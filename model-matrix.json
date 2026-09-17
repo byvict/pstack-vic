@@ -5,7 +5,7 @@
     "A family is one line below. Adding a family = adding one line; the test suite derives everything else from this file.",
     "efforts is the closed universe. Codex also exposes `ultra` (automatic task delegation); it is excluded because a pstack child never delegates.",
     "cursorSlug is the Cursor pstack 0.15.2 selector this family replaces, with {effort} where the effort token goes; null when upstream has no such family.",
-    "reportedModel is the regex a runner receipt's provider-reported model must match to count as verified; null when the CLI does not report the served model (Codex pins by argv)."
+    "reportedModel is the regex a runner receipt's provider-reported model must match to count as verified; null when the CLI does not report the served model (Codex pins by argv). Grok Build CLI 1.0.5 reports the served model with a build suffix (`grok-4.6-build`, measured 2026-09-17), so the grok pattern accepts one."
   ],
   "efforts": ["low", "medium", "high", "xhigh", "max"],
   "aliases": ["inherit-parent", "auto"],
@@ -27,6 +27,6 @@
     { "family": "opus", "provider": "claude", "model": "opus", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "xhigh", "agentStem": "opus", "cursorSlug": "claude-opus-5-thinking-{effort}", "reportedModel": "^claude-opus-[0-9]+(-[0-9]+)*$" },
     { "family": "sol", "provider": "codex", "model": "gpt-5.6-sol", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "max", "agentStem": null, "cursorSlug": "gpt-5.6-sol-{effort}", "reportedModel": null },
     { "family": "astra", "provider": "codex", "model": "gpt-6-astra", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "max", "agentStem": null, "cursorSlug": null, "reportedModel": null },
-    { "family": "grok", "provider": "grok", "model": "grok-4.6", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "xhigh", "agentStem": null, "cursorSlug": "grok-4.6-fast-{effort}", "reportedModel": "^grok-4\\.6$" }
+    { "family": "grok", "provider": "grok", "model": "grok-4.6", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "xhigh", "agentStem": null, "cursorSlug": "grok-4.6-fast-{effort}", "reportedModel": "^grok-4\\.6(-[a-z0-9]+)*$" }
   ]
 }

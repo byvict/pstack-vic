@@ -295,6 +295,8 @@ describe("descriptors", () => {
     assert.equal(reportedModelMatches(sol, "gpt-5.6-sol"), false, "codex pins by argv");
     assert.equal(reportedModelMatches(grok, "grok-4.6"), true);
     assert.equal(reportedModelMatches(grok, "grok-4.5"), false);
+    assert.equal(reportedModelMatches(grok, "grok-4.6-build"), true, "grok 1.0.5 reports a build suffix");
+    assert.equal(reportedModelMatches(grok, "grok-4.6.1"), false);
   });
 });
 

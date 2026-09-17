@@ -33,6 +33,8 @@ The allowed effort universe is exactly `low`, `medium`, `high`, `xhigh`, `max`. 
 
 `fable` and `opus` are Claude Code's rolling aliases. Claude resolves each alias to the latest available family revision. A runner receipt keeps the requested alias in `model` and the concrete provider-reported revision in `reportedModel`; verification accepts only a report matching that family's `reportedModel` pattern in the matrix (a numeric `claude-fable-*` or `claude-opus-*` revision).
 
+Grok Build CLI 1.0.5 reports the served model as `grok-4.6-build` in the result event's `modelUsage` (measured 2026-09-17); the grok family's `reportedModel` pattern accepts that build suffix and nothing else.
+
 `sol` and `astra` share the `codex` CLI, its flags, and its output parser. They differ only in the `--model` argument. Codex also exposes an `ultra` effort that delegates tasks automatically; it is outside the effort universe because a pstack child never delegates.
 
 ## Read-time normalization

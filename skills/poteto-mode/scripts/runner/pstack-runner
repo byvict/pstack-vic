@@ -1,0 +1,6 @@
+#!/usr/bin/env node
+// Copied from open-pstack 1.4.1 (de67e6b); the shebang targets Node 24 (type
+// stripping runs the .ts modules directly) instead of Bun.
+const startedAt = Date.now();
+const { main } = await import("./cli.ts");
+process.exitCode = await main(process.argv.slice(2), startedAt);
