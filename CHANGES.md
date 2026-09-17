@@ -100,8 +100,8 @@ Legenda: **A** aplica (cópia do open), **Ad** adapta (open + mudança de desenh
 
 | Item do diff | Fase | Nota |
 | --- | --- | --- |
-| Skills novas do open: `babysit`, `deslop`, `fix-ci`, `fix-merge-conflicts`, `get-pr-comments`, `make-pr-easy-to-review`, `thermo-nuclear-code-quality-review`, `what-did-i-get-done` | 5 | avaliadas uma a uma lá; `poteto-mode` já cita `deslop` e `babysit` de forma condicional |
-| Remoção de `skills/make-bot-ui`, `automations/benny`, `docs/guide/`, `README.md` da Cursor | 5 | conteúdo Cursor-only e documentação; `docs/reference.md` nasce na fase 5 |
+| Skills novas do open: `babysit`, `deslop`, `fix-ci`, `fix-merge-conflicts`, `get-pr-comments`, `make-pr-easy-to-review`, `thermo-nuclear-code-quality-review`, `what-did-i-get-done` | 5 | decididas em **Fase 5** abaixo: as oito entram |
+| Remoção de `skills/make-bot-ui`, `automations/benny`, `docs/guide/`, `README.md` da Cursor | 5 | decididas em **Fase 5** abaixo: os três saem, o README é substituído, `docs/reference.md` nasce |
 | `hooks/` (`hooks.json`, `session-start`, `session-start-context.md`, `run-hook.cmd` + `LICENSE-superpowers`) | 7 | hook SessionStart com precedência a `CLAUDE.md`/`AGENTS.md` |
 | `.claude-plugin/plugin.json` (campo `logo`), `.codex-plugin/plugin.json`, remoção de `.cursor-plugin/`, `.gitignore`, `LICENSE` na raiz do plugin | 7 | manifests e instalação por tag |
 | `agents/pstack-*.md` | 3 | já gerados da matriz, byte-idênticos ao open |
@@ -114,3 +114,50 @@ Legenda: **A** aplica (cópia do open), **Ad** adapta (open + mudança de desenh
 - `grep` por primitivas Cursor-only em `skills/` e `agents/` (`.cursor/`, `AskQuestion`, `generalPurpose`, `Task` tool, `cursor-team-kit`, `create-skill`, `control-ui`/`control-cli`, `environment: "cloud"`, `is_background`, `agent-transcripts`, `pstack-models.mdc`, `/goal`, `git show origin/main:`, `pstack/skills/`) retorna só três menções explicativas: `codex-tools.md` cita `Task` como nome alternativo do `Agent`, e `autopilot-*` dizem que o Claude Code não tem `/goal`. A palavra "Cursor" sobra em `provider-dispatch.md` (coluna "Replaces (Cursor 0.15.2)" e nota sobre `fast`) e no `watch-pr` (Bugbot é produto da Cursor, roda em qualquer harness).
 - `check-plan.mjs` sobre o esqueleto extraído de `multi-phase-plan.md`: todos os marcadores estruturais presentes.
 - Smoke do `poteto-mode` nos dois pais, tarefa trivial (criar `hello.md` com uma linha exata numa pasta de rascunho, sem worktree/commit/PR), prompt idêntico: pai Claude Code (`claude -p`, `acceptEdits`, `--add-dir` do plugin) criou o arquivo com os bytes exatos, respondeu no formato de **Writing the reply**, listou o todolist do playbook Feature e nomeou `principle-laziness-protocol`, `principle-prove-it-works` e `principle-never-block-on-the-human` como lidos; leu `provider-dispatch.md` e `feature.md`, e explicou que não leu `codex-tools.md` por ser Claude Code. Pai Codex (`codex exec`, `workspace-write`, gpt-5.6-sol high) criou o arquivo com os bytes exatos, leu `SKILL.md`, `provider-dispatch.md` e `codex-tools.md`, respondeu no formato e nomeou Laziness Protocol e Prove It Works. Nenhum dos dois tentou `AskQuestion`, `Task`, `create-skill`, `control-*` ou caminho `.cursor/`.
+
+# Fase 5 — Subconjunto de skills (2026-09-17)
+
+Vereditos sobre o que a fase 4 adiou: as oito skills que o open-pstack 1.4.1 acrescenta ao pstack da Cursor, e o conteúdo Cursor-only que ainda estava na árvore 0.15.2. Mesma legenda: **A** aplica (cópia do open ou do `cursor-team-kit` via open), **Ad** adapta, **R** recusa (sai da árvore ou não entra). Proveniência das cópias em `NOTICE.md`.
+
+## Skills extras do open
+
+Critério: entra o que não depende de primitiva da Cursor e não duplica um built-in do Claude Code nem uma skill que o pstack já tem. As sete do `cursor-team-kit` são byte-idênticas ao original em `cursor/main` (`git diff` vazio contra `cursor/main:cursor-team-kit/skills/<nome>/SKILL.md`), então a cópia vem do open mas a proveniência é a Cursor, com `LICENSE-cursor-team-kit` na raiz.
+
+| Skill | Veredito | Motivo |
+| --- | --- | --- |
+| `deslop` | A | `poteto-mode`, `opening-a-pr`, `autopilot-*` e `multi-phase-plan` já mandam rodar `/deslop` antes de cada commit; a Cursor 0.15.2 a buscava no `cursor-team-kit`, que não existe fora da Cursor. Só usa o diff contra `main`. A frase "when it is installed" de `poteto-mode/SKILL.md` (fase 4) volta a ser incondicional |
+| `babysit` | A | Análogo standalone do `/babysit` embutido da Cursor, escrito pelo open (sem prosa da Cursor, proveniência declarada no próprio arquivo). Cobre o caso que o playbook Babysit não cobre: um PR isolado fora do `poteto-mode`. Usa `gh`, `loop`, `AskUserQuestion` e aponta para `bugbot-triage.md`, tudo já mapeado em `codex-tools.md`. O playbook continua mandando dentro do `poteto-mode`; as frases condicionais ("if one is installed") de `poteto-mode/SKILL.md` e `playbooks/babysit.md` viram referência direta, e o script de colisão verifica a precedência dos dois lados |
+| `thermo-nuclear-code-quality-review` | A | Rubrica de revisão estrita, prosa pura. A Cursor a marca `disable-model-invocation: true`; aqui o campo sai (decisão 1 da fase 4: no Claude Code ele exclui a skill da ferramenta `Skill`), como o open já fazia. Não substitui a lente de qualidade de `interrogate/references/code-quality-review.md`, que a Cursor 0.15.2 já tem; é a entrada standalone da mesma postura |
+| `make-pr-easy-to-review` | A | Só `gh` e `git`; atua num PR já aberto, o que `opening-a-pr` (que rege a abertura) não faz |
+| `fix-ci` | A | Só `gh`; escopo mais estreito que Babysit (CI de branch ou PR, sem loop de review threads) |
+| `fix-merge-conflicts` | A | Só `git`; o playbook Babysit proíbe resolver conflitos dentro do babysit e manda reportar, então um resolvedor standalone é uma entrada distinta, não duplicata |
+| `get-pr-comments` | A | Só `gh`, só leitura; resumo de feedback sem entrar no loop de triagem |
+| `what-did-i-get-done` | A | Só `git`; é a de encaixe mais fraco no pstack (não é roteada por nenhum playbook), mas é minúscula e sem primitiva de plataforma. Entra com a ressalva de que pode sair no primeiro digest em que estorvar |
+
+Nenhuma das oito cita descritor de modelo, então nada muda na matriz nem na tabela de papéis. Nenhuma tem `references/` ou scripts.
+
+## Conteúdo Cursor-only adiado da fase 4
+
+| Item | Veredito | Motivo |
+| --- | --- | --- |
+| `skills/make-bot-ui` | R (sai) | Construída sobre `update_state` de rotinas, webhook `api2.cursor.sh`, painel do agente e Tailscale. Não há mapeamento comum Claude Code / Codex; uma reescrita seria feature nova, não port. O script de colisão garante a ausência |
+| `automations/benny/` | R (sai) | Pacote dormente de duas automações Slack sobre o runtime de eventos da Cursor (`.cursor/automations/`, `.cursor/settings.json`, control adapter). Não registrava skill nem no original, então remover não muda o comportamento do plugin. Volta a ser avaliado só se a Cursor mover algo dele para `skills/` |
+| `docs/guide/` | R (sai) | Dez capítulos e seis imagens (2,3 MB) que ensinam pstack pela UI da Cursor, sticky mode e cloud agents. Port fiel seria reescrita; `docs/reference.md` aponta para o original no upstream |
+| `README.md` da Cursor | Ad (substituído) | Falava de `/add-plugin`, "cursor gives you the best of all worlds", `/make-bot-ui`, benny e "`/deslop` ships in `cursor-team-kit`", tudo falso aqui. Substituído por um README curto do port (o que é, começar, documentos); o texto da Cursor fica no histórico (`91e5b82:README.md`) e no upstream. O open preserva o dele em `README-UPSTREAM.md`; aqui não, porque o split já carrega o histórico e o merge da fase 8 conflita do mesmo jeito |
+| Sticky mode | R | Já decidido na fase 4 (frontmatter `mode`/`icon`/`color`/`reminder` removido de `poteto-mode`); a menção "sticky" que sobrava estava só em `docs/guide/` |
+
+Consequência para a fase 8: um commit do remote `cursor` que toque `automations/benny/`, `docs/guide/`, `skills/make-bot-ui` ou `README.md` vai aparecer no digest como conflito modify/delete (ou de conteúdo, no README). O veredito padrão para esses caminhos é "não aplica".
+
+## `docs/reference.md` e testes
+
+- `docs/reference.md` é escrita nova (em português, como `UPSTREAM.md`/`NOTICE.md`/`CHANGES.md`): instalação provisória até a fase 7, layout, notas de Codex, dependências, tabela das 31 skills de fluxo, tabela dos 23 princípios, subagents, verificação, o que ficou de fora, licenças. O `docs/reference.md` do open serviu de esqueleto, mas o texto não é cópia (o dele descreve marketplace, Bun, quad fixo e `plugin-dev`).
+- `scripts/reference.test.ts`: o conjunto de nomes nas duas tabelas da referência é exatamente o conjunto de `skills/*/SKILL.md`; diretório = `name` do frontmatter; `principle-*` só na tabela de princípios.
+- `tests/skill-collision-repro.sh`: adaptado do open (ver `NOTICE.md` para o que mudou). Parte estática roda dentro de `npm test` via `scripts/skill-collision.test.ts` e sozinha com `npm run collision:check`; a prova comportamental (`claude -p --plugin-dir` com um plugin de uma skill, invocação pela tool `Skill` e por `/testplug:foo`) roda com `PSTACK_BEHAVIORAL=1`, modelo `PSTACK_TEST_MODEL` (default `haiku`).
+
+## Verificação (2026-09-17)
+
+- `npm test`: 85 testes (80 da fase 4 + 4 de `reference.test.ts` + 1 de `skill-collision.test.ts`), 0 `todo`. Primeira rodada 85/85. Rodadas seguintes, com a máquina em load ~3,8, 84/85: `run.test.ts` "spends one explicit deadline across preflight and model execution" (runner, fase 2) dá 300 ms para o fake CLI subir depois de 1,2 s de preflight e estoura sob carga. Falha igual num worktree limpo de `f087f8e`, então é flake pré-existente do runner, não desta fase; fica anotado para ajuste em sessão própria.
+- `npm run matrix:check` e `npm run agents:check` verdes.
+- `PSTACK_BEHAVIORAL=1 bash tests/skill-collision-repro.sh`: todos os invariantes estáticos `ok`, manifests `skip` (fase 7), e as duas invocações (tool `Skill` e `/testplug:foo`) devolveram `SKILL-RAN` com `haiku`.
+- `diff` das sete skills do `cursor-team-kit` contra `cursor/main`: vazio, salvo o frontmatter de `thermo-nuclear-code-quality-review`. `LICENSE-cursor-team-kit` byte-idêntico a `cursor/main:cursor-team-kit/LICENSE`.
+- `grep -ri 'if one is installed\|when it is installed' skills`: vazio.

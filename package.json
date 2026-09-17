@@ -12,6 +12,7 @@
     "matrix:check": "node scripts/render-model-matrix.ts --check",
     "agents:generate": "node scripts/generate-agents.ts",
     "agents:check": "node scripts/generate-agents.ts --check",
+    "collision:check": "bash tests/skill-collision-repro.sh",
     "runner": "node skills/poteto-mode/scripts/runner/pstack-runner"
   }
 }
