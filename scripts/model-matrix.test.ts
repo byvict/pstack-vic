@@ -351,7 +351,7 @@ describe("consumers", () => {
       assert.equal(fields.model, family.model);
       assert.equal(agentName(family, fields.effort), name);
     }
-    // Fase 3 adds the generator and the missing-agent direction of this check.
+    // The missing/stale directions and the generator live in generate-agents.test.ts (fase 3).
   });
 
   it("no longer cite Cursor 0.15.2 selectors (fase 4 substitution tracker)", { todo: true }, () => {

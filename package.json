@@ -10,6 +10,8 @@
     "test": "node --test 'scripts/**/*.test.ts' 'skills/poteto-mode/scripts/runner/*.test.ts'",
     "matrix:render": "node scripts/render-model-matrix.ts",
     "matrix:check": "node scripts/render-model-matrix.ts --check",
+    "agents:generate": "node scripts/generate-agents.ts",
+    "agents:check": "node scripts/generate-agents.ts --check",
     "runner": "node skills/poteto-mode/scripts/runner/pstack-runner"
   }
 }
