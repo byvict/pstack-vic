@@ -37,6 +37,36 @@ Grok Build CLI 1.0.5 reports the served model as `grok-4.6-build` in the result 
 
 `sol` and `astra` share the `codex` CLI, its flags, and its output parser. They differ only in the `--model` argument. Codex also exposes an `ultra` effort that delegates tasks automatically; it is outside the effort universe because a pstack child never delegates.
 
+## Role defaults
+
+Skills name roles by the labels below, the same labels `/setup-pstack` writes to the model sheet (`~/.claude/pstack-models.md` on Claude Code, `~/.codex/pstack-models.md` on Codex). A sheet line overrides the default of its role. Without a sheet, a role takes its cell for the current parent. The block is rendered from `model-matrix.json`; edit the JSON, not the table.
+
+<!-- role-defaults:begin -->
+
+| Role | Claude Code parent | Codex parent |
+|---|---|---|
+| `feature, refactoring` | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
+| `bug-fix` | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
+| `perf-issue` | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
+| `hillclimb` | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
+| `judgment and prose` | `claude:fable@max` | `codex:gpt-6-astra@max` |
+| `hardest tasks` | `claude:fable@max` | `codex:gpt-6-astra@max` |
+| `how explorer` | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
+| `how explainer` | `claude:fable@max` | `codex:gpt-6-astra@max` |
+| `why investigators` | `inherit-parent` | `inherit-parent` |
+| `why synthesizer` | `inherit-parent` | `inherit-parent` |
+| `reflect tooling` | `inherit-parent` | `inherit-parent` |
+| `reflect judgment, divergent, synthesizer` | `inherit-parent` | `inherit-parent` |
+| `arena runners` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:opus@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:opus@xhigh` |
+| `arena cross-judge pool` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:opus@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:opus@xhigh` |
+| `swarm workers` | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
+| `architect runners` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:opus@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:opus@xhigh` |
+| `interrogate reviewers` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:opus@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:opus@xhigh` |
+
+A list is a panel: one lane per entry, in this order. A role whose two columns differ takes the parent's native frontier family. Aliases run on the parent model through its native subagent primitive.
+
+<!-- role-defaults:end -->
+
 ## Read-time normalization
 
 Normalize configured descriptors before matching them to the matrix or choosing a route. If a provider-qualified Claude model starts with `claude-fable-` or `claude-opus-` and its remaining revision contains only digits and hyphens, replace that model component in memory with `fable` or `opus`. Preserve provider, effort, role, and lane order. Use only the normalized descriptor for native dispatch or runner argv. Never pass the versioned predecessor to Claude.

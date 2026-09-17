@@ -15,15 +15,19 @@ import {
   nativeParentOf,
   parseDescriptor,
   renderMatrixMarkdown,
+  renderRoleDefaultsMarkdown,
+  renderRoleSheet,
   reportedModelMatches,
   resolveDescriptor,
+  roleDefault,
+  roleNamed,
   routeFor,
   spliceMatrixBlock,
   validateMatrix,
   type Family,
   type ModelMatrix,
 } from "./model-matrix.ts";
-import { DISPATCH_PATH, renderDispatch } from "./render-model-matrix.ts";
+import { DISPATCH_PATH, SETUP_PATH, renderDispatch, renderSetup } from "./render-model-matrix.ts";
 
 const matrix = loadMatrix();
 
@@ -72,6 +76,12 @@ function withFamilies(
   const raw = rawMatrix();
   const families = raw.families as Record<string, unknown>[];
   edit(families);
+  return raw;
+}
+
+function withRoles(edit: (roles: Record<string, unknown>[]) => void): unknown {
+  const raw = rawMatrix();
+  edit(raw.roles as Record<string, unknown>[]);
   return raw;
 }
 
@@ -300,6 +310,85 @@ describe("descriptors", () => {
   });
 });
 
+describe("roles", () => {
+  const parents = Object.keys(matrix.parents);
+
+  it("resolve every role default to descriptors or aliases for every parent", () => {
+    assert.ok(matrix.roles.length >= 1);
+    for (const role of matrix.roles) {
+      for (const parent of parents) {
+        const lanes = roleDefault(matrix, role.role, parent);
+        assert.ok(lanes.length >= 1, `${role.role}/${parent}: at least one lane`);
+        for (const lane of lanes) {
+          if (matrix.aliases.includes(lane)) continue;
+          resolveDescriptor(matrix, lane);
+        }
+      }
+    }
+  });
+
+  it("carry the decided default map: volume on grok, frontier solo on the parent's native frontier, panels mixed, why and reflect inherit", () => {
+    // Decisions of 2026-09-17 (plan, fase 6 bullets). The labels are the sheet lines /setup-pstack writes.
+    for (const label of ["feature, refactoring", "bug-fix", "perf-issue", "hillclimb", "swarm workers", "how explorer"]) {
+      for (const parent of parents) {
+        assert.deepEqual(roleDefault(matrix, label, parent), ["grok:grok-4.6@xhigh"], `${label}/${parent}`);
+      }
+    }
+    for (const label of ["hardest tasks", "judgment and prose", "how explainer"]) {
+      assert.deepEqual(roleDefault(matrix, label, "claude"), ["claude:fable@max"], `${label}/claude`);
+      assert.deepEqual(roleDefault(matrix, label, "codex"), ["codex:gpt-6-astra@max"], `${label}/codex`);
+    }
+    for (const label of ["why investigators", "why synthesizer", "reflect tooling", "reflect judgment, divergent, synthesizer"]) {
+      for (const parent of parents) assert.deepEqual(roleDefault(matrix, label, parent), ["inherit-parent"]);
+    }
+    for (const label of ["arena runners", "arena cross-judge pool", "architect runners", "interrogate reviewers"]) {
+      for (const parent of parents) {
+        const lanes = roleDefault(matrix, label, parent);
+        const providers = new Set(lanes.map((l) => parseDescriptor(l)?.provider));
+        assert.equal(lanes.length, 4, `${label}: four lanes`);
+        assert.deepEqual([...providers].sort(), ["claude", "codex", "grok"], `${label}: every provider present`);
+      }
+    }
+  });
+
+  it("reject a role default naming an unknown family, an unselectable effort, or a foreign parent", () => {
+    assert.throws(
+      () => validateMatrix(withRoles((rs) => { rs[0] = { ...rs[0], default: "gemini@high" }; })),
+      /unknown family gemini/
+    );
+    assert.throws(
+      () => validateMatrix(withRoles((rs) => { rs[0] = { ...rs[0], default: "grok@ultra" }; })),
+      /does not select effort ultra/
+    );
+    assert.throws(
+      () => validateMatrix(withRoles((rs) => { rs[0] = { ...rs[0], default: { claude: "grok@xhigh", cursor: "grok@xhigh" } }; })),
+      /one entry per parent/
+    );
+    assert.throws(
+      () => validateMatrix(withRoles((rs) => { rs.push({ ...rs[0] }); })),
+      /duplicate/
+    );
+    assert.throws(
+      () => validateMatrix(withRoles((rs) => { rs[0] = { ...rs[0], default: [] }; })),
+      /empty list/
+    );
+    assert.throws(() => roleDefault(matrix, "no such role", "claude"), /unknown role/);
+  });
+
+  it("render one sheet per parent in the line shape the sheet uses", () => {
+    for (const parent of parents) {
+      const lines = renderRoleSheet(matrix, parent).split("\n");
+      assert.equal(lines.length, matrix.roles.length);
+      for (const [i, line] of lines.entries()) {
+        const role = matrix.roles[i];
+        assert.equal(line, `${role.role}: ${roleDefault(matrix, role.role, parent).join(", ")}`);
+      }
+    }
+    const table = renderRoleDefaultsMarkdown(matrix);
+    for (const role of matrix.roles) assert.ok(table.includes(`| \`${role.role}\` |`), role.role);
+  });
+});
+
 describe("consumers", () => {
   const files = consumerFiles();
   const effortAlternation = matrix.efforts.join("|");
@@ -328,10 +417,28 @@ describe("consumers", () => {
     assert.deepEqual(offenders, []);
   });
 
-  it("keep provider-dispatch.md's generated block current", () => {
-    const current = readFileSync(DISPATCH_PATH, "utf8");
-    assert.equal(renderDispatch(current), current, "run: node scripts/render-model-matrix.ts");
+  it("keep the generated blocks of provider-dispatch.md and setup-pstack current", () => {
+    const dispatch = readFileSync(DISPATCH_PATH, "utf8");
+    assert.equal(renderDispatch(dispatch), dispatch, "run: node scripts/render-model-matrix.ts");
+    const setup = readFileSync(SETUP_PATH, "utf8");
+    assert.equal(renderSetup(setup), setup, "run: node scripts/render-model-matrix.ts");
     assert.throws(() => spliceMatrixBlock("no markers here", "x"), /exactly one/);
+    assert.throws(() => renderSetup("no markers here"), /exactly one/);
+  });
+
+  it("cite only role labels the matrix declares", () => {
+    // Skills say "your configured `<label>` role" or "the `<label>` row"; every
+    // label has to be a sheet line, or /setup-pstack cannot override it.
+    const citation = /`([^`\n]+)` (?:role\b|row (?:in|of) the (?:same )?role table)/g;
+    const unknown: string[] = [];
+    for (const path of files) {
+      if (!rel(path).startsWith("skills/")) continue;
+      const text = readFileSync(path, "utf8");
+      for (const match of text.matchAll(citation)) {
+        if (roleNamed(matrix, match[1]) === null) unknown.push(`${rel(path)}: ${match[0]}`);
+      }
+    }
+    assert.deepEqual(unknown, []);
   });
 
   it("ship pstack-* agents only for declared families and efforts", () => {
@@ -354,7 +461,7 @@ describe("consumers", () => {
     // The missing/stale directions and the generator live in generate-agents.test.ts (fase 3).
   });
 
-  it("no longer cite Cursor 0.15.2 selectors (fase 4 substitution tracker)", { todo: true }, () => {
+  it("no longer cite Cursor 0.15.2 selectors (fase 4 substitution tracker)", () => {
     const pattern = cursorSlugPattern(matrix);
     const hits = new Map<string, number>();
     for (const path of files) {

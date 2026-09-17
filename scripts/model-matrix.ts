@@ -38,6 +38,19 @@ export interface Family {
   readonly reportedModel: string | null;
 }
 
+/**
+ * One role default as written in the JSON: an alias, `family@effort`, a list of
+ * those (a panel, one lane per entry), or one of the former per parent when the
+ * default depends on which harness is the parent.
+ */
+export type RoleSpec = string | readonly string[];
+export type RoleDefault = RoleSpec | Readonly<Record<string, RoleSpec>>;
+
+export interface Role {
+  readonly role: string;
+  readonly default: RoleDefault;
+}
+
 export interface ModelMatrix {
   readonly schemaVersion: 1;
   readonly notes: readonly string[];
@@ -47,6 +60,7 @@ export interface ModelMatrix {
   readonly providers: Readonly<Record<string, ProviderSpec>>;
   readonly routes: Readonly<Record<string, Readonly<Record<string, Route>>>>;
   readonly families: readonly Family[];
+  readonly roles: readonly Role[];
 }
 
 export interface Descriptor {
@@ -60,6 +74,8 @@ export class MatrixError extends Error {}
 const NAME_RE = /^[a-z][a-z0-9-]*$/;
 const MODEL_RE = /^[a-z0-9][a-z0-9.-]*$/;
 const DESCRIPTOR_RE = /^([a-z][a-z0-9-]*):([a-z0-9][a-z0-9.-]*)@([a-z]+)$/;
+const ROLE_SPEC_RE = /^([a-z][a-z0-9-]*)@([a-z]+)$/;
+const ROLE_LABEL_RE = /^[a-z][a-z0-9 ,-]*$/;
 
 function fail(message: string): never {
   throw new MatrixError(message);
@@ -241,6 +257,57 @@ export function validateMatrix(raw: unknown): ModelMatrix {
     stems.add(f.agentStem);
   }
 
+  if (!Array.isArray(raw.roles) || raw.roles.length === 0) {
+    fail("roles must be a non-empty list");
+  }
+  const familyNames = new Set(families.map((f) => f.family));
+  const checkSpec = (value: unknown, where: string): RoleSpec => {
+    const one = (text: unknown, at: string): string => {
+      if (typeof text !== "string") fail(`${at} must be a string`);
+      if (aliases.includes(text)) return text;
+      const match = ROLE_SPEC_RE.exec(text);
+      if (!match) fail(`${at}: ${JSON.stringify(text)} is neither an alias nor family@effort`);
+      const [, family, effort] = match;
+      if (!familyNames.has(family)) fail(`${at}: unknown family ${family}`);
+      const row = families.find((f) => f.family === family) as Family;
+      if (!row.efforts.includes(effort)) {
+        fail(`${at}: ${family} does not select effort ${effort} (allowed: ${row.efforts.join(" ")})`);
+      }
+      return text;
+    };
+    if (Array.isArray(value)) {
+      if (value.length === 0) fail(`${where} must not be an empty list`);
+      return value.map((v, i) => one(v, `${where}[${i}]`));
+    }
+    return one(value, where);
+  };
+  const roles: Role[] = raw.roles.map((entry, index) => {
+    const where = `roles[${index}]`;
+    if (!isRecord(entry)) fail(`${where} must be an object`);
+    if (typeof entry.role !== "string" || !ROLE_LABEL_RE.test(entry.role)) {
+      fail(`${where}.role must match ${ROLE_LABEL_RE}`);
+    }
+    const label = entry.role;
+    const value = entry.default;
+    if (isRecord(value)) {
+      const keys = Object.keys(value).sort();
+      if (keys.join(",") !== [...parentNames].sort().join(",")) {
+        fail(`${label}: a per-parent default must have one entry per parent (${parentNames.join(", ")})`);
+      }
+      const byParent: Record<string, RoleSpec> = {};
+      for (const [parent, spec] of Object.entries(value)) {
+        byParent[parent] = checkSpec(spec, `${label}.${parent}`);
+      }
+      return { role: label, default: byParent };
+    }
+    return { role: label, default: checkSpec(value, label) };
+  });
+  const labels = new Set<string>();
+  for (const r of roles) {
+    if (labels.has(r.role)) fail(`roles: duplicate ${JSON.stringify(r.role)}`);
+    labels.add(r.role);
+  }
+
   return {
     schemaVersion: 1,
     notes,
@@ -250,6 +317,7 @@ export function validateMatrix(raw: unknown): ModelMatrix {
     providers,
     routes,
     families,
+    roles,
   };
 }
 
@@ -359,6 +427,38 @@ export function declaredAgentNames(matrix: ModelMatrix): string[] {
   return names;
 }
 
+// --- Roles --------------------------------------------------------------
+
+export function roleNamed(matrix: ModelMatrix, label: string): Role | null {
+  return matrix.roles.find((r) => r.role === label) ?? null;
+}
+
+/** Expand one `family@effort` (or alias) to the descriptor a sheet or skill would write. */
+export function expandRoleEntry(matrix: ModelMatrix, entry: string): string {
+  if (matrix.aliases.includes(entry)) return entry;
+  const match = ROLE_SPEC_RE.exec(entry);
+  if (!match) fail(`not a role entry: ${JSON.stringify(entry)}`);
+  const family = familyNamed(matrix, match[1]);
+  if (!family) fail(`unknown family ${match[1]}`);
+  return formatDescriptor({ provider: family.provider, model: family.model, effort: match[2] });
+}
+
+/**
+ * The default lanes of a role when `parent` is the top-level harness: one
+ * descriptor or alias per lane. A single-lane role yields a one-element list.
+ */
+export function roleDefault(matrix: ModelMatrix, label: string, parent: string): string[] {
+  const role = roleNamed(matrix, label);
+  if (!role) fail(`unknown role ${JSON.stringify(label)}`);
+  if (!(parent in matrix.parents)) fail(`unknown parent ${parent}`);
+  const spec: RoleSpec =
+    typeof role.default === "string" || Array.isArray(role.default)
+      ? (role.default as RoleSpec)
+      : (role.default as Readonly<Record<string, RoleSpec>>)[parent];
+  const entries = typeof spec === "string" ? [spec] : [...spec];
+  return entries.map((e) => expandRoleEntry(matrix, e));
+}
+
 /**
  * Map a Cursor pstack selector (for example `grok-4.6-fast-xhigh`) to the
  * family and effort it stands for, or null when no family claims it.
@@ -399,6 +499,10 @@ export function reportedModelMatches(f: Family, reported: string): boolean {
 
 export const MATRIX_BEGIN = "<!-- model-matrix:begin -->";
 export const MATRIX_END = "<!-- model-matrix:end -->";
+export const ROLES_BEGIN = "<!-- role-defaults:begin -->";
+export const ROLES_END = "<!-- role-defaults:end -->";
+export const SHEET_BEGIN = "<!-- role-sheet:begin -->";
+export const SHEET_END = "<!-- role-sheet:end -->";
 
 function cell(value: string | null): string {
   return value === null ? "-" : `\`${value}\``;
@@ -446,17 +550,83 @@ export function renderMatrixMarkdown(matrix: ModelMatrix): string {
   return lines.join("\n");
 }
 
-/** Replace the generated block inside a markdown document. Throws when markers are missing or duplicated. */
-export function spliceMatrixBlock(document: string, block: string): string {
-  const begins = document.split(MATRIX_BEGIN).length - 1;
-  const ends = document.split(MATRIX_END).length - 1;
-  if (begins !== 1 || ends !== 1) {
-    fail(
-      `document must contain exactly one ${MATRIX_BEGIN} and one ${MATRIX_END} (found ${begins} and ${ends})`
+/**
+ * Markdown table of the role defaults, one column per parent, for
+ * provider-dispatch.md. Everything between ROLES_BEGIN and ROLES_END is
+ * replaced by this text.
+ */
+export function renderRoleDefaultsMarkdown(matrix: ModelMatrix): string {
+  const parents = Object.entries(matrix.parents);
+  const lines: string[] = [];
+  lines.push(ROLES_BEGIN);
+  lines.push("");
+  lines.push(`| Role | ${parents.map(([, p]) => `${p.name} parent`).join(" | ")} |`);
+  lines.push(`|---|${parents.map(() => "---").join("|")}|`);
+  for (const role of matrix.roles) {
+    const cells = parents.map(([parent]) =>
+      roleDefault(matrix, role.role, parent).map((d) => `\`${d}\``).join(", ")
     );
+    lines.push(`| \`${role.role}\` | ${cells.join(" | ")} |`);
   }
-  const start = document.indexOf(MATRIX_BEGIN);
-  const end = document.indexOf(MATRIX_END) + MATRIX_END.length;
-  if (end < start) fail("matrix end marker precedes begin marker");
-  return document.slice(0, start) + block + document.slice(end);
+  lines.push("");
+  lines.push(
+    "A list is a panel: one lane per entry, in this order. A role whose two columns differ takes the parent's native frontier family. Aliases run on the parent model through its native subagent primitive."
+  );
+  lines.push("");
+  lines.push(ROLES_END);
+  return lines.join("\n");
+}
+
+/** The first-run model sheet for one parent, in the line shape `/setup-pstack` writes. */
+export function renderRoleSheet(matrix: ModelMatrix, parent: string): string {
+  return matrix.roles
+    .map((r) => `${r.role}: ${roleDefault(matrix, r.role, parent).join(", ")}`)
+    .join("\n");
+}
+
+/**
+ * The first-run sheets of every parent as fenced blocks, for setup-pstack.
+ * Everything between SHEET_BEGIN and SHEET_END is replaced by this text.
+ */
+export function renderRoleSheetsMarkdown(matrix: ModelMatrix): string {
+  const lines: string[] = [SHEET_BEGIN, ""];
+  for (const [parent, spec] of Object.entries(matrix.parents)) {
+    lines.push(`${spec.name} parent:`);
+    lines.push("");
+    lines.push("```markdown");
+    lines.push("# pstack model configuration");
+    lines.push("");
+    lines.push(
+      "Provider-qualified per-role choices. Read the installed pstack provider-dispatch reference before dispatching a configured role. Every documented role remains present. `inherit-parent` and `auto` use the parent model natively and still count as one panel lane."
+    );
+    lines.push("");
+    lines.push(renderRoleSheet(matrix, parent));
+    lines.push("```");
+    lines.push("");
+  }
+  lines.push(SHEET_END);
+  return lines.join("\n");
+}
+
+/** Replace one generated block inside a markdown document. Throws when its markers are missing or duplicated. */
+export function spliceBlock(
+  document: string,
+  block: string,
+  begin: string,
+  end: string
+): string {
+  const begins = document.split(begin).length - 1;
+  const ends = document.split(end).length - 1;
+  if (begins !== 1 || ends !== 1) {
+    fail(`document must contain exactly one ${begin} and one ${end} (found ${begins} and ${ends})`);
+  }
+  const start = document.indexOf(begin);
+  const stop = document.indexOf(end) + end.length;
+  if (stop < start) fail(`${end} precedes ${begin}`);
+  return document.slice(0, start) + block + document.slice(stop);
+}
+
+/** Replace the model-matrix block inside a markdown document. */
+export function spliceMatrixBlock(document: string, block: string): string {
+  return spliceBlock(document, block, MATRIX_BEGIN, MATRIX_END);
 }
