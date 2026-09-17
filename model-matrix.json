@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "notes": [
+    "Single source of truth for pstack-vic model families and parent routes. Consumers: runner (skills/poteto-mode/scripts/runner), setup-pstack, agents generator, provider-dispatch.md (rendered by scripts/render-model-matrix.ts).",
+    "A family is one line below. Adding a family = adding one line; the test suite derives everything else from this file.",
+    "efforts is the closed universe. Codex also exposes `ultra` (automatic task delegation); it is excluded because a pstack child never delegates.",
+    "cursorSlug is the Cursor pstack 0.15.2 selector this family replaces, with {effort} where the effort token goes; null when upstream has no such family.",
+    "reportedModel is the regex a runner receipt's provider-reported model must match to count as verified; null when the CLI does not report the served model (Codex pins by argv)."
+  ],
+  "efforts": ["low", "medium", "high", "xhigh", "max"],
+  "aliases": ["inherit-parent", "auto"],
+  "parents": {
+    "claude": { "name": "Claude Code", "nativePrimitive": "Agent" },
+    "codex": { "name": "Codex", "nativePrimitive": "spawn_agent" }
+  },
+  "providers": {
+    "claude": { "cli": "claude", "nativeIn": "claude" },
+    "codex": { "cli": "codex", "nativeIn": "codex" },
+    "grok": { "cli": "grok", "nativeIn": null }
+  },
+  "routes": {
+    "claude": { "claude": "native", "codex": "runner", "grok": "runner" },
+    "codex": { "claude": "runner", "codex": "native", "grok": "runner" }
+  },
+  "families": [
+    { "family": "fable", "provider": "claude", "model": "fable", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "max", "agentStem": "fable", "cursorSlug": "claude-fable-5-1-thinking-{effort}", "reportedModel": "^claude-fable-[0-9]+(-[0-9]+)*$" },
+    { "family": "opus", "provider": "claude", "model": "opus", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "xhigh", "agentStem": "opus", "cursorSlug": "claude-opus-5-thinking-{effort}", "reportedModel": "^claude-opus-[0-9]+(-[0-9]+)*$" },
+    { "family": "sol", "provider": "codex", "model": "gpt-5.6-sol", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "max", "agentStem": null, "cursorSlug": "gpt-5.6-sol-{effort}", "reportedModel": null },
+    { "family": "astra", "provider": "codex", "model": "gpt-6-astra", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "max", "agentStem": null, "cursorSlug": null, "reportedModel": null },
+    { "family": "grok", "provider": "grok", "model": "grok-4.6", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "xhigh", "agentStem": null, "cursorSlug": "grok-4.6-fast-{effort}", "reportedModel": "^grok-4\\.6$" }
+  ]
+}
