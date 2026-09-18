@@ -275,3 +275,94 @@ A linha "prevista" para `scripts/upstream-*.py` sai de `NOTICE.md`; o digest ent
 - **Primeira rodada real, com fetch** (`npm run upstream:digest`): os dois remotes buscados, `5bf2b15..cursor/main -- pstack` e `de67e6b..open/main` vazios, "Sem novidades" nos dois lados, tip do cursor `e31650e` (2026-09-16, `0.15.2`; o tip de `cursor/main` anda por commits fora de `pstack/`) e tip do open `de67e6b` (2026-09-10, `1.4.1`), exit 0. Critério de pronto da fase cumprido: o delta atual é vazio porque 0.15.2 já está absorvido e o open não saiu de 1.4.1.
 - **Renderização com commits, real**: `--since cursor=f8abedd` reabre o delta 0.15.1 → 0.15.2 e lista os 3 commits (`f5bdd68`, `889ec4b`, `5bf2b15`) com 5, 5 e 3 arquivos, `README.md`, `docs/guide/01-setup.md` e `.cursor-plugin/plugin.json` marcados "excluído na fase 5" e o veredito vazio porque cada commit também toca skills mantidas.
 - **Rotina, real**: tarefa `pstack-vic-upstream-digest` criada (o app aplica um jitter e mostra "09:03, segunda-feira"; próxima execução 2026-09-21) e disparada uma vez por "Run now": a sessão rodou o script com fetch, viu intervalo vazio e postou no projeto pstack-vic do Linear o comentário `Upstream digest 2026-09-18: sem novidades (cursor em e31650e, open em de67e6b).` em 30 s, sem tocar no repo (`git status` limpo fora dos arquivos desta fase). As aprovações de tool dessa rodada ficam guardadas na tarefa, então as próximas não param em prompt.
+
+
+# Fase 9 — Validação no primeiro consumidor, o Clinext (2026-09-18)
+
+O plano previa instalar no worktree `~/Dev/clinext-open-pstack` no lugar do open-pstack. Nenhum dos dois existia mais na máquina (o worktree foi removido e o open-pstack não estava instalado em nenhum pai), então não houve o que substituir: a instalação real foi feita por tag nos dois pais e a validação rodou em dois worktrees descartáveis do Clinext, um por pai (`test/pstack-vic-claude` e `test/pstack-vic-codex`, ambos de `main` em `50eadb6e9`), cada um com uma issue real do backlog: CLI-148 (o `AI_PARSE_ERROR` que nunca chegava ao log) no pai Claude Code e CLI-150 (`pendingFacts` repetidos por `rule id`) no pai Codex. Cada pai rodou `arena` (quatro runners e um juiz) e depois `interrogate` (quatro revisores) sobre o diff que a própria arena produziu, sem push nem PR: a decisão de mandar essas correções para o Clinext é do Victor.
+
+## O que a validação encontrou e o que mudou
+
+| Achado | Onde | O que mudou |
+| --- | --- | --- |
+| Dentro do seatbelt do Codex, o Grok não inicializa o próprio perfil de sandbox (`sandbox initialization failed: Operation not permitted`) e se recusa a rodar | runner, lane Grok com pai Codex | `commands.ts`: quando o runner vê `CODEX_SANDBOX` no próprio ambiente, passa `--sandbox none` ao Grok e o seatbelt externo manda; teste em `commands.test.ts`. Release `0.1.1` (`d2ddb4c`) |
+| O Grok grava a sessão em `~/.grok`, que o seatbelt bloqueia (`FS_PERMISSION_DENIED`), e as CLIs filhas precisam de rede | pai Codex | Precondição documentada em `provider-dispatch.md` e `docs/reference.md`: `sandbox_workspace_write.network_access = true` e `~/.grok` em `writable_roots` (no `config.toml` ou por sessão com `-c`). Provado com a lane Grok `complete` dentro do sandbox |
+| Um pai headless (`claude -p`) encerrou o turno "esperando as lanes" e o processo cancelou os runners aos 10 min 47 s (receipts `cancelled`, `SIGTERM`); a primeira arena não chegou ao julgamento (US$ 15,83 perdidos) | pai Claude Code, primeira rodada | `provider-dispatch.md`: drenar os handles é dever do pai em qualquer modo; num pai não interativo nada o acorda, então ele bloqueia em `TaskOutput`/`wait_agent` até cada lane ter receipt. A segunda rodada, com essa instrução, drenou tudo |
+| Lanes Grok caíram nos dois pais como `malformed-output`: escritoras nas arenas (`acceptEdits`) e a revisora read-only no interrogate do Claude (`plan`). O motor de permissões do Grok pede aprovação para segmentos de shell que as heurísticas não liberam; sem TTY, o turno inteiro é cancelado (`permission_cancelled`) | runner, todas as lanes Grok | Reproduzido de forma determinística: o mesmo `node -e` multilinha é aprovado num repo de sonda e pede aprovação dentro do Clinext (worktree e checkout principal), em `plan`, `acceptEdits` e `dontAsk`; `.grok/config.toml` e `.claude/settings.json` do projeto copiados para a sonda não disparam, então o gatilho é do conteúdo do repo. A documentação do Grok manda automação sem operador para always-approve e diz que o "piso" de aprovação só cede a esse modo. `commands.ts`: lanes Grok rodam em `bypassPermissions` nos dois modos e o confinamento é do sandbox (`read-only`/`workspace`, ou o seatbelt do Codex quando o Grok roda em `none`) mais a lista de tools; provado no worktree do Clinext (comando que cancelava rodou sem prompt; `touch` bloqueado pelo sandbox `read-only`). Entra na `0.1.2` |
+| O receipt de uma lane que falha guardava os primeiros 4.000 caracteres do stream, isto é, a linha de `init` com a lista de tools, e perdia o evento `result` com o erro | runner, `run.ts` | `evidence()` guarda os primeiros 1.000 caracteres e os últimos 2.995, com teste. Entra na `0.1.2` |
+| O `codex exec` headless expõe `collaboration.spawn_agent` quando `features.multi_agent=true` vai por flag; a nota da fase 6 ("só em sessão interativa") estava errada | pai Codex | `-c features.multi_agent=true` na chamada; a lane nativa astra rodou por `spawn_agent` na arena e no interrogate |
+| O sandbox `workspace-write` do Codex protege `.git`, então o pai não consegue fazer o commit da síntese num worktree (recusa `index.lock`) | pai Codex | Registrado; o commit `28cad37fb` foi feito à mão com a mensagem que o pai deixou em `commit-message.txt`. O Playwright do `verify-clinext` também é bloqueado (MachPortRendezvous) e o pai provou a UI pelo CUA Chrome |
+| O `README.md` ficou com `--ref v0.1.0` depois da release 0.1.1 | docs | Teste novo em `manifests.test.ts`: README e `docs/reference.md` citam a tag da versão corrente |
+
+## `verify-clinext` a partir do `poteto-mode`
+
+`claude -p` no checkout principal do Clinext, plugin instalado, pai `opus`: carregou `pstack:poteto-mode`, `pstack:principle-prove-it-works` e a skill do projeto `verify-clinext` pela tool `Skill` (o link `.claude/skills/verify-clinext` resolve no worktree também), rodou `launch`, `doctor`, `drive-login` e `cleanup` em 3371/5271 com banco descartável, e deixou sete evidências (`01-login-form.png` + ARIA, `02-shell-after-login.png` + ARIA, `03-auth-me.json`, `04-auth-sessions.json`, `report.json`). `git status` limpo depois; 14 turnos, 70 s, US$ 1,16.
+
+## Arena, pai Claude Code (CLI-148)
+
+Segunda rodada, plugin `0.1.1`, `claude -p` sem flags de bypass (as permissões vêm do `settings.json` do Clinext), pai `opus`: 100 turnos, 42 min, US$ 26,17 (opus 17,98 + fable 8,19; astra e grok cobram fora). Commit `fddc2003d` em `test/pstack-vic-claude` (2 arquivos, +100/−1): `_fail` emite `warn` com `{ conversationId, operationId, cause, code, detail }`, `detail` = rótulo da mensagem até o primeiro `: ` (o valor emitido pelo modelo fica fora do log); checks 47 e 48 falham sem a mudança e passam com ela; `npm test` 1278/0.
+
+| Lane | Descritor | Rota | Receipt | `reportedModel` | Evidência | Tempo |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | `claude:fable@max` | nativa, `Agent` → `pstack:pstack-fable-max` | n/a (rationale `native-1.md`, commit `4b8f0977c` no worktree) | n/a | transcript da tool | 928 s |
+| 2 | `codex:gpt-6-astra@max` | runner externo, `isolated-write` | `complete` | `null` | `pinned-argv` | 623 s |
+| 3 | `grok:grok-4.6@xhigh` | runner externo, `isolated-write` | `malformed-output` (dropout) | `null` | `null` | 777 s |
+| 4 | `claude:opus@xhigh` | nativa, `Agent` → `pstack:pstack-opus-xhigh` | n/a (rationale `native-4.md`, commit `c4a37bb29`) | n/a | transcript da tool | 530 s |
+| juiz | `codex:gpt-6-astra@max` | runner externo, `read-only` | `complete` | `null` | `pinned-argv` | 462 s |
+
+Base C (opus), enxertos de B (rótulo estático, ideia do juiz) e de A (forma do segundo check); rejeitada a coluna `failure_detail` de A (oito arquivos de migração e texto livre numa tabela cujos snapshots viajam). O juiz discordou do pai na base (recomendou B) e a nota de síntese registra a resolução.
+
+## Arena, pai Codex (CLI-150)
+
+`codex exec -m gpt-6-astra` em `xhigh`, `-c features.multi_agent=true`, sandbox `workspace-write` com rede e `writable_roots` = `~/Dev/clinext` e `~/.grok`; 16,8 M tokens de entrada (16,6 M em cache), 33,7 k de saída. Commit `28cad37fb` em `test/pstack-vic-codex` (2 arquivos, +89/−1): dedupe dos `pendingFacts` por id antes da persistência, primeira ocorrência vence, fatos da consulta preservados; 47/47, `npm run preflight` verde, cliente 5.942 testes, raiz 1.278 (o teste de dependências precisou de `npm_config_cache` dentro do sandbox), prova de UI com `verify-clinext` (oito pendências antes, duas depois).
+
+| Lane | Descritor | Rota | Receipt | `reportedModel` | Evidência | Tempo |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | `claude:fable@max` | runner externo, `isolated-write` | `complete` | `claude-fable-5-1` | `provider-report` | 326 s |
+| 2 | `codex:gpt-6-astra@max` | nativa, `spawn_agent` | n/a (rationale `native-2.md`) | n/a | resultado nativo | ≤ 446 s |
+| 3 | `grok:grok-4.6@xhigh` | runner externo, `isolated-write` | `malformed-output` (dropout) | `null` | `null` | 252 s |
+| 4 | `claude:opus@xhigh` | runner externo, `isolated-write` | `complete` | `claude-opus-5` | `provider-report` | 302 s |
+| juiz | `claude:fable@max` | runner externo, `read-only` | `complete` | `claude-fable-5-1` | `provider-report` | 474 s |
+
+Base B (astra nativa), uma frase de JSDoc enxertada de A/D; A, B e D convergiram na semântica da agregação.
+
+## Interrogate
+
+Cada pai revisou o diff que a própria arena produziu, com os quatro revisores do sheet, todos read-only, cwd = o worktree.
+
+**Pai Codex (CLI-150, `28cad37fb`)**, plugin `0.1.1`: 3,33 M tokens de entrada (3,23 M em cache), 18,1 k de saída. Veredito: *changes requested* por um achado consensual (fable e opus): o dedupe trata `id` ausente ou nulo como identidade compartilhada e descarta fatos distintos do rascunho em silêncio; o pai reproduziu com entrada sintética pela fronteira real do provedor. Astra e Grok sem achados.
+
+| Revisor | Descritor | Rota | Receipt | `reportedModel` | Evidência | Tempo | Achados |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| A | `claude:fable@max` | runner externo | `complete` | `claude-fable-5-1` | `provider-report` | 243 s | 1 |
+| B | `codex:gpt-6-astra@max` | nativa, `spawn_agent` | n/a (`native-reviewer-b-astra.md`) | n/a | resultado nativo | ≤ 240 s | 0 |
+| C | `grok:grok-4.6@xhigh` | runner externo (`--sandbox none` sob o seatbelt) | `complete` | `grok-4.6-build` | `provider-report` | 510 s | 0 |
+| D | `claude:opus@xhigh` | runner externo | `complete` | `claude-opus-5` | `provider-report` | 276 s | 3 |
+
+**Pai Claude Code (CLI-148, `fddc2003d`)**, duas rodadas. A primeira, com o plugin `0.1.1`, perdeu o revisor Grok (`malformed-output`, `permission_cancelled` num `node -e` em modo `plan`): 29 turnos, 17 min, US$ 13,95, veredito com um "act on". A segunda, com o plugin `0.1.2` (Grok em always-approve sob sandbox `read-only`), é a prova da correção: quatro revisores, três provedores, zero dropouts; 28 turnos, 17 min, US$ 12,82 (opus 8,15 + fable 4,67). Veredito: três "act on" (o check 48 fixa o rótulo e não a propriedade de contenção, apontado por fable, grok e opus de forma independente; o `warn` sai com `subsystem` errado; o corte no `: ` é decidido no `catch` e perde o diagnóstico das classes de provedor e capacidade), dois "consider".
+
+| Revisor | Descritor | Rota | Receipt | `reportedModel` | Evidência | Tempo | Achados |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| A | `claude:fable@max` | nativa, `Agent` → `pstack:pstack-fable-max` | n/a (`native-reviewer-a-fable.md`) | n/a | transcript da tool | 555 s | 3 |
+| B | `codex:gpt-6-astra@max` | runner externo | `complete` | `null` | `pinned-argv` | 273 s | 0 |
+| C | `grok:grok-4.6@xhigh` | runner externo (`bypassPermissions`, sandbox `read-only`) | `complete` | `grok-4.6-build` | `provider-report` | 672 s | 2 |
+| D | `claude:opus@xhigh` | nativa, `Agent` → `pstack:pstack-opus-xhigh` | n/a (`native-reviewer-d-opus.md`) | n/a | transcript da tool | 551 s | 4 |
+
+Os dois vereditos ficam com o Victor junto das branches: nenhuma das correções foi aplicada ao Clinext.
+
+## Decisões
+
+1. **Instalação real por tag e em escopo `user`** no Claude Code (o mesmo caminho provado na fase 7) e na marketplace do Codex; a versão instalada ao fechar a fase é a `0.1.2`.
+2. **A `1.0.0` espera o smoke visual do Victor**, que o plano deixa com ele; as duas correções do Clinext ficam nas branches de teste até ele decidir.
+3. **Correções do runner entram na fase**, com release, porque a validação existe para isso; o que não reproduziu fora do Clinext (o gatilho do prompt do Grok) fica registrado como decisão por documentação.
+4. **As arenas rodaram headless** (`claude -p`, `codex exec`) por serem reprodutíveis e observáveis; a lição da drenagem vale também para o uso interativo, onde a notificação da task acorda o pai.
+
+## Verificação (2026-09-18)
+
+- `npm test`: 144 testes (141 + `evidence` em `run.test.ts`, `--sandbox none`/always-approve em `commands.test.ts`, tag nos docs em `manifests.test.ts`), 0 falhas, 0 `todo`. `matrix:check`, `agents:check` e `collision:check` verdes.
+- **Instalação real**: Claude Code `pstack@pstack-vic` em escopo `user` (`claude plugin marketplace add byvict/pstack-vic` + `install`, depois `marketplace update` + `plugin update` a cada release: 0.1.0 → 0.1.1 → 0.1.2, cache em `~/.claude/plugins/cache/pstack-vic/pstack/<versão>`); Codex `marketplace add byvict/pstack-vic --ref v0.1.2` + `plugin add`, `config.toml` com `ref = "v0.1.2"`. Nenhuma instalação de verificação a desfazer: esta é a instalação de verdade.
+- **Sonda do runner dentro do sandbox do Codex** (`codex exec --sandbox workspace-write`, rede ligada): opus `complete`/`provider-report` já na 0.1.0; grok `child-failed` (seatbelt aninhado) na 0.1.0, `unavailable-model`/`FS_PERMISSION_DENIED` com `--sandbox none` e `~/.grok` bloqueado, `complete`/`grok-4.6-build` com `--sandbox none` e `~/.grok` em `writable_roots`.
+- **Sonda do Grok headless** no worktree do Clinext: o `node -e` que cancelou a lane do interrogate cancela também em `plan` e `dontAsk`; em `bypassPermissions` com sandbox `read-only` roda, e um `touch` no worktree é bloqueado pelo sandbox (arquivo não criado).
+- **Critério de pronto do plano**: receipts das quatro lanes com a rota certa e o `reportedModel` de cada família nos dois pais, vindos dos dois `interrogate` finais (Codex na 0.1.1, Claude na 0.1.2); a lane nativa de cada pai não tem receipt por desenho (o transcript da tool é a evidência). Os pacotes de evidência (prompts, saídas, rationales, receipts, sínteses e vereditos, um por pai) estão anexados à issue "Fase 9 — receipts de validação" do projeto pstack-vic no Linear; não entram neste repo público porque carregam diffs e código do Clinext.
+- **`verify-clinext` a partir do `poteto-mode`**: provado no pai Claude Code (tabela acima); o pai Codex também o usou por conta própria na verificação da arena.
+- **Custo medido** (só a parte cobrada pela Anthropic; astra e grok cobram nos próprios provedores): verify US$ 1,16; arena Claude rodada 1 (perdida) US$ 15,83 e rodada 2 US$ 26,17; interrogate Claude US$ 13,95 + 12,82. Pai Codex: 16,8 M + 3,3 M tokens de entrada, 96 % em cache.
