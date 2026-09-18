@@ -24,7 +24,7 @@ O hook SessionStart (`hooks/hooks.json`, em startup, `/clear` e pós-compact) in
 ### Codex
 
 ```shell
-codex plugin marketplace add byvict/pstack-vic --ref v0.1.3
+codex plugin marketplace add byvict/pstack-vic --ref v0.1.4
 codex plugin add pstack@pstack-vic
 ```
 
