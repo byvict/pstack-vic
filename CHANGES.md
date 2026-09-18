@@ -192,3 +192,45 @@ O `setup-pstack` do open-pstack 1.4.1 é só prosa: o modelo lê o sheet, normal
 - **Rerun byte-idêntico, real**: plano novo nos dois pais (`firstRun: false`), 5 probes externos e 3 nativos novos, todos passaram; `write` devolveu `unchanged` para sheet e integração nos dois pais, `shasum -c` idêntico à primeira escrita e o `sheet` do plano igual byte a byte ao arquivo em disco.
 - O passo 9 do skill (painel misto de smoke) é etapa de uso do skill, não critério desta fase; cada descritor do mapa rodou uma lane `read-only` real nos dois pais pelos probes acima.
 
+
+# Fase 7 — Manifests, marketplace, hook e instalação por tag (2026-09-18)
+
+O plugin é a raiz do repo (no open ele fica em `plugins/pstack/`), então os dois manifests do plugin e os dois marketplaces convivem na mesma árvore. Instalação é por tag, nunca por `main`: no Claude Code a entrada do marketplace fixa `ref: vX.Y.Z` (o `claude plugin marketplace add` não tem `--ref`; quem fixa a tag é a fonte do plugin); no Codex o `--ref` do `marketplace add` fixa o snapshot inteiro. Versão inicial `0.1.0`, independente das versões dos upstreams (`UPSTREAM.md`).
+
+## Veredito por arquivo
+
+| Arquivo | Veredito | O que entrou / o que ficou fora |
+| --- | --- | --- |
+| `.claude-plugin/plugin.json` | Ad | ponto de partida: o manifest da Cursor 0.15.2 (`.cursor-plugin/plugin.json`) com os campos que o open manteve. `claude plugin validate --strict` (CLI 2.1.273) reprova `logo` (campo desconhecido), `category` e `tags` (campos de entrada de marketplace) e `agents` como string; saem os três (o logo segue no manifest do Codex; `category`/`tags` vão para a entrada do marketplace) e `skills`/`agents`/`hooks` ficam nos defaults (`skills/`, `agents/`, `hooks/hooks.json`). Ficam `name`, `displayName`, `version`, `description`, `author`, `homepage`, `repository`, `license`, `keywords`. Fecha a decisão "campo logo" pendente da fase 4: fora, pela mesma razão do open |
+| `.claude-plugin/marketplace.json` | Ad | do open: nome `pstack-vic`, owner, um plugin `pstack`. Muda a fonte: `{"source":"github","repo":"byvict/pstack-vic","ref":"v0.1.0"}` no lugar de `./plugins/pstack`, porque o marketplace é lido de `main` e a fonte é o que fixa a tag; `category: development` e `tags` vêm do manifest da Cursor |
+| `.codex-plugin/plugin.json` | Ad | do open: `skills: ./skills/`, bloco `interface` (logo, descrições, capabilities, prompts). Adaptados nome de desenvolvedor, URLs e descrições |
+| `.agents/plugins/marketplace.json` | Ad | do open: fonte `local` com `path: "./"` (raiz) no lugar de `./plugins/pstack`; nome `pstack-vic` |
+| `hooks/hooks.json`, `hooks/session-start`, `hooks/session-start-context.md` | A | byte-idênticos ao open 1.4.1. O mandato já declara precedência de `CLAUDE.md`, `AGENTS.md` e pedidos diretos, manda subagents despachados ignorarem o bloco, compõe com o superpowers e cita só skills que existem aqui (`poteto-mode`, `tdd`, `architect`, `how`, `why`, `arena`, `interrogate`). Sem `shell: "bash"` (o superpowers 6.3 acrescentou; o polyglot dispensa e o validador aceita as duas formas) |
+| `hooks/run-hook.cmd` + `LICENSE-superpowers` | A | via open, quase verbatim do superpowers (MIT, Jesse Vincent); ambos os scripts entram executáveis |
+| `.cursor-plugin/plugin.json` | R | removido; fica no histórico (`91e5b82`) e serviu de base ao manifest do Claude Code |
+| `.gitignore` do open | R | o nosso já cobre (`node_modules/`, `.DS_Store`); `.remember/`, `.vscode/` e o `node_modules` do Bun não se aplicam |
+| `.github/workflows/ci.yml`, `scripts/upstream-*.py`, `open-pstack.code-workspace`, `AGENTS.md` do open | — | fora: CI não está no plano; scripts de sync são a fase 8 |
+| `tests/skill-collision-repro.sh` | Ad | voltam os checks de manifest do open: versão única (agora entre os dois manifests, o marketplace do Claude Code com a tag `ref` e `package.json`) e logo do Codex resolvendo para arquivo regular dentro do plugin; check novo: manifest do Claude Code sem `logo` |
+
+## Escrita nova
+
+- `scripts/manifests.test.ts`: os quatro manifests e `hooks/hooks.json` parseiam; nome `pstack` e versão iguais em todos, `ref` = `v<versão>`, `package.json` igual; URLs iguais entre os manifests; manifest do Claude Code só com campos conhecidos; `skills` e `interface.logo` do Codex resolvem dentro do plugin; `.cursor-plugin/` ausente; `claude plugin validate --strict --json` passa para o marketplace e para o plugin (pula sem o CLI); hook registrado em `startup|clear|compact` pelo polyglot, scripts executáveis, saída byte-idêntica ao arquivo de contexto, falha limpa e sem injeção quando o arquivo falta, skills citadas no mandato existem.
+- `package.json` ganha `version` (quarto lugar da versão única).
+- `docs/reference.md`: seção Instalação (marketplace e tag nos dois pais, opt-out do hook, clone para desenvolvimento, publicar uma versão), layout, auto-fire, sticky mode, verificação, licenças. `README.md`: o passo 1 vira a instalação. `NOTICE.md`: linhas dos arquivos copiados.
+- `skills/setup-pstack/SKILL.md`: o par nativo do Codex sem `multi_agent` roda como uma volta de `codex exec` do próprio CLI do pai (nota herdada da fase 6).
+- Higiene de tags: `remote.{cursor,open}.tagOpt --no-tags` e as seis tags `v1.x` do open que o `fetch` tinha trazido foram apagadas localmente, para que `git push --tags` nunca reexporte tag de upstream; `docs/reference.md` manda publicar a tag pelo nome.
+
+## Decisões
+
+1. **Nome do plugin `pstack`, marketplace `pstack-vic`.** O prefixo `/pstack:` e o mandato `pstack:poteto-mode` já estão nas skills, no hook e em `codex-tools.md`; o que distingue este port do open é o marketplace (`pstack@pstack-vic` vs `pstack@open-pstack`). Os dois não devem ficar habilitados ao mesmo tempo no mesmo pai (colisão de nomes de skill); a fase 9 troca um pelo outro.
+2. **Tag fixada na fonte do plugin (Claude Code) e no `--ref` do marketplace (Codex).** O marketplace do Claude Code é lido de `main` e o CLI não tem `--ref`, então `ref: vX.Y.Z` na entrada é o único ponto que fixa a versão instalada; teste e script exigem `ref` = `v` + versão. Publicar uma versão é subir a versão nos quatro arquivos, commit, tag com o mesmo nome. A árvore da tag carrega a própria tag na entrada do marketplace, o que é consistente.
+3. **Versão `0.1.0`**, semver próprio do port; `1.0.0` depois da validação no primeiro consumidor (fase 9).
+4. **Sem `logo` no manifest do Claude Code**, com `interface.logo` no do Codex: é o que o validador estrito do Claude Code aceita, e é o que o open já fazia.
+5. **Instalação de verificação é desfeita.** As provas abaixo instalaram e desinstalaram o plugin; o ambiente do Victor fica como estava (`config.toml` do Codex byte-idêntico) até a fase 9 instalar de verdade.
+6. **URL do repositório assumida** como `byvict/pstack-vic` (conta GitHub ativa do `gh`) nos manifests e docs; o repo é criado ao fechar esta fase, e o dono/visibilidade é decisão do Victor.
+
+## Verificação (2026-09-18)
+
+- `npm test`: 131 testes (121 + 10 de `manifests.test.ts`), 0 falhas, 0 `todo`. `matrix:check`, `agents:check` e `collision:check` verdes. `claude plugin validate --strict` passa para `.` (marketplace) e para `.claude-plugin/plugin.json`.
+- **Claude Code, clone carregado direto** (`claude -p --plugin-dir ~/Dev/pstack-vic`, pai `haiku`): o hook injetou o mandato (a resposta citou as duas primeiras frases do bloco); as 54 skills listadas com prefixo `pstack:` (31 de fluxo + 23 princípios); o probe nativo `Agent` → `pstack-fable-max` respondeu o marker exato e `modelUsage` do pai lista `claude-fable-5-1` ao lado do haiku (3,4 s, US$ 0,55). Aposenta a receita do plugin temporário da fase 6.
+- **Codex, marketplace local** (`codex plugin marketplace add ~/Dev/pstack-vic` → `codex plugin add pstack@pstack-vic`, CLI 0.154.0): instalou `0.1.0` em `~/.codex/plugins/cache/pstack-vic/pstack/0.1.0`; `config.toml` ganhou `[marketplaces.pstack-vic]` e `[plugins."pstack@pstack-vic"]`; `codex exec` (astra, `low`) listou as 54 skills como `pstack:<nome>`, os `principle-*` inclusive (`user-invocable: false` é do Claude Code). `plugin remove` + `marketplace remove` devolveram o `config.toml` aos bytes originais.

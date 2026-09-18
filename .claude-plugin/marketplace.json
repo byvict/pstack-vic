@@ -1,0 +1,40 @@
+{
+  "name": "pstack-vic",
+  "owner": {
+    "name": "Victor Baccega"
+  },
+  "description": "Port autoral do pstack da Cursor para Claude Code e Codex, acompanhando os upstreams cursor/plugins e open-pstack.",
+  "plugins": [
+    {
+      "name": "pstack",
+      "source": {
+        "source": "github",
+        "repo": "byvict/pstack-vic",
+        "ref": "v0.1.0"
+      },
+      "description": "if you want to go fast, go deep first. pstack helps you write less, but higher quality code. rigorous agent workflows you can parallelize with confidence.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Lauren Tan"
+      },
+      "homepage": "https://github.com/byvict/pstack-vic",
+      "license": "MIT",
+      "category": "development",
+      "tags": [
+        "workflow",
+        "principles",
+        "review",
+        "planning"
+      ],
+      "keywords": [
+        "pstack",
+        "poteto-mode",
+        "workflow",
+        "principles",
+        "agent-style",
+        "subagents",
+        "unslop"
+      ]
+    }
+  ]
+}

@@ -10,7 +10,18 @@ Este port mantém a prosa da Cursor onde ela não depende da Cursor e substitui 
 
 ## Começar
 
-1. Carregue o plugin no pai (a instalação por marketplace e tag é a fase 7 do plano; até lá, `claude --plugin-dir` ou link das skills no Codex, ver a [referência](docs/reference.md#instalação)).
+1. Instale o plugin por marketplace, a partir de uma tag (detalhes e opt-out do hook na [referência](docs/reference.md#instalação)):
+
+   ```text
+   /plugin marketplace add byvict/pstack-vic
+   /plugin install pstack@pstack-vic
+   ```
+
+   ```shell
+   codex plugin marketplace add byvict/pstack-vic --ref v0.1.0
+   codex plugin add pstack@pstack-vic
+   ```
+
 2. Rode `/setup-pstack` uma vez em cada pai para escolher os modelos por papel.
 3. Use `/poteto-mode` sempre que a tarefa pedir rigor.
 
@@ -27,4 +38,4 @@ Este port mantém a prosa da Cursor onde ela não depende da Cursor e substitui 
 
 ## Licença
 
-MIT. Ver [`LICENSE`](LICENSE), [`LICENSE-open-pstack`](LICENSE-open-pstack) e [`LICENSE-cursor-team-kit`](LICENSE-cursor-team-kit).
+MIT. Ver [`LICENSE`](LICENSE), [`LICENSE-open-pstack`](LICENSE-open-pstack), [`LICENSE-cursor-team-kit`](LICENSE-cursor-team-kit) e [`LICENSE-superpowers`](LICENSE-superpowers).

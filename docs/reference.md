@@ -8,33 +8,64 @@ Conteúdo sincronizado com Cursor pstack **0.15.2** (`5bf2b15`) e com open-pstac
 
 ## Instalação
 
-A instalação por marketplace e tag (`.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, `--ref vX.Y.Z`) é a fase 7 do plano. Até lá o plugin roda a partir do clone:
+O plugin é a raiz deste repositório. Ele se instala por marketplace a partir de uma tag (`vX.Y.Z`), nunca de `main`: no Claude Code a entrada do marketplace fixa a tag (`ref`); no Codex o `--ref` fixa o snapshot inteiro.
 
-```shell
-# Claude Code: carrega o clone como plugin da sessão
-claude --plugin-dir ~/Dev/pstack-vic
+### Claude Code
+
+```text
+/plugin marketplace add byvict/pstack-vic
+/plugin install pstack@pstack-vic
 ```
 
+No shell, `claude plugin marketplace add byvict/pstack-vic` e `claude plugin install pstack@pstack-vic`. As skills aparecem com o prefixo do plugin (`/pstack:poteto-mode`).
+
+O hook SessionStart (`hooks/hooks.json`, em startup, `/clear` e pós-compact) injeta o mandato de `hooks/session-start-context.md`: tarefa de engenharia não trivial entra por `pstack:poteto-mode`; a skill completa só carrega quando invocada; subagents despachados ignoram o bloco; `CLAUDE.md`, `AGENTS.md` e pedidos diretos têm precedência. Para desligar o auto-fire, apague `hooks/hooks.json` da cópia instalada em `~/.claude/plugins/cache/pstack-vic/pstack/<versão>/`; a próxima atualização o restaura.
+
+### Codex
+
 ```shell
-# Codex: liga as skills no diretório de skills do usuário
-for s in ~/Dev/pstack-vic/skills/*/; do ln -s "$s" ~/.agents/skills/"$(basename "$s")"; done
+codex plugin marketplace add byvict/pstack-vic --ref v0.1.0
+codex plugin add pstack@pstack-vic
 ```
 
-No Codex, ligue subagents em `~/.codex/config.toml` para as skills que fazem fan-out (`interrogate`, `arena`, `how`, `why`, `reflect`, `architect`, `swarm`):
+O Codex descobre as skills sob o namespace `pstack` (`pstack:poteto-mode`, `pstack:tdd`…), que vem de `.codex-plugin/plugin.json`; os `principle-*` também aparecem, porque `user-invocable: false` é do Claude Code. Não há hook no Codex: entre com `pstack:poteto-mode` pelo nome ou coloque uma instrução fixa em `~/.codex/AGENTS.md`. Para as skills que fazem fan-out (`interrogate`, `arena`, `how`, `why`, `reflect`, `architect`, `swarm`), ligue subagents em `~/.codex/config.toml`; sem isso a lane nativa do Codex vira dropout nomeado e as lanes externas seguem:
 
 ```toml
 [features]
 multi_agent = true
 ```
 
+### A partir do clone
+
+Para desenvolver ou testar um checkout antes de publicar:
+
+```shell
+# Claude Code: carrega o clone como plugin da sessão (manifest, hook, agents e skills)
+claude --plugin-dir ~/Dev/pstack-vic
+```
+
+```shell
+# Codex: marketplace local, sem tag; desfaz com plugin remove + marketplace remove
+codex plugin marketplace add ~/Dev/pstack-vic
+codex plugin add pstack@pstack-vic
+```
+
 Rode `/setup-pstack` uma vez em cada pai para escrever o sheet de modelos (`~/.claude/pstack-models.md` e `~/.codex/pstack-models.md`). Depois, `/poteto-mode` é o ponto de entrada para qualquer tarefa que peça rigor.
+
+### Publicar uma versão
+
+A versão do pstack-vic é independente das versões dos upstreams ([`UPSTREAM.md`](../UPSTREAM.md)). Ela vive em quatro lugares que `npm test` obriga a concordar: `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, `.claude-plugin/marketplace.json` (`version` e `ref: vX.Y.Z`) e `package.json`. Publicar é subir a versão nos quatro, `npm test`, commit, `git tag vX.Y.Z` e `git push origin main vX.Y.Z`. Nunca `git push --tags`: os remotes `cursor` e `open` são só leitura (`tagOpt --no-tags`) e este repo não reexporta tags deles.
 
 ## Layout
 
 ```text
 .
+├── .claude-plugin/                   # plugin.json (manifest do Claude Code) e marketplace.json (um plugin, fonte fixada na tag)
+├── .codex-plugin/plugin.json         # manifest do Codex (skills: ./skills/, interface com logo)
+├── .agents/plugins/marketplace.json  # marketplace do Codex (fonte local ./)
+├── hooks/                            # SessionStart do Claude Code: hooks.json, run-hook.cmd (polyglot), session-start, session-start-context.md
 ├── model-matrix.json                 # famílias, efforts, pais, rota por pai, papéis (dado canônico)
-├── scripts/                          # loader/validação da matriz, render dos blocos gerados, gerador de agents, testes
+├── scripts/                          # loader/validação da matriz, render dos blocos gerados, gerador de agents, testes (inclui manifests.test.ts)
 ├── skills/                           # 54 skills compartilhadas por Claude Code e Codex
 │   ├── poteto-mode/references/       # provider-dispatch.md (rota e papéis), codex-tools.md (mapa de tools), bugbot-triage.md
 │   ├── poteto-mode/scripts/          # runner externo (Node 24), watch-pr, orch, check-plan.mjs, worktree-audit.sh
@@ -46,8 +77,9 @@ Rode `/setup-pstack` uma vez em cada pai para escrever o sheet de modelos (`~/.c
 ├── LICENSE                           # pstack (Lauren Tan), MIT
 ├── LICENSE-open-pstack               # open-pstack (Eric Litman), MIT
 ├── LICENSE-cursor-team-kit           # cursor-team-kit (Cursor), MIT
+├── LICENSE-superpowers               # superpowers (Jesse Vincent), MIT: hooks/run-hook.cmd
 ├── NOTICE.md · UPSTREAM.md · CHANGES.md
-└── package.json                      # npm test, matrix:check, agents:check, collision:check, setup-pstack
+└── package.json                      # versão do plugin; npm test, matrix:check, agents:check, collision:check, setup-pstack
 ```
 
 ## Rodar no Codex
@@ -57,7 +89,7 @@ Nada é gerado nem bifurcado por pai. Duas referências fazem a tradução em te
 - **Invocação.** O Codex carrega `SKILL.md` nativamente; não há tool `Skill`. Peça a skill pelo nome.
 - **Rota de modelos.** Quem é pai escolhe a rota. No Claude Code, Fable e Opus rodam em agents nativos e Sol, Astra e Grok no runner externo. No Codex, Sol e Astra rodam em `spawn_agent` e Fable, Opus e Grok no runner. Um filho nunca escolhe provider nem troca de rota por conta própria; lane indisponível vira dropout nomeado, nunca substituição silenciosa.
 - **Papéis.** As skills citam papéis (`arena runners`, `bug-fix`, `how explainer`…), não descritores. O default de cada papel, por pai, está na seção *Role defaults* de `provider-dispatch.md` e é o que `/setup-pstack` escreve no sheet.
-- **Auto-fire.** O hook SessionStart (fase 7) é só do Claude Code. No Codex, entre com `poteto-mode` pelo nome ou coloque uma instrução fixa em `~/.codex/AGENTS.md`.
+- **Auto-fire.** O hook SessionStart (`hooks/`) é só do Claude Code. No Codex, entre com `pstack:poteto-mode` pelo nome ou coloque uma instrução fixa em `~/.codex/AGENTS.md`.
 
 ## Dependências
 
@@ -72,7 +104,7 @@ Nada é declarado em manifest. O que as skills usam:
 
 ## Skills
 
-Nomes curtos; no Claude Code cada uma aparece com o prefixo do plugin (`/pstack:poteto-mode`, quando instalado por manifest) e no Codex como `pstack:poteto-mode`.
+Nomes curtos; no Claude Code cada uma aparece com o prefixo do plugin (`/pstack:poteto-mode`) e no Codex como `pstack:poteto-mode`.
 
 | skill | quando usar |
 | --- | --- |
@@ -149,24 +181,25 @@ Vinte e três skills de um princípio cada. `poteto-mode` indexa todas inline e 
 ## Verificação
 
 ```shell
-npm test               # matriz, gerador de agents, runner, referência de skills, invariantes do pacote
+npm test               # matriz, gerador de agents, runner, setup-pstack, referência de skills, manifests e hook, invariantes do pacote
 npm run matrix:check   # blocos gerados de provider-dispatch.md e setup-pstack em dia
 npm run agents:check   # agents/pstack-*.md em dia com a matriz
 npm run collision:check
 npm run setup-pstack -- --help   # subcomandos do setup: state, plan, probe, attest, write
+claude plugin validate --strict .   # manifest do plugin e do marketplace pelo validador do Claude Code
 ```
 
-`tests/skill-collision-repro.sh` verifica os invariantes estáticos do pacote (sem camada `commands/`, `principle-*` ocultos e legíveis pelo modelo, skills de fluxo sem `disable-model-invocation`, nome do diretório igual ao `name`, aliases móveis de Fable e Opus, vínculo do Bugbot entre a skill `babysit` e o playbook, playbooks sem comandos Graphite, conteúdo Cursor-only ausente). Com `PSTACK_BEHAVIORAL=1` ele também monta um plugin de uma skill e prova, com `claude -p`, que a invocação pela tool `Skill` e pelo `/comando` chegam à skill.
+`tests/skill-collision-repro.sh` verifica os invariantes estáticos do pacote (sem camada `commands/`, `principle-*` ocultos e legíveis pelo modelo, skills de fluxo sem `disable-model-invocation`, nome do diretório igual ao `name`, versão única entre manifests, tag do marketplace e `package.json`, logo do Codex resolvendo, aliases móveis de Fable e Opus, vínculo do Bugbot entre a skill `babysit` e o playbook, playbooks sem comandos Graphite, conteúdo Cursor-only ausente). Com `PSTACK_BEHAVIORAL=1` ele também monta um plugin de uma skill e prova, com `claude -p`, que a invocação pela tool `Skill` e pelo `/comando` chegam à skill.
 
 ## O que ficou de fora
 
 - **`skills/make-bot-ui`** — construída sobre rotinas, webhooks e UI da Cursor; não há mapeamento comum Claude Code / Codex.
 - **`automations/benny/`** — pacote dormente de automações Slack sobre o runtime de eventos da Cursor. Não registrava skills nem no original.
 - **`docs/guide/`** — tutorial de dez capítulos que ensina pstack pela UI da Cursor, sticky mode e cloud agents (2,3 MB de imagens). Leia no original em [cursor/plugins/pstack/docs/guide](https://github.com/cursor/plugins/tree/main/pstack/docs/guide); os conceitos mapeiam pela tabela de substituições de `CHANGES.md`.
-- **Sticky mode** — frontmatter `mode`/`icon`/`color`/`reminder` só da Cursor. O análogo é o hook SessionStart da fase 7.
+- **Sticky mode** — frontmatter `mode`/`icon`/`color`/`reminder` só da Cursor. O análogo é o hook SessionStart em `hooks/`.
 - **Resto do `cursor-team-kit`** — `control-cli`/`control-ui` viraram `run`/`verify`; `verify-this` e `check-compiler-errors` duplicam built-ins; `loop-on-ci`, `review-and-ship`, `weekly-review` sobrepõem `babysit`, `fix-ci`, `make-pr-easy-to-review` e `what-did-i-get-done`; `pr-review-canvas` é UI da Cursor.
 - **`README.md` da Cursor** — substituído por um README do port; o original está no histórico (`git show 91e5b82:README.md`) e no upstream.
 
 ## Licença
 
-MIT. Três arquivos de licença preservados: [`LICENSE`](../LICENSE) (pstack, Lauren Tan), [`LICENSE-open-pstack`](../LICENSE-open-pstack) (open-pstack, Eric Litman) e [`LICENSE-cursor-team-kit`](../LICENSE-cursor-team-kit) (Cursor; cobre `deslop`, `thermo-nuclear-code-quality-review`, `make-pr-easy-to-review`, `fix-ci`, `fix-merge-conflicts`, `get-pr-comments` e `what-did-i-get-done`).
+MIT. Quatro arquivos de licença preservados: [`LICENSE`](../LICENSE) (pstack, Lauren Tan), [`LICENSE-open-pstack`](../LICENSE-open-pstack) (open-pstack, Eric Litman), [`LICENSE-cursor-team-kit`](../LICENSE-cursor-team-kit) (Cursor; cobre `deslop`, `thermo-nuclear-code-quality-review`, `make-pr-easy-to-review`, `fix-ci`, `fix-merge-conflicts`, `get-pr-comments` e `what-did-i-get-done`) e [`LICENSE-superpowers`](../LICENSE-superpowers) (Jesse Vincent; cobre `hooks/run-hook.cmd`).

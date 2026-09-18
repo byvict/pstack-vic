@@ -3,7 +3,7 @@
 # open-pstack 1.4.1 (MIT, LICENSE-open-pstack) para o layout deste repo: o plugin
 # é a raiz, os modelos por papel vêm de model-matrix.json (cobertos por npm test),
 # e os checks que dependiam da reescrita de shipping/autopilot do open (recusada
-# na fase 4) ficam de fora. Só a parte estática roda por padrão; a prova de
+# na fase 4) ficam de fora; os de manifest voltaram na fase 7. Só a parte estática roda por padrão; a prova de
 # invocação no Claude Code roda com PSTACK_BEHAVIORAL=1.
 set -euo pipefail
 
@@ -84,19 +84,51 @@ else
   note "ok: every skill name equals its directory and is unique"
 fi
 
-# Fase 7 preenche os manifests; enquanto não existem, a comparação de versão é pulada.
+# Versão única: os dois manifests do plugin, a entrada do marketplace do Claude
+# Code (e a tag que ela fixa) e package.json têm de concordar. Instalação é por
+# tag, nunca por main.
 verof() { { grep -m1 '"version"' "$1" || true; } | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/'; }
-if [ -f "$repo/.claude-plugin/plugin.json" ] && [ -f "$repo/.codex-plugin/plugin.json" ]; then
-  vc="$(verof "$repo/.claude-plugin/plugin.json")"
-  vx="$(verof "$repo/.codex-plugin/plugin.json")"
-  if [ -n "$vc" ] && [ "$vc" = "$vx" ]; then
-    note "ok: plugin version matches across the Claude and Codex manifests ($vc)"
-  else
-    note "FAIL: plugin version differs: claude-plugin=$vc codex-plugin=$vx"
-    fail=1
-  fi
+vc="$(verof "$repo/.claude-plugin/plugin.json")"
+vx="$(verof "$repo/.codex-plugin/plugin.json")"
+vm="$(verof "$repo/.claude-plugin/marketplace.json")"
+vp="$(verof "$repo/package.json")"
+ref="$(sed -n 's/^[[:space:]]*"ref":[[:space:]]*"\([^"]*\)".*/\1/p' "$repo/.claude-plugin/marketplace.json" | head -1)"
+if [ -n "$vc" ] && [ "$vc" = "$vx" ] && [ "$vc" = "$vm" ] && [ "$vc" = "$vp" ] && [ "$ref" = "v$vc" ]; then
+  note "ok: plugin version matches across the manifests, the marketplace tag and package.json ($vc)"
 else
-  note "skip: plugin manifests not present yet (fase 7)"
+  note "FAIL: plugin version differs: claude-plugin=$vc codex-plugin=$vx marketplace=$vm ref=$ref package.json=$vp"
+  fail=1
+fi
+
+# O logo do manifest do Codex tem de ser um arquivo regular dentro do plugin
+# (check do open 1.4.1). O manifest do Claude Code não declara logo: o campo não
+# existe no schema e reprova em `claude plugin validate --strict`.
+codex_manifest="$repo/.codex-plugin/plugin.json"
+logo_path="$(sed -n 's/^[[:space:]]*"logo":[[:space:]]*"\([^"]*\)".*/\1/p' "$codex_manifest")"
+logo_bad=""
+case "$logo_path" in
+  "") logo_bad="interface.logo is missing from $codex_manifest" ;;
+  /*) logo_bad="interface.logo must be plugin-relative: $logo_path" ;;
+esac
+logo_rel="${logo_path#./}"
+case "/$logo_rel/" in
+  */../*) logo_bad="interface.logo escapes the plugin root: $logo_path" ;;
+esac
+if [ -z "$logo_bad" ] && { [ ! -f "$repo/$logo_rel" ] || [ -L "$repo/$logo_rel" ]; }; then
+  logo_bad="interface.logo does not name a regular file under the plugin root: $logo_path"
+fi
+if [ -n "$logo_bad" ]; then
+  note "FAIL: codex logo path does not resolve"
+  note "$logo_bad"
+  fail=1
+else
+  note "ok: codex logo path resolves"
+fi
+if grep -q '"logo"' "$repo/.claude-plugin/plugin.json"; then
+  note "FAIL: the Claude manifest carries a logo field that Claude Code does not know"
+  fail=1
+else
+  note "ok: the Claude manifest has no logo field"
 fi
 
 # A configuração ativa usa os aliases móveis de Fable e Opus (a matriz é a fonte;
