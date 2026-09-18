@@ -24,7 +24,7 @@ O hook SessionStart (`hooks/hooks.json`, em startup, `/clear` e pós-compact) in
 ### Codex
 
 ```shell
-codex plugin marketplace add byvict/pstack-vic --ref v0.1.2
+codex plugin marketplace add byvict/pstack-vic --ref v0.1.3
 codex plugin add pstack@pstack-vic
 ```
 
@@ -132,7 +132,7 @@ Nomes curtos; no Claude Code cada uma aparece com o prefixo do plugin (`/pstack:
 | `show-me-your-work` | trilha de decisões revisável em tsv |
 | `blast-radius` | o que uma mudança pequena pode quebrar fora do diff, provado rodando código |
 | `recall` | reconstruir o contexto recente de um tema a partir do histórico e do registro compartilhado |
-| `setup-pstack` | escolher modelo por papel e effort por família; probe e escrita do sheet pelo `scripts/setup-pstack.ts` (rerun byte-idêntico, nada escrito se um probe falha) |
+| `setup-pstack` | escolher modelo e effort por papel (a mesma família pode rodar em efforts diferentes em papéis diferentes); probe de cada par família+effort e escrita do sheet pelo `scripts/setup-pstack.ts` (rerun byte-idêntico, nada escrito se um probe falha) |
 | `unslop` | limpar marcas de IA de qualquer prosa |
 | `no-comments` | tirar comentários antes da revisão via o subagent `comment-sicko` |
 | `create-verification-skill` | gerar uma skill de verificação local ao projeto com mapa de features |

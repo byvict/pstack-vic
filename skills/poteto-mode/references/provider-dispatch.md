@@ -67,6 +67,8 @@ A list is a panel: one lane per entry, in this order. A role whose two columns d
 
 <!-- role-defaults:end -->
 
+A lane's effort is its own. Two roles, or two lanes of one panel, may name the same family at different efforts (`bug-fix: codex:gpt-5.6-sol@xhigh` next to `hillclimb: codex:gpt-5.6-sol@high`). The parent dispatches each descriptor as written, through the agent or runner flags of that effort, and `/setup-pstack` probes each distinct family-and-effort pair the sheet uses. A family has no effort of its own; the Default effort column above seeds first-run lanes only.
+
 ## Read-time normalization
 
 Normalize configured descriptors before matching them to the matrix or choosing a route. If a provider-qualified Claude model starts with `claude-fable-` or `claude-opus-` and its remaining revision contains only digits and hyphens, replace that model component in memory with `fable` or `opus`. Preserve provider, effort, role, and lane order. Use only the normalized descriptor for native dispatch or runner argv. Never pass the versioned predecessor to Claude.
