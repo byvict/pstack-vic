@@ -32,7 +32,8 @@ import { DISPATCH_PATH, SETUP_PATH, renderDispatch, renderSetup } from "./render
 const matrix = loadMatrix();
 
 // Files whose prose or frontmatter may cite a model. Anything here that names a
-// descriptor outside model-matrix.json fails the consumer test.
+// descriptor outside model-matrix.json fails the consumer test. Test files are
+// skipped: their fixtures hold deliberately invalid descriptors and legacy pins.
 const CONSUMER_DIRS = ["skills", "agents", "docs", "hooks"] as const;
 const CONSUMER_ROOT_FILES = ["README.md"] as const;
 const CONSUMER_EXTENSIONS = new Set([".md", ".json", ".mjs", ".ts", ".sh", ".cmd"]);
@@ -47,6 +48,7 @@ function walk(dir: string, out: string[]): void {
       walk(path, out);
       continue;
     }
+    if (name.endsWith(".test.ts")) continue;
     const dot = name.lastIndexOf(".");
     if (dot >= 0 && CONSUMER_EXTENSIONS.has(name.slice(dot))) out.push(path);
   }

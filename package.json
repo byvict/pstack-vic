@@ -7,12 +7,13 @@
     "node": ">=24"
   },
   "scripts": {
-    "test": "node --test 'scripts/**/*.test.ts' 'skills/poteto-mode/scripts/runner/*.test.ts'",
+    "test": "node --test 'scripts/**/*.test.ts' 'skills/poteto-mode/scripts/runner/*.test.ts' 'skills/setup-pstack/scripts/*.test.ts'",
     "matrix:render": "node scripts/render-model-matrix.ts",
     "matrix:check": "node scripts/render-model-matrix.ts --check",
     "agents:generate": "node scripts/generate-agents.ts",
     "agents:check": "node scripts/generate-agents.ts --check",
     "collision:check": "bash tests/skill-collision-repro.sh",
-    "runner": "node skills/poteto-mode/scripts/runner/pstack-runner"
+    "runner": "node skills/poteto-mode/scripts/runner/pstack-runner",
+    "setup-pstack": "node skills/setup-pstack/scripts/setup-pstack.ts"
   }
 }

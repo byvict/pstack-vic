@@ -100,10 +100,12 @@ else
 fi
 
 # A configuração ativa usa os aliases móveis de Fable e Opus (a matriz é a fonte;
-# npm test cobre os descritores). Aqui só o grep barato por pin de revisão.
+# npm test cobre os descritores). Aqui só o grep barato por pin de revisão. Testes
+# ficam de fora: setup-pstack.test.ts exercita a migração desses pins de propósito.
 legacy_model_pins="$(
   grep -REn \
     --include='*.md' --include='*.ts' --include='*.sh' \
+    --exclude='*.test.ts' \
     'claude:claude-(fable|opus)-[0-9]|^model: claude-(fable|opus)-[0-9]|--model claude-(fable|opus)-[0-9]' \
     "$repo/skills" "$repo/agents" "$repo/docs" "$repo/tests" "$repo/README.md" \
     2>/dev/null || true

@@ -584,6 +584,19 @@ export function renderRoleSheet(matrix: ModelMatrix, parent: string): string {
     .join("\n");
 }
 
+export const SHEET_TITLE = "# pstack model configuration";
+export const SHEET_PREAMBLE =
+  "Provider-qualified per-role choices. Read the installed pstack provider-dispatch reference before dispatching a configured role. Every documented role remains present. `inherit-parent` and `auto` use the parent model natively and still count as one panel lane.";
+
+/**
+ * The complete model sheet document `/setup-pstack` writes: title, preamble,
+ * one `role: lanes` line per row, trailing newline. `rows` are the sheet lines
+ * without the trailing newline (renderRoleSheet gives the first-run rows).
+ */
+export function renderSheetDocument(rows: string): string {
+  return `${SHEET_TITLE}\n\n${SHEET_PREAMBLE}\n\n${rows}\n`;
+}
+
 /**
  * The first-run sheets of every parent as fenced blocks, for setup-pstack.
  * Everything between SHEET_BEGIN and SHEET_END is replaced by this text.
@@ -594,13 +607,7 @@ export function renderRoleSheetsMarkdown(matrix: ModelMatrix): string {
     lines.push(`${spec.name} parent:`);
     lines.push("");
     lines.push("```markdown");
-    lines.push("# pstack model configuration");
-    lines.push("");
-    lines.push(
-      "Provider-qualified per-role choices. Read the installed pstack provider-dispatch reference before dispatching a configured role. Every documented role remains present. `inherit-parent` and `auto` use the parent model natively and still count as one panel lane."
-    );
-    lines.push("");
-    lines.push(renderRoleSheet(matrix, parent));
+    lines.push(renderSheetDocument(renderRoleSheet(matrix, parent)).trimEnd());
     lines.push("```");
     lines.push("");
   }

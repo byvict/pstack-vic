@@ -37,7 +37,8 @@ Rode `/setup-pstack` uma vez em cada pai para escrever o sheet de modelos (`~/.c
 ├── scripts/                          # loader/validação da matriz, render dos blocos gerados, gerador de agents, testes
 ├── skills/                           # 54 skills compartilhadas por Claude Code e Codex
 │   ├── poteto-mode/references/       # provider-dispatch.md (rota e papéis), codex-tools.md (mapa de tools), bugbot-triage.md
-│   └── poteto-mode/scripts/          # runner externo (Node 24), watch-pr, orch, check-plan.mjs, worktree-audit.sh
+│   ├── poteto-mode/scripts/          # runner externo (Node 24), watch-pr, orch, check-plan.mjs, worktree-audit.sh
+│   └── setup-pstack/scripts/         # setup-pstack.ts: estado, plano, probe, atestado e escrita do sheet (Node 24)
 ├── agents/                           # poteto-agent, comment-sicko e as lanes nativas pstack-<família>-<effort> geradas da matriz
 ├── assets/                           # logo
 ├── docs/reference.md                 # esta referência
@@ -46,7 +47,7 @@ Rode `/setup-pstack` uma vez em cada pai para escrever o sheet de modelos (`~/.c
 ├── LICENSE-open-pstack               # open-pstack (Eric Litman), MIT
 ├── LICENSE-cursor-team-kit           # cursor-team-kit (Cursor), MIT
 ├── NOTICE.md · UPSTREAM.md · CHANGES.md
-└── package.json                      # npm test, matrix:check, agents:check, collision:check
+└── package.json                      # npm test, matrix:check, agents:check, collision:check, setup-pstack
 ```
 
 ## Rodar no Codex
@@ -93,7 +94,7 @@ Nomes curtos; no Claude Code cada uma aparece com o prefixo do plugin (`/pstack:
 | `show-me-your-work` | trilha de decisões revisável em tsv |
 | `blast-radius` | o que uma mudança pequena pode quebrar fora do diff, provado rodando código |
 | `recall` | reconstruir o contexto recente de um tema a partir do histórico e do registro compartilhado |
-| `setup-pstack` | escolher modelo por papel e effort por família; probe e escrita do sheet |
+| `setup-pstack` | escolher modelo por papel e effort por família; probe e escrita do sheet pelo `scripts/setup-pstack.ts` (rerun byte-idêntico, nada escrito se um probe falha) |
 | `unslop` | limpar marcas de IA de qualquer prosa |
 | `no-comments` | tirar comentários antes da revisão via o subagent `comment-sicko` |
 | `create-verification-skill` | gerar uma skill de verificação local ao projeto com mapa de features |
@@ -152,6 +153,7 @@ npm test               # matriz, gerador de agents, runner, referência de skill
 npm run matrix:check   # blocos gerados de provider-dispatch.md e setup-pstack em dia
 npm run agents:check   # agents/pstack-*.md em dia com a matriz
 npm run collision:check
+npm run setup-pstack -- --help   # subcomandos do setup: state, plan, probe, attest, write
 ```
 
 `tests/skill-collision-repro.sh` verifica os invariantes estáticos do pacote (sem camada `commands/`, `principle-*` ocultos e legíveis pelo modelo, skills de fluxo sem `disable-model-invocation`, nome do diretório igual ao `name`, aliases móveis de Fable e Opus, vínculo do Bugbot entre a skill `babysit` e o playbook, playbooks sem comandos Graphite, conteúdo Cursor-only ausente). Com `PSTACK_BEHAVIORAL=1` ele também monta um plugin de uma skill e prova, com `claude -p`, que a invocação pela tool `Skill` e pelo `/comando` chegam à skill.

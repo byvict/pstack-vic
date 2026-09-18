@@ -5,7 +5,9 @@ description: Configure pstack's provider-qualified models, per-family requested 
 
 # Setup pstack
 
-Configure one portable model sheet for the current parent harness. Read [`provider-dispatch.md`](../poteto-mode/references/provider-dispatch.md) before probing or writing anything. Its model matrix, descriptor grammar, and route table are the contract. Choose one requested effort per matrix family. Do not add a second configuration file, a runtime resolver, or a weaker-model fallback.
+Configure one portable model sheet for the current parent harness. Read [`provider-dispatch.md`](../poteto-mode/references/provider-dispatch.md) before probing or writing anything. Its model matrix, descriptor grammar, route table, and role defaults are the contract. Choose one requested effort per matrix family in the role map. Do not add a second configuration file, a runtime resolver, or a weaker-model fallback.
+
+The deterministic half of this skill is `scripts/setup-pstack.ts`, next to this file (Node 24, no dependencies; run it as `node <this skill's directory>/scripts/setup-pstack.ts <subcommand>`). It reads the matrix, reads and normalizes the current sheet, renders the new one, runs the external probes through the runner, refuses to write while any probe is missing, and writes with snapshot, read-back, and restore. You own the conversation (parent, efforts, role changes, confirmation) and the native one-turn probes. Every subcommand prints JSON; `--help` prints the usage. Never edit the sheet or the integration files by hand, and never paste a rendered sheet as the result.
 
 Claude Code writes `~/.claude/pstack-models.md` and loads it from `~/.claude/CLAUDE.md` with:
 
@@ -13,7 +15,7 @@ Claude Code writes `~/.claude/pstack-models.md` and loads it from `~/.claude/CLA
 @~/.claude/pstack-models.md
 ```
 
-Codex writes `~/.codex/pstack-models.md`. Codex has no `@` include, so mirror the sheet's exact bytes inside one bounded block in `~/.codex/AGENTS.md` and retain the sheet as the editable source of truth:
+Codex writes `~/.codex/pstack-models.md`. Codex has no `@` include, so the script mirrors the sheet's exact bytes inside one bounded block in `~/.codex/AGENTS.md` and keeps the sheet as the editable source of truth:
 
 ```text
 <!-- pstack:models:begin -->
@@ -25,58 +27,80 @@ Codex writes `~/.codex/pstack-models.md`. Codex has no `@` include, so mirror th
 
 ### 1. Establish the parent
 
-Use the harness and tool surface running this skill: Claude Code or Codex. Environment markers may corroborate that top-level answer, but do not launch a child and ask it to detect where it came from. Record the parent because the same descriptor takes a different route in each harness.
+Use the harness and tool surface running this skill: Claude Code (`--parent claude`) or Codex (`--parent codex`). Environment markers may corroborate that top-level answer, but do not launch a child and ask it to detect where it came from. Record the parent because the same descriptor takes a different route in each harness.
 
 ### 2. Load current state
 
-Read the current parent-specific sheet when it exists. Before matrix validation, normalize only the rolling-alias predecessors that earlier pstack releases generated. A provider-qualified Claude model is migratable when its model component starts with `claude-fable-` or `claude-opus-` and the remaining revision contains only digits and hyphens. Replace that component in memory with `fable` or `opus`, preserving the provider, effort, role, and lane order. Record each original and normalized descriptor for the confirmation in step 7. This migration is valid loaded state and does not require a separate operator choice.
+```shell
+node scripts/setup-pstack.ts state --parent <parent>
+```
 
-Treat the normalized values as current role-to-family assignments. Overlay those rows on the complete first-run role map in step 7. Materialize any missing documented role row from that map on the next successful write. A duplicate or unknown role row is inconsistent state; report it and resolve it before probing. A bare host-native slug from an older sheet is also invalid because it does not say which provider owns it. A versioned Claude model outside the two migration families remains inconsistent state. If the sheet is missing, use the complete first-run role map and the model matrix's Default effort cells.
+The JSON says whether the parent's sheet exists (`exists`), its path, the normalized rows, the rolling-alias `migrations` it applied in memory (a provider-qualified Claude model whose component starts with `claude-fable-` or `claude-opus-` followed by digits and hyphens becomes `fable` or `opus`, preserving provider, effort, role, and lane order), one `efforts` entry per matrix family, and the `conflicts`. Each family's status is `current` (one effort found in the sheet), `unassigned` (first run: the matrix Default effort is proposed), `outside-map` (no role uses the family, so no effort can persist for it; Sol is outside the first-run map by the 2026-09-17 decision), or `conflict` (two efforts for one family).
 
-### 3. Parse per-family efforts
+The script stops on inconsistent state: an unknown or duplicate role row, a bare host-native slug, a versioned Claude model outside the two migration families, a provider/model pair outside the matrix, or an effort outside the family's Selectable efforts. Show the error verbatim and resolve it with the operator before going on. Do not probe or write while any inconsistency is unresolved.
 
-Read the model matrix. Every non-alias value must match `<provider>:<model>@<effort>`. Map it to exactly one matrix family by `(provider, model)`, require its effort to appear in that row's Selectable efforts cell, and collect the effort. `inherit-parent` and `auto` rows carry no family effort.
+### 3. Collect one requested effort per family
 
-An unmatched provider/model, out-of-domain effort, duplicate role, or unknown role is inconsistent state. Stop, show the conflicting rows verbatim, and ask for an explicit matrix family or alias replacement. If one or more families have mixed efforts, show every conflicting family and role row, then ask for one normalized effort per family from its Selectable efforts cell. Do not invent a precedence rule. Do not probe or write while any inconsistency is unresolved.
+Ask one effort question per family whose status is `current`, `unassigned`, or `conflict`, in matrix order. Name the model, its current or proposed value, and the Selectable efforts from its matrix row. Empty input keeps a current value or accepts the matrix proposal for an unassigned family. On a first run, state every family's matrix default before asking. On a rerun, state the parsed values without offering to reset customized role lanes. A `conflict` family has no current value: show every conflicting row verbatim and require one effort for it. Report `outside-map` families in one line; do not ask their effort unless step 4 moves a role onto them.
 
-One distinct effort per family is the current value. A family with no non-alias occurrence is unassigned; use its matrix Default effort as the proposed value and label it unassigned rather than calling it current.
+### 4. Ask about role changes
 
-### 4. Collect one requested effort per family
+Ask whether to keep the role-to-family assignments (the loaded rows on a rerun, the first-run map below on a first run) or change named roles. Keeping them is the default. Apply only role changes the operator names; never offer a reset of a customized sheet to the first-run assignments. A changed role may use a matrix descriptor, `inherit-parent`, or `auto`. A role change that brings a family into the map also needs its effort (step 3 question, asked now).
 
-Ask one effort question per matrix family, in matrix order. Name each model, its current or proposed value, and the Selectable efforts from its matrix row. Empty input keeps a current value or accepts the matrix proposal for an unassigned family. On a first run, state every family's matrix default before asking. On a rerun, state the parsed values without offering to reset customized role lanes.
+### 5. Plan
 
-### 5. Probe every requested pair
+```shell
+node scripts/setup-pstack.ts plan --parent <parent> \
+  [--effort <family>=<effort>]... [--role "<label>=<lane>[, <lane>]"]...
+```
 
-Probe only the selected `provider:model@effort` pairs, one per matrix family, even when two families share a provider. Do not enumerate or offer older models as substitutes. A failed probe writes nothing: report the failing pair and provider, stop, and keep the active sheet plus parent integration bytes unchanged. A failed first run creates neither artifact.
+The plan is the in-memory render: it starts from the loaded rows (or the first-run map), materializes any missing documented role from the defaults, applies the named role changes, then rewrites every descriptor of a family to that family's one effort. It refuses an unqualified slug, an unknown role or family, an effort outside the family's row, an effort for a family outside the map, a role change whose effort disagrees with the family's, and an unresolved conflict. Changing Grok's effort updates every Grok occurrence and moves no role.
 
-The route table in `provider-dispatch.md` gives each pair's lane for this parent. A family native to this parent gets a native one-turn probe: on Claude Code, one turn of the mapped `pstack-<stem>-<effort>` agent; on Codex, one `spawn_agent` turn with the selected `reasoning_effort`. Every other pair runs through the external runner with the selected effort flag, after its CLI proves credentials (`claude auth status --json`, `codex login status`, or `grok models` listing the requested model).
+The output carries `dir` (a fresh run directory holding `plan.json`; pass `--dir` to choose it), the requested `efforts`, the `rows`, the `sheet` bytes, the `migrations`, and one probe `pair` per family in the map with its route for this parent and, for native pairs, how to probe it.
 
-Use a tiny read-only probe that returns a unique marker. A login-status command alone proves credentials, not that the requested model and effort flags run. Record native and external results separately. Never call the external launcher for the parent's own provider.
+### 6. Probe every pair
 
-Receipts and native transcripts prove the requested effort and the route. They do not prove a provider's hidden applied reasoning depth. There is no implicit timeout, weaker-model fallback, same-provider external fallback, or second mutable configuration source.
+```shell
+node scripts/setup-pstack.ts probe --dir <dir> [--timeout <seconds>]
+```
 
-### 6. Render, preserving role families
+External pairs (route `runner`) run at once through the external runner in `read-only` mode, each with its own prompt, output, and receipt under the run directory, after the CLI proves credentials (`claude auth status --json`, `codex login status`, or `grok models` listing the requested model). A pair passes only when its receipt is `complete` for exactly the requested provider, model, and effort, the model is verified (provider report) or pinned by argv (Codex), and the output carries the pair's unique marker. Exit code 1 means at least one external pair failed: report the failing pair, provider, and `detail`, stop, and write nothing. There is no implicit timeout; pass `--timeout` only when the operator gives a real deadline.
 
-Build the new sheet in memory. Do not write it yet.
+Native pairs (route `native`) are listed under `native` with the `prompt` to send. Run each one yourself through the parent's primitive: on Claude Code, one turn of the mapped `pstack-<stem>-<effort>` agent (`Agent` with that `subagent_type`); on Codex, one `spawn_agent` turn with the listed `model` and `reasoning_effort`. Then record the exact reply:
 
-- First run: start from the complete role assignments in step 7.
-- Rerun: start from the normalized complete role map from step 2, preserving each loaded row's lane order and family (or alias) per lane.
+```shell
+node scripts/setup-pstack.ts attest --dir <dir> --family <family> --observed "<exact reply text>"
+```
 
-After effort selection, ask whether to keep those role-to-family assignments or change named roles. Keeping them is the default. Apply only role changes the operator names; never offer a reset of a customized sheet to the first-run assignments. A changed role may use one of the probed matrix families, `inherit-parent`, or `auto`.
-
-Require the final role map to contain at least one descriptor from each matrix family. The sheet stores effort only in role descriptors, so an unassigned family's selection cannot persist without adding a second source of truth.
-
-Rewrite every matrix-family descriptor to `provider:model@<requested effort for that family>`. Leave `inherit-parent` and `auto` unchanged. An effort-only rerun cannot change a role's family. Changing Grok's effort updates every Grok occurrence and does not move a Sol role onto Grok. Refuse an unqualified slug, an unavailable route, a model outside the matrix, or a provider/model mismatch.
+`attest` refuses a reply that lacks the marker. Never call the external launcher for the parent's own provider, and never attest a reply you did not observe. A login-status command alone proves credentials, not that the requested model and effort flags run. Receipts and native transcripts prove the requested effort and the route; they do not prove a provider's hidden applied reasoning depth.
 
 ### 7. Confirm and commit
 
-Show any rolling-alias migrations as original and normalized descriptors. Then show the route table for this parent and every rendered role and descriptor. Ask for confirmation before writing.
+Show any rolling-alias migrations as original and normalized descriptors. Show the route table for this parent and every rendered row from `plan.json`. Say when `inherit-parent` or `auto` reduces a panel's provider diversity. Why and Reflect require the parent's live MCP surface; keep their roles on `inherit-parent` or `auto`, because the bounded external runner deliberately omits ambient MCPs. For panel roles, one lane runs per entry and the list length is the fan-out count. `arena cross-judge pool` is a list from which Arena chooses a provider different from the parent and base candidate when possible. `swarm workers` is the default for every worker unless a race explicitly assigns another descriptor.
 
-Why and Reflect require the parent's live MCP surface. Keep their investigator, reviewer, and synthesizer roles on `inherit-parent` or `auto`; the bounded external runner deliberately omits ambient MCPs. `inherit-parent` and `auto` always validate, but say when they reduce a panel's provider diversity. For panel roles, one lane runs per entry. The list length is the fan-out count. `arena cross-judge pool` is a list from which Arena chooses a provider different from the parent and base candidate when possible. `swarm workers` is the default for every worker unless a race explicitly assigns another descriptor.
+Ask for confirmation. After the operator confirms:
 
-Every non-alias value must match `<provider>:<model>@<effort>` and must have passed step 5.
+```shell
+node scripts/setup-pstack.ts write --dir <dir>
+```
 
-After the operator confirms, write the in-memory render from step 6. The first-run role maps below are rendered from `model-matrix.json` by `scripts/render-model-matrix.ts`, one per parent because the frontier solo roles take the parent's native frontier family. They only seed step 2; selected efforts and explicit role changes always replace their values before writing. Never paste one as the result.
+`write` verifies every pair of the plan against the run directory first and refuses (exit 1, nothing touched) while any probe is missing or failed. It then snapshots the sheet and the parent integration, renders the integration, compares, writes only what changed, reads both back, and restores every snapshot if a write or read-back fails. The result names each target as `created`, `updated`, or `unchanged`. An unchanged rerun is byte-identical and reports both as `unchanged`.
+
+### 8. How the integration is wired
+
+On Claude Code, the integration is the single `@~/.claude/pstack-models.md` line in `~/.claude/CLAUDE.md`: appended once on first run, left alone when present, inconsistent when duplicated. On Codex, it is the exact sheet bytes between one `<!-- pstack:models:begin -->` and `<!-- pstack:models:end -->` pair in `~/.codex/AGENTS.md`: one block appended at the end on first run, the whole block replaced on a rerun. Missing, duplicated, or reversed markers, or a directory where a file should be, stop the write as inconsistent state instead of guessing a boundary.
+
+Do not copy the model sheet between harnesses without rerunning the parent-specific probes; route availability can differ even on the same host.
+
+### 9. Behavioral smoke
+
+Before declaring setup complete, run one small read-only mixed panel from this parent: every chosen descriptor, distinct output/receipt paths, and an independent cross-judge. Launch Claude-native agents and every external process in the background with retained handles, then drain them. Verify the native transcript entries and every external receipt. A structural config check or unit test is not a substitute.
+
+Report the sheet path, parent route table, requested-effort probe results, smoke results, and external elapsed/token/cost receipts. Re-running this skill re-probes and updates the same sheet. Do not claim the provider exposed hidden applied-effort observability.
+
+## First-run role maps
+
+The maps below are rendered from `model-matrix.json` by `scripts/render-model-matrix.ts`, one per parent because the frontier solo roles take the parent's native frontier family. They only seed the plan on a first run; selected efforts and explicit role changes always replace their values before writing. Never paste one as the result.
 
 <!-- role-sheet:begin -->
 
@@ -133,17 +157,3 @@ interrogate reviewers: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xh
 ```
 
 <!-- role-sheet:end -->
-
-### 8. Wire it in
-
-Render the parent integration in memory before either write. On Claude, the integration is the single `@~/.claude/pstack-models.md` include in `~/.claude/CLAUDE.md`. On Codex, it is the exact sheet bytes between one `<!-- pstack:models:begin -->` and `<!-- pstack:models:end -->` pair in `~/.codex/AGENTS.md`. Replace that whole bounded block on a rerun. Insert one block at the end on first run. If either marker is missing, duplicated, or reversed, stop and report inconsistent state instead of guessing a boundary.
-
-Snapshot every target's current bytes. Write the sheet and parent integration only after all four probes pass and the operator confirms. Read both targets back and compare them with the in-memory render. If either write or readback fails, restore every snapshot and report the failure. An unchanged rerun must produce byte-identical sheet and integration content after normalization.
-
-Do not copy the model sheet between harnesses without rerunning the parent-specific probes; route availability can differ even on the same host.
-
-### 9. Behavioral smoke
-
-Before declaring setup complete, run one small read-only mixed panel from this parent: every chosen descriptor, distinct output/receipt paths, and an independent cross-judge. Launch Claude-native agents and every external process in the background with retained handles, then drain them. Verify the native transcript entries and every external receipt. A structural config check or unit test is not a substitute.
-
-Report the sheet path, parent route table, requested-effort probe results, smoke results, and external elapsed/token/cost receipts. Re-running this skill re-probes and updates the same sheet. Do not claim the provider exposed hidden applied-effort observability.
