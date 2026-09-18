@@ -1,20 +1,22 @@
 #!/usr/bin/env node
 // Deterministic half of /setup-pstack (pstack-vic, fase 6). The skill's prose
-// owns the conversation (which parent, one effort per family, named role
-// changes, confirmation) and the native one-turn probes; this script owns
-// everything that must be exact: reading and normalizing the current sheet,
-// rendering the new one from model-matrix.json, running the external probes
-// through the runner, refusing to write while any probe is missing, and the
-// snapshot / write / read-back / restore of the sheet and the parent
-// integration. A rerun without changes is byte-identical by construction: the
-// render is a pure function of (matrix, loaded sheet, requested efforts, role
-// changes), and `write` compares before touching anything.
+// owns the conversation (which parent, requested efforts, named role changes,
+// confirmation) and the native one-turn probes; this script owns everything
+// that must be exact: reading and normalizing the current sheet, rendering the
+// new one from model-matrix.json, running the external probes through the
+// runner, refusing to write while any probe is missing, and the snapshot /
+// write / read-back / restore of the sheet and the parent integration. Effort
+// belongs to the lane, not the family: two lanes of one family may differ. The
+// probe unit is the pair (family, effort), one per distinct descriptor in the
+// final role map. A rerun without changes is byte-identical by construction:
+// the render is a pure function of (matrix, loaded sheet, requested efforts,
+// role changes), and `write` compares before touching anything.
 //
 //   setup-pstack.ts state  --parent <claude|codex> [--home <dir>]
 //   setup-pstack.ts plan   --parent <p> [--home <dir>] [--dir <run dir>]
 //                          [--effort <family>=<effort>]... [--role "<label>=<lane>, <lane>"]...
 //   setup-pstack.ts probe  --dir <run dir> [--timeout <seconds>]
-//   setup-pstack.ts attest --dir <run dir> --family <family> --observed <text>
+//   setup-pstack.ts attest --dir <run dir> --pair <family>@<effort> --observed <text>
 //   setup-pstack.ts write  --dir <run dir> [--home <dir>]
 //
 // Node 24, type stripping, no dependencies: erasable TypeScript only.
@@ -149,22 +151,20 @@ function laneFamily(lane: string, matrix: ModelMatrix): Family | null {
 
 // --- State -----------------------------------------------------------------
 
-export type EffortStatus = "current" | "unassigned" | "outside-map" | "conflict";
+export type EffortStatus = "current" | "mixed" | "unassigned" | "outside-map";
 
 export interface EffortState {
-  readonly effort: string;
   readonly status: EffortStatus;
+  /** Distinct efforts in use, in matrix effort order (low → max). The matrix default when unassigned or outside-map. */
+  readonly efforts: readonly string[];
+  /** Every lane of the family in the map, in sheet order. Empty when unassigned or outside-map. */
+  readonly rows: ReadonlyArray<{ readonly role: string; readonly lane: string }>;
 }
 
 export interface Migration {
   readonly role: string;
   readonly from: string;
   readonly to: string;
-}
-
-export interface EffortConflict {
-  readonly family: string;
-  readonly rows: ReadonlyArray<{ readonly role: string; readonly lane: string }>;
 }
 
 export interface State {
@@ -177,7 +177,6 @@ export interface State {
   readonly migrations: readonly Migration[];
   /** One entry per matrix family, in matrix order. */
   readonly efforts: Readonly<Record<string, EffortState>>;
-  readonly conflicts: readonly EffortConflict[];
 }
 
 function readIfExists(path: string): string | null {
@@ -204,17 +203,12 @@ function normalizeRows(
 }
 
 /**
- * One effort per family from a complete, normalized role map. A family absent
- * from the map is `outside-map` (its default effort is only a proposal); a
- * family present with one effort is `current`; two efforts is a `conflict`.
+ * Efforts in use per family from a complete, normalized role map. A family
+ * absent from the map is `outside-map` (its default effort is only a proposal);
+ * a family present with one effort is `current`; two or more is `mixed`.
  */
-function familyEfforts(
-  rows: readonly SheetRow[],
-  matrix: ModelMatrix,
-  unassignedStatus: "unassigned" | "outside-map"
-): { efforts: Record<string, EffortState>; conflicts: EffortConflict[] } {
+function familyEfforts(rows: readonly SheetRow[], matrix: ModelMatrix): Record<string, EffortState> {
   const efforts: Record<string, EffortState> = {};
-  const conflicts: EffortConflict[] = [];
   for (const family of matrix.families) {
     const occurrences: Array<{ role: string; lane: string }> = [];
     for (const row of rows) {
@@ -224,15 +218,17 @@ function familyEfforts(
     }
     const distinct = new Set(occurrences.map((o) => parseDescriptor(o.lane)?.effort ?? ""));
     if (occurrences.length === 0) {
-      efforts[family.family] = { effort: family.defaultEffort, status: unassignedStatus };
-    } else if (distinct.size === 1) {
-      efforts[family.family] = { effort: [...distinct][0], status: "current" };
+      efforts[family.family] = { status: "outside-map", efforts: [family.defaultEffort], rows: [] };
     } else {
-      efforts[family.family] = { effort: family.defaultEffort, status: "conflict" };
-      conflicts.push({ family: family.family, rows: occurrences });
+      const ordered = matrix.efforts.filter((effort) => distinct.has(effort));
+      efforts[family.family] = {
+        status: ordered.length === 1 ? "current" : "mixed",
+        efforts: ordered,
+        rows: occurrences,
+      };
     }
   }
-  return { efforts, conflicts };
+  return efforts;
 }
 
 export interface StateInput {
@@ -241,7 +237,7 @@ export interface StateInput {
   readonly matrix?: ModelMatrix;
 }
 
-/** Read the parent's sheet (if any), normalize it, and derive the per-family efforts. */
+/** Read the parent's sheet (if any), normalize it, and derive the efforts in use per family. */
 export function loadState(input: StateInput): State {
   const matrix = input.matrix ?? loadMatrix();
   const home = input.home ?? homedir();
@@ -252,15 +248,18 @@ export function loadState(input: StateInput): State {
   const text = readIfExists(sheetPath);
   if (text === null) {
     const defaults = matrix.roles.map((r) => ({ role: r.role, lanes: roleDefault(matrix, r.role, parent) }));
-    const { efforts } = familyEfforts(defaults, matrix, "outside-map");
-    for (const [family, state] of Object.entries(efforts)) {
-      if (state.status === "current") efforts[family] = { effort: state.effort, status: "unassigned" };
+    const efforts = familyEfforts(defaults, matrix);
+    for (const family of matrix.families) {
+      const state = efforts[family.family];
+      if (state.status === "current" || state.status === "mixed") {
+        efforts[family.family] = { status: "unassigned", efforts: [family.defaultEffort], rows: [] };
+      }
     }
-    return { parent, sheetPath, integrationPath, exists: false, rows: [], migrations: [], efforts, conflicts: [] };
+    return { parent, sheetPath, integrationPath, exists: false, rows: [], migrations: [], efforts };
   }
   const { rows, migrations } = normalizeRows(parseSheet(text, matrix), matrix);
-  const { efforts, conflicts } = familyEfforts(rows, matrix, "outside-map");
-  return { parent, sheetPath, integrationPath, exists: true, rows, migrations, efforts, conflicts };
+  const efforts = familyEfforts(rows, matrix);
+  return { parent, sheetPath, integrationPath, exists: true, rows, migrations, efforts };
 }
 
 // --- Plan ------------------------------------------------------------------
@@ -278,9 +277,11 @@ export interface NativeSpawnProbe {
 
 export interface ProbePair {
   readonly family: string;
+  readonly effort: string;
+  /** `<family>@<effort>`, the operator-facing id of the pair (attest --pair, file names). */
+  readonly pair: string;
   readonly provider: string;
   readonly model: string;
-  readonly effort: string;
   readonly descriptor: string;
   readonly route: Route;
   /** How the parent probes this pair natively, or null when it goes through the runner. */
@@ -290,24 +291,25 @@ export interface ProbePair {
 }
 
 export interface Plan {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 2;
   readonly parent: string;
   readonly createdAt: string;
   readonly sheetPath: string;
   readonly integrationPath: string;
   readonly firstRun: boolean;
-  /** Requested effort per family present in the final role map, in matrix order. */
-  readonly efforts: Readonly<Record<string, string>>;
+  /** Distinct efforts per family present in the final map, families in matrix order, efforts in matrix order. Families outside the map are absent. */
+  readonly efforts: Readonly<Record<string, readonly string[]>>;
   readonly rows: readonly SheetRow[];
   readonly sheet: string;
+  /** One pair per distinct (family, effort) in the final map, families in matrix order, efforts in matrix order. */
   readonly pairs: readonly ProbePair[];
   readonly migrations: readonly Migration[];
 }
 
 export interface PlanInput extends StateInput {
-  /** Requested effort per family (family name → effort). Missing families keep their current or proposed value. */
+  /** Bulk rewrite: every lane of that family in the base rows takes this effort. */
   readonly efforts?: Readonly<Record<string, string>>;
-  /** Named role changes (role label → lanes as written by the operator). */
+  /** Named role changes (role label → lanes as written by the operator). Applied after the bulk rewrite. */
   readonly roles?: Readonly<Record<string, readonly string[]>>;
 }
 
@@ -328,8 +330,9 @@ function nativeProbeFor(matrix: ModelMatrix, parent: string, family: Family, eff
 /**
  * Build the in-memory render for one parent: the role map (defaults on a first
  * run, the normalized loaded sheet on a rerun, missing documented roles filled
- * from the defaults), the named role changes, then one effort per family
- * rewritten into every occurrence. Nothing is written.
+ * from the defaults), then --effort as a bulk rewrite of every lane of that
+ * family, then the named role changes (each lane keeps the effort as written).
+ * Nothing is written.
  */
 export function buildPlan(input: PlanInput): Plan {
   const matrix = input.matrix ?? loadMatrix();
@@ -344,8 +347,31 @@ export function buildPlan(input: PlanInput): Plan {
     lanes: [...(loaded.get(r.role) ?? roleDefault(matrix, r.role, parent))],
   }));
 
-  // 2. Named role changes, validated lane by lane (no migration here: the
-  //    operator types current descriptors).
+  // 2. --effort rewrites every lane of that family in the base rows. A family
+  //    with no lane here is outside-map even if a later --role would add one.
+  const requested = input.efforts ?? {};
+  const derived = familyEfforts(rows, matrix);
+  for (const [name, effort] of Object.entries(requested)) {
+    const family = familyNamed(matrix, name);
+    if (!family) fail(`unknown family ${name}`);
+    if (!family.efforts.includes(effort)) {
+      fail(`${name} does not select effort ${effort} (allowed: ${family.efforts.join(" ")})`);
+    }
+    if (derived[name].status === "outside-map") {
+      fail(`${name} is outside the role map; nothing to rewrite. Write the effort in a role's descriptor (--role) or drop --effort ${name}`);
+    }
+  }
+  rows = rows.map((row) => ({
+    role: row.role,
+    lanes: row.lanes.map((lane) => {
+      const family = laneFamily(lane, matrix);
+      if (!family || !(family.family in requested)) return lane;
+      return `${family.provider}:${family.model}@${requested[family.family]}`;
+    }),
+  }));
+
+  // 3. Named role changes overlay after the bulk rewrite; each lane keeps the
+  //    effort as written (no migration here: the operator types current descriptors).
   const roleChanges = input.roles ?? {};
   for (const [role, lanes] of Object.entries(roleChanges)) {
     if (!matrix.roles.some((r) => r.role === role)) fail(`unknown role ${JSON.stringify(role)}`);
@@ -358,77 +384,32 @@ export function buildPlan(input: PlanInput): Plan {
     rows = rows.map((r) => (r.role === role ? { role, lanes: normalized } : r));
   }
 
-  // 3. One effort per family. Requested overrides first; then the loaded
-  //    sheet's single effort; a conflict without an override stops here.
-  const requested = input.efforts ?? {};
-  const { efforts: derived, conflicts } = familyEfforts(rows, matrix, "outside-map");
-  const efforts: Record<string, string> = {};
-  for (const [name, effort] of Object.entries(requested)) {
-    const family = familyNamed(matrix, name);
-    if (!family) fail(`unknown family ${name}`);
-    if (!family.efforts.includes(effort)) {
-      fail(`${name} does not select effort ${effort} (allowed: ${family.efforts.join(" ")})`);
-    }
-    if (derived[name].status === "outside-map") {
-      fail(`${name} is outside the role map; an effort for it cannot persist. Assign it to a role first (--role) or drop --effort ${name}`);
-    }
-  }
-  for (const family of matrix.families) {
-    const name = family.family;
-    const state = derived[name];
-    if (state.status === "outside-map") continue;
-    if (name in requested) {
-      efforts[name] = requested[name];
-      continue;
-    }
-    if (state.status === "conflict") {
-      const conflict = conflicts.find((c) => c.family === name) as EffortConflict;
-      const lines = conflict.rows.map((r) => `  ${r.role}: ${r.lane}`).join("\n");
-      fail(`family ${name} has mixed efforts in the sheet; pass --effort ${name}=<${family.efforts.join("|")}> to normalize:\n${lines}`);
-    }
-    efforts[name] = state.effort;
-  }
-
-  // A role change that names an effort different from the family's single
-  // effort is a contradiction: the sheet stores one effort per family.
-  for (const [role, lanes] of Object.entries(roleChanges)) {
-    for (const lane of lanes) {
-      const family = laneFamily(lane, matrix);
-      const effort = parseDescriptor(lane)?.effort;
-      if (family && effort && efforts[family.family] !== effort) {
-        fail(`role ${JSON.stringify(role)} asks ${family.family}@${effort} but the family's effort is ${efforts[family.family]}; pass --effort ${family.family}=${effort} to change every ${family.family} lane`);
-      }
-    }
-  }
-
-  // 4. Rewrite every family descriptor to the family's effort.
-  rows = rows.map((row) => ({
-    role: row.role,
-    lanes: row.lanes.map((lane) => {
-      const family = laneFamily(lane, matrix);
-      return family ? `${family.provider}:${family.model}@${efforts[family.family]}` : lane;
-    }),
-  }));
-
   const sheet = renderSheetDocument(rows.map((r) => `${r.role}: ${r.lanes.join(", ")}`).join("\n"));
-  const pairs: ProbePair[] = matrix.families
-    .filter((f) => f.family in efforts)
-    .map((f) => {
-      const effort = efforts[f.family];
-      return {
-        family: f.family,
-        provider: f.provider,
-        model: f.model,
+  const finalEfforts = familyEfforts(rows, matrix);
+  const efforts: Record<string, readonly string[]> = {};
+  const pairs: ProbePair[] = [];
+  for (const family of matrix.families) {
+    const used = finalEfforts[family.family];
+    if (used.status === "outside-map") continue;
+    efforts[family.family] = used.efforts;
+    for (const effort of used.efforts) {
+      const pair = `${family.family}@${effort}`;
+      pairs.push({
+        family: family.family,
         effort,
-        descriptor: `${f.provider}:${f.model}@${effort}`,
-        route: routeFor(matrix, parent, f.provider),
-        native: nativeProbeFor(matrix, parent, f, effort),
-        marker: `PSTACK-SETUP-${parent}-${f.family}-${randomBytes(4).toString("hex")}`,
-      };
-    });
+        pair,
+        provider: family.provider,
+        model: family.model,
+        descriptor: `${family.provider}:${family.model}@${effort}`,
+        route: routeFor(matrix, parent, family.provider),
+        native: nativeProbeFor(matrix, parent, family, effort),
+        marker: `PSTACK-SETUP-${parent}-${family.family}-${effort}-${randomBytes(4).toString("hex")}`,
+      });
+    }
+  }
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     parent,
     createdAt: new Date().toISOString(),
     sheetPath: state.sheetPath,
@@ -457,7 +438,9 @@ export function loadPlan(dir: string): Plan {
   const path = join(dir, PLAN_FILE);
   if (!existsSync(path)) fail(`no ${PLAN_FILE} in ${dir}; run plan first`);
   const raw = JSON.parse(readFileSync(path, "utf8")) as Plan;
-  if (raw.schemaVersion !== 1) fail(`${path}: unsupported schemaVersion`);
+  if (raw.schemaVersion !== 2) {
+    fail(`${path}: unsupported schemaVersion ${JSON.stringify(raw.schemaVersion)}; run plan again with this version of the script`);
+  }
   return raw;
 }
 
@@ -475,6 +458,7 @@ const RUNNER_LAUNCHER = join(
 
 export interface ExternalProbeResult {
   readonly family: string;
+  readonly pair: string;
   readonly descriptor: string;
   readonly status: "passed" | "failed";
   readonly promptPath: string;
@@ -485,6 +469,7 @@ export interface ExternalProbeResult {
 
 export interface NativeProbeStatus {
   readonly family: string;
+  readonly pair: string;
   readonly descriptor: string;
   readonly native: NativeAgentProbe | NativeSpawnProbe;
   readonly marker: string;
@@ -512,16 +497,20 @@ function probePrompt(marker: string): string {
   return `This is a connectivity probe. Reply with exactly this token and nothing else: ${marker}\n`;
 }
 
-function probePaths(dir: string, family: string): { prompt: string; output: string; receipt: string } {
+function probePaths(dir: string, pair: string): { prompt: string; output: string; receipt: string } {
   return {
-    prompt: join(dir, `probe-${family}.prompt.md`),
-    output: join(dir, `probe-${family}.output.md`),
-    receipt: join(dir, `probe-${family}.receipt.json`),
+    prompt: join(dir, `probe-${pair}.prompt.md`),
+    output: join(dir, `probe-${pair}.output.md`),
+    receipt: join(dir, `probe-${pair}.receipt.json`),
   };
 }
 
-function nativeEvidencePath(dir: string, family: string): string {
-  return join(dir, `native-${family}.json`);
+function nativeEvidencePath(dir: string, pair: string): string {
+  return join(dir, `native-${pair}.json`);
+}
+
+function probeLabel(pair: ProbePair): string {
+  return `${pair.pair} (${pair.descriptor})`;
 }
 
 interface RunnerReceiptLike {
@@ -571,7 +560,7 @@ function judgeExternal(pair: ProbePair, receiptPath: string, outputPath: string)
 }
 
 function runLane(pair: ProbePair, plan: Plan, options: ProbeOptions): Promise<ExternalProbeResult> {
-  const paths = probePaths(options.dir, pair.family);
+  const paths = probePaths(options.dir, pair.pair);
   writeFileSync(paths.prompt, probePrompt(pair.marker), { mode: 0o600 });
   const args = [
     RUNNER_LAUNCHER,
@@ -599,6 +588,7 @@ function runLane(pair: ProbePair, plan: Plan, options: ProbeOptions): Promise<Ex
     child.on("error", (error) => {
       resolve({
         family: pair.family,
+        pair: pair.pair,
         descriptor: pair.descriptor,
         status: "failed",
         promptPath: paths.prompt,
@@ -612,6 +602,7 @@ function runLane(pair: ProbePair, plan: Plan, options: ProbeOptions): Promise<Ex
       const detail = verdict.passed || stderr.trim().length === 0 ? verdict.detail : `${verdict.detail}\n${stderr.trim().slice(0, 2_000)}`;
       resolve({
         family: pair.family,
+        pair: pair.pair,
         descriptor: pair.descriptor,
         status: verdict.passed ? "passed" : "failed",
         promptPath: paths.prompt,
@@ -623,12 +614,18 @@ function runLane(pair: ProbePair, plan: Plan, options: ProbeOptions): Promise<Ex
   });
 }
 
-function nativeStatus(plan: Plan, dir: string, pair: ProbePair): NativeProbeStatus {
-  const evidencePath = nativeEvidencePath(dir, pair.family);
+function nativeStatus(
+  plan: Plan,
+  dir: string,
+  pair: ProbePair,
+  native: NativeAgentProbe | NativeSpawnProbe
+): NativeProbeStatus {
+  const evidencePath = nativeEvidencePath(dir, pair.pair);
   return {
     family: pair.family,
+    pair: pair.pair,
     descriptor: pair.descriptor,
-    native: pair.native as NativeAgentProbe | NativeSpawnProbe,
+    native,
     marker: pair.marker,
     prompt: probePrompt(pair.marker).trimEnd(),
     evidencePath,
@@ -646,18 +643,19 @@ export async function runProbes(plan: Plan, options: ProbeOptions): Promise<Prob
   mkdirSync(options.dir, { recursive: true });
   const runnerPairs = plan.pairs.filter((p) => p.route === "runner");
   for (const pair of runnerPairs) {
-    const paths = probePaths(options.dir, pair.family);
+    const paths = probePaths(options.dir, pair.pair);
     for (const path of [paths.output, paths.receipt]) {
       if (existsSync(path)) fail(`${path} already exists; use a fresh run directory or remove the previous probe artifacts`);
     }
   }
   const external = await Promise.all(runnerPairs.map((pair) => runLane(pair, plan, options)));
-  const native = plan.pairs.filter((p) => p.native !== null).map((p) => nativeStatus(plan, options.dir, p));
+  const native = plan.pairs.flatMap((p) => (p.native === null ? [] : [nativeStatus(plan, options.dir, p, p.native)]));
   const externalOk = external.every((r) => r.status === "passed");
   return { external, native, externalOk, ok: externalOk && native.every((n) => n.attested) };
 }
 
 interface NativeEvidence {
+  readonly pair: string;
   readonly family: string;
   readonly descriptor: string;
   readonly native: NativeAgentProbe | NativeSpawnProbe;
@@ -670,17 +668,19 @@ interface NativeEvidence {
  * Record the outcome of a native one-turn probe the skill ran through the
  * parent's primitive. The observed reply must carry the pair's marker.
  */
-export function attestNative(plan: Plan, dir: string, family: string, observed: string): string {
-  const pair = plan.pairs.find((p) => p.family === family);
-  if (!pair) fail(`${family} is not a pair of this plan`);
-  if (pair.native === null) fail(`${family} is not a native pair of this plan; it runs through the runner`);
+export function attestNative(plan: Plan, dir: string, pairId: string, observed: string): string {
+  const ids = plan.pairs.map((p) => p.pair).join(", ");
+  const pair = plan.pairs.find((p) => p.pair === pairId);
+  if (!pair) fail(`${pairId} is not a pair of this plan; pairs: ${ids}`);
+  if (pair.native === null) fail(`${pairId} is not a native pair of this plan; it runs through the runner`);
   if (!observed.includes(pair.marker)) {
-    fail(`observed reply for ${family} lacks the marker ${pair.marker}; the native probe did not pass`);
+    fail(`observed reply for ${pairId} lacks the marker ${pair.marker}; the native probe did not pass`);
   }
   mkdirSync(dir, { recursive: true });
-  const path = nativeEvidencePath(dir, family);
+  const path = nativeEvidencePath(dir, pair.pair);
   const evidence: NativeEvidence = {
-    family,
+    pair: pair.pair,
+    family: pair.family,
     descriptor: pair.descriptor,
     native: pair.native,
     marker: pair.marker,
@@ -692,19 +692,20 @@ export function attestNative(plan: Plan, dir: string, family: string, observed: 
 }
 
 function verifyNative(plan: Plan, dir: string, pair: ProbePair): string | null {
-  const path = nativeEvidencePath(dir, pair.family);
-  if (!existsSync(path)) return `${pair.family} (${pair.descriptor}): native probe not attested (${path} missing)`;
+  const path = nativeEvidencePath(dir, pair.pair);
+  const label = probeLabel(pair);
+  if (!existsSync(path)) return `${label}: native probe not attested (${path} missing)`;
   let evidence: NativeEvidence;
   try {
     evidence = JSON.parse(readFileSync(path, "utf8")) as NativeEvidence;
   } catch (error) {
-    return `${pair.family}: native evidence is not JSON: ${(error as Error).message}`;
+    return `${label}: native evidence is not JSON: ${(error as Error).message}`;
   }
-  if (evidence.descriptor !== pair.descriptor || evidence.marker !== pair.marker) {
-    return `${pair.family}: native evidence is for ${evidence.descriptor} / ${evidence.marker}, plan asks ${pair.descriptor} / ${pair.marker}`;
+  if (evidence.pair !== pair.pair || evidence.descriptor !== pair.descriptor || evidence.marker !== pair.marker) {
+    return `${label}: native evidence is for ${evidence.pair} / ${evidence.descriptor} / ${evidence.marker}, plan asks ${pair.pair} / ${pair.descriptor} / ${pair.marker}`;
   }
   if (typeof evidence.observed !== "string" || !evidence.observed.includes(pair.marker)) {
-    return `${pair.family}: native evidence lacks the marker`;
+    return `${label}: native evidence lacks the marker`;
   }
   return null;
 }
@@ -714,9 +715,9 @@ export function verifyProbes(plan: Plan, dir: string): { readonly ok: boolean; r
   const problems: string[] = [];
   for (const pair of plan.pairs) {
     if (pair.route === "runner") {
-      const paths = probePaths(dir, pair.family);
+      const paths = probePaths(dir, pair.pair);
       const verdict = judgeExternal(pair, paths.receipt, paths.output);
-      if (!verdict.passed) problems.push(`${pair.family} (${pair.descriptor}): external probe ${verdict.detail}`);
+      if (!verdict.passed) problems.push(`${probeLabel(pair)}: external probe ${verdict.detail}`);
     } else {
       const problem = verifyNative(plan, dir, pair);
       if (problem !== null) problems.push(problem);
@@ -841,13 +842,14 @@ export function writeSheet(plan: Plan, dir: string, options: { readonly home?: s
 const USAGE = `Usage: setup-pstack <state|plan|probe|attest|write> [options]
 
   state  --parent <${Object.keys(TARGETS).join("|")}> [--home <dir>]
-         Read the parent's sheet, normalize rolling aliases, derive one effort per family.
+         Read the parent's sheet, normalize rolling aliases, derive per-lane efforts grouped by family.
   plan   --parent <p> [--home <dir>] [--dir <run dir>]
          [--effort <family>=<effort>]... [--role "<label>=<lane>[, <lane>]"]...
          Render the new sheet in memory and save plan.json (creates a run dir when --dir is omitted).
+         --effort rewrites every lane of that family; --role overlays after, each lane keeping its effort.
   probe  --dir <run dir> [--timeout <seconds>]
          Run every external pair of the plan through the runner; list native pairs to attest.
-  attest --dir <run dir> --family <family> --observed <reply text>
+  attest --dir <run dir> --pair <family>@<effort> --observed <reply text>
          Record a native one-turn probe whose reply carries the pair's marker.
   write  --dir <run dir> [--home <dir>]
          Verify every probe, then write the sheet and the parent integration (byte-identical rerun writes nothing).
@@ -902,7 +904,7 @@ export async function main(argv: readonly string[], io: Io = {
           dir: { type: "string" },
           effort: { type: "string", multiple: true },
           role: { type: "string", multiple: true },
-          family: { type: "string" },
+          pair: { type: "string" },
           observed: { type: "string" },
           timeout: { type: "string" },
           help: { type: "boolean", short: "h", default: false },
@@ -961,13 +963,13 @@ export async function main(argv: readonly string[], io: Io = {
       }
       case "attest": {
         const dir = requireDir();
-        const family = parsed.values.family;
+        const pair = parsed.values.pair;
         const observed = parsed.values.observed;
-        if (typeof family !== "string") usage("--family is required");
+        if (typeof pair !== "string") usage("--pair is required");
         if (typeof observed !== "string") usage("--observed is required");
         const plan = loadPlan(dir);
-        const path = attestNative(plan, dir, family, observed);
-        emit({ family, evidencePath: path, remaining: verifyProbes(plan, dir).problems });
+        const path = attestNative(plan, dir, pair, observed);
+        emit({ pair, evidencePath: path, remaining: verifyProbes(plan, dir).problems });
         return 0;
       }
       case "write": {

@@ -1,11 +1,11 @@
 ---
 name: setup-pstack
-description: Configure pstack's provider-qualified models, per-family requested effort, and parent-owned routes per role. Verifies native and external Claude, Codex, and Grok lanes before writing the override sheet. Use for /setup-pstack, "configure pstack models", or changing pstack's model choices.
+description: Configure pstack's provider-qualified models, per-lane requested effort, and parent-owned routes per role. Verifies every distinct family-and-effort pair on native and external Claude, Codex, and Grok lanes before writing the override sheet. Use for /setup-pstack, "configure pstack models", or changing pstack's model choices.
 ---
 
 # Setup pstack
 
-Configure one portable model sheet for the current parent harness. Read [`provider-dispatch.md`](../poteto-mode/references/provider-dispatch.md) before probing or writing anything. Its model matrix, descriptor grammar, route table, and role defaults are the contract. Choose one requested effort per matrix family in the role map. Do not add a second configuration file, a runtime resolver, or a weaker-model fallback.
+Configure one portable model sheet for the current parent harness. Read [`provider-dispatch.md`](../poteto-mode/references/provider-dispatch.md) before probing or writing anything. Its model matrix, descriptor grammar, route table, and role defaults are the contract. Each lane carries its own effort, so two roles may run the same family at different efforts. Do not add a second configuration file, a runtime resolver, or a weaker-model fallback.
 
 The deterministic half of this skill is `scripts/setup-pstack.ts`, next to this file (Node 24, no dependencies; run it as `node <this skill's directory>/scripts/setup-pstack.ts <subcommand>`). It reads the matrix, reads and normalizes the current sheet, renders the new one, runs the external probes through the runner, refuses to write while any probe is missing, and writes with snapshot, read-back, and restore. You own the conversation (parent, efforts, role changes, confirmation) and the native one-turn probes. Every subcommand prints JSON; `--help` prints the usage. Never edit the sheet or the integration files by hand, and never paste a rendered sheet as the result.
 
@@ -35,17 +35,26 @@ Use the harness and tool surface running this skill: Claude Code (`--parent clau
 node scripts/setup-pstack.ts state --parent <parent>
 ```
 
-The JSON says whether the parent's sheet exists (`exists`), its path, the normalized rows, the rolling-alias `migrations` it applied in memory (a provider-qualified Claude model whose component starts with `claude-fable-` or `claude-opus-` followed by digits and hyphens becomes `fable` or `opus`, preserving provider, effort, role, and lane order), one `efforts` entry per matrix family, and the `conflicts`. Each family's status is `current` (one effort found in the sheet), `unassigned` (first run: the matrix Default effort is proposed), `outside-map` (no role uses the family, so no effort can persist for it; Sol is outside the first-run map by the 2026-09-17 decision), or `conflict` (two efforts for one family).
+The JSON says whether the parent's sheet exists (`exists`), its path, the normalized rows, the rolling-alias `migrations` it applied in memory (a provider-qualified Claude model whose component starts with `claude-fable-` or `claude-opus-` followed by digits and hyphens becomes `fable` or `opus`, preserving provider, effort, role, and lane order), and one `efforts` entry per matrix family with its `status`, the distinct `efforts` in use, and the `rows` that use them. A family's status is `current` (every lane of the family shares one effort), `mixed` (its lanes use two or more efforts; a valid sheet, not a conflict), `unassigned` (first run: the matrix Default effort is proposed), or `outside-map` (no role uses the family, so no effort can persist for it; Sol is outside the first-run map by the 2026-09-17 decision).
 
 The script stops on inconsistent state: an unknown or duplicate role row, a bare host-native slug, a versioned Claude model outside the two migration families, a provider/model pair outside the matrix, or an effort outside the family's Selectable efforts. Show the error verbatim and resolve it with the operator before going on. Do not probe or write while any inconsistency is unresolved.
 
-### 3. Collect one requested effort per family
+### 3. Ask role by role: model, then effort
 
-Ask one effort question per family whose status is `current`, `unassigned`, or `conflict`, in matrix order. Name the model, its current or proposed value, and the Selectable efforts from its matrix row. Empty input keeps a current value or accepts the matrix proposal for an unassigned family. On a first run, state every family's matrix default before asking. On a rerun, state the parsed values without offering to reset customized role lanes. A `conflict` family has no current value: show every conflicting row verbatim and require one effort for it. Report `outside-map` families in one line; do not ask their effort unless step 4 moves a role onto them.
+Before the first question, show the whole map in one block: every role with its current lanes (the loaded rows on a rerun, the first-run map below on a first run), the rolling-alias migrations from step 2, and the `outside-map` families in one line. Never offer a reset of a customized sheet to the first-run assignments.
 
-### 4. Ask about role changes
+Then walk the roles in matrix order, one role per `AskUserQuestion` call with two questions in this order. Both questions carry the role's `description` from `model-matrix.json` (the "What the lane does" column of the role table in `provider-dispatch.md`) so the operator knows what the lane does before choosing.
 
-Ask whether to keep the role-to-family assignments (the loaded rows on a rerun, the first-run map below on a first run) or change named roles. Keeping them is the default. Apply only role changes the operator names; never offer a reset of a customized sheet to the first-run assignments. A changed role may use a matrix descriptor, `inherit-parent`, or `auto`. A role change that brings a family into the map also needs its effort (step 3 question, asked now).
+1. **Model.** Options are the current value first, labeled "(keep)", then three more in this order until four options are filled: the role's matrix default for this parent when it differs from the current value, then the remaining families in matrix order, then `inherit-parent` and `auto`. Each family option names its model and its route for this parent (native or external runner). The families and aliases that did not fit are typed under "Other" by family name. For a role whose lane is an alias, the options are the current alias first, then the other alias, then families in matrix order.
+2. **Effort.** Options are the current effort first, labeled "(keep)", then the family's remaining Selectable efforts in matrix order, dropping `low` when it is not current; the dropped one is typed under "Other". Say in the question that the effort is ignored when the model answer is an alias. Empty input keeps the current lanes; on a first run it accepts the matrix proposal.
+
+A panel role (a list) gets one question instead of two: the current lanes as the "(keep)" option, the parent's matrix default panel when it differs, and "Other" for a typed list of descriptors, one per lane, in the order they should run. Explain that one lane runs per entry and that the list length is the fan-out count.
+
+Each lane keeps the effort written in its descriptor, so `bug-fix: codex:gpt-5.6-sol@xhigh` next to `hillclimb: codex:gpt-5.6-sol@high` is a valid map; there is no per-family effort question. A role that brings a family into the map carries that family's effort in its answer. Why and Reflect roles need the parent's live MCP surface, so recommend `inherit-parent` or `auto` for them in the question.
+
+### 4. Collect the changes
+
+Every answer that differs from the current lanes becomes one `--role "<label>=<lane>[, <lane>]"` for step 5. Answers equal to the current lanes produce no flag. When the operator wants to move a whole family to one effort ("all grok to xhigh"), use `--effort <family>=<effort>` once instead of repeating the same answer across roles; it rewrites every lane of that family and the per-role answers apply after it, so a family-wide rewrite plus a named exception fits in one plan.
 
 ### 5. Plan
 
@@ -54,9 +63,9 @@ node scripts/setup-pstack.ts plan --parent <parent> \
   [--effort <family>=<effort>]... [--role "<label>=<lane>[, <lane>]"]...
 ```
 
-The plan is the in-memory render: it starts from the loaded rows (or the first-run map), materializes any missing documented role from the defaults, applies the named role changes, then rewrites every descriptor of a family to that family's one effort. It refuses an unqualified slug, an unknown role or family, an effort outside the family's row, an effort for a family outside the map, a role change whose effort disagrees with the family's, and an unresolved conflict. Changing Grok's effort updates every Grok occurrence and moves no role.
+The plan is the in-memory render: it starts from the loaded rows (or the first-run map), materializes any missing documented role from the defaults, rewrites every lane of a family named in `--effort` to that effort, then applies the named role changes lane by lane. It refuses an unqualified slug, an unknown role or family, an effort outside the family's row, and a family-wide `--effort` for a family outside the map. A family-wide `--effort` updates every lane of that family and moves no role.
 
-The output carries `dir` (a fresh run directory holding `plan.json`; pass `--dir` to choose it), the requested `efforts`, the `rows`, the `sheet` bytes, the `migrations`, and one probe `pair` per family in the map with its route for this parent and, for native pairs, how to probe it.
+The output carries `dir` (a fresh run directory holding `plan.json`; pass `--dir` to choose it), the distinct `efforts` per family in the final map, the `rows`, the `sheet` bytes, the `migrations`, and one probe `pair` per distinct family-and-effort in the map (`fable@medium`, `sol@xhigh`) with its route for this parent and, for native pairs, how to probe it. A family used at two efforts gets two pairs.
 
 ### 6. Probe every pair
 
@@ -64,12 +73,12 @@ The output carries `dir` (a fresh run directory holding `plan.json`; pass `--dir
 node scripts/setup-pstack.ts probe --dir <dir> [--timeout <seconds>]
 ```
 
-External pairs (route `runner`) run at once through the external runner in `read-only` mode, each with its own prompt, output, and receipt under the run directory, after the CLI proves credentials (`claude auth status --json`, `codex login status`, or `grok models` listing the requested model). A pair passes only when its receipt is `complete` for exactly the requested provider, model, and effort, the model is verified (provider report) or pinned by argv (Codex), and the output carries the pair's unique marker. Exit code 1 means at least one external pair failed: report the failing pair, provider, and `detail`, stop, and write nothing. There is no implicit timeout; pass `--timeout` only when the operator gives a real deadline.
+External pairs (route `runner`) run at once through the external runner in `read-only` mode, each with its own prompt, output, and receipt named after the pair under the run directory, after the CLI proves credentials (`claude auth status --json`, `codex login status`, or `grok models` listing the requested model). A pair passes only when its receipt is `complete` for exactly the requested provider, model, and effort, the model is verified (provider report) or pinned by argv (Codex), and the output carries the pair's unique marker. Exit code 1 means at least one external pair failed: report the failing pair, provider, and `detail`, stop, and write nothing. There is no implicit timeout; pass `--timeout` only when the operator gives a real deadline.
 
-Native pairs (route `native`) are listed under `native` with the `prompt` to send. Run each one yourself through the parent's primitive: on Claude Code, one turn of the mapped `pstack-<stem>-<effort>` agent (`Agent` with that `subagent_type`); on Codex, one `spawn_agent` turn with the listed `model` and `reasoning_effort`. When the Codex parent has no `multi_agent` (so `spawn_agent` is unavailable), run the same prompt as one turn of the parent's own CLI instead: `codex exec --model <model> --config 'model_reasoning_effort="<effort>"' --sandbox read-only --skip-git-repo-check --ephemeral`; the Codex CLI is the parent's native process, not the external launcher. Then record the exact reply:
+Native pairs (route `native`) are listed under `native` with the `pair` id and the `prompt` to send. Run each one yourself through the parent's primitive: on Claude Code, one turn of the mapped `pstack-<stem>-<effort>` agent (`Agent` with that `subagent_type`); on Codex, one `spawn_agent` turn with the listed `model` and `reasoning_effort`. Two native pairs of one family are two agents (`pstack-fable-medium` and `pstack-fable-max`), one turn each. When the Codex parent has no `multi_agent` (so `spawn_agent` is unavailable), run the same prompt as one turn of the parent's own CLI instead: `codex exec --model <model> --config 'model_reasoning_effort="<effort>"' --sandbox read-only --skip-git-repo-check --ephemeral`; the Codex CLI is the parent's native process, not the external launcher. Then record the exact reply:
 
 ```shell
-node scripts/setup-pstack.ts attest --dir <dir> --family <family> --observed "<exact reply text>"
+node scripts/setup-pstack.ts attest --dir <dir> --pair <family>@<effort> --observed "<exact reply text>"
 ```
 
 `attest` refuses a reply that lacks the marker. Never call the external launcher for the parent's own provider, and never attest a reply you did not observe. A login-status command alone proves credentials, not that the requested model and effort flags run. Receipts and native transcripts prove the requested effort and the route; they do not prove a provider's hidden applied reasoning depth.
@@ -96,7 +105,7 @@ Do not copy the model sheet between harnesses without rerunning the parent-speci
 
 Before declaring setup complete, run one small read-only mixed panel from this parent: every chosen descriptor, distinct output/receipt paths, and an independent cross-judge. Launch Claude-native agents and every external process in the background with retained handles, then drain them. Verify the native transcript entries and every external receipt. A structural config check or unit test is not a substitute.
 
-Report the sheet path, parent route table, requested-effort probe results, smoke results, and external elapsed/token/cost receipts. Re-running this skill re-probes and updates the same sheet. Do not claim the provider exposed hidden applied-effort observability.
+Report the sheet path, parent route table, per-pair probe results, smoke results, and external elapsed/token/cost receipts. Re-running this skill re-probes and updates the same sheet. Do not claim the provider exposed hidden applied-effort observability.
 
 ## First-run role maps
 

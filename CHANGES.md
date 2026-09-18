@@ -366,3 +366,26 @@ Os dois vereditos ficam com o Victor junto das branches: nenhuma das correções
 - **Critério de pronto do plano**: receipts das quatro lanes com a rota certa e o `reportedModel` de cada família nos dois pais, vindos dos dois `interrogate` finais (Codex na 0.1.1, Claude na 0.1.2); a lane nativa de cada pai não tem receipt por desenho (o transcript da tool é a evidência). Os pacotes de evidência (prompts, saídas, rationales, receipts, sínteses e vereditos, um por pai) estão anexados à issue "Fase 9 — receipts de validação" do projeto pstack-vic no Linear; não entram neste repo público porque carregam diffs e código do Clinext.
 - **`verify-clinext` a partir do `poteto-mode`**: provado no pai Claude Code (tabela acima); o pai Codex também o usou por conta própria na verificação da arena.
 - **Consumo reportado** (o `total_cost_usd` que o `claude -p` imprime é equivalente de tabela, `costBasis: list`; nada foi cobrado por uso, os três CLIs rodam nas assinaturas: Claude Max pelo login claude.ai, ChatGPT no Codex, OAuth no Grok): verify US$ 1,16; arena Claude rodada 1 (perdida) US$ 15,83 e rodada 2 US$ 26,17; interrogate Claude US$ 13,95 + 12,82. Pai Codex: 16,8 M + 3,3 M tokens de entrada, 96 % em cache. Serve para comparar rodadas, não como fatura.
+
+# CLI-179 — Effort por lane no `setup-pstack` (2026-09-18)
+
+A fase 6 guardava um effort por família: `state` lia dois efforts de uma família como `conflict`, `plan` recusava mudança de papel com effort divergente (decisão 3 da fase 6) e reescrevia toda lane da família para o effort único. O runtime nunca teve esse limite: o descritor `provider:model@effort` é por lane, o runner recebe `--effort` por chamada e os agentes nativos existem em todo nível. A CLI-179 pede `bug-fix: codex:gpt-5.6-sol@xhigh` e `hillclimb: codex:gpt-5.6-sol@high` na mesma planilha.
+
+## Desenho
+
+- O effort pertence à lane, não à família. A unidade de sonda passa a ser o par (família, effort): um por descritor distinto no mapa final, arquivos `probe-<família>@<effort>.*` e `native-<família>@<effort>.json`, marker com o effort, `attest --pair <família>@<effort>`.
+- `state`: `efforts` por família com `status` (`current`, `mixed`, `unassigned`, `outside-map`), os efforts distintos em uso e as linhas que os usam. `mixed` é estado válido; `conflicts` deixa de existir.
+- `plan`: `--effort <família>=<effort>` é reescrita em bloco de toda lane da família nas linhas de base; `--role` aplica depois, lane a lane, cada uma com o effort escrito. Assim `--effort grok=high --role "bug-fix=grok:grok-4.6@xhigh"` cabe num plano só. `plan.json` sobe para `schemaVersion: 2`; um diretório de execução do formato anterior é recusado.
+- Prosa do skill: a conversa passa a ser papel por papel, em ordem da matriz, uma chamada de `AskUserQuestion` por papel com duas perguntas de opções, modelo e depois effort (painel recebe uma pergunta só, com a lista digitada). Cada pergunta traz a `description` do papel, campo novo e obrigatório em `model-matrix.json` (uma linha sobre o que a lane faz), renderizado como coluna "What the lane does" na tabela de papéis de `provider-dispatch.md`. A pergunta por família some; `--effort` fica como atalho para mover uma família inteira. `provider-dispatch.md` registra que a família não tem effort próprio e que a coluna Default só semeia a primeira execução.
+
+## Decisões
+
+1. **Reverte a decisão 3 da fase 6.** Mudança de papel com effort divergente deixa de ser contradição porque o sheet não guarda mais um effort por família; a precedência é a ordem de aplicação (bloco, depois papel), não uma regra inventada.
+2. **`--effort` em bloco continua existindo** porque "sobe todo Grok para xhigh" é a operação comum; a exceção por papel vai em `--role`.
+3. **Versão 0.1.3**: mudança de comportamento e de linha de comando (`attest --pair`).
+
+## Verificação (2026-09-18)
+
+- `npm test`: 151 testes (144 + 7 em `setup-pstack.test.ts`: `mixed` no `state`, papel com effort diferente das outras lanes da família, `--effort` em bloco seguido de `--role`, rerun byte-idêntico de sheet misto, duas lanes externas de Sol com caminhos distintos, dois pares nativos de Fable, `attest --pair` e recusa de `plan.json` do schema 1), 0 falhas, 0 `todo`. `matrix:check` e `agents:check` verdes.
+- **Sonda real, pai Claude Code**, sobre uma cópia do sheet do Victor com `--role "bug-fix=codex:gpt-5.6-sol@xhigh"` (hillclimb já em `sol@high`): seis pares, `sol@high` e `sol@xhigh` separados. Externos `complete` com o effort pedido no receipt: sol high 6,2 s, sol xhigh 8,1 s, astra medium 6,9 s (os três `pinned-argv`), grok high 5,9 s (`grok-4.6-build`). Nativos por `pstack-fable-medium` e `pstack-opus-high`, um turno cada, marker exato. `write` numa home de rascunho: sheet `updated` com as duas linhas de Sol, integração `unchanged`; segundo `write` do mesmo plano: `unchanged`/`unchanged`; `plan` sem argumentos sobre o sheet escrito rende o mesmo byte a byte e os mesmos seis pares.
+- Código escrito por uma lane `grok:grok-4.6@high` (papel `feature, refactoring`) em worktree isolado pelo runner, `isolated-write`, receipt `complete`, 14,8 min, 52 k tokens de saída; a lane não conseguiu commitar porque o sandbox `workspace` do Grok não escreve em `.git` do checkout pai (mesmo achado do seatbelt do Codex na fase 9), commit feito pelo pai.

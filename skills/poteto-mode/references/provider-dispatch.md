@@ -43,29 +43,31 @@ Skills name roles by the labels below, the same labels `/setup-pstack` writes to
 
 <!-- role-defaults:begin -->
 
-| Role | Claude Code parent | Codex parent |
-|---|---|---|
-| `feature, refactoring` | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
-| `bug-fix` | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
-| `perf-issue` | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
-| `hillclimb` | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
-| `judgment and prose` | `claude:fable@max` | `codex:gpt-6-astra@max` |
-| `hardest tasks` | `claude:fable@max` | `codex:gpt-6-astra@max` |
-| `how explorer` | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
-| `how explainer` | `claude:fable@max` | `codex:gpt-6-astra@max` |
-| `why investigators` | `inherit-parent` | `inherit-parent` |
-| `why synthesizer` | `inherit-parent` | `inherit-parent` |
-| `reflect tooling` | `inherit-parent` | `inherit-parent` |
-| `reflect judgment, divergent, synthesizer` | `inherit-parent` | `inherit-parent` |
-| `arena runners` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:opus@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:opus@xhigh` |
-| `arena cross-judge pool` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:opus@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:opus@xhigh` |
-| `swarm workers` | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
-| `architect runners` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:opus@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:opus@xhigh` |
-| `interrogate reviewers` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:opus@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:opus@xhigh` |
+| Role | What the lane does | Claude Code parent | Codex parent |
+|---|---|---|---|
+| `feature, refactoring` | Writes the code of a feature or a behavior-preserving refactor in its own worktree; the parent reviews the diff. | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
+| `bug-fix` | Reproduces a reported defect, finds the root cause, and writes the fix with runtime evidence. | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
+| `perf-issue` | Traces a measured slowness against a baseline and implements the improvement. | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
+| `hillclimb` | Iterates hypotheses on one metric with before/after measurements, one commit per accepted win. | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
+| `judgment and prose` | Writes and judges prose: docs, PR descriptions, summaries, explanations, syntheses. | `claude:fable@max` | `codex:gpt-6-astra@max` |
+| `hardest tasks` | Implements the hardest changes: cross-cutting design, subtle concurrency or algorithms, vague intent, or a precise multi-step sequence. | `claude:fable@max` | `codex:gpt-6-astra@max` |
+| `how explorer` | Reads a subsystem in read-only mode and reports how it works, with file and line evidence. | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
+| `how explainer` | Turns the explorers' findings into the explanation the how skill delivers. | `claude:fable@max` | `codex:gpt-6-astra@max` |
+| `why investigators` | Investigate why something was built this way across git history, tickets, and the parent's MCP sources; needs the parent's MCPs, so it stays on an alias. | `inherit-parent` | `inherit-parent` |
+| `why synthesizer` | Merges the why investigators' findings into one answer; same MCP constraint, stays on an alias. | `inherit-parent` | `inherit-parent` |
+| `reflect tooling` | Reads transcripts and skills to find lessons after a long task with the parent's tools; stays on an alias for the MCP reason. | `inherit-parent` | `inherit-parent` |
+| `reflect judgment, divergent, synthesizer` | Judges, dissents on, and synthesizes the lessons the reflect skill captures; stays on an alias for the MCP reason. | `inherit-parent` | `inherit-parent` |
+| `arena runners` | Each lane attempts the same task in parallel; the arena picks a base and grafts the strongest parts of the others. One lane per entry. | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:opus@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:opus@xhigh` |
+| `arena cross-judge pool` | Judges the arena candidates; the arena picks a provider different from the parent and the base candidate when possible. | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:opus@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:opus@xhigh` |
+| `swarm workers` | Default worker for every swarm lane: coverage matrices, races, gauntlets, exploration partitions. | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
+| `architect runners` | Each lane proposes a design (types, module shape) for the same problem before implementation. One lane per entry. | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:opus@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:opus@xhigh` |
+| `interrogate reviewers` | Each lane reviews the diff adversarially from its own angle; a different provider per lane widens the blind spots covered. | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:opus@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:opus@xhigh` |
 
 A list is a panel: one lane per entry, in this order. A role whose two columns differ takes the parent's native frontier family. Aliases run on the parent model through its native subagent primitive.
 
 <!-- role-defaults:end -->
+
+A lane's effort is its own. Two roles, or two lanes of one panel, may name the same family at different efforts (`bug-fix: codex:gpt-5.6-sol@xhigh` next to `hillclimb: codex:gpt-5.6-sol@high`). The parent dispatches each descriptor as written, through the agent or runner flags of that effort, and `/setup-pstack` probes each distinct family-and-effort pair the sheet uses. A family has no effort of its own; the Default effort column above seeds first-run lanes only.
 
 ## Read-time normalization
 
