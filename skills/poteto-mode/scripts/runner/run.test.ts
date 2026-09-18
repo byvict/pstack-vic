@@ -592,16 +592,19 @@ describe("runLane", () => {
   });
 
   it("spends one explicit deadline across preflight and model execution", async () => {
+    // Each stage alone fits the deadline with ~800 ms to spare for spawning the
+    // fake CLI under load; together they exceed it, so only a shared deadline
+    // lets preflight pass and still cuts the model short.
     process.env.FAKE_PREFLIGHT_DELAY_MS = "1200";
     process.env.FAKE_MODEL_DELAY_MS = "1200";
-    const input = { ...options("claude"), timeoutMs: 1_500 };
+    const input = { ...options("claude"), timeoutMs: 2_000 };
     const result = await runLane(input);
     const recorded = receipt(input.receiptPath);
 
     assert.equal(result.exitCode, 124);
     assert.equal(recorded.status, "timed-out");
     assert.equal(recorded.preflight.status, "passed");
-    assert.ok(recorded.elapsedMs < 2_100);
+    assert.ok(recorded.elapsedMs < 2_700);
   });
 
   it("bounds a descendant-held pipe by the explicit deadline without fabricating a signal", async () => {

@@ -157,6 +157,7 @@ Consequência para a fase 8: um commit do remote `cursor` que toque `automations
 ## Verificação (2026-09-17)
 
 - `npm test`: 85 testes (80 da fase 4 + 4 de `reference.test.ts` + 1 de `skill-collision.test.ts`), 0 `todo`. Primeira rodada 85/85. Rodadas seguintes, com a máquina em load ~3,8, 84/85: `run.test.ts` "spends one explicit deadline across preflight and model execution" (runner, fase 2) dá 300 ms para o fake CLI subir depois de 1,2 s de preflight e estoura sob carga. Falha igual num worktree limpo de `f087f8e`, então é flake pré-existente do runner, não desta fase; fica anotado para ajuste em sessão própria.
+- Flake ajustado na mesma data, em commit próprio: o teste passou de `timeoutMs` 1 500 para 2 000 e de `elapsedMs < 2 100` para `< 2 700`, com os mesmos delays de 1,2 s em cada estágio (cada um cabe sozinho no prazo, os dois juntos não), sem mexer em `run.ts`. 10/10 no caso isolado e 3/3 no arquivo inteiro com quatro `yes > /dev/null` em paralelo (load ~5,8); `npm test` 85/85.
 - `npm run matrix:check` e `npm run agents:check` verdes.
 - `PSTACK_BEHAVIORAL=1 bash tests/skill-collision-repro.sh`: todos os invariantes estáticos `ok`, manifests `skip` (fase 7), e as duas invocações (tool `Skill` e `/testplug:foo`) devolveram `SKILL-RAN` com `haiku`.
 - `diff` das sete skills do `cursor-team-kit` contra `cursor/main`: vazio, salvo o frontmatter de `thermo-nuclear-code-quality-review`. `LICENSE-cursor-team-kit` byte-idêntico a `cursor/main:cursor-team-kit/LICENSE`.
