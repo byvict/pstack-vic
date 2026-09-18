@@ -207,11 +207,7 @@ function normalizeRows(
  * absent from the map is `outside-map` (its default effort is only a proposal);
  * a family present with one effort is `current`; two or more is `mixed`.
  */
-function familyEfforts(
-  rows: readonly SheetRow[],
-  matrix: ModelMatrix,
-  emptyStatus: "unassigned" | "outside-map"
-): Record<string, EffortState> {
+function familyEfforts(rows: readonly SheetRow[], matrix: ModelMatrix): Record<string, EffortState> {
   const efforts: Record<string, EffortState> = {};
   for (const family of matrix.families) {
     const occurrences: Array<{ role: string; lane: string }> = [];
@@ -222,7 +218,7 @@ function familyEfforts(
     }
     const distinct = new Set(occurrences.map((o) => parseDescriptor(o.lane)?.effort ?? ""));
     if (occurrences.length === 0) {
-      efforts[family.family] = { status: emptyStatus, efforts: [family.defaultEffort], rows: [] };
+      efforts[family.family] = { status: "outside-map", efforts: [family.defaultEffort], rows: [] };
     } else {
       const ordered = matrix.efforts.filter((effort) => distinct.has(effort));
       efforts[family.family] = {
@@ -252,7 +248,7 @@ export function loadState(input: StateInput): State {
   const text = readIfExists(sheetPath);
   if (text === null) {
     const defaults = matrix.roles.map((r) => ({ role: r.role, lanes: roleDefault(matrix, r.role, parent) }));
-    const efforts = familyEfforts(defaults, matrix, "outside-map");
+    const efforts = familyEfforts(defaults, matrix);
     for (const family of matrix.families) {
       const state = efforts[family.family];
       if (state.status === "current" || state.status === "mixed") {
@@ -262,7 +258,7 @@ export function loadState(input: StateInput): State {
     return { parent, sheetPath, integrationPath, exists: false, rows: [], migrations: [], efforts };
   }
   const { rows, migrations } = normalizeRows(parseSheet(text, matrix), matrix);
-  const efforts = familyEfforts(rows, matrix, "outside-map");
+  const efforts = familyEfforts(rows, matrix);
   return { parent, sheetPath, integrationPath, exists: true, rows, migrations, efforts };
 }
 
@@ -354,7 +350,7 @@ export function buildPlan(input: PlanInput): Plan {
   // 2. --effort rewrites every lane of that family in the base rows. A family
   //    with no lane here is outside-map even if a later --role would add one.
   const requested = input.efforts ?? {};
-  const derived = familyEfforts(rows, matrix, "outside-map");
+  const derived = familyEfforts(rows, matrix);
   for (const [name, effort] of Object.entries(requested)) {
     const family = familyNamed(matrix, name);
     if (!family) fail(`unknown family ${name}`);
@@ -389,7 +385,7 @@ export function buildPlan(input: PlanInput): Plan {
   }
 
   const sheet = renderSheetDocument(rows.map((r) => `${r.role}: ${r.lanes.join(", ")}`).join("\n"));
-  const finalEfforts = familyEfforts(rows, matrix, "outside-map");
+  const finalEfforts = familyEfforts(rows, matrix);
   const efforts: Record<string, readonly string[]> = {};
   const pairs: ProbePair[] = [];
   for (const family of matrix.families) {
