@@ -163,6 +163,24 @@ describe("invocationCommand", () => {
     ]);
   });
 
+  it("runs Grok on its `none` profile when the runner is already inside Codex's seatbelt", () => {
+    const grokOptions = options({ provider: "grok", model: "grok-4.6" });
+    const outside = invocationCommand(grokOptions, { PATH: "/usr/bin" });
+    arrayContaining(outside.args, ["--sandbox", "read-only"]);
+    const nested = invocationCommand(grokOptions, {
+      PATH: "/usr/bin",
+      CODEX_SANDBOX: "seatbelt",
+    });
+    arrayContaining(nested.args, ["--sandbox", "none", "--permission-mode", "plan"]);
+    const writer = invocationCommand(
+      options({ provider: "grok", model: "grok-4.6", mode: "isolated-write" }),
+      { CODEX_SANDBOX: "seatbelt" }
+    );
+    arrayContaining(writer.args, ["--sandbox", "none", "--permission-mode", "acceptEdits"]);
+    const codexNested = invocationCommand(options(), { CODEX_SANDBOX: "seatbelt" });
+    arrayContaining(codexNested.args, ["--sandbox", "read-only"]);
+  });
+
   it("covers low, medium, and high for every external provider", () => {
     const cases = [
       {

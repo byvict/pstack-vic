@@ -24,7 +24,7 @@ O hook SessionStart (`hooks/hooks.json`, em startup, `/clear` e pós-compact) in
 ### Codex
 
 ```shell
-codex plugin marketplace add byvict/pstack-vic --ref v0.1.0
+codex plugin marketplace add byvict/pstack-vic --ref v0.1.1
 codex plugin add pstack@pstack-vic
 ```
 
@@ -33,7 +33,13 @@ O Codex descobre as skills sob o namespace `pstack` (`pstack:poteto-mode`, `psta
 ```toml
 [features]
 multi_agent = true
+
+[sandbox_workspace_write]
+network_access = true
+writable_roots = ["/Users/<você>/.grok"]
 ```
+
+As duas linhas de `sandbox_workspace_write` são para as lanes externas: o runner roda dentro do seatbelt do Codex, e as CLIs `claude` e `grok` precisam de rede; o `grok` ainda grava a sessão em `~/.grok`, que o seatbelt bloqueia. Sem elas a lane Grok cai como dropout com receipt (`unavailable-model`, `FS_PERMISSION_DENIED`). Dentro do seatbelt o runner passa `--sandbox none` ao Grok, porque um seatbelt aninhado não inicializa; o sandbox do Codex continua valendo. Os valores também podem ir por sessão com `-c`.
 
 ### A partir do clone
 
@@ -41,12 +47,12 @@ Para desenvolver ou testar um checkout antes de publicar:
 
 ```shell
 # Claude Code: carrega o clone como plugin da sessão (manifest, hook, agents e skills)
-claude --plugin-dir ~/Dev/pstack-vic
+claude --plugin-dir ~/Dev/Skills/pstack-vic
 ```
 
 ```shell
 # Codex: marketplace local, sem tag; desfaz com plugin remove + marketplace remove
-codex plugin marketplace add ~/Dev/pstack-vic
+codex plugin marketplace add ~/Dev/Skills/pstack-vic
 codex plugin add pstack@pstack-vic
 ```
 

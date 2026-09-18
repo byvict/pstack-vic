@@ -65,8 +65,19 @@ function codexSandbox(mode: AccessMode): string {
   return mode === "read-only" ? "read-only" : "workspace-write";
 }
 
-function grokSandbox(mode: AccessMode): string {
+// Grok applies its own seatbelt profile and refuses to start when the profile
+// cannot be initialised. Inside Codex's seatbelt (the parent exports
+// CODEX_SANDBOX to the runner) a nested profile always fails with "sandbox
+// initialization failed: Operation not permitted", so the lane runs on Grok's
+// built-in `none` profile and the outer sandbox governs; plan mode and the
+// tool list still apply. Measured with Grok CLI 1.0.5 and Codex 0.154.0.
+function grokSandbox(mode: AccessMode, outerSeatbelt: boolean): string {
+  if (outerSeatbelt) return "none";
   return mode === "read-only" ? "read-only" : "workspace";
+}
+
+export function insideCodexSandbox(env: NodeJS.ProcessEnv): boolean {
+  return (env.CODEX_SANDBOX ?? "") !== "";
 }
 
 function grokTools(mode: AccessMode): string {
@@ -82,7 +93,10 @@ function effortOverride(effort: Effort): string {
   return `model_reasoning_effort=${JSON.stringify(effort)}`;
 }
 
-export function invocationCommand(options: RunnerOptions): CommandSpec {
+export function invocationCommand(
+  options: RunnerOptions,
+  env: NodeJS.ProcessEnv = process.env
+): CommandSpec {
   const cli = requireCli(options.provider);
   switch (cli) {
     case "claude":
@@ -151,7 +165,7 @@ export function invocationCommand(options: RunnerOptions): CommandSpec {
           "--permission-mode",
           permissionMode(options.mode),
           "--sandbox",
-          grokSandbox(options.mode),
+          grokSandbox(options.mode, insideCodexSandbox(env)),
           "--tools",
           grokTools(options.mode),
           "--disallowed-tools",
