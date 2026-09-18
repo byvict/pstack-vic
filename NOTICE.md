@@ -26,11 +26,7 @@ pstack-vic é um port autoral de trabalho sob licença MIT. Todos os avisos de c
 | `.codex-plugin/plugin.json` (manifest do Codex com bloco `interface`) e `.agents/plugins/marketplace.json` (marketplace do Codex), copiados e adaptados na fase 7 (2026-09-18): nome do marketplace, URLs, descrições, fonte `./` (o plugin é a raiz) | [ericlitman/open-pstack @ de67e6b](https://github.com/ericlitman/open-pstack/tree/de67e6b40511814171e5e4c8ad7af3b79f07c9ee) (1.4.1) | (c) 2026 Lauren Tan (port: Eric Litman) | MIT | [LICENSE-open-pstack](LICENSE-open-pstack) |
 | `.claude-plugin/plugin.json` e `.claude-plugin/marketplace.json`, adaptados na fase 7 (2026-09-18) do manifest da Cursor 0.15.2 (`.cursor-plugin/plugin.json`, no split) e do marketplace do open: campos reduzidos ao schema do Claude Code, fonte fixada na tag | Cursor (acima) e [ericlitman/open-pstack @ de67e6b](https://github.com/ericlitman/open-pstack/tree/de67e6b40511814171e5e4c8ad7af3b79f07c9ee) (1.4.1) | (c) 2026 Lauren Tan (port: Eric Litman) | MIT | [LICENSE](LICENSE), [LICENSE-open-pstack](LICENSE-open-pstack) |
 
-Linhas a acrescentar quando algo for copiado (fase 8 do plano). Nada abaixo está copiado ainda:
-
-| Componente previsto | Upstream | Copyright | Licença | Arquivo de licença |
-| --- | --- | --- | --- | --- |
-| Scripts de sync (`scripts/upstream-*.py`), se o `upstream-digest` partir deles | [ericlitman/open-pstack @ de67e6b](https://github.com/ericlitman/open-pstack/tree/de67e6b40511814171e5e4c8ad7af3b79f07c9ee) (1.4.1) | (c) 2026 Lauren Tan (port: Eric Litman) | MIT | [LICENSE-open-pstack](LICENSE-open-pstack) (já copiado na fase 1) |
+Os scripts de sync do open (`scripts/upstream-audit.py`, `upstream-merge.py`, `upstream-merge-probe.py`) não foram copiados: o digest da fase 8 é escrita nova em Node 24 (veredito em [`CHANGES.md`](CHANGES.md), Fase 8). Linhas novas entram nesta tabela conforme o digest semanal trouxer commits do open com veredito `aplica` ou `adaptar`.
 
 ## O que muda no port
 
@@ -46,7 +42,7 @@ Escrita nova, sem origem upstream (a preencher conforme as fases fecham):
 - Subconjunto de skills (fase 5, 2026-09-17): `docs/reference.md` (referência técnica do port, lista exata das skills instaladas), `README.md` do port, `scripts/reference.test.ts` (referência ↔ `skills/*/SKILL.md`), `scripts/skill-collision.test.ts` (roda o script de colisão em `npm test`); frases de `poteto-mode/SKILL.md` e `playbooks/babysit.md` que citavam `deslop` e `babysit` de forma condicional
 - `setup-pstack` consumindo a matriz (fase 6, 2026-09-18): `skills/setup-pstack/scripts/setup-pstack.ts` (subcomandos `state`, `plan`, `probe`, `attest`, `write`: leitura e normalização do sheet, render, probe externo pelo runner, atestado nativo, escrita com snapshot e restauração) e `setup-pstack.test.ts`; `SHEET_TITLE`/`SHEET_PREAMBLE`/`renderSheetDocument` em `scripts/model-matrix.ts`; prosa de `setup-pstack/SKILL.md` reescrita em torno do script (os passos de conversa seguem o texto do open, já copiado na fase 4)
 - Manifests e instalação por tag (fase 7, 2026-09-18): `scripts/manifests.test.ts` (nome, versão e tag únicos entre manifests, marketplaces e `package.json`; campos do manifest do Claude Code; `claude plugin validate --strict`; hook registrado, executável, saída byte-idêntica ao contexto, skills citadas existem), checks de versão e logo devolvidos a `tests/skill-collision-repro.sh`, seção Instalação e Publicar uma versão de `docs/reference.md`, passo 1 do `README.md`, nota do probe nativo headless do Codex em `setup-pstack/SKILL.md`
-- Tracking semanal dos dois upstreams (`upstream-digest`, fase 8)
+- Tracking semanal dos dois upstreams (fase 8, 2026-09-18): `scripts/upstream-digest.ts` (sync points lidos de `UPSTREAM.md`, fetch, uma linha por commit com mapa de caminhos, exclusões da fase 5 pré-vereditadas, markdown e JSON, `--since`) e `scripts/upstream-digest.test.ts` (repo de fixture com os dois upstreams); seção Digest semanal de `UPSTREAM.md`; tarefa agendada do app Claude Code que posta o digest no Linear
 
 ## Modificações
 

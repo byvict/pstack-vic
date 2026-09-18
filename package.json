@@ -14,6 +14,7 @@
     "agents:generate": "node scripts/generate-agents.ts",
     "agents:check": "node scripts/generate-agents.ts --check",
     "collision:check": "bash tests/skill-collision-repro.sh",
+    "upstream:digest": "node scripts/upstream-digest.ts",
     "runner": "node skills/poteto-mode/scripts/runner/pstack-runner",
     "setup-pstack": "node skills/setup-pstack/scripts/setup-pstack.ts"
   }

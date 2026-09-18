@@ -49,9 +49,27 @@ git diff --stat de67e6b40511814171e5e4c8ad7af3b79f07c9ee..open/main
 
 Saída vazia = nada novo. Nos dois casos.
 
+## Digest semanal
+
+`scripts/upstream-digest.ts` automatiza a seção anterior: lê os dois pontos de sync da tabela acima (fonte única), faz `git fetch` dos dois remotes e imprime um digest em markdown com uma linha por commit novo em cada upstream e a coluna de veredito vazia.
+
+```shell
+npm run upstream:digest                      # fetch + digest em markdown
+npm run upstream:digest -- --no-fetch        # só com o que o clone já tem
+npm run upstream:digest -- --json            # mesma coisa em JSON
+npm run upstream:digest -- --since cursor=<sha>   # reabre o intervalo a partir de <sha> (também open=<sha>)
+```
+
+- `cursor`: só commits que tocaram `pstack/`; caminhos aparecem como `pstack/X` → `X`.
+- `open`: todos os commits; `plugins/pstack/X` → `X`, e o que fica fora de `plugins/pstack/` é marcado como "fora do plugin" (CI, scripts de sync, docs do open).
+- Caminhos que a fase 5 tirou do port (`automations/benny/`, `docs/guide/`, `skills/make-bot-ui/`, `README.md`, `.cursor-plugin/`) aparecem como "excluído na fase 5"; um commit que só toca esses já vem com veredito `não aplica`. Arquivo novo no upstream que não existe aqui aparece como "ausente aqui".
+- Intervalo vazio imprime "Sem novidades" e sai com 0; só falha de fetch, de parse da tabela ou de sync point inválido sai com 2.
+
+Uma tarefa agendada do app Claude Code (segunda-feira, 09:00 local; roda com o app aberto e, fechado, dispara na próxima abertura) executa o digest e posta o resultado no projeto pstack-vic do Linear: uma issue por semana com novidades (o veredito por commit é preenchido nela), um comentário de uma linha no projeto quando não há nada. Aplicar é uma sessão normal com PR, a partir da issue.
+
 ## Incorporar uma mudança
 
-1. O digest semanal (fase 8) lista uma linha por commit do intervalo, com veredito vazio: `aplica` / `não aplica` / `adaptar`. A decisão é do Victor, por commit.
+1. O digest semanal lista uma linha por commit do intervalo, com veredito vazio: `aplica` / `não aplica` / `adaptar`. A decisão é do Victor, por commit, registrada na issue do digest.
 2. Aplicar é uma sessão normal com PR. Commits do `cursor` entram por merge do split (`git subtree` ou cherry-pick sobre a linha do split); commits do `open` entram por cópia auditada, arquivo a arquivo, nunca por merge.
 3. O ponto de sync deste arquivo só avança quando todos os commits do intervalo têm veredito. Ao avançar, atualizar a linha de proveniência correspondente em `NOTICE.md`.
 4. Versão da Cursor, versão do open e versão do pstack-vic são independentes. As duas primeiras identificam conteúdo importado; a terceira identifica a distribuição para Claude Code e Codex.

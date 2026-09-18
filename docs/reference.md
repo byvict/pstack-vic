@@ -65,7 +65,7 @@ A versão do pstack-vic é independente das versões dos upstreams ([`UPSTREAM.m
 ├── .agents/plugins/marketplace.json  # marketplace do Codex (fonte local ./)
 ├── hooks/                            # SessionStart do Claude Code: hooks.json, run-hook.cmd (polyglot), session-start, session-start-context.md
 ├── model-matrix.json                 # famílias, efforts, pais, rota por pai, papéis (dado canônico)
-├── scripts/                          # loader/validação da matriz, render dos blocos gerados, gerador de agents, testes (inclui manifests.test.ts)
+├── scripts/                          # loader/validação da matriz, render dos blocos gerados, gerador de agents, digest semanal dos upstreams, testes (inclui manifests.test.ts)
 ├── skills/                           # 54 skills compartilhadas por Claude Code e Codex
 │   ├── poteto-mode/references/       # provider-dispatch.md (rota e papéis), codex-tools.md (mapa de tools), bugbot-triage.md
 │   ├── poteto-mode/scripts/          # runner externo (Node 24), watch-pr, orch, check-plan.mjs, worktree-audit.sh
@@ -79,7 +79,7 @@ A versão do pstack-vic é independente das versões dos upstreams ([`UPSTREAM.m
 ├── LICENSE-cursor-team-kit           # cursor-team-kit (Cursor), MIT
 ├── LICENSE-superpowers               # superpowers (Jesse Vincent), MIT: hooks/run-hook.cmd
 ├── NOTICE.md · UPSTREAM.md · CHANGES.md
-└── package.json                      # versão do plugin; npm test, matrix:check, agents:check, collision:check, setup-pstack
+└── package.json                      # versão do plugin; npm test, matrix:check, agents:check, collision:check, upstream:digest, setup-pstack
 ```
 
 ## Rodar no Codex
@@ -181,10 +181,11 @@ Vinte e três skills de um princípio cada. `poteto-mode` indexa todas inline e 
 ## Verificação
 
 ```shell
-npm test               # matriz, gerador de agents, runner, setup-pstack, referência de skills, manifests e hook, invariantes do pacote
+npm test               # matriz, gerador de agents, runner, setup-pstack, referência de skills, manifests e hook, digest dos upstreams, invariantes do pacote
 npm run matrix:check   # blocos gerados de provider-dispatch.md e setup-pstack em dia
 npm run agents:check   # agents/pstack-*.md em dia com a matriz
 npm run collision:check
+npm run upstream:digest -- --no-fetch   # digest dos dois upstreams desde o ponto de sync (UPSTREAM.md, seção Digest semanal)
 npm run setup-pstack -- --help   # subcomandos do setup: state, plan, probe, attest, write
 claude plugin validate --strict .   # manifest do plugin e do marketplace pelo validador do Claude Code
 ```
