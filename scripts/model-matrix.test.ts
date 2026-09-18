@@ -313,6 +313,35 @@ describe("descriptors", () => {
 });
 
 describe("roles", () => {
+  it("give every role a one-line description and render it in the role table", () => {
+    const table = renderRoleDefaultsMarkdown(matrix);
+    assert.ok(table.includes("| Role | What the lane does |"));
+    for (const role of matrix.roles) {
+      assert.equal(typeof role.description, "string", role.role);
+      assert.ok(role.description.trim().length > 0 && !role.description.includes("\n"), role.role);
+      assert.ok(table.includes(`| \`${role.role}\` | ${role.description} |`), role.role);
+    }
+    assert.equal(
+      roleNamed(matrix, "bug-fix")?.description,
+      "Reproduces a reported defect, finds the root cause, and writes the fix with runtime evidence."
+    );
+  });
+
+  it("reject a role without a one-line description", () => {
+    for (const bad of [undefined, "", "   ", "two\nlines"]) {
+      assert.throws(
+        () =>
+          validateMatrix(
+            withRoles((roles) => {
+              roles[0] = { ...roles[0], description: bad };
+            })
+          ),
+        /description must be one non-empty line/,
+        JSON.stringify(bad)
+      );
+    }
+  });
+
   const parents = Object.keys(matrix.parents);
 
   it("resolve every role default to descriptors or aliases for every parent", () => {

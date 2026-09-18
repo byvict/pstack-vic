@@ -48,6 +48,8 @@ export type RoleDefault = RoleSpec | Readonly<Record<string, RoleSpec>>;
 
 export interface Role {
   readonly role: string;
+  /** One line on what a lane in this role does; /setup-pstack shows it when asking for the role. */
+  readonly description: string;
   readonly default: RoleDefault;
 }
 
@@ -288,6 +290,10 @@ export function validateMatrix(raw: unknown): ModelMatrix {
       fail(`${where}.role must match ${ROLE_LABEL_RE}`);
     }
     const label = entry.role;
+    const description = entry.description;
+    if (typeof description !== "string" || description.trim().length === 0 || description.includes("\n")) {
+      fail(`${label}: description must be one non-empty line`);
+    }
     const value = entry.default;
     if (isRecord(value)) {
       const keys = Object.keys(value).sort();
@@ -298,9 +304,9 @@ export function validateMatrix(raw: unknown): ModelMatrix {
       for (const [parent, spec] of Object.entries(value)) {
         byParent[parent] = checkSpec(spec, `${label}.${parent}`);
       }
-      return { role: label, default: byParent };
+      return { role: label, description, default: byParent };
     }
-    return { role: label, default: checkSpec(value, label) };
+    return { role: label, description, default: checkSpec(value, label) };
   });
   const labels = new Set<string>();
   for (const r of roles) {
@@ -560,13 +566,13 @@ export function renderRoleDefaultsMarkdown(matrix: ModelMatrix): string {
   const lines: string[] = [];
   lines.push(ROLES_BEGIN);
   lines.push("");
-  lines.push(`| Role | ${parents.map(([, p]) => `${p.name} parent`).join(" | ")} |`);
-  lines.push(`|---|${parents.map(() => "---").join("|")}|`);
+  lines.push(`| Role | What the lane does | ${parents.map(([, p]) => `${p.name} parent`).join(" | ")} |`);
+  lines.push(`|---|---|${parents.map(() => "---").join("|")}|`);
   for (const role of matrix.roles) {
     const cells = parents.map(([parent]) =>
       roleDefault(matrix, role.role, parent).map((d) => `\`${d}\``).join(", ")
     );
-    lines.push(`| \`${role.role}\` | ${cells.join(" | ")} |`);
+    lines.push(`| \`${role.role}\` | ${role.description} | ${cells.join(" | ")} |`);
   }
   lines.push("");
   lines.push(

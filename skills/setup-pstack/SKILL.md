@@ -39,13 +39,22 @@ The JSON says whether the parent's sheet exists (`exists`), its path, the normal
 
 The script stops on inconsistent state: an unknown or duplicate role row, a bare host-native slug, a versioned Claude model outside the two migration families, a provider/model pair outside the matrix, or an effort outside the family's Selectable efforts. Show the error verbatim and resolve it with the operator before going on. Do not probe or write while any inconsistency is unresolved.
 
-### 3. Review the efforts per family
+### 3. Ask role by role: model, then effort
 
-Walk the families whose status is `current`, `mixed`, or `unassigned`, in matrix order. Name the model, the efforts in use (each with the rows that use it when `mixed`) or the proposed value, and the Selectable efforts from its matrix row. Ask whether to move every lane of the family to one effort (a bulk rewrite, `--effort <family>=<effort>`) or keep the lanes as they are. Empty input keeps the current lanes or accepts the matrix proposal for an unassigned family. On a first run, state every family's matrix default before asking. On a rerun, state the parsed values without offering to reset customized role lanes. A different effort for one role is a role change (step 4), not a family question. Report `outside-map` families in one line; do not ask their effort unless step 4 moves a role onto them.
+Before the first question, show the whole map in one block: every role with its current lanes (the loaded rows on a rerun, the first-run map below on a first run), the rolling-alias migrations from step 2, and the `outside-map` families in one line. Never offer a reset of a customized sheet to the first-run assignments.
 
-### 4. Ask about role changes
+Then walk the roles in matrix order, one role per `AskUserQuestion` call with two questions in this order. Both questions carry the role's `description` from `model-matrix.json` (the "What the lane does" column of the role table in `provider-dispatch.md`) so the operator knows what the lane does before choosing.
 
-Ask whether to keep the role-to-family assignments (the loaded rows on a rerun, the first-run map below on a first run) or change named roles. Keeping them is the default. Apply only role changes the operator names; never offer a reset of a customized sheet to the first-run assignments. A changed role may use a matrix descriptor, `inherit-parent`, or `auto`. Each lane keeps the effort written in its descriptor, so `bug-fix=codex:gpt-5.6-sol@xhigh` next to `hillclimb: codex:gpt-5.6-sol@high` is a valid map. Role changes apply after any bulk effort from step 3, so a family-wide rewrite plus one named exception fits in one plan. A role change that brings a family into the map carries that family's effort in its descriptor; there is no separate effort question.
+1. **Model.** Options are the current value first, labeled "(keep)", then three more in this order until four options are filled: the role's matrix default for this parent when it differs from the current value, then the remaining families in matrix order, then `inherit-parent` and `auto`. Each family option names its model and its route for this parent (native or external runner). The families and aliases that did not fit are typed under "Other" by family name. For a role whose lane is an alias, the options are the current alias first, then the other alias, then families in matrix order.
+2. **Effort.** Options are the current effort first, labeled "(keep)", then the family's remaining Selectable efforts in matrix order, dropping `low` when it is not current; the dropped one is typed under "Other". Say in the question that the effort is ignored when the model answer is an alias. Empty input keeps the current lanes; on a first run it accepts the matrix proposal.
+
+A panel role (a list) gets one question instead of two: the current lanes as the "(keep)" option, the parent's matrix default panel when it differs, and "Other" for a typed list of descriptors, one per lane, in the order they should run. Explain that one lane runs per entry and that the list length is the fan-out count.
+
+Each lane keeps the effort written in its descriptor, so `bug-fix: codex:gpt-5.6-sol@xhigh` next to `hillclimb: codex:gpt-5.6-sol@high` is a valid map; there is no per-family effort question. A role that brings a family into the map carries that family's effort in its answer. Why and Reflect roles need the parent's live MCP surface, so recommend `inherit-parent` or `auto` for them in the question.
+
+### 4. Collect the changes
+
+Every answer that differs from the current lanes becomes one `--role "<label>=<lane>[, <lane>]"` for step 5. Answers equal to the current lanes produce no flag. When the operator wants to move a whole family to one effort ("all grok to xhigh"), use `--effort <family>=<effort>` once instead of repeating the same answer across roles; it rewrites every lane of that family and the per-role answers apply after it, so a family-wide rewrite plus a named exception fits in one plan.
 
 ### 5. Plan
 
@@ -54,7 +63,7 @@ node scripts/setup-pstack.ts plan --parent <parent> \
   [--effort <family>=<effort>]... [--role "<label>=<lane>[, <lane>]"]...
 ```
 
-The plan is the in-memory render: it starts from the loaded rows (or the first-run map), materializes any missing documented role from the defaults, rewrites every lane of a family named in `--effort` to that effort, then applies the named role changes lane by lane. It refuses an unqualified slug, an unknown role or family, an effort outside the family's row, and a bulk effort for a family outside the map. Changing Grok's effort in bulk updates every Grok lane and moves no role.
+The plan is the in-memory render: it starts from the loaded rows (or the first-run map), materializes any missing documented role from the defaults, rewrites every lane of a family named in `--effort` to that effort, then applies the named role changes lane by lane. It refuses an unqualified slug, an unknown role or family, an effort outside the family's row, and a family-wide `--effort` for a family outside the map. A family-wide `--effort` updates every lane of that family and moves no role.
 
 The output carries `dir` (a fresh run directory holding `plan.json`; pass `--dir` to choose it), the distinct `efforts` per family in the final map, the `rows`, the `sheet` bytes, the `migrations`, and one probe `pair` per distinct family-and-effort in the map (`fable@medium`, `sol@xhigh`) with its route for this parent and, for native pairs, how to probe it. A family used at two efforts gets two pairs.
 
