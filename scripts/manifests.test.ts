@@ -67,6 +67,16 @@ describe("plugin manifests", () => {
     assert.deepEqual(codexEntries[0].source, { source: "local", path: "./" });
   });
 
+  it("documents the Codex install with the current tag in README.md and docs/reference.md", () => {
+    // Fase 9: the 0.1.1 release left `--ref v0.1.0` in README.md; the docs name
+    // the tag by hand, so they must follow the version like the manifests do.
+    for (const rel of ["README.md", "docs/reference.md"]) {
+      const refs = readFileSync(join(PLUGIN_ROOT, rel), "utf8").match(/--ref v\d+\.\d+\.\d+/g) ?? [];
+      assert.ok(refs.length > 0, `${rel} shows the tagged Codex install`);
+      for (const ref of refs) assert.equal(ref, `--ref v${version}`, `${rel} names the current tag`);
+    }
+  });
+
   it("keep the same homepage and repository across the Claude and Codex manifests", () => {
     assert.match(claudePlugin.repository, /^https:\/\/github\.com\/[^/]+\/[^/]+$/);
     assert.equal(claudePlugin.homepage, claudePlugin.repository);

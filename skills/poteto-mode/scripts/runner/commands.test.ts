@@ -119,7 +119,7 @@ describe("invocationCommand", () => {
       "--reasoning-effort",
       "xhigh",
       "--permission-mode",
-      "plan",
+      "bypassPermissions",
       "--sandbox",
       "read-only",
       "--tools",
@@ -144,7 +144,7 @@ describe("invocationCommand", () => {
     );
     arrayContaining(grok.args, [
       "--permission-mode",
-      "acceptEdits",
+      "bypassPermissions",
       "--sandbox",
       "workspace",
       "--tools",
@@ -171,12 +171,12 @@ describe("invocationCommand", () => {
       PATH: "/usr/bin",
       CODEX_SANDBOX: "seatbelt",
     });
-    arrayContaining(nested.args, ["--sandbox", "none", "--permission-mode", "plan"]);
+    arrayContaining(nested.args, ["--sandbox", "none", "--permission-mode", "bypassPermissions"]);
     const writer = invocationCommand(
       options({ provider: "grok", model: "grok-4.6", mode: "isolated-write" }),
       { CODEX_SANDBOX: "seatbelt" }
     );
-    arrayContaining(writer.args, ["--sandbox", "none", "--permission-mode", "acceptEdits"]);
+    arrayContaining(writer.args, ["--sandbox", "none", "--permission-mode", "bypassPermissions"]);
     const codexNested = invocationCommand(options(), { CODEX_SANDBOX: "seatbelt" });
     arrayContaining(codexNested.args, ["--sandbox", "read-only"]);
   });

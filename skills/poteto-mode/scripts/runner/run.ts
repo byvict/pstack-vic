@@ -74,8 +74,18 @@ export interface RunResult {
   readonly receipt: RunnerReceipt;
 }
 
-function evidence(value: string): string {
-  return value.trim().slice(0, ERROR_EVIDENCE_LIMIT);
+// A provider stream opens with a multi-kilobyte init event and ends with the
+// result event that says why the lane failed, so a head-only window kept the
+// tool list and dropped the error (measured 2026-09-18, Grok lane). Keep the
+// head for preflight-style failures and the tail for the terminal event.
+const EVIDENCE_HEAD = 1_000;
+const EVIDENCE_GAP = "\n[…]\n";
+
+export function evidence(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length <= ERROR_EVIDENCE_LIMIT) return trimmed;
+  const tailLength = ERROR_EVIDENCE_LIMIT - EVIDENCE_HEAD - EVIDENCE_GAP.length;
+  return `${trimmed.slice(0, EVIDENCE_HEAD)}${EVIDENCE_GAP}${trimmed.slice(-tailLength)}`;
 }
 
 function removeIfExists(path: string): void {

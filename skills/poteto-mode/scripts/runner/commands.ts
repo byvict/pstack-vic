@@ -89,6 +89,20 @@ function permissionMode(mode: AccessMode): string {
   return mode === "read-only" ? "plan" : "acceptEdits";
 }
 
+// Grok's permission engine prompts for any shell segment its heuristics do not
+// auto-approve, and a headless prompt cancels the whole turn
+// (`permission_cancelled`, measured 2026-09-18 in every mode: `acceptEdits`,
+// `plan` and `dontAsk` alike; the same command was approved in a scratch repo
+// and prompted inside the Clinext checkout, so the trigger is repo-dependent).
+// Grok's own docs send unattended automation to always-approve, and its
+// "request-level floor" only yields to that mode. A lane cannot answer a
+// prompt, so the runner never relies on one: always-approve, and confinement
+// comes from the sandbox (`read-only` / `workspace`, or the outer Codex
+// seatbelt when Grok runs on `none`) plus the tool list.
+function grokPermissionMode(): string {
+  return "bypassPermissions";
+}
+
 function effortOverride(effort: Effort): string {
   return `model_reasoning_effort=${JSON.stringify(effort)}`;
 }
@@ -163,7 +177,7 @@ export function invocationCommand(
           "--reasoning-effort",
           options.effort,
           "--permission-mode",
-          permissionMode(options.mode),
+          grokPermissionMode(),
           "--sandbox",
           grokSandbox(options.mode, insideCodexSandbox(env)),
           "--tools",

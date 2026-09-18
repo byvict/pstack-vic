@@ -22,7 +22,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { childEnvironment, findExecutable, runLane } from "./run.ts";
+import { childEnvironment, evidence, findExecutable, runLane } from "./run.ts";
 import { main } from "./cli.ts";
 import type { Provider, RunnerOptions, RunnerReceipt } from "./types.ts";
 import { matchObject } from "./match-object.test-helper.ts";
@@ -862,6 +862,19 @@ describe("runLane", () => {
 
     const unknownProvider = { ...options("grok", "unknown-provider"), provider: "gemini" };
     await assert.rejects(runLane(unknownProvider), /provider gemini is not in model-matrix.json/);
+  });
+});
+
+describe("evidence", () => {
+  it("keeps short output whole and, past the limit, the head plus the tail", () => {
+    assert.equal(evidence("  short  "), "short");
+    const init = `{"type":"system","subtype":"init","tools":[${'"x",'.repeat(2_000)}"y"]}`;
+    const result = '{"type":"result","subtype":"error","is_error":true,"outcome":"permission_cancelled"}';
+    const kept = evidence(`${init}\n${result}`);
+    assert.ok(kept.length <= 4_000);
+    assert.ok(kept.startsWith(init.slice(0, 1_000)));
+    assert.ok(kept.endsWith(result));
+    assert.ok(kept.includes("[…]"));
   });
 });
 
