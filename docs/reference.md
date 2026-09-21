@@ -103,7 +103,7 @@ Nada é declarado em manifest. O que as skills usam:
 
 - **Node 24** — runner externo, scripts da matriz, `check-plan.mjs` e a suíte de testes rodam TypeScript direto, sem build e sem Bun.
 - **CLIs `claude`, `codex` e `grok`** — autenticados, só os que o sheet de modelos usa. O runner recusa provider igual ao do pai (essa lane é nativa).
-- **`CURSOR_API_KEY`** — só para o provider `cursor` (lanes http na API de cloud agents da Cursor; famílias `cursor-grok` e `composer`). Sem a variável a lane cai como dropout `unavailable-cli` (exit 69). Lanes http exigem `--repo` e `--pr`; veja a seção *HTTP lanes* de `provider-dispatch.md`.
+- **`CURSOR_API_KEY`** — só para o provider `cursor` (lanes http na API de cloud agents da Cursor; famílias da tabela gerada em `provider-dispatch.md`). Sem a variável a lane cai como dropout `unavailable-cli` (exit 69). Lanes http exigem `--repo` e `--pr`; veja a seção *HTTP lanes* de `provider-dispatch.md`.
 - **`gh`** — forge padrão dos playbooks de PR e da skill `babysit`; `origin` é usado quando resolve o repositório; `gt` só no playbook Orchestrate.
 - **`bun`** — só para `watch-pr` e `orch`, que vieram da Cursor como estão.
 - **`jq` e `rg`** — só para `worktree-audit.sh` (playbook Worktree cleanup); sem eles o audit avisa e deixa colunas em branco.
@@ -118,6 +118,17 @@ npm run setup-pstack -- probe --dir <dir> --repo <owner/name> --pr <number>
 ```
 
 O provider Cursor requer `CURSOR_API_KEY` e acesso de leitura ao remoto Git. O recibo registra `remote.heads` como `not-taken`, `unverified` com motivo ou `observed` com `changedBranches`. A comparação observa branches adicionadas, movidas ou removidas durante a execução. Ela não identifica quem fez essas alterações. Uma lane read-only falha se houver alteração observada ou se a comparação não puder ser concluída. A seção [HTTP lanes](../skills/poteto-mode/references/provider-dispatch.md#http-lanes) define o contrato completo do recibo.
+
+## Converge
+
+O [playbook Converge](../skills/poteto-mode/playbooks/converge.md) conduz um PR pronto até o merge, com veredito independente. Babysit continua até merge-ready e Shipping cuida das stacks. O [contrato Converge](../skills/poteto-mode/references/converge-contract.md) define evidências, prompts, publicação e recuperação.
+
+```shell
+node skills/poteto-mode/scripts/converge/converge-reconcile --repo Clinextapp/clinext --pr <n> --config .cursor/converge.json --output <relatorio-unico.json>
+node skills/poteto-mode/scripts/converge/converge-arm --repo Clinextapp/clinext --pr <n> --head <sha-completo> --verdict VERIFIED --dry-run
+```
+
+Os comandos usam Node 24, `gh` e `git`, sem checkout local do repositório alvo. O reconciliador lê o contrato fixado no trunk e preserva uma identidade nova por execução. O dry-run faz as leituras reais e falha quando falta algum requisito. `prepare-lane.ts` prepara prompts completos e manifests exclusivos; `publish.ts` admite recibos e bytes de artefatos antes de calcular o veredito. Veja os argumentos e formatos no contrato. O modo `verdict-only` publica status de erro mesmo quando a prova passa, sem autorização de merge.
 
 ## Skills
 

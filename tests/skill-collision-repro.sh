@@ -219,6 +219,7 @@ else
 fi
 
 forge_neutral_files=(
+  "$repo/skills/poteto-mode/playbooks/converge.md"
   "$repo/skills/poteto-mode/playbooks/shipping.md"
   "$repo/skills/poteto-mode/playbooks/babysit.md"
   "$repo/skills/poteto-mode/playbooks/autopilot-full.md"
