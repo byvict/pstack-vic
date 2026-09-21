@@ -1,15 +1,7 @@
-// Copied from open-pstack 1.4.1 (de67e6b) runner/run.test.ts. Changes:
-// bun:test replaced by node:test and node:assert/strict; the fake CLIs are Node
-// ESM scripts writing through fs.writeSync (pipes are asynchronous on macOS);
-// the runner under test is spawned with node:child_process instead of
-// Bun.spawn; the SIGINT preflight case runs the shipped launcher in place
-// because the runner now reads model-matrix.json relative to its own path and
-// cannot be copied to a scratch directory. Added: matrix-driven validation
-// cases (unknown pair, unselectable effort, Astra lane).
-
-import { afterEach, beforeEach, describe, it } from "node:test";
+import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { createServer } from "node:http";
 import {
   chmodSync,
   existsSync,
@@ -23,13 +15,31 @@ import {
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { childEnvironment, evidence, findExecutable, runLane } from "./run.ts";
+import { CURSOR_ENV } from "./http-lane.ts";
 import { main } from "./cli.ts";
-import type { Provider, RunnerOptions, RunnerReceipt } from "./types.ts";
+import { MATRIX, type Provider, type RunnerOptions, type RunnerReceipt } from "./types.ts";
 import { matchObject } from "./match-object.test-helper.ts";
 
 let scratch = "";
 let bin = "";
 let previousPath: string | undefined;
+
+// The http lane snapshots the remote heads around the cloud run. One empty
+// bare repo stands in for github.com across every http case here.
+let bareRepo = "";
+
+before(() => {
+  bareRepo = mkdtempSync(join(tmpdir(), "pstack-runner-test-remote-"));
+  execFileSync("git", ["init", "--quiet", "--bare", bareRepo], { stdio: ["ignore", "pipe", "pipe"] });
+});
+
+after(() => {
+  rmSync(bareRepo, { recursive: true, force: true });
+});
+
+const CLI_PROVIDERS: readonly string[] = Object.entries(MATRIX.providers)
+  .filter(([, spec]) => spec.transport === "cli")
+  .map(([name]) => name);
 
 const fake = `#!/usr/bin/env node
 import { appendFileSync, existsSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
@@ -170,6 +180,17 @@ function options(provider: Provider, suffix: string = provider): RunnerOptions {
     outputPath: join(scratch, `${suffix}.out`),
     receiptPath: join(scratch, `${suffix}.receipt.json`),
     timeoutMs: null,
+    target: null,
+  };
+}
+
+function httpOptions(suffix: string): RunnerOptions {
+  return {
+    ...options("cursor", suffix),
+    parent: "claude",
+    model: "composer-2.5",
+    effort: "high",
+    target: { owner: "acme", name: "app", pullNumber: 7 },
   };
 }
 
@@ -193,7 +214,67 @@ function runnerArgs(input: RunnerOptions): string[] {
   if (input.timeoutMs !== null) {
     args.push("--timeout", String(input.timeoutMs / 1_000));
   }
+  if (input.target !== null) {
+    args.push(
+      "--repo", `${input.target.owner}/${input.target.name}`,
+      "--pr", String(input.target.pullNumber)
+    );
+  }
   return args;
+}
+
+interface FakeCursor {
+  readonly env: NodeJS.ProcessEnv;
+  readonly requests: readonly string[];
+  close(): Promise<void>;
+}
+
+async function fakeCursor(finished: boolean): Promise<FakeCursor> {
+  const requests: string[] = [];
+  const runPath = "/v1/agents/bc_1/runs/run_1";
+  const server = createServer((request, response) => {
+    request.resume();
+    request.on("end", () => {
+      const route = `${request.method} ${request.url}`;
+      requests.push(route);
+      const answer = (body: unknown): void => {
+        response.writeHead(200, { "content-type": "application/json", connection: "close" });
+        response.end(JSON.stringify(body));
+      };
+      if (route === "GET /v1/models") {
+        answer({ items: [{ id: "composer-2.5", parameters: [{ id: "fast", values: [] }] }] });
+      } else if (route === "POST /v1/agents") {
+        answer({ agent: { id: "bc_1", url: "https://cursor.com/agents/bc_1" }, run: { id: "run_1" } });
+      } else if (route === `GET ${runPath}`) {
+        answer(finished
+          ? { id: "run_1", status: "FINISHED", result: "pong", git: { branches: [{ repoUrl: "x" }] } }
+          : { id: "run_1", status: "RUNNING" });
+      } else if (route === `POST ${runPath}/cancel`) {
+        answer({ id: "run_1" });
+      } else {
+        response.writeHead(404, { connection: "close" });
+        response.end();
+      }
+    });
+  });
+  server.unref();
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("fake did not bind a port");
+  return {
+    env: {
+      [CURSOR_ENV.apiKey]: "test-key",
+      [CURSOR_ENV.baseUrl]: `http://127.0.0.1:${address.port}`,
+      [CURSOR_ENV.pollIntervalMs]: "5",
+      [CURSOR_ENV.gitRemote]: bareRepo,
+    },
+    requests,
+    close: () =>
+      new Promise((resolve) => {
+        server.closeAllConnections();
+        server.close(() => resolve());
+      }),
+  };
 }
 
 function sleep(ms: number): Promise<void> {
@@ -318,7 +399,7 @@ beforeEach(() => {
   mkdirSync(bin);
   writeFileSync(join(bin, "package.json"), '{"type":"module"}\n');
   writeFileSync(join(scratch, "prompt.md"), "Return the marker.");
-  for (const name of ["claude", "codex", "grok"]) makeExecutable(name);
+  for (const name of CLI_PROVIDERS) makeExecutable(name);
   previousPath = process.env.PATH;
   process.env.PATH = `${bin}:${dirname(process.execPath)}:${previousPath ?? ""}`;
   clearFakeEnv();
@@ -331,7 +412,11 @@ afterEach(() => {
 });
 
 describe("runLane", () => {
-  for (const provider of ["claude", "codex", "grok"]) {
+  it("drives every matrix cli provider through the fake binaries", () => {
+    assert.deepEqual(CLI_PROVIDERS, ["claude", "codex", "grok"]);
+  });
+
+  for (const provider of CLI_PROVIDERS) {
     it(`executes and receipts the ${provider} external lane`, async () => {
       const input = options(provider);
       const result = await runLane(input);
@@ -346,6 +431,7 @@ describe("runLane", () => {
         modelVerified: provider !== "codex",
         modelEvidence: provider === "codex" ? "pinned-argv" : "provider-report",
         preflight: { status: "passed" },
+        remote: null,
       });
       if (provider === "claude") {
         assert.equal(receipt(input.receiptPath).reportedModel, "claude-fable-9-9");
@@ -831,6 +917,76 @@ describe("runLane", () => {
     assert.equal((await runLane(retry)).exitCode, 0);
     assert.equal(receipt(retry.receiptPath).status, "complete");
   });
+
+  it("runs the http provider through the launcher without a binary and refuses a reused receipt path before any request", async () => {
+    const fake = await fakeCursor(true);
+    try {
+      const input = httpOptions("cursor-complete");
+      const runner = startRunner(input, fake.env);
+      assert.equal(await exitWithin(runner, 5_000), 0);
+      assert.equal(readFileSync(input.outputPath, "utf8"), "pong");
+      matchObject(receipt(input.receiptPath), {
+        status: "complete",
+        provider: "cursor",
+        executable: null,
+        exitCode: null,
+        signal: null,
+        modelEvidence: "pinned-argv",
+        argv: ["POST", "/v1/agents", "composer-2.5", "high"],
+        remote: { agentId: "bc_1", runId: "run_1", pushedBranches: [] },
+      });
+      assert.deepEqual(fake.requests, [
+        "GET /v1/models",
+        "POST /v1/agents",
+        "GET /v1/agents/bc_1/runs/run_1",
+      ]);
+
+      const seen = fake.requests.length;
+      const samePaths = startRunner(input, fake.env);
+      assert.equal(await finish(samePaths), 64);
+      assert.equal(fake.requests.length, seen);
+      assert.equal(receipt(input.receiptPath).status, "complete");
+    } finally {
+      await fake.close();
+    }
+  });
+
+  for (const signal of ["SIGINT", "SIGTERM"] as const) {
+    it(`cancels an http lane on ${signal}, sends one cancel request, and receipts cancelled`, async () => {
+      const fake = await fakeCursor(false);
+      try {
+        const input = httpOptions(`cursor-${signal}`);
+        const runner = startRunner(input, fake.env);
+        for (let attempt = 0; attempt < 300; attempt += 1) {
+          if (fake.requests.includes("GET /v1/agents/bc_1/runs/run_1")) break;
+          await sleep(10);
+        }
+        assert.ok(fake.requests.includes("GET /v1/agents/bc_1/runs/run_1"), "the lane never polled");
+        runner.child.kill(signal);
+
+        assert.equal(await exitWithin(runner, 3_000), 130);
+        assert.equal(existsSync(input.outputPath), false);
+        matchObject(receipt(input.receiptPath), {
+          status: "cancelled",
+          signal: null,
+          exitCode: null,
+          preflight: { status: "passed" },
+          argv: ["POST", "/v1/agents", "composer-2.5", "high", "POST", "/v1/agents/bc_1/runs/run_1/cancel"],
+          remote: { agentId: "bc_1", runId: "run_1" },
+          error: {
+            message: `launcher received ${signal} while polling the cloud agent; cancel requested`,
+            evidence: "cancel acknowledged",
+          },
+        });
+        assert.equal(
+          fake.requests.filter((route) => route === "POST /v1/agents/bc_1/runs/run_1/cancel").length,
+          1
+        );
+      } finally {
+        await fake.close();
+      }
+    });
+  }
 
   it("rejects same-provider recursion", async () => {
     const input = { ...options("claude"), parent: "claude" };

@@ -1,9 +1,3 @@
-// Copied from open-pstack 1.4.1 (de67e6b) runner/parse-output.test.ts;
-// bun:test replaced by node:test and node:assert/strict. Model verification now
-// follows each family's reportedModel pattern in model-matrix.json, so the
-// Grok case asserts the matrix pattern (which admits the `-build` suffix the
-// real CLI reports) instead of a prefix rule.
-
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { parseProviderOutput, reportedModelMatches } from "./parse-output.ts";
@@ -147,6 +141,13 @@ describe("parseProviderOutput", () => {
     assert.equal(reportedModelMatches("codex", "gpt-6-astra", "gpt-6-astra"), false);
     assert.equal(reportedModelMatches("claude", "sonnet", "claude-sonnet-9"), false);
     assert.equal(reportedModelMatches("claude", "fable", null), false);
+  });
+
+  it("refuses to parse an http provider as CLI output", () => {
+    assert.throws(
+      () => parseProviderOutput("cursor", "{}", "", "composer-2.5"),
+      /provider cursor uses the http transport; it has no CLI output to parse/
+    );
   });
 
   it("rejects malformed or textless responses", () => {

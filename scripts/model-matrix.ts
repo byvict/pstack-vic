@@ -24,12 +24,26 @@ export interface ParentSpec {
 
 export type Transport = "cli" | "http";
 
-export interface ProviderSpec {
-  /** Binary the runner spawns; null when the transport is http. */
-  readonly cli: string | null;
-  readonly transport: Transport;
+export interface CliProviderSpec {
+  /** Binary the runner spawns. */
+  readonly cli: string;
+  readonly transport: "cli";
   readonly nativeIn: string | null;
 }
+
+export interface HttpProviderSpec {
+  /** No binary: the lane is the API client in skills/poteto-mode/scripts/runner/http-lane.ts. */
+  readonly cli: null;
+  readonly transport: "http";
+  readonly nativeIn: string | null;
+}
+
+/**
+ * The union is the rule: `{ cli: null, transport: "cli" }` and
+ * `{ cli: "agent", transport: "http" }` are compile errors, not only validator
+ * findings. validateMatrix picks an arm.
+ */
+export type ProviderSpec = CliProviderSpec | HttpProviderSpec;
 
 export interface Family {
   readonly family: string;
@@ -153,17 +167,19 @@ export function validateMatrix(raw: unknown): ModelMatrix {
       fail(`providers.${name}.transport must be "cli" or "http"`);
     }
     const cli = nullableString(spec.cli, `providers.${name}.cli`);
-    if (transport === "cli" && (cli === null || cli.length === 0)) {
-      fail(`providers.${name}.cli must be a non-empty string when transport is cli`);
-    }
-    if (transport === "http" && cli !== null) {
-      fail(`providers.${name}.cli must be null when transport is http`);
-    }
     const nativeIn = nullableString(spec.nativeIn, `providers.${name}.nativeIn`);
     if (nativeIn !== null && !(nativeIn in parents)) {
       fail(`providers.${name}.nativeIn names unknown parent ${nativeIn}`);
     }
-    providers[name] = { cli, transport, nativeIn };
+    if (transport === "http") {
+      if (cli !== null) fail(`providers.${name}.cli must be null when transport is http`);
+      providers[name] = { cli: null, transport, nativeIn };
+    } else {
+      if (cli === null || cli.length === 0) {
+        fail(`providers.${name}.cli must be a non-empty string when transport is cli`);
+      }
+      providers[name] = { cli, transport, nativeIn };
+    }
   }
   for (const parent of parentNames) {
     const owners = providerNames.filter((p) => providers[p].nativeIn === parent);
@@ -445,8 +461,6 @@ export function declaredAgentNames(matrix: ModelMatrix): string[] {
   return names;
 }
 
-// --- Roles --------------------------------------------------------------
-
 export function roleNamed(matrix: ModelMatrix, label: string): Role | null {
   return matrix.roles.find((r) => r.role === label) ?? null;
 }
@@ -512,8 +526,6 @@ export function reportedModelMatches(f: Family, reported: string): boolean {
   if (f.reportedModel === null) return false;
   return new RegExp(f.reportedModel).test(reported);
 }
-
-// --- Rendering -----------------------------------------------------------
 
 export const MATRIX_BEGIN = "<!-- model-matrix:begin -->";
 export const MATRIX_END = "<!-- model-matrix:end -->";

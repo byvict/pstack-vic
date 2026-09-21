@@ -1,13 +1,9 @@
-// Copied from open-pstack 1.4.1 (de67e6b) runner/parse-output.ts. Change from
-// the original: reportedModelMatches consults the family's `reportedModel`
-// pattern in model-matrix.json (via scripts/model-matrix.ts) instead of the
-// hard-coded rolling-alias rules of model-aliases.ts, and the parser is chosen
-// by the CLI the matrix assigns to the provider.
-
 import { reportedModelMatches as familyReportMatches } from "../../../../scripts/model-matrix.ts";
 import {
   cliFor,
   familyOf,
+  transportFor,
+  UsageError,
   type NormalizedUsage,
   type ParsedOutput,
   type Provider,
@@ -168,6 +164,11 @@ export function parseProviderOutput(
   stderr: string,
   requestedModel: string
 ): ParsedOutput {
+  if (transportFor(provider) === "http") {
+    throw new UsageError(
+      `provider ${provider} uses the http transport; it has no CLI output to parse`
+    );
+  }
   switch (cliFor(provider)) {
     case "claude":
       return parseClaude(stdout, requestedModel);

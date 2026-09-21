@@ -1,11 +1,6 @@
-// Copied from open-pstack 1.4.1 (de67e6b) runner/commands.ts. Change from the
-// original: the command binary and the flag shape are keyed by the CLI that
-// model-matrix.json assigns to the provider (`providers.<name>.cli`), so an
-// unknown provider fails loudly instead of falling through a switch. Every
-// Codex family (sol, astra) shares the same argv; only `--model` differs.
-
 import {
   cliFor,
+  transportFor,
   UsageError,
   type AccessMode,
   type Effort,
@@ -20,6 +15,11 @@ export interface CommandSpec {
 }
 
 function requireCli(provider: Provider): string {
+  if (transportFor(provider) === "http") {
+    throw new UsageError(
+      `provider ${provider} uses the http transport; its lane is built in http-lane.ts, not as a CLI command`
+    );
+  }
   const cli = cliFor(provider);
   if (cli === null) {
     throw new UsageError(`provider ${provider} has no CLI in model-matrix.json`);

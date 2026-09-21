@@ -103,7 +103,7 @@ The launcher lives at `skills/poteto-mode/scripts/runner/pstack-runner` under th
 ```text
 pstack-runner \
   --parent <claude|codex> \
-  --provider <claude|codex|grok> \
+  --provider <claude|codex|cursor|grok> \
   --model <real CLI model> \
   --effort <low|medium|high|xhigh|max> \
   --mode <read-only|isolated-write> \
@@ -111,12 +111,29 @@ pstack-runner \
   --cwd <repository or dedicated worktree> \
   --output <unique final-response file> \
   --receipt <unique receipt file> \
-  [--timeout <seconds>]
+  [--timeout <seconds>] \
+  [--repo <owner/name> --pr <number>]
 ```
 
 Pass arguments as an argv array or quote every path. Never interpolate prompt text into a shell command. The launcher preflights the assigned CLI and authentication, invokes the model exactly once, disables recursive agents and ambient skill dispatch where the CLI supports it, restricts the built-in tool surface, and records the exact provider/model/effort flags. External lanes do not receive the parent's MCP surface. Keep MCP-dependent Why and Reflect roles on `inherit-parent` or `auto`. The launcher never falls back.
 
 Grok authentication preflight has one bounded retry. If the first `grok models` result would be classified as unauthenticated, the runner waits five seconds and tries the same preflight once more. A second failure is terminal. The delay and second attempt share the runner's absolute deadline and cancellation latch, and the receipt keeps evidence from both attempts. Model execution is never retried.
+
+## HTTP lanes
+
+A provider whose matrix row says `transport: "http"` has no CLI binary. Today that is `cursor`, the Cursor cloud agents API, with the families `cursor-grok` (`grok-4.6`) and `composer` (`composer-2.5`). The launcher reaches it from `skills/poteto-mode/scripts/runner/http-lane.ts` and shares everything else with a CLI lane: the exclusive output and receipt reservation, the one absolute deadline, the SIGINT and SIGTERM latch, receipt writing, and `modelProof`.
+
+An http lane needs `--repo <owner/name>` and `--pr <number>`, the GitHub pull request the cloud agent works on. A CLI lane refuses both flags. `CURSOR_API_KEY` must be in the launcher's environment. Without it the lane exits 69 with an `unavailable-cli` receipt whose message is `CURSOR_API_KEY is not set`, the same dropout shape as a missing binary.
+
+The lane runs in this order. Preflight is `GET /v1/models` with Basic auth from the key. A 401 or 403 is `unauthenticated`. A model id absent from the inventory is `unavailable-model`, with the inventory ids in the error evidence. The effort goes into the launch request only when the model lists an `effort` parameter (`grok-4.6` does, `composer-2.5` does not, measured 2026-09-21); the `fast` parameter is never sent. Launch is `POST /v1/agents` with the prompt file's text, `workOnCurrentBranch: true`, and `autoCreatePR: false`. Poll is `GET /v1/agents/{id}/runs/{runId}` every 30 seconds until `FINISHED`, `ERROR`, `CANCELLED`, or `EXPIRED`. `FINISHED` writes the run's `result` to `--output`. `ERROR` and `EXPIRED` are `child-failed`. A `CANCELLED` the launcher did not request is `child-failed` too, because a `cancelled` receipt promises that this launcher received a signal or reached its deadline.
+
+When the deadline or the latch fires after launch, the launcher sends `POST /v1/agents/{id}/runs/{runId}/cancel` once and writes a `cancelled` receipt. Before launch, a deadline is `timed-out` and a signal is `cancelled`, as on a CLI lane.
+
+The receipt keeps `schemaVersion: 1`. On an http lane `executable`, `exitCode`, and `signal` are null, `preflight.argv` is `["GET", "/v1/models"]`, and `argv` starts with `["POST", "/v1/agents", "<model id>", "<effort>"]`; a cancel request is appended after those four. `remote` carries `agentId`, `runId`, `agentUrl`, and `pushedBranches`. On a CLI lane `remote` is null. The Cursor API reports no served model, so a complete http receipt has `reportedModel: null` and `modelEvidence: "pinned-argv"`, like Codex.
+
+Read-only mode is enforced after the fact. The prompt carries the read-only clause, and the launcher snapshots the repository's remote heads with `git ls-remote --heads` before launch and again after a `FINISHED` run. A head that is new or moved between the two snapshots is a pushed branch. A read-only lane with one is `child-failed` with the message `read-only lane pushed <branch>`, and a read-only lane whose snapshot fails is `child-failed` with `could not verify pushed branches`. The run body's `git.branches[]` names the branch the agent worked on, not a push (measured 2026-09-21), so the launcher does not read it. The pushed branches stay in `remote.pushedBranches` in both modes.
+
+Three environment variables exist for tests: `PSTACK_CURSOR_BASE_URL` points the client at a fake server and is honored only when the host is loopback, and `PSTACK_CURSOR_POLL_MS` and `PSTACK_CURSOR_GIT_REMOTE` shorten the poll interval and redirect the `ls-remote` snapshots only alongside an accepted override. A non-loopback override is ignored.
 
 The parent tool sandbox still governs whether a subscribed child CLI can reach its credentials and network. Run setup's live probe from the actual parent profile. A blocked external CLI is a loud dropout, not a reason to elevate permissions or substitute a model silently.
 
@@ -141,7 +158,7 @@ Success requires all of these:
 
 1. Exit status `0`.
 2. Receipt status `complete`.
-3. Either `modelVerified: true` with `modelEvidence: "provider-report"`, or a Codex receipt with `reportedModel: null`, `modelVerified: false`, and `modelEvidence: "pinned-argv"`. For Claude's `fable` and `opus` aliases, the concrete provider report must match the family's `reportedModel` pattern. Codex 0.154.0 accepts the exact `--model` argument but does not report the served model in its `--json` stream (measured 2026-09-17 with `gpt-6-astra`).
+3. Either `modelVerified: true` with `modelEvidence: "provider-report"`, or a Codex or Cursor receipt with `reportedModel: null`, `modelVerified: false`, and `modelEvidence: "pinned-argv"`. For Claude's `fable` and `opus` aliases, the concrete provider report must match the family's `reportedModel` pattern. Codex 0.154.0 accepts the exact `--model` argument but does not report the served model in its `--json` stream (measured 2026-09-17 with `gpt-6-astra`). The Cursor cloud agents API reports no served model either (measured 2026-09-21), so its families pin by argv the same way.
 4. A non-empty output file.
 
 The receipt also carries elapsed time, token usage when the CLI exposes it, and cost when available. Keep it with the arena or review artifacts so parent-harness comparisons are evidence-based.
