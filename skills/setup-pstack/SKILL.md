@@ -142,6 +142,11 @@ arena cross-judge pool: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@x
 swarm workers: grok:grok-4.6@xhigh
 architect runners: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:opus@xhigh
 interrogate reviewers: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:opus@xhigh
+pr verifier: cursor:composer-2.5@high
+pr reviewer: cursor:grok-4.6@high
+pr fixer, simple: cursor:composer-2.5@high
+pr fixer, complex: cursor:grok-4.6@xhigh
+pr diagnosis pool: cursor:muse-spark-1.3@high, cursor:glm-5.2@high, cursor:gemini-3.1-pro@high, cursor:kimi-k3@high
 ```
 
 Codex parent:
@@ -168,6 +173,11 @@ arena cross-judge pool: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@x
 swarm workers: grok:grok-4.6@xhigh
 architect runners: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:opus@xhigh
 interrogate reviewers: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:opus@xhigh
+pr verifier: cursor:composer-2.5@high
+pr reviewer: cursor:grok-4.6@high
+pr fixer, simple: cursor:composer-2.5@high
+pr fixer, complex: cursor:grok-4.6@xhigh
+pr diagnosis pool: cursor:muse-spark-1.3@high, cursor:glm-5.2@high, cursor:gemini-3.1-pro@high, cursor:kimi-k3@high
 ```
 
 <!-- role-sheet:end -->

@@ -16,6 +16,21 @@ import {
 
 const matrix = loadMatrix();
 
+const CLI_ONLY_ROLES: Record<string, string[]> = {
+  "pr verifier": ["inherit-parent"],
+  "pr reviewer": ["inherit-parent"],
+  "pr fixer, simple": ["inherit-parent"],
+  "pr fixer, complex": ["inherit-parent"],
+  "pr diagnosis pool": ["inherit-parent"],
+};
+
+function cliOnlyRoleFlags(): string[] {
+  return Object.entries(CLI_ONLY_ROLES).flatMap(([role, lanes]) => [
+    "--role",
+    `${role}=${lanes.join(", ")}`,
+  ]);
+}
+
 let home = "";
 
 beforeEach(() => {
@@ -40,6 +55,20 @@ function firstRunSheet(parent: string): string {
     "Provider-qualified per-role choices. Read the installed pstack provider-dispatch reference before dispatching a configured role. Every documented role remains present. `inherit-parent` and `auto` use the parent model natively and still count as one panel lane.",
     "",
     renderRoleSheet(matrix, parent),
+    "",
+  ].join("\n");
+}
+
+function oldSeventeenSheet(parent: string): string {
+  const lines = renderRoleSheet(matrix, parent).split("\n").slice(0, 17);
+  assert.equal(lines.length, 17);
+  assert.ok(lines[16].startsWith("interrogate reviewers:"));
+  return [
+    "# pstack model configuration",
+    "",
+    "Provider-qualified per-role choices. Read the installed pstack provider-dispatch reference before dispatching a configured role. Every documented role remains present. `inherit-parent` and `auto` use the parent model natively and still count as one panel lane.",
+    "",
+    lines.join("\n"),
     "",
   ].join("\n");
 }
@@ -161,7 +190,18 @@ describe("buildPlan", () => {
     const plan = buildPlan({ parent: "claude", home, matrix });
     assert.equal(plan.sheet, firstRunSheet("claude"));
     assert.equal(plan.schemaVersion, 2);
-    assert.deepEqual(plan.efforts, { fable: ["max"], opus: ["xhigh"], astra: ["max"], grok: ["xhigh"] });
+    assert.deepEqual(plan.efforts, {
+      fable: ["max"],
+      opus: ["xhigh"],
+      astra: ["max"],
+      grok: ["xhigh"],
+      "cursor-grok": ["high", "xhigh"],
+      composer: ["high"],
+      kimi: ["high"],
+      glm: ["high"],
+      "gemini-pro": ["high"],
+      muse: ["high"],
+    });
     assert.deepEqual(
       plan.pairs.map((p) => [p.family, p.pair, p.descriptor, p.route]),
       [
@@ -169,6 +209,13 @@ describe("buildPlan", () => {
         ["opus", "opus@xhigh", "claude:opus@xhigh", "native"],
         ["astra", "astra@max", "codex:gpt-6-astra@max", "runner"],
         ["grok", "grok@xhigh", "grok:grok-4.6@xhigh", "runner"],
+        ["cursor-grok", "cursor-grok@high", "cursor:grok-4.6@high", "runner"],
+        ["cursor-grok", "cursor-grok@xhigh", "cursor:grok-4.6@xhigh", "runner"],
+        ["composer", "composer@high", "cursor:composer-2.5@high", "runner"],
+        ["kimi", "kimi@high", "cursor:kimi-k3@high", "runner"],
+        ["glm", "glm@high", "cursor:glm-5.2@high", "runner"],
+        ["gemini-pro", "gemini-pro@high", "cursor:gemini-3.1-pro@high", "runner"],
+        ["muse", "muse@high", "cursor:muse-spark-1.3@high", "runner"],
       ]
     );
     const fable = plan.pairs.find((p) => p.pair === "fable@max");
@@ -226,7 +273,11 @@ describe("buildPlan", () => {
       parent: "claude",
       home,
       matrix,
-      roles: { "swarm workers": ["codex:gpt-5.6-sol@high"], "why synthesizer": ["auto"] },
+      roles: {
+        ...CLI_ONLY_ROLES,
+        "swarm workers": ["codex:gpt-5.6-sol@high"],
+        "why synthesizer": ["auto"],
+      },
     });
     assert.deepEqual(lanesOf(plan, "swarm workers"), ["codex:gpt-5.6-sol@high"]);
     assert.deepEqual(lanesOf(plan, "why synthesizer"), ["auto"]);
@@ -312,6 +363,36 @@ describe("buildPlan", () => {
     assert.deepEqual(lanesOf(plan, "bug-fix"), ["grok:grok-4.6@xhigh"]);
     assert.equal(plan.rows.length, matrix.roles.length);
     assert.deepEqual(plan.rows.map((r) => r.role), matrix.roles.map((r) => r.role));
+  });
+
+  it("keeps an old 17-role sheet's saved rows in state and materializes the five PR-phase defaults only in the plan", () => {
+    putSheet("claude", oldSeventeenSheet("claude"));
+    const state = loadState({ parent: "claude", home, matrix });
+    assert.equal(state.exists, true);
+    assert.equal(state.rows.length, 17);
+    assert.deepEqual(
+      state.rows.map((r) => r.role),
+      matrix.roles.slice(0, 17).map((r) => r.role)
+    );
+    const plan = buildPlan({ parent: "claude", home, matrix });
+    assert.equal(plan.rows.length, 22);
+    assert.deepEqual(lanesOf(plan, "bug-fix"), ["grok:grok-4.6@xhigh"]);
+    assert.deepEqual(lanesOf(plan, "interrogate reviewers"), [
+      "claude:fable@max",
+      "codex:gpt-6-astra@max",
+      "grok:grok-4.6@xhigh",
+      "claude:opus@xhigh",
+    ]);
+    assert.deepEqual(lanesOf(plan, "pr verifier"), ["cursor:composer-2.5@high"]);
+    assert.deepEqual(lanesOf(plan, "pr reviewer"), ["cursor:grok-4.6@high"]);
+    assert.deepEqual(lanesOf(plan, "pr fixer, simple"), ["cursor:composer-2.5@high"]);
+    assert.deepEqual(lanesOf(plan, "pr fixer, complex"), ["cursor:grok-4.6@xhigh"]);
+    assert.deepEqual(lanesOf(plan, "pr diagnosis pool"), [
+      "cursor:muse-spark-1.3@high",
+      "cursor:glm-5.2@high",
+      "cursor:gemini-3.1-pro@high",
+      "cursor:kimi-k3@high",
+    ]);
   });
 
   it("carries the rolling-alias migrations into the plan and rewrites them in the sheet", () => {
@@ -412,7 +493,13 @@ function fakeEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
 
 /** Plan, run the external probes with the fake CLIs, and attest every native pair. */
 async function planAndProbe(parent: string, input: { efforts?: Record<string, string>; roles?: Record<string, string[]> } = {}) {
-  const plan = buildPlan({ parent, home, matrix, ...input });
+  const plan = buildPlan({
+    parent,
+    home,
+    matrix,
+    ...input,
+    roles: { ...CLI_ONLY_ROLES, ...input.roles },
+  });
   rmSync(runDir, { recursive: true, force: true });
   savePlan(runDir, plan);
   const summary = await runProbes(plan, { dir: runDir, env: fakeEnv() });
@@ -425,7 +512,7 @@ async function planAndProbe(parent: string, input: { efforts?: Record<string, st
 
 describe("runProbes", () => {
   it("runs one external lane per runner pair, passes when the marker comes back, and lists the native pairs as pending", async () => {
-    const plan = buildPlan({ parent: "claude", home, matrix });
+    const plan = buildPlan({ parent: "claude", home, matrix, roles: CLI_ONLY_ROLES });
     savePlan(runDir, plan);
     const summary = await runProbes(plan, { dir: runDir, env: fakeEnv() });
     assert.equal(summary.externalOk, true);
@@ -463,6 +550,7 @@ describe("runProbes", () => {
       home,
       matrix,
       roles: {
+        ...CLI_ONLY_ROLES,
         "bug-fix": ["codex:gpt-5.6-sol@xhigh"],
         hillclimb: ["codex:gpt-5.6-sol@high"],
       },
@@ -498,7 +586,7 @@ describe("runProbes", () => {
   });
 
   it("marks a lane failed when its CLI is unauthenticated and keeps the other results", async () => {
-    const plan = buildPlan({ parent: "claude", home, matrix });
+    const plan = buildPlan({ parent: "claude", home, matrix, roles: CLI_ONLY_ROLES });
     savePlan(runDir, plan);
     const summary = await runProbes(plan, { dir: runDir, env: fakeEnv({ FAKE_GROK_UNAUTH: "1" }) });
     assert.equal(summary.externalOk, false);
@@ -509,7 +597,7 @@ describe("runProbes", () => {
   });
 
   it("fails a lane whose receipt is complete but whose output lacks the marker", async () => {
-    const plan = buildPlan({ parent: "codex", home, matrix });
+    const plan = buildPlan({ parent: "codex", home, matrix, roles: CLI_ONLY_ROLES });
     savePlan(runDir, plan);
     const summary = await runProbes(plan, { dir: runDir, env: fakeEnv({ FAKE_DROP_MARKER: "1" }) });
     assert.equal(summary.externalOk, false);
@@ -554,7 +642,7 @@ describe("attestNative", () => {
       parent: "claude",
       home,
       matrix,
-      roles: { "hardest tasks": ["claude:fable@medium"] },
+      roles: { ...CLI_ONLY_ROLES, "hardest tasks": ["claude:fable@medium"] },
     });
     savePlan(runDir, plan);
     const fable = plan.pairs.filter((p) => p.family === "fable");
@@ -585,7 +673,7 @@ describe("attestNative", () => {
 
 describe("writeSheet", () => {
   it("refuses to write while any pair lacks a passing probe and creates nothing", async () => {
-    const plan = buildPlan({ parent: "claude", home, matrix });
+    const plan = buildPlan({ parent: "claude", home, matrix, roles: CLI_ONLY_ROLES });
     savePlan(runDir, plan);
     assert.throws(() => writeSheet(plan, runDir, { home }), (error: unknown) => error instanceof SetupError && /probe/.test((error as Error).message));
     assert.equal(existsSync(join(home, ".claude")), false);
@@ -772,7 +860,7 @@ describe("command line", () => {
   });
 
   it("probe runs the external lanes and exits 1 when one fails", () => {
-    cli(["plan", "--parent", "claude", "--home", home, "--dir", runDir]);
+    cli(["plan", "--parent", "claude", "--home", home, "--dir", runDir, ...cliOnlyRoleFlags()]);
     const ok = cli(["probe", "--dir", runDir], fakeEnv());
     assert.equal(ok.code, 0, ok.stderr);
     const summary = JSON.parse(ok.stdout);
@@ -780,14 +868,14 @@ describe("command line", () => {
     assert.equal(summary.native.length, 2);
 
     rmSync(runDir, { recursive: true, force: true });
-    cli(["plan", "--parent", "claude", "--home", home, "--dir", runDir]);
+    cli(["plan", "--parent", "claude", "--home", home, "--dir", runDir, ...cliOnlyRoleFlags()]);
     const failed = cli(["probe", "--dir", runDir], fakeEnv({ FAKE_GROK_UNAUTH: "1" }));
     assert.equal(failed.code, 1);
     assert.equal(JSON.parse(failed.stdout).externalOk, false);
   });
 
   it("attest records a native probe and write commits only when every probe passed", () => {
-    cli(["plan", "--parent", "claude", "--home", home, "--dir", runDir]);
+    cli(["plan", "--parent", "claude", "--home", home, "--dir", runDir, ...cliOnlyRoleFlags()]);
     assert.equal(cli(["probe", "--dir", runDir], fakeEnv()).code, 0);
     const plan = JSON.parse(readFileSync(join(runDir, "plan.json"), "utf8")) as Plan;
 
@@ -975,7 +1063,7 @@ function mixedPlan(): Plan {
     parent: "claude",
     home,
     matrix,
-    roles: { "bug-fix": ["cursor:grok-4.6@high"] },
+    roles: { ...CLI_ONLY_ROLES, "bug-fix": ["cursor:grok-4.6@high"] },
   });
 }
 
@@ -1040,8 +1128,17 @@ describe("probe target", () => {
     assert.deepEqual(readdirSync(runDir), ["plan.json"]);
   });
 
-  it("rejects a target on a cli-only plan with exit 64 and names the rule", async () => {
+  it("requires --repo and --pr on a first-run plan because the PR-phase defaults include cursor pairs", () => {
     const plan = buildPlan({ parent: "claude", home, matrix });
+    savePlan(runDir, plan);
+    const missing = cli(["probe", "--dir", runDir], fakeEnv());
+    assert.equal(missing.code, 64, missing.stderr);
+    assert.match(missing.stderr, /--repo and --pr are required for cursor \(http transport\)/);
+    assert.deepEqual(readdirSync(runDir), ["plan.json"]);
+  });
+
+  it("rejects a target on a cli-only plan with exit 64 and names the rule", async () => {
+    const plan = buildPlan({ parent: "claude", home, matrix, roles: CLI_ONLY_ROLES });
     savePlan(runDir, plan);
     const result = cli(["probe", "--dir", runDir, "--repo", "acme/app", "--pr", "7"], fakeEnv());
     assert.equal(result.code, 64, result.stderr);

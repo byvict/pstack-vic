@@ -305,6 +305,34 @@ describe("descriptors", () => {
     assert.throws(() => resolveDescriptor(matrix, "codex:gpt-6-astra@ultra"), /does not select effort ultra/);
   });
 
+  it("resolves the four Cursor PR-phase families and rejects unselectable efforts", () => {
+    const cases: Array<[string, string, readonly string[], string]> = [
+      ["kimi", "kimi-k3", ["low", "high"], "max"],
+      ["glm", "glm-5.2", ["high"], "low"],
+      ["gemini-pro", "gemini-3.1-pro", ["high"], "low"],
+      ["muse", "muse-spark-1.3", ["low", "high", "xhigh"], "medium"],
+    ];
+    assert.deepEqual(
+      matrix.families.map((f) => f.family).slice(-4),
+      ["kimi", "glm", "gemini-pro", "muse"]
+    );
+    for (const [family, model, efforts, bad] of cases) {
+      const resolved = resolveDescriptor(matrix, `cursor:${model}@high`);
+      assert.equal(resolved.family.family, family);
+      assert.equal(resolved.family.provider, "cursor");
+      assert.equal(resolved.family.model, model);
+      assert.deepEqual([...resolved.family.efforts], [...efforts]);
+      assert.equal(resolved.family.defaultEffort, "high");
+      assert.equal(resolved.family.agentStem, null);
+      assert.equal(resolved.family.cursorSlug, null);
+      assert.equal(resolved.family.reportedModel, null);
+      assert.throws(
+        () => resolveDescriptor(matrix, `cursor:${model}@${bad}`),
+        /does not select effort/
+      );
+    }
+  });
+
   it("map Cursor 0.15.2 selectors back to a family and effort", () => {
     const cases: Array<[string, string, string]> = [
       ["claude-fable-5-1-thinking-max", "fable", "max"],
@@ -406,6 +434,83 @@ describe("roles", () => {
         assert.deepEqual([...providers].sort(), ["claude", "codex", "grok"], `${label}: every provider present`);
       }
     }
+  });
+
+  it("pins 22 roles, keeps the original 17 and four mixed panels, and adds the five PR-phase defaults", () => {
+    assert.deepEqual(
+      matrix.roles.map((r) => r.role),
+      [
+        "feature, refactoring",
+        "bug-fix",
+        "perf-issue",
+        "hillclimb",
+        "judgment and prose",
+        "hardest tasks",
+        "how explorer",
+        "how explainer",
+        "why investigators",
+        "why synthesizer",
+        "reflect tooling",
+        "reflect judgment, divergent, synthesizer",
+        "arena runners",
+        "arena cross-judge pool",
+        "swarm workers",
+        "architect runners",
+        "interrogate reviewers",
+        "pr verifier",
+        "pr reviewer",
+        "pr fixer, simple",
+        "pr fixer, complex",
+        "pr diagnosis pool",
+      ]
+    );
+    assert.equal(matrix.roles.length, 22);
+    const mixedPanel = [
+      "claude:fable@max",
+      "codex:gpt-6-astra@max",
+      "grok:grok-4.6@xhigh",
+      "claude:opus@xhigh",
+    ];
+    const diagnosis = [
+      "cursor:muse-spark-1.3@high",
+      "cursor:glm-5.2@high",
+      "cursor:gemini-3.1-pro@high",
+      "cursor:kimi-k3@high",
+    ];
+    for (const parent of parents) {
+      for (const label of ["arena runners", "arena cross-judge pool", "architect runners", "interrogate reviewers"]) {
+        assert.deepEqual(roleDefault(matrix, label, parent), mixedPanel, `${label}/${parent}`);
+      }
+      assert.deepEqual(roleDefault(matrix, "pr verifier", parent), ["cursor:composer-2.5@high"]);
+      assert.deepEqual(roleDefault(matrix, "pr reviewer", parent), ["cursor:grok-4.6@high"]);
+      assert.deepEqual(roleDefault(matrix, "pr fixer, simple", parent), ["cursor:composer-2.5@high"]);
+      assert.deepEqual(roleDefault(matrix, "pr fixer, complex", parent), ["cursor:grok-4.6@xhigh"]);
+      assert.deepEqual(roleDefault(matrix, "pr diagnosis pool", parent), diagnosis);
+      const lanes = roleDefault(matrix, "pr diagnosis pool", parent);
+      const providers = new Set(lanes.map((l) => parseDescriptor(l)?.provider));
+      assert.equal(lanes.length, 4, `pr diagnosis pool/${parent}: four lanes`);
+      assert.deepEqual([...providers], ["cursor"], `pr diagnosis pool/${parent}: cursor only`);
+    }
+    assert.equal(
+      roleNamed(matrix, "pr verifier")?.description,
+      "Runs the gates and the live lane of a ready PR and reconciles evidence against claims; never writes code."
+    );
+    assert.equal(
+      roleNamed(matrix, "pr reviewer")?.description,
+      "Reads the base-to-head diff of a PR that touches an irreversible or contained class and reports regressions with a failure scenario and file and line."
+    );
+    assert.equal(
+      roleNamed(matrix, "pr fixer, simple")?.description,
+      "Repairs one named cause of a single file, a lint or type failure, or a confirmed finding with a concrete disproof, in the PR branch."
+    );
+    assert.equal(
+      roleNamed(matrix, "pr fixer, complex")?.description,
+      "Repairs a cross-file or behavior-changing cause in the PR branch; the second and last attempt."
+    );
+    assert.equal(
+      roleNamed(matrix, "pr diagnosis pool")?.description,
+      "Read-only diagnosers that each name the root cause of a failed fix with evidence; two that agree decide."
+    );
   });
 
   it("reject a role default naming an unknown family, an unselectable effort, or a foreign parent", () => {

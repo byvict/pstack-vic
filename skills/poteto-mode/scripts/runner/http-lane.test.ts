@@ -21,6 +21,7 @@ interface FakeModel {
 
 interface FakeScript {
   readonly models?: readonly FakeModel[];
+  readonly rawModels?: readonly unknown[];
   /** Status code the preflight answers with instead of the inventory. */
   readonly modelsStatus?: number;
   readonly runs?: readonly RunStatus[];
@@ -57,11 +58,38 @@ const INVENTORY: readonly FakeModel[] = [
   { id: "grok-4.6", variants: GROK_VARIANTS, defaultVariant: "effort=high fast=true" },
 ];
 
+const MUSE_MODEL: FakeModel = {
+  id: "muse-spark-1.3",
+  variants: [
+    "context=300k effort=high",
+    "context=1m effort=low",
+    "context=1m effort=high",
+    "context=1m effort=xhigh",
+  ],
+  defaultVariant: "context=1m effort=high",
+};
+const KIMI_MODEL: FakeModel = {
+  id: "kimi-k3",
+  variants: ["reasoning=low", "reasoning=high", "reasoning=max"],
+  defaultVariant: "reasoning=max",
+};
+const GLM_MODEL: FakeModel = {
+  id: "glm-5.2",
+  variants: ["reasoning=high", "reasoning=max"],
+  defaultVariant: "reasoning=high",
+};
+const GEMINI_MODEL: FakeModel = {
+  id: "gemini-3.1-pro",
+  variants: [""],
+  defaultVariant: "",
+};
+
 const REPO_URL = "https://github.com/acme/app";
 const RUN_PATH = "/v1/agents/bc_1/runs/run_1";
 const BASIC_AUTH = `Basic ${Buffer.from("test-key:").toString("base64")}`;
 
 function parseParams(variant: string): { id: string; value: string }[] {
+  if (variant.length === 0) return [];
   return variant.split(" ").map((pair) => {
     const [id, value] = pair.split("=");
     return { id: id ?? "", value: value ?? "" };
@@ -90,6 +118,26 @@ function modelItem(model: FakeModel): unknown {
     displayName: model.id,
     ...(parameters.length > 0 ? { parameters } : {}),
     variants,
+  };
+}
+
+interface InventoryVariant {
+  readonly line: string;
+  readonly isDefault?: unknown;
+}
+
+function inventoryItem(
+  id: string,
+  parameterIds: readonly string[],
+  variants: readonly InventoryVariant[]
+): unknown {
+  return {
+    id,
+    parameters: parameterIds.map((parameterId) => ({ id: parameterId })),
+    variants: variants.map((variant) => ({
+      params: parseParams(variant.line),
+      ...(variant.isDefault === undefined ? {} : { isDefault: variant.isDefault }),
+    })),
   };
 }
 
@@ -122,7 +170,7 @@ async function fakeCursor(script: FakeScript = {}): Promise<FakeCursor> {
         if (script.modelsStatus !== undefined) {
           answer(script.modelsStatus, { error: "refused" });
         } else {
-          answer(200, { items: (script.models ?? INVENTORY).map(modelItem) });
+          answer(200, { items: script.rawModels ?? (script.models ?? INVENTORY).map(modelItem) });
         }
       } else if (method === "POST" && path === "/v1/agents") {
         answer(200, {
@@ -358,6 +406,66 @@ async function runHttpLane(fake: FakeCursor, overrides: LaneOverrides = {}): Pro
   return { exitCode: result.exitCode, receipt, outputPath };
 }
 
+interface SuccessfulSelection {
+  readonly model: string;
+  readonly effort: string;
+  readonly inventory: readonly FakeModel[];
+  readonly params: readonly { readonly id: string; readonly value: string }[];
+  readonly evidence: string;
+  readonly suffix: string;
+}
+
+async function assertSuccessfulSelection(expected: SuccessfulSelection): Promise<void> {
+  const fake = await fakeCursor({ models: expected.inventory, result: "selector ok" });
+  const result = await runHttpLane(fake, {
+    model: expected.model,
+    effort: expected.effort,
+    suffix: expected.suffix,
+  });
+  assert.equal(result.exitCode, 0);
+  assert.equal(readFileSync(result.outputPath, "utf8"), "selector ok");
+  matchObject(result.receipt, {
+    status: "complete",
+    model: expected.model,
+    effort: expected.effort,
+    reportedModel: null,
+    modelVerified: false,
+    modelEvidence: "pinned-argv",
+    preflight: { status: "passed", evidence: expected.evidence },
+    remote: { agentId: "bc_1", runId: "run_1", heads: { kind: "observed", changedBranches: [] } },
+  });
+  assert.deepEqual(launchModel(fake), { id: expected.model, params: expected.params });
+  assert.deepEqual(paths(fake), ["GET /v1/models", "POST /v1/agents", `GET ${RUN_PATH}`]);
+}
+
+interface RefusedSelection {
+  readonly script: FakeScript;
+  readonly model: string;
+  readonly effort: string;
+  readonly suffix: string;
+  readonly message: string;
+}
+
+async function assertSelectionRefused(expected: RefusedSelection): Promise<void> {
+  const snapshots = lsRemoteCalls().length;
+  const fake = await fakeCursor(expected.script);
+  const result = await runHttpLane(fake, {
+    model: expected.model,
+    effort: expected.effort,
+    suffix: expected.suffix,
+  });
+  assert.equal(result.exitCode, 69);
+  assert.equal(existsSync(result.outputPath), false);
+  matchObject(result.receipt, {
+    status: "unavailable-model",
+    preflight: { status: "failed" },
+    error: { message: expected.message },
+    remote: { agentId: null, runId: null, heads: { kind: "not-taken" } },
+  });
+  assert.deepEqual(paths(fake), ["GET /v1/models"]);
+  assert.equal(lsRemoteCalls().length, snapshots);
+}
+
 describe("cursor http lane", () => {
   it("completes a FINISHED run with a pinned-argv receipt and the measured launch body", async () => {
     const fake = await fakeCursor({ runs: ["CREATING", "RUNNING", "FINISHED"], result: "pong" });
@@ -384,7 +492,7 @@ describe("cursor http lane", () => {
       preflight: {
         argv: ["GET", "/v1/models"],
         status: "passed",
-        evidence: "authenticated; model composer-2.5 available as fast=false",
+        evidence: "authenticated; model composer-2.5 available; selected params: fast=false; requested effort high is not selectable; this matrix label maps to the provider default",
       },
       argv: ["POST", "/v1/agents", "composer-2.5", "high"],
       remote: { agentId: "bc_1", runId: "run_1", agentUrl: "https://cursor.com/agents/bc_1", heads: { kind: "observed", changedBranches: [] } },
@@ -416,7 +524,9 @@ describe("cursor http lane", () => {
     assert.equal(grokLane.exitCode, 0);
     matchObject(grokLane.receipt, {
       argv: ["POST", "/v1/agents", "grok-4.6", "xhigh"],
-      preflight: { evidence: "authenticated; model grok-4.6 available as effort=xhigh fast=false" },
+      preflight: {
+        evidence: "authenticated; model grok-4.6 available; selected params: effort=xhigh fast=false; requested effort xhigh selects effort=xhigh",
+      },
     });
     assert.deepEqual(launchModel(grok), {
       id: "grok-4.6",
@@ -424,7 +534,12 @@ describe("cursor http lane", () => {
     });
 
     const composer = await fakeCursor();
-    await runHttpLane(composer, { suffix: "composer" });
+    const composerLane = await runHttpLane(composer, { suffix: "composer" });
+    matchObject(composerLane.receipt, {
+      preflight: {
+        evidence: "authenticated; model composer-2.5 available; selected params: fast=false; requested effort high is not selectable; this matrix label maps to the provider default",
+      },
+    });
     assert.deepEqual(launchModel(composer), { id: "composer-2.5", params: [{ id: "fast", value: "false" }] });
 
     for (const fake of [grok, composer]) {
@@ -441,7 +556,7 @@ describe("cursor http lane", () => {
       status: "unavailable-model",
       preflight: { status: "failed" },
       error: {
-        message: "model grok-4.6 has no variant for effort xhigh with fast=false",
+        message: "model grok-4.6 has no exact variant for effort=xhigh",
         evidence: "model grok-4.6 variants:\neffort=low fast=false\neffort=xhigh fast=true",
       },
       remote: { agentId: null, runId: null },
@@ -450,9 +565,303 @@ describe("cursor http lane", () => {
 
     const bare = await fakeCursor({ models: [{ id: "composer-2.5" }] });
     const plain = await runHttpLane(bare, { suffix: "no-variants" });
-    assert.equal(plain.exitCode, 0);
-    matchObject(plain.receipt, { preflight: { evidence: "authenticated; model composer-2.5 available" } });
-    assert.deepEqual(launchModel(bare), { id: "composer-2.5", params: [] });
+    assert.equal(plain.exitCode, 69);
+    assert.equal(existsSync(plain.outputPath), false);
+    matchObject(plain.receipt, {
+      status: "unavailable-model",
+      preflight: { status: "failed" },
+      error: { message: "model composer-2.5 advertises no variants" },
+      remote: { agentId: null, runId: null },
+    });
+    assert.deepEqual(paths(bare), ["GET /v1/models"]);
+  });
+
+  it("selects the advertised variants for every repaired model and effort", async () => {
+    const cases: readonly SuccessfulSelection[] = [
+      {
+        model: "muse-spark-1.3",
+        effort: "low",
+        inventory: [MUSE_MODEL],
+        params: [{ id: "context", value: "1m" }, { id: "effort", value: "low" }],
+        evidence: "authenticated; model muse-spark-1.3 available; selected params: context=1m effort=low; requested effort low selects effort=low",
+        suffix: "muse-low",
+      },
+      {
+        model: "muse-spark-1.3",
+        effort: "high",
+        inventory: [MUSE_MODEL],
+        params: [{ id: "context", value: "1m" }, { id: "effort", value: "high" }],
+        evidence: "authenticated; model muse-spark-1.3 available; selected params: context=1m effort=high; requested effort high selects effort=high",
+        suffix: "muse-high",
+      },
+      {
+        model: "muse-spark-1.3",
+        effort: "xhigh",
+        inventory: [MUSE_MODEL],
+        params: [{ id: "context", value: "1m" }, { id: "effort", value: "xhigh" }],
+        evidence: "authenticated; model muse-spark-1.3 available; selected params: context=1m effort=xhigh; requested effort xhigh selects effort=xhigh",
+        suffix: "muse-xhigh",
+      },
+      {
+        model: "kimi-k3",
+        effort: "low",
+        inventory: [KIMI_MODEL],
+        params: [{ id: "reasoning", value: "low" }],
+        evidence: "authenticated; model kimi-k3 available; selected params: reasoning=low; requested effort low selects reasoning=low",
+        suffix: "kimi-low",
+      },
+      {
+        model: "kimi-k3",
+        effort: "high",
+        inventory: [KIMI_MODEL],
+        params: [{ id: "reasoning", value: "high" }],
+        evidence: "authenticated; model kimi-k3 available; selected params: reasoning=high; requested effort high selects reasoning=high",
+        suffix: "kimi-high",
+      },
+      {
+        model: "glm-5.2",
+        effort: "high",
+        inventory: [GLM_MODEL],
+        params: [{ id: "reasoning", value: "high" }],
+        evidence: "authenticated; model glm-5.2 available; selected params: reasoning=high; requested effort high selects reasoning=high",
+        suffix: "glm-high",
+      },
+      {
+        model: "gemini-3.1-pro",
+        effort: "high",
+        inventory: [GEMINI_MODEL],
+        params: [],
+        evidence: "authenticated; model gemini-3.1-pro available; selected params: []; requested effort high is not selectable; this matrix label maps to the provider default",
+        suffix: "gemini-high",
+      },
+    ];
+
+    for (const expected of cases) await assertSuccessfulSelection(expected);
+  });
+
+  it("uses default metadata instead of variant or parameter order", async () => {
+    await assertSuccessfulSelection({
+      model: "muse-spark-1.3",
+      effort: "low",
+      inventory: [{
+        id: "muse-spark-1.3",
+        variants: [
+          "effort=high context=1m",
+          "effort=low context=300k",
+          "effort=high context=300k",
+        ],
+        defaultVariant: "effort=high context=300k",
+      }],
+      params: [{ id: "effort", value: "low" }, { id: "context", value: "300k" }],
+      evidence: "authenticated; model muse-spark-1.3 available; selected params: effort=low context=300k; requested effort low selects effort=low",
+      suffix: "muse-reordered",
+    });
+  });
+
+  it("keeps controlled-only inventories compatible without a default marker", async () => {
+    await assertSuccessfulSelection({
+      model: "grok-4.6",
+      effort: "xhigh",
+      inventory: [{ id: "grok-4.6", variants: ["effort=low fast=false", "effort=xhigh fast=false"] }],
+      params: [{ id: "effort", value: "xhigh" }, { id: "fast", value: "false" }],
+      evidence: "authenticated; model grok-4.6 available; selected params: effort=xhigh fast=false; requested effort xhigh selects effort=xhigh",
+      suffix: "grok-controlled-only",
+    });
+  });
+
+  it("rejects ambiguous defaults before selecting an advertised variant", async () => {
+    const cases: readonly RefusedSelection[] = [
+      {
+        script: { rawModels: [inventoryItem("composer-2.5", ["fast"], [
+          { line: "fast=false", isDefault: true },
+          { line: "fast=false", isDefault: true },
+        ])] },
+        model: "composer-2.5",
+        effort: "high",
+        suffix: "identical-defaults",
+        message: "model composer-2.5 advertises multiple default variants",
+      },
+      {
+        script: { rawModels: [inventoryItem("grok-4.6", ["effort", "fast"], [
+          { line: "effort=low fast=false", isDefault: true },
+          { line: "effort=high fast=true", isDefault: true },
+          { line: "effort=high fast=false" },
+        ])] },
+        model: "grok-4.6",
+        effort: "high",
+        suffix: "unrelated-default",
+        message: "model grok-4.6 advertises multiple default variants",
+      },
+    ];
+
+    for (const expected of cases) await assertSelectionRefused(expected);
+  });
+
+  it("rejects inventories that cannot supply a unique complete assignment", async () => {
+    const cases: readonly RefusedSelection[] = [
+      {
+        script: { models: [{ id: "muse-spark-1.3", variants: ["context=1m effort=low"] }] },
+        model: "muse-spark-1.3",
+        effort: "low",
+        suffix: "missing-context-default",
+        message: "model muse-spark-1.3 has no default for parameters: context",
+      },
+      {
+        script: { models: [{ id: "gemini-3.1-pro", variants: [""] }] },
+        model: "gemini-3.1-pro",
+        effort: "high",
+        suffix: "gemini-no-default",
+        message: "model gemini-3.1-pro has no declared provider default",
+      },
+      {
+        script: { models: [{
+          id: "kimi-k3",
+          variants: ["reasoning=high", "reasoning=high"],
+        }] },
+        model: "kimi-k3",
+        effort: "high",
+        suffix: "duplicate-match",
+        message: "model kimi-k3 advertises duplicate exact variants",
+      },
+      {
+        script: { models: [{
+          id: "muse-spark-1.3",
+          variants: ["context=1m effort=high", "context=300k effort=low"],
+          defaultVariant: "context=1m effort=high",
+        }] },
+        model: "muse-spark-1.3",
+        effort: "low",
+        suffix: "missing-combination",
+        message: "model muse-spark-1.3 has no exact variant for effort=low",
+      },
+      {
+        script: { rawModels: [inventoryItem("muse-spark-1.3", ["context", "effort"], [
+          { line: "effort=high", isDefault: true },
+          { line: "effort=low" },
+        ])] },
+        model: "muse-spark-1.3",
+        effort: "low",
+        suffix: "default-omits-context",
+        message: "model muse-spark-1.3 default omits parameters: context",
+      },
+      {
+        script: { rawModels: [{ id: "composer-2.5" }] },
+        model: "composer-2.5",
+        effort: "high",
+        suffix: "absent-variants",
+        message: "model composer-2.5 advertises no variants",
+      },
+    ];
+
+    for (const expected of cases) await assertSelectionRefused(expected);
+  });
+
+  it("rejects unsupported and inconsistent control axes", async () => {
+    const cases: readonly RefusedSelection[] = [
+      {
+        script: { models: [{ id: "kimi-k3", variants: [""], defaultVariant: "" }] },
+        model: "kimi-k3",
+        effort: "high",
+        suffix: "kimi-no-axis",
+        message: "model kimi-k3 has no selectable effort parameter for matrix effort high",
+      },
+      {
+        script: { models: [{
+          id: "grok-4.6",
+          variants: ["effort=high reasoning=high fast=false"],
+          defaultVariant: "effort=high reasoning=high fast=false",
+        }] },
+        model: "grok-4.6",
+        effort: "high",
+        suffix: "both-axes",
+        message: "model grok-4.6 advertises both effort and reasoning parameters",
+      },
+      {
+        script: { models: [{ id: "kimi-k3", variants: ["reasoning=max"], defaultVariant: "reasoning=max" }] },
+        model: "kimi-k3",
+        effort: "high",
+        suffix: "reasoning-value-missing",
+        message: "model kimi-k3 has no exact variant for reasoning=high",
+      },
+      {
+        script: { rawModels: [inventoryItem("grok-4.6", ["effort"], [
+          { line: "effort=high fast=false", isDefault: true },
+        ])] },
+        model: "grok-4.6",
+        effort: "high",
+        suffix: "hidden-fast",
+        message: "model grok-4.6 has undeclared control parameters: fast",
+      },
+      {
+        script: { rawModels: [inventoryItem("grok-4.6", ["effort", "fast"], [
+          { line: "effort=high reasoning=high fast=false", isDefault: true },
+        ])] },
+        model: "grok-4.6",
+        effort: "high",
+        suffix: "hidden-reasoning",
+        message: "model grok-4.6 has undeclared control parameters: reasoning",
+      },
+    ];
+
+    for (const expected of cases) await assertSelectionRefused(expected);
+  });
+
+  it("rejects malformed variant data instead of changing the advertised assignment", async () => {
+    const rawModels: readonly unknown[][] = [
+      [{
+        id: "gemini-3.1-pro",
+        variants: [{ params: [{ id: "effort" }], isDefault: true }],
+      }],
+      [inventoryItem("kimi-k3", ["reasoning"], [{ line: "reasoning=low reasoning=high" }])],
+      [inventoryItem("gemini-3.1-pro", [], [{ line: "", isDefault: "yes" }])],
+      [modelItem(GEMINI_MODEL), modelItem(GEMINI_MODEL)],
+    ];
+
+    for (const [index, items] of rawModels.entries()) {
+      const snapshots = lsRemoteCalls().length;
+      const fake = await fakeCursor({ rawModels: items });
+      const result = await runHttpLane(fake, {
+        model: index === 1 ? "kimi-k3" : "gemini-3.1-pro",
+        effort: index === 1 ? "low" : "high",
+        suffix: `malformed-${index}`,
+      });
+      assert.equal(result.exitCode, 69);
+      assert.equal(existsSync(result.outputPath), false);
+      matchObject(result.receipt, {
+        status: "unavailable-cli",
+        preflight: { status: "failed" },
+        error: { message: "model inventory had an unexpected shape" },
+        remote: { agentId: null, runId: null, heads: { kind: "not-taken" } },
+      });
+      assert.deepEqual(paths(fake), ["GET /v1/models"]);
+      assert.equal(lsRemoteCalls().length, snapshots);
+    }
+  });
+
+  it("ignores malformed variant data for an unrelated inventory model", async () => {
+    const fake = await fakeCursor({ rawModels: [
+      {
+        id: "unrelated-model",
+        variants: [{ params: [{ id: "effort" }], isDefault: "yes" }],
+      },
+      modelItem(GEMINI_MODEL),
+    ] });
+    const result = await runHttpLane(fake, {
+      model: "gemini-3.1-pro",
+      effort: "high",
+      suffix: "unrelated-malformed",
+    });
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(readFileSync(result.outputPath, "utf8"), "pong");
+    matchObject(result.receipt, {
+      status: "complete",
+      preflight: {
+        status: "passed",
+        evidence: "authenticated; model gemini-3.1-pro available; selected params: []; requested effort high is not selectable; this matrix label maps to the provider default",
+      },
+    });
+    assert.deepEqual(launchModel(fake), { id: "gemini-3.1-pro", params: [] });
   });
 
   it("reports a missing key as unavailable-cli without sending a request", async () => {
