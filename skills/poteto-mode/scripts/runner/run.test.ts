@@ -242,7 +242,22 @@ async function fakeCursor(finished: boolean): Promise<FakeCursor> {
         response.end(JSON.stringify(body));
       };
       if (route === "GET /v1/models") {
-        answer({ items: [{ id: "composer-2.5", parameters: [{ id: "fast", values: [] }] }] });
+        answer({ items: [{
+          id: "composer-2.5",
+          parameters: [{
+            id: "fast",
+            values: [{ value: "false" }, { value: "true" }],
+          }],
+          variants: [
+            {
+              params: [{ id: "fast", value: "true" }],
+              isDefault: true,
+            },
+            {
+              params: [{ id: "fast", value: "false" }],
+            },
+          ],
+        }] });
       } else if (route === "POST /v1/agents") {
         answer({ agent: { id: "bc_1", url: "https://cursor.com/agents/bc_1" }, run: { id: "run_1" } });
       } else if (route === `GET ${runPath}`) {

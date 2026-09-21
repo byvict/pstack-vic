@@ -1,12 +1,13 @@
 import { spawn } from "node:child_process";
-import type {
-  HttpEvidence,
-  HttpRunnerOptions,
-  Lane,
-  LaneContext,
-  LaneFailure,
-  LaneOutcome,
-  RemoteRun,
+import {
+  familyOf,
+  type HttpEvidence,
+  type HttpRunnerOptions,
+  type Lane,
+  type LaneContext,
+  type LaneFailure,
+  type LaneOutcome,
+  type RemoteRun,
 } from "./types.ts";
 
 export const CURSOR_ENV = {
@@ -163,7 +164,12 @@ interface LaunchParam {
   readonly value: string;
 }
 
-type Variant = readonly LaunchParam[];
+type Params = readonly LaunchParam[];
+
+interface Variant {
+  readonly params: Params;
+  readonly isDefault: boolean;
+}
 
 /**
  * What /v1/models says about a model: the parameter ids it lists and the
@@ -176,40 +182,59 @@ interface ModelEntry {
 
 type ModelInventory = ReadonlyMap<string, ModelEntry>;
 
-function decodeParams(value: unknown): Variant {
-  if (!Array.isArray(value)) return [];
+function decodeParams(value: unknown): Params | null {
+  if (!Array.isArray(value)) return null;
   const params: LaunchParam[] = [];
+  const ids = new Set<string>();
   for (const entry of value as unknown[]) {
-    if (isRecord(entry) && typeof entry.id === "string" && typeof entry.value === "string") {
-      params.push({ id: entry.id, value: entry.value });
-    }
+    if (
+      !isRecord(entry) ||
+      typeof entry.id !== "string" ||
+      entry.id.length === 0 ||
+      typeof entry.value !== "string" ||
+      ids.has(entry.id)
+    ) return null;
+    ids.add(entry.id);
+    params.push({ id: entry.id, value: entry.value });
   }
   return params;
 }
 
-function decodeInventory(body: unknown): ModelInventory | null {
+function decodeInventory(body: unknown, selectedModelId: string): ModelInventory | null {
   if (!isRecord(body) || !Array.isArray(body.items)) return null;
   const models = new Map<string, ModelEntry>();
   for (const item of body.items as unknown[]) {
     if (!isRecord(item) || typeof item.id !== "string") continue;
+    if (models.has(item.id)) {
+      if (item.id === selectedModelId) return null;
+      continue;
+    }
+    if (item.id !== selectedModelId) {
+      models.set(item.id, { parameters: new Set(), variants: [] });
+      continue;
+    }
     const parameters = new Set(
       stringsOf(item.parameters, (entry) => (isRecord(entry) && typeof entry.id === "string" ? entry.id : null))
     );
-    const variants = Array.isArray(item.variants)
-      ? (item.variants as unknown[]).flatMap((variant): Variant[] =>
-        isRecord(variant) ? [decodeParams(variant.params)] : []
-      )
-      : [];
+    if (item.variants !== undefined && !Array.isArray(item.variants)) return null;
+    const variants: Variant[] = [];
+    for (const value of (item.variants ?? []) as unknown[]) {
+      if (!isRecord(value)) return null;
+      if (value.isDefault !== undefined && typeof value.isDefault !== "boolean") return null;
+      const params = decodeParams(value.params);
+      if (params === null) return null;
+      variants.push({ params, isDefault: value.isDefault === true });
+    }
     models.set(item.id, { parameters, variants });
   }
   return models;
 }
 
-function describeParams(params: Variant): string {
+function describeParams(params: Params): string {
   return params.map((param) => `${param.id}=${param.value}`).join(" ");
 }
 
-function sameParams(left: Variant, right: Variant): boolean {
+function sameParams(left: Params, right: Params): boolean {
   return (
     left.length === right.length &&
     left.every((param) => right.some((other) => other.id === param.id && other.value === param.value))
@@ -217,31 +242,152 @@ function sameParams(left: Variant, right: Variant): boolean {
 }
 
 type ModelSelection =
-  | { readonly kind: "ready"; readonly params: Variant }
+  | { readonly kind: "ready"; readonly params: Params; readonly evidence: string }
   | { readonly kind: "missing"; readonly message: string; readonly evidence: string };
 
-function selectModel(models: ModelInventory, modelId: string, effort: string): ModelSelection {
-  const entry = models.get(modelId);
+type SelectionRequest = Pick<HttpRunnerOptions, "provider" | "model" | "effort">;
+
+type EffortBinding =
+  | { readonly kind: "selectable"; readonly id: "effort" | "reasoning" }
+  | { readonly kind: "provider-default" };
+
+const CONTROL_IDS = new Set(["effort", "reasoning", "fast"]);
+
+function describeVariants(entry: ModelEntry): string {
+  return entry.variants
+    .map((variant) => `${describeParams(variant.params) || "[]"}${variant.isDefault ? " [default]" : ""}`)
+    .join("\n");
+}
+
+function unavailable(modelId: string, entry: ModelEntry, message: string): ModelSelection {
+  return {
+    kind: "missing",
+    message,
+    evidence: `model ${modelId} variants:\n${describeVariants(entry) || "(none)"}`,
+  };
+}
+
+function selectModel(models: ModelInventory, request: SelectionRequest): ModelSelection {
+  const entry = models.get(request.model);
   if (entry === undefined) {
     return {
       kind: "missing",
-      message: `model ${modelId} is not in the Cursor inventory`,
+      message: `model ${request.model} is not in the Cursor inventory`,
       evidence: `available models: ${[...models.keys()].join(", ")}`,
     };
   }
-  const wanted: LaunchParam[] = [];
-  if (entry.parameters.has("effort")) wanted.push({ id: "effort", value: effort });
-  if (entry.parameters.has("fast")) wanted.push({ id: "fast", value: "false" });
-  // The launch must quote a listed variant verbatim (measured: a hand-built
-  // params list is refused as invalid_model). A model that publishes no
-  // variant table leaves nothing to quote, so the wanted list goes as is.
-  if (entry.variants.length === 0) return { kind: "ready", params: wanted };
-  const variant = entry.variants.find((candidate) => sameParams(candidate, wanted));
-  if (variant !== undefined) return { kind: "ready", params: variant };
+  if (entry.variants.length === 0) {
+    return unavailable(request.model, entry, `model ${request.model} advertises no variants`);
+  }
+
+  const advertisedIds = new Set(entry.variants.flatMap((variant) => variant.params.map((param) => param.id)));
+  const hiddenControlIds = [...advertisedIds]
+    .filter((id) => CONTROL_IDS.has(id) && !entry.parameters.has(id));
+  if (hiddenControlIds.length > 0) {
+    return unavailable(
+      request.model,
+      entry,
+      `model ${request.model} has undeclared control parameters: ${hiddenControlIds.join(", ")}`
+    );
+  }
+
+  const hasEffort = entry.parameters.has("effort");
+  const hasReasoning = entry.parameters.has("reasoning");
+  if (hasEffort && hasReasoning) {
+    return unavailable(
+      request.model,
+      entry,
+      `model ${request.model} advertises both effort and reasoning parameters`
+    );
+  }
+
+  let effortBinding: EffortBinding;
+  if (hasEffort || hasReasoning) {
+    effortBinding = { kind: "selectable", id: hasEffort ? "effort" : "reasoning" };
+  } else {
+    const family = familyOf(request.provider, request.model);
+    if (
+      family === null ||
+      family.efforts.length !== 1 ||
+      family.efforts[0] !== request.effort
+    ) {
+      return unavailable(
+        request.model,
+        entry,
+        `model ${request.model} has no selectable effort parameter for matrix effort ${request.effort}`
+      );
+    }
+    effortBinding = { kind: "provider-default" };
+  }
+
+  const defaults = entry.variants.filter((variant) => variant.isDefault);
+  if (defaults.length > 1) {
+    return unavailable(request.model, entry, `model ${request.model} advertises multiple default variants`);
+  }
+
+  const controlledIds = new Set<string>();
+  if (effortBinding.kind === "selectable") controlledIds.add(effortBinding.id);
+  if (entry.parameters.has("fast")) controlledIds.add("fast");
+  const allIds = new Set([...entry.parameters, ...advertisedIds]);
+  const uncontrolledIds = [...allIds].filter((id) => !controlledIds.has(id));
+
+  let wanted: LaunchParam[];
+  const defaultVariant = defaults[0];
+  if (defaultVariant === undefined) {
+    if (uncontrolledIds.length > 0) {
+      return unavailable(
+        request.model,
+        entry,
+        `model ${request.model} has no default for parameters: ${uncontrolledIds.join(", ")}`
+      );
+    }
+    if (effortBinding.kind === "provider-default") {
+      return unavailable(request.model, entry, `model ${request.model} has no declared provider default`);
+    }
+    wanted = [];
+  } else {
+    const defaultIds = new Set(defaultVariant.params.map((param) => param.id));
+    const missingDefaultIds = uncontrolledIds.filter((id) => !defaultIds.has(id));
+    if (missingDefaultIds.length > 0) {
+      return unavailable(
+        request.model,
+        entry,
+        `model ${request.model} default omits parameters: ${missingDefaultIds.join(", ")}`
+      );
+    }
+    wanted = defaultVariant.params.map((param) => ({ ...param }));
+  }
+
+  const setWanted = (id: string, value: string): void => {
+    const index = wanted.findIndex((param) => param.id === id);
+    if (index === -1) wanted.push({ id, value });
+    else wanted[index] = { id, value };
+  };
+  if (effortBinding.kind === "selectable") setWanted(effortBinding.id, request.effort);
+  if (entry.parameters.has("fast")) setWanted("fast", "false");
+
+  let selected: Variant | undefined;
+  for (const variant of entry.variants) {
+    if (!sameParams(variant.params, wanted)) continue;
+    if (selected !== undefined) {
+      return unavailable(request.model, entry, `model ${request.model} advertises duplicate exact variants`);
+    }
+    selected = variant;
+  }
+  if (selected === undefined) {
+    const control = effortBinding.kind === "selectable"
+      ? `${effortBinding.id}=${request.effort}`
+      : `provider default for matrix effort ${request.effort}`;
+    return unavailable(request.model, entry, `model ${request.model} has no exact variant for ${control}`);
+  }
+  const params = describeParams(selected.params) || "[]";
+  const effortEvidence = effortBinding.kind === "selectable"
+    ? `requested effort ${request.effort} selects ${effortBinding.id}=${request.effort}`
+    : `requested effort ${request.effort} is not selectable; this matrix label maps to the provider default`;
   return {
-    kind: "missing",
-    message: `model ${modelId} has no variant for effort ${effort} with fast=false`,
-    evidence: `model ${modelId} variants:\n${entry.variants.map(describeParams).join("\n")}`,
+    kind: "ready",
+    params: selected.params,
+    evidence: `authenticated; model ${request.model} available; selected params: ${params}; ${effortEvidence}`,
   };
 }
 
@@ -409,12 +555,12 @@ async function runCursorLane(
       ? failed("unauthenticated", "authentication preflight was refused", inventory.detail)
       : failed("unavailable-cli", "authentication preflight failed", inventory.detail);
   }
-  const models = decodeInventory(inventory.body);
+  const models = decodeInventory(inventory.body, options.model);
   if (models === null) {
     preflightFailed(ev, head(JSON.stringify(inventory.body)));
     return failed("unavailable-cli", "model inventory had an unexpected shape", ev.preflight.evidence);
   }
-  const selection = selectModel(models, options.model, options.effort);
+  const selection = selectModel(models, options);
   if (selection.kind === "missing") {
     preflightFailed(ev, selection.evidence);
     return failed("unavailable-model", selection.message, selection.evidence);
@@ -422,9 +568,7 @@ async function runCursorLane(
   ev.preflight = {
     ...ev.preflight,
     status: "passed",
-    evidence: `authenticated; model ${options.model} available${
-      selection.params.length > 0 ? ` as ${describeParams(selection.params)}` : ""
-    }`,
+    evidence: selection.evidence,
   };
 
   const beforeLaunch = await context.wait(0);
