@@ -19,15 +19,17 @@ The matrix lives in [`model-matrix.json`](../../../model-matrix.json) at the plu
 | sol | codex | `gpt-5.6-sol` | max | low medium high xhigh max | codex | - | `gpt-5.6-sol-{effort}` |
 | astra | codex | `gpt-6-astra` | max | low medium high xhigh max | codex | - | - |
 | grok | grok | `grok-4.6` | xhigh | low medium high xhigh max | - | - | `grok-4.6-fast-{effort}` |
+| cursor-grok | cursor | `grok-4.6` | high | low high xhigh | - | - | - |
+| composer | cursor | `composer-2.5` | high | high | - | - | - |
 
 The allowed effort universe is exactly `low`, `medium`, `high`, `xhigh`, `max`. First-run requested efforts are the Default effort cell of each row. A Claude-native agent stem of `-` means the family has no Claude-native agent. Otherwise the shipped agent name is `pstack-<stem>-<effort>`. Aliases `inherit-parent` and `auto` are not families and carry no effort.
 
 ### Route table
 
-| Parent | `claude:*` | `codex:*` | `grok:*` |
-|---|---|---|---|
-| Claude Code | native `Agent` | external runner | external runner |
-| Codex | external runner | native `spawn_agent` | external runner |
+| Parent | `claude:*` | `codex:*` | `cursor:*` | `grok:*` |
+|---|---|---|---|---|
+| Claude Code | native `Agent` | external runner | external runner | external runner |
+| Codex | external runner | native `spawn_agent` | external runner | external runner |
 
 <!-- model-matrix:end -->
 

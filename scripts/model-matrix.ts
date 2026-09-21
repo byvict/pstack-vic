@@ -22,8 +22,12 @@ export interface ParentSpec {
   readonly nativePrimitive: string;
 }
 
+export type Transport = "cli" | "http";
+
 export interface ProviderSpec {
-  readonly cli: string;
+  /** Binary the runner spawns; null when the transport is http. */
+  readonly cli: string | null;
+  readonly transport: Transport;
   readonly nativeIn: string | null;
 }
 
@@ -144,14 +148,22 @@ export function validateMatrix(raw: unknown): ModelMatrix {
   const providers: Record<string, ProviderSpec> = {};
   for (const [name, spec] of Object.entries(raw.providers)) {
     if (!isRecord(spec)) fail(`providers.${name} must be an object`);
-    if (typeof spec.cli !== "string" || spec.cli.length === 0) {
-      fail(`providers.${name}.cli must be a non-empty string`);
+    const transport = spec.transport ?? "cli";
+    if (transport !== "cli" && transport !== "http") {
+      fail(`providers.${name}.transport must be "cli" or "http"`);
+    }
+    const cli = nullableString(spec.cli, `providers.${name}.cli`);
+    if (transport === "cli" && (cli === null || cli.length === 0)) {
+      fail(`providers.${name}.cli must be a non-empty string when transport is cli`);
+    }
+    if (transport === "http" && cli !== null) {
+      fail(`providers.${name}.cli must be null when transport is http`);
     }
     const nativeIn = nullableString(spec.nativeIn, `providers.${name}.nativeIn`);
     if (nativeIn !== null && !(nativeIn in parents)) {
       fail(`providers.${name}.nativeIn names unknown parent ${nativeIn}`);
     }
-    providers[name] = { cli: spec.cli, nativeIn };
+    providers[name] = { cli, transport, nativeIn };
   }
   for (const parent of parentNames) {
     const owners = providerNames.filter((p) => providers[p].nativeIn === parent);

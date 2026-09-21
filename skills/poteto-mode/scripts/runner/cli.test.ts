@@ -46,7 +46,7 @@ describe("runner CLI parsing", () => {
   it("derives parent, provider, and effort choices from the matrix", () => {
     assert.throws(
       () => parseArgs(argv(["--provider", "gemini"])),
-      /provider must be one of: claude, codex, grok/
+      /provider must be one of: claude, codex, cursor, grok$/
     );
     assert.throws(
       () => parseArgs(argv(["--parent", "cursor"])),

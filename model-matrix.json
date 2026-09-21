@@ -5,6 +5,7 @@
     "A family is one line below. Adding a family = adding one line; the test suite derives everything else from this file.",
     "efforts is the closed universe. Codex also exposes `ultra` (automatic task delegation); it is excluded because a pstack child never delegates.",
     "cursorSlug is the Cursor pstack 0.15.2 selector this family replaces, with {effort} where the effort token goes; null when upstream has no such family.",
+    "transport is how the runner reaches a provider: `cli` (default) spawns providers.<name>.cli; `http` calls the provider's agents API from skills/poteto-mode/scripts/runner/http-lane.ts and needs cli null. The Cursor cloud API reports no served model, so its families pin by argv.",
     "reportedModel is the regex a runner receipt's provider-reported model must match to count as verified; null when the CLI does not report the served model (Codex pins by argv). Grok Build CLI 1.0.5 reports the served model with a build suffix (`grok-4.6-build`, measured 2026-09-17), so the grok pattern accepts one.",
     "roles are the per-role first-run defaults every skill cites by label (the same labels /setup-pstack writes to the model sheet). A value is an alias, `family@effort`, a list of those for a panel, or an object keyed by parent when the default depends on the parent (frontier solo roles use the parent's native frontier family). Skills never spell descriptors; they name the role and point at the rendered role table in provider-dispatch.md. description is the one-line account of what a lane in that role does; /setup-pstack shows it in the question for the role and the role table renders it."
   ],
@@ -17,18 +18,21 @@
   "providers": {
     "claude": { "cli": "claude", "nativeIn": "claude" },
     "codex": { "cli": "codex", "nativeIn": "codex" },
+    "cursor": { "cli": null, "transport": "http", "nativeIn": null },
     "grok": { "cli": "grok", "nativeIn": null }
   },
   "routes": {
-    "claude": { "claude": "native", "codex": "runner", "grok": "runner" },
-    "codex": { "claude": "runner", "codex": "native", "grok": "runner" }
+    "claude": { "claude": "native", "codex": "runner", "cursor": "runner", "grok": "runner" },
+    "codex": { "claude": "runner", "codex": "native", "cursor": "runner", "grok": "runner" }
   },
   "families": [
     { "family": "fable", "provider": "claude", "model": "fable", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "max", "agentStem": "fable", "cursorSlug": "claude-fable-5-1-thinking-{effort}", "reportedModel": "^claude-fable-[0-9]+(-[0-9]+)*$" },
     { "family": "opus", "provider": "claude", "model": "opus", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "xhigh", "agentStem": "opus", "cursorSlug": "claude-opus-5-thinking-{effort}", "reportedModel": "^claude-opus-[0-9]+(-[0-9]+)*$" },
     { "family": "sol", "provider": "codex", "model": "gpt-5.6-sol", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "max", "agentStem": null, "cursorSlug": "gpt-5.6-sol-{effort}", "reportedModel": null },
     { "family": "astra", "provider": "codex", "model": "gpt-6-astra", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "max", "agentStem": null, "cursorSlug": null, "reportedModel": null },
-    { "family": "grok", "provider": "grok", "model": "grok-4.6", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "xhigh", "agentStem": null, "cursorSlug": "grok-4.6-fast-{effort}", "reportedModel": "^grok-4\\.6(-[a-z0-9]+)*$" }
+    { "family": "grok", "provider": "grok", "model": "grok-4.6", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "xhigh", "agentStem": null, "cursorSlug": "grok-4.6-fast-{effort}", "reportedModel": "^grok-4\\.6(-[a-z0-9]+)*$" },
+    { "family": "cursor-grok", "provider": "cursor", "model": "grok-4.6", "efforts": ["low", "high", "xhigh"], "defaultEffort": "high", "agentStem": null, "cursorSlug": null, "reportedModel": null },
+    { "family": "composer", "provider": "cursor", "model": "composer-2.5", "efforts": ["high"], "defaultEffort": "high", "agentStem": null, "cursorSlug": null, "reportedModel": null }
   ],
   "roles": [
     { "role": "feature, refactoring", "description": "Writes the code of a feature or a behavior-preserving refactor in its own worktree; the parent reviews the diff.", "default": "grok@xhigh" },
