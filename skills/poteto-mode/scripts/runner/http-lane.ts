@@ -158,69 +158,91 @@ function stringsOf(value: unknown, pick: (entry: unknown) => string | null): str
   return out;
 }
 
-/**
- * What /v1/models says about a model's effort parameter. A model that lists
- * none takes no effort param in the launch body; one that lists it must list
- * the requested value.
- */
-type EffortParameter =
-  | { readonly effort: "unlisted" }
-  | { readonly effort: "listed"; readonly values: readonly string[] };
+interface LaunchParam {
+  readonly id: string;
+  readonly value: string;
+}
 
-type ModelInventory = ReadonlyMap<string, EffortParameter>;
+type Variant = readonly LaunchParam[];
+
+/**
+ * What /v1/models says about a model: the parameter ids it lists and the
+ * id+value combinations (variants) a launch must match exactly.
+ */
+interface ModelEntry {
+  readonly parameters: ReadonlySet<string>;
+  readonly variants: readonly Variant[];
+}
+
+type ModelInventory = ReadonlyMap<string, ModelEntry>;
+
+function decodeParams(value: unknown): Variant {
+  if (!Array.isArray(value)) return [];
+  const params: LaunchParam[] = [];
+  for (const entry of value as unknown[]) {
+    if (isRecord(entry) && typeof entry.id === "string" && typeof entry.value === "string") {
+      params.push({ id: entry.id, value: entry.value });
+    }
+  }
+  return params;
+}
 
 function decodeInventory(body: unknown): ModelInventory | null {
   if (!isRecord(body) || !Array.isArray(body.items)) return null;
-  const models = new Map<string, EffortParameter>();
+  const models = new Map<string, ModelEntry>();
   for (const item of body.items as unknown[]) {
     if (!isRecord(item) || typeof item.id !== "string") continue;
-    const parameters = Array.isArray(item.parameters) ? (item.parameters as unknown[]) : [];
-    const effort = parameters.find((parameter) => isRecord(parameter) && parameter.id === "effort");
-    models.set(
-      item.id,
-      isRecord(effort)
-        ? {
-          effort: "listed",
-          values: stringsOf(effort.values, (entry) =>
-            isRecord(entry) && typeof entry.value === "string" ? entry.value : null
-          ),
-        }
-        : { effort: "unlisted" }
+    const parameters = new Set(
+      stringsOf(item.parameters, (entry) => (isRecord(entry) && typeof entry.id === "string" ? entry.id : null))
     );
+    const variants = Array.isArray(item.variants)
+      ? (item.variants as unknown[]).flatMap((variant): Variant[] =>
+        isRecord(variant) ? [decodeParams(variant.params)] : []
+      )
+      : [];
+    models.set(item.id, { parameters, variants });
   }
   return models;
 }
 
-interface LaunchParam {
-  readonly id: "effort";
-  readonly value: string;
+function describeParams(params: Variant): string {
+  return params.map((param) => `${param.id}=${param.value}`).join(" ");
+}
+
+function sameParams(left: Variant, right: Variant): boolean {
+  return (
+    left.length === right.length &&
+    left.every((param) => right.some((other) => other.id === param.id && other.value === param.value))
+  );
 }
 
 type ModelSelection =
-  | { readonly kind: "ready"; readonly params: readonly LaunchParam[] }
+  | { readonly kind: "ready"; readonly params: Variant }
   | { readonly kind: "missing"; readonly message: string; readonly evidence: string };
 
 function selectModel(models: ModelInventory, modelId: string, effort: string): ModelSelection {
-  const parameter = models.get(modelId);
-  if (parameter === undefined) {
+  const entry = models.get(modelId);
+  if (entry === undefined) {
     return {
       kind: "missing",
       message: `model ${modelId} is not in the Cursor inventory`,
       evidence: `available models: ${[...models.keys()].join(", ")}`,
     };
   }
-  switch (parameter.effort) {
-    case "unlisted":
-      return { kind: "ready", params: [] };
-    case "listed":
-      return parameter.values.includes(effort)
-        ? { kind: "ready", params: [{ id: "effort", value: effort }] }
-        : {
-          kind: "missing",
-          message: `model ${modelId} does not select effort ${effort}`,
-          evidence: `model ${modelId} lists effort values: ${parameter.values.join(", ")}`,
-        };
-  }
+  const wanted: LaunchParam[] = [];
+  if (entry.parameters.has("effort")) wanted.push({ id: "effort", value: effort });
+  if (entry.parameters.has("fast")) wanted.push({ id: "fast", value: "false" });
+  // The launch must quote a listed variant verbatim (measured: a hand-built
+  // params list is refused as invalid_model). A model that publishes no
+  // variant table leaves nothing to quote, so the wanted list goes as is.
+  if (entry.variants.length === 0) return { kind: "ready", params: wanted };
+  const variant = entry.variants.find((candidate) => sameParams(candidate, wanted));
+  if (variant !== undefined) return { kind: "ready", params: variant };
+  return {
+    kind: "missing",
+    message: `model ${modelId} has no variant for effort ${effort} with fast=false`,
+    evidence: `model ${modelId} variants:\n${entry.variants.map(describeParams).join("\n")}`,
+  };
 }
 
 function decodeLaunch(body: unknown): RemoteRun {
@@ -403,7 +425,7 @@ async function runCursorLane(
     ...ev.preflight,
     status: "passed",
     evidence: `authenticated; model ${options.model} available${
-      selection.params.length > 0 ? ` with effort ${options.effort}` : ""
+      selection.params.length > 0 ? ` as ${describeParams(selection.params)}` : ""
     }`,
   };
 

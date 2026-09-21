@@ -12,9 +12,11 @@ import { matchObject } from "./match-object.test-helper.ts";
 
 type RunStatus = "CREATING" | "RUNNING" | "FINISHED" | "ERROR" | "CANCELLED" | "EXPIRED";
 
+/** Variants as `effort=high fast=true` lines; `defaultVariant` names the one the API flags isDefault. */
 interface FakeModel {
   readonly id: string;
-  readonly efforts?: readonly string[];
+  readonly variants?: readonly string[];
+  readonly defaultVariant?: string;
 }
 
 interface FakeScript {
@@ -43,24 +45,48 @@ interface FakeCursor {
   close(): Promise<void>;
 }
 
+const GROK_VARIANTS = ["low", "medium", "high", "xhigh"].flatMap((effort) =>
+  ["false", "true"].map((fast) => `effort=${effort} fast=${fast}`)
+);
+
 const INVENTORY: readonly FakeModel[] = [
-  { id: "composer-2.5" },
-  { id: "grok-4.6", efforts: ["low", "medium", "high", "xhigh"] },
+  { id: "composer-2.5", variants: ["fast=true", "fast=false"], defaultVariant: "fast=true" },
+  { id: "grok-4.6", variants: GROK_VARIANTS, defaultVariant: "effort=high fast=true" },
 ];
 
 const REPO_URL = "https://github.com/acme/app";
 const RUN_PATH = "/v1/agents/bc_1/runs/run_1";
 const BASIC_AUTH = `Basic ${Buffer.from("test-key:").toString("base64")}`;
 
+function parseParams(variant: string): { id: string; value: string }[] {
+  return variant.split(" ").map((pair) => {
+    const [id, value] = pair.split("=");
+    return { id: id ?? "", value: value ?? "" };
+  });
+}
+
 function modelItem(model: FakeModel): unknown {
-  const effort = model.efforts === undefined
-    ? []
-    : [{ id: "effort", displayName: "Effort", values: model.efforts.map((value) => ({ value })) }];
+  const variants = (model.variants ?? []).map((line) => ({
+    params: parseParams(line),
+    displayName: model.id,
+    ...(line === model.defaultVariant ? { isDefault: true } : {}),
+  }));
+  const values = new Map<string, Set<string>>();
+  for (const variant of variants) {
+    for (const param of variant.params) {
+      values.set(param.id, (values.get(param.id) ?? new Set()).add(param.value));
+    }
+  }
+  const parameters = [...values].map(([id, set]) => ({
+    id,
+    displayName: id,
+    values: [...set].map((value) => ({ value })),
+  }));
   return {
     id: model.id,
     displayName: model.id,
-    parameters: [...effort, { id: "fast", displayName: "Fast", values: [{ value: "true" }, { value: "false" }] }],
-    variants: [],
+    ...(parameters.length > 0 ? { parameters } : {}),
+    variants,
   };
 }
 
@@ -143,6 +169,17 @@ async function fakeCursor(script: FakeScript = {}): Promise<FakeCursor> {
 
 function paths(fake: FakeCursor): string[] {
   return fake.requests.map((request) => `${request.method} ${request.path}`);
+}
+
+interface LaunchModel {
+  readonly id: string;
+  readonly params: readonly { readonly id: string; readonly value: string }[];
+}
+
+function launchModel(fake: FakeCursor): LaunchModel {
+  const launch = fake.requests.find((request) => request.method === "POST" && request.path === "/v1/agents");
+  assert.ok(launch !== undefined, "no launch request recorded");
+  return (launch.body as { model: LaunchModel }).model;
 }
 
 // One bare remote and one work clone serve every case: a lane's baseline is
@@ -298,7 +335,11 @@ describe("cursor http lane", () => {
       usage: null,
       costUsd: null,
       error: null,
-      preflight: { argv: ["GET", "/v1/models"], status: "passed", evidence: "authenticated; model composer-2.5 available" },
+      preflight: {
+        argv: ["GET", "/v1/models"],
+        status: "passed",
+        evidence: "authenticated; model composer-2.5 available as fast=false",
+      },
       argv: ["POST", "/v1/agents", "composer-2.5", "high"],
       remote: { agentId: "bc_1", runId: "run_1", agentUrl: "https://cursor.com/agents/bc_1", pushedBranches: [] },
     });
@@ -318,44 +359,54 @@ describe("cursor http lane", () => {
       repos: [{ url: REPO_URL, prUrl: `${REPO_URL}/pull/7` }],
       workOnCurrentBranch: true,
       autoCreatePR: false,
-      model: { id: "composer-2.5", params: [] },
+      model: { id: "composer-2.5", params: [{ id: "fast", value: "false" }] },
       prompt: { text: "Reply with the single word pong" },
     });
   });
 
-  it("sends effort only when the model lists it and never sends fast", async () => {
+  it("quotes the listed variant with the requested effort and fast off, never fast on", async () => {
     const grok = await fakeCursor();
     const grokLane = await runHttpLane(grok, { model: "grok-4.6", effort: "xhigh", suffix: "grok" });
     assert.equal(grokLane.exitCode, 0);
     matchObject(grokLane.receipt, {
       argv: ["POST", "/v1/agents", "grok-4.6", "xhigh"],
-      preflight: { evidence: "authenticated; model grok-4.6 available with effort xhigh" },
+      preflight: { evidence: "authenticated; model grok-4.6 available as effort=xhigh fast=false" },
     });
-    matchObject(grok.requests[1].body as Record<string, unknown>, {
-      model: { id: "grok-4.6", params: [{ id: "effort", value: "xhigh" }] },
+    assert.deepEqual(launchModel(grok), {
+      id: "grok-4.6",
+      params: [{ id: "effort", value: "xhigh" }, { id: "fast", value: "false" }],
     });
-    assert.ok(!JSON.stringify(grok.requests[1].body).includes("fast"));
 
     const composer = await fakeCursor();
     await runHttpLane(composer, { suffix: "composer" });
-    matchObject(composer.requests[1].body as Record<string, unknown>, {
-      model: { id: "composer-2.5", params: [] },
-    });
-    assert.ok(!JSON.stringify(composer.requests[1].body).includes("fast"));
+    assert.deepEqual(launchModel(composer), { id: "composer-2.5", params: [{ id: "fast", value: "false" }] });
 
-    const narrow = await fakeCursor({ models: [{ id: "grok-4.6", efforts: ["low", "medium"] }] });
-    const refused = await runHttpLane(narrow, { model: "grok-4.6", effort: "xhigh", suffix: "narrow" });
+    for (const fake of [grok, composer]) {
+      const sent = launchModel(fake).params;
+      assert.ok(!sent.some((param) => param.id === "fast" && param.value !== "false"));
+    }
+
+    const fastOnly = await fakeCursor({
+      models: [{ id: "grok-4.6", variants: ["effort=low fast=false", "effort=xhigh fast=true"] }],
+    });
+    const refused = await runHttpLane(fastOnly, { model: "grok-4.6", effort: "xhigh", suffix: "fast-only" });
     assert.equal(refused.exitCode, 69);
     matchObject(refused.receipt, {
       status: "unavailable-model",
       preflight: { status: "failed" },
       error: {
-        message: "model grok-4.6 does not select effort xhigh",
-        evidence: "model grok-4.6 lists effort values: low, medium",
+        message: "model grok-4.6 has no variant for effort xhigh with fast=false",
+        evidence: "model grok-4.6 variants:\neffort=low fast=false\neffort=xhigh fast=true",
       },
       remote: { agentId: null, runId: null },
     });
-    assert.deepEqual(paths(narrow), ["GET /v1/models"]);
+    assert.deepEqual(paths(fastOnly), ["GET /v1/models"]);
+
+    const bare = await fakeCursor({ models: [{ id: "composer-2.5" }] });
+    const plain = await runHttpLane(bare, { suffix: "no-variants" });
+    assert.equal(plain.exitCode, 0);
+    matchObject(plain.receipt, { preflight: { evidence: "authenticated; model composer-2.5 available" } });
+    assert.deepEqual(launchModel(bare), { id: "composer-2.5", params: [] });
   });
 
   it("reports a missing key as unavailable-cli without sending a request", async () => {
@@ -403,7 +454,9 @@ describe("cursor http lane", () => {
   });
 
   it("reports a model absent from the inventory and lists every inventory id", async () => {
-    const fake = await fakeCursor({ models: [{ id: "composer-9" }, { id: "grok-4.6", efforts: ["high"] }] });
+    const fake = await fakeCursor({
+      models: [{ id: "composer-9" }, { id: "grok-4.6", variants: ["effort=high fast=false"] }],
+    });
     const { exitCode, receipt } = await runHttpLane(fake);
     assert.equal(exitCode, 69);
     matchObject(receipt, {
