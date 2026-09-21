@@ -933,7 +933,7 @@ describe("runLane", () => {
         signal: null,
         modelEvidence: "pinned-argv",
         argv: ["POST", "/v1/agents", "composer-2.5", "high"],
-        remote: { agentId: "bc_1", runId: "run_1", pushedBranches: [] },
+        remote: { agentId: "bc_1", runId: "run_1", heads: { kind: "observed", changedBranches: [] } },
       });
       assert.deepEqual(fake.requests, [
         "GET /v1/models",

@@ -36,7 +36,7 @@ export function httpLane(
     kind: "http",
     preflight: { argv: ["GET", "/v1/models"], status: "not-run", evidence: "" },
     argv: ["POST", "/v1/agents", options.model, options.effort],
-    remote: { agentId: null, runId: null, agentUrl: null, pushedBranches: [] },
+    remote: { agentId: null, runId: null, agentUrl: null, heads: { kind: "not-taken" } },
   };
   const endpoint = resolveEndpoint(env);
   return { evidence: ev, run: (context) => runCursorLane(options, endpoint, env, ev, context) };
@@ -252,38 +252,36 @@ function decodeLaunch(body: unknown): RemoteRun {
     agentId: typeof agent.id === "string" ? agent.id : null,
     runId: typeof run.id === "string" ? run.id : null,
     agentUrl: typeof agent.url === "string" ? agent.url : null,
-    pushedBranches: [],
+    heads: { kind: "not-taken" },
   };
 }
 
-type RunState = "pending" | "finished" | "failed" | "cancelled" | "unknown";
+type RunSnapshot =
+  | { readonly state: "pending" | "unknown"; readonly status: string }
+  | { readonly state: "finished"; readonly status: "FINISHED"; readonly text: string | null }
+  | { readonly state: "failed"; readonly status: "ERROR" | "EXPIRED" }
+  | { readonly state: "cancelled"; readonly status: "CANCELLED" };
 
-const RUN_STATES: Readonly<Record<string, RunState>> = {
-  CREATING: "pending",
-  RUNNING: "pending",
-  FINISHED: "finished",
-  ERROR: "failed",
-  EXPIRED: "failed",
-  CANCELLED: "cancelled",
-};
-
-interface RunSnapshot {
-  readonly state: RunState;
-  readonly status: string;
-  readonly text: string | null;
-}
-
-// The run body's git.branches names the branch the agent worked on, which
-// with workOnCurrentBranch is the PR head whether or not anything was pushed
-// (measured 2026-09-21 on a read-only run). Push evidence comes from the
-// remote heads instead; see remoteHeads.
+// git.branches names the working branch even when no push occurred.
 function decodeSnapshot(body: unknown): RunSnapshot | null {
   if (!isRecord(body) || typeof body.status !== "string") return null;
-  return {
-    state: RUN_STATES[body.status] ?? "unknown",
-    status: body.status,
-    text: typeof body.result === "string" && body.result.length > 0 ? body.result : null,
-  };
+  switch (body.status) {
+    case "CREATING":
+    case "RUNNING":
+      return { state: "pending", status: body.status };
+    case "FINISHED":
+      return {
+        state: "finished", status: body.status,
+        text: typeof body.result === "string" && body.result.length > 0 ? body.result : null,
+      };
+    case "ERROR":
+    case "EXPIRED":
+      return { state: "failed", status: body.status };
+    case "CANCELLED":
+      return { state: "cancelled", status: body.status };
+    default:
+      return { state: "unknown", status: body.status };
+  }
 }
 
 /** Branch name to commit SHA, from `git ls-remote --heads`. */
@@ -344,15 +342,15 @@ function remoteHeads(
   });
 }
 
-/** Heads whose SHA is new or changed since `before`, sorted. */
-function pushedBetween(before: RemoteHeads, after: RemoteHeads): readonly string[] {
-  return [...after]
-    .filter(([name, sha]) => before.get(name) !== sha)
-    .map(([name]) => name)
+function changedBetween(before: RemoteHeads, after: RemoteHeads): readonly string[] {
+  return [...new Set([...before.keys(), ...after.keys()])]
+    .filter((name) => before.get(name) !== after.get(name))
     .sort();
 }
 
-function failed(status: LaneFailure, message: string, evidence: string = ""): LaneOutcome {
+type FailedOutcome = Extract<LaneOutcome, { readonly kind: "failed" }>;
+
+function failed(status: LaneFailure, message: string, evidence: string = ""): FailedOutcome {
   return { kind: "failed", status, error: { message, evidence } };
 }
 
@@ -377,7 +375,7 @@ function preflightFailed(ev: HttpEvidence, evidence: string): void {
   ev.preflight = { ...ev.preflight, status: "failed", evidence };
 }
 
-const UNVERIFIED_PUSHES = "could not verify pushed branches";
+const UNVERIFIED_HEADS = "could not verify read-only execution: remote head snapshot unavailable";
 
 async function runCursorLane(
   options: HttpRunnerOptions,
@@ -438,14 +436,15 @@ async function runCursorLane(
   const gitRemote = endpoint.gitRemote ?? repoUrl;
   const before = await remoteHeads(gitRemote, options.cwd, env, requestSignal(context));
   if (before.kind === "failed") {
-    const why = await context.wait(0);
-    if (why !== "ready") {
-      return stoppedBeforeLaunch(ev, why, context, "during the remote head snapshot");
-    }
-    if (options.mode === "read-only") return failed("child-failed", UNVERIFIED_PUSHES, before.detail);
+    ev.remote = { ...ev.remote, heads: { kind: "unverified", reason: before.detail } };
   }
-  // An isolated-write lane may push, so a failed baseline only costs it the
-  // pushedBranches record; a read-only lane fails closed above.
+  const afterBaseline = await context.wait(0);
+  if (afterBaseline !== "ready") {
+    return stoppedBeforeLaunch(ev, afterBaseline, context, "during the remote head snapshot");
+  }
+  if (before.kind === "failed" && options.mode === "read-only") {
+    return failed("child-failed", UNVERIFIED_HEADS, before.detail);
+  }
   const baseline = before.kind === "ok" ? before.heads : null;
   const launch = await client.request("POST", "/v1/agents", requestSignal(context), {
     name: `pstack ${owner}/${name}#${pullNumber} ${options.model}@${options.effort}`,
@@ -467,7 +466,7 @@ async function runCursorLane(
   if (launch.kind === "failed") {
     return failed("child-failed", "the launch request failed", launch.detail);
   }
-  ev.remote = decodeLaunch(launch.body);
+  ev.remote = { ...decodeLaunch(launch.body), heads: ev.remote.heads };
   const { agentId, runId } = ev.remote;
   if (agentId === null || runId === null) {
     return failed(
@@ -479,44 +478,97 @@ async function runCursorLane(
 
   const runPath = `/v1/agents/${encodeURIComponent(agentId)}/runs/${encodeURIComponent(runId)}`;
   const cancel = cancelOnce(client, ev, runPath);
+  let end: RunEnd;
+  try {
+    end = await observeRun(client, runPath, context, endpoint.pollIntervalMs);
+  } catch (error) {
+    end = { kind: "abandoned", outcome: failed("child-failed", describeError(error)) };
+  }
+  if (end.kind === "abandoned") {
+    const detail = await cancel();
+    return {
+      ...end.outcome,
+      error: { ...end.outcome.error, evidence: [end.outcome.error.evidence, detail].filter(Boolean).join("\n\n") },
+    };
+  }
+
+  if (end.snapshot.state === "finished" && baseline !== null) {
+    const after = await remoteHeads(gitRemote, options.cwd, env, requestSignal(context));
+    ev.remote = {
+      ...ev.remote,
+      heads: after.kind === "ok"
+        ? { kind: "observed", changedBranches: changedBetween(baseline, after.heads) }
+        : { kind: "unverified", reason: after.detail },
+    };
+  }
+  const wake = await context.wait(0);
+  if (wake !== "ready") {
+    return failed(
+      "cancelled",
+      wake === "cancelled"
+        ? `launcher received ${context.cancellation.signal} after the cloud run reached ${end.snapshot.status}; no cancel needed`
+        : `explicit deadline elapsed after the cloud run reached ${end.snapshot.status}; no cancel needed`
+    );
+  }
+  return terminalOutcome(options, ev, end.snapshot, end.raw);
+}
+
+type TerminalSnapshot = Extract<RunSnapshot, { readonly state: "finished" | "failed" | "cancelled" }>;
+
+type RunEnd =
+  | { readonly kind: "terminal"; readonly snapshot: TerminalSnapshot; readonly raw: string }
+  | { readonly kind: "abandoned"; readonly outcome: FailedOutcome };
+
+function stoppedWhilePolling(wake: "cancelled" | "timed-out", context: LaneContext): FailedOutcome {
+  return failed(
+    "cancelled",
+    wake === "cancelled"
+      ? `launcher received ${context.cancellation.signal} while polling the cloud agent; cancel requested`
+      : "explicit deadline elapsed while polling the cloud agent; cancel requested"
+  );
+}
+
+async function observeRun(
+  client: CursorClient,
+  runPath: string,
+  context: LaneContext,
+  pollIntervalMs: number
+): Promise<RunEnd> {
+  const beforePoll = await context.wait(0);
+  if (beforePoll !== "ready") return { kind: "abandoned", outcome: stoppedWhilePolling(beforePoll, context) };
   let failures = 0;
   let lastFailure = "";
   for (;;) {
     const reply = await client.request("GET", runPath, requestSignal(context));
+    const snapshot = reply.kind === "ok" ? decodeSnapshot(reply.body) : null;
+    const raw = reply.kind === "ok" ? head(JSON.stringify(reply.body)) : "";
+    if (snapshot !== null && (snapshot.state === "finished" || snapshot.state === "failed" || snapshot.state === "cancelled")) {
+      return { kind: "terminal", snapshot, raw };
+    }
+    const wake = await context.wait(0);
+    if (wake !== "ready") return { kind: "abandoned", outcome: stoppedWhilePolling(wake, context) };
     if (reply.kind === "aborted") {
-      const why = await context.wait(0);
-      if (why !== "ready") return cancel(why, context);
       failures += 1;
       lastFailure = "poll request exceeded its budget";
     } else if (reply.kind === "failed") {
       failures += 1;
       lastFailure = reply.detail;
+    } else if (snapshot === null) {
+      failures += 1;
+      lastFailure = `unexpected run shape: ${raw}`;
+    } else if (snapshot.state === "unknown") {
+      return {
+        kind: "abandoned",
+        outcome: failed("child-failed", `cloud run reported an unknown status ${snapshot.status}`, raw),
+      };
     } else {
-      const snapshot = decodeSnapshot(reply.body);
-      if (snapshot === null) {
-        failures += 1;
-        lastFailure = `unexpected run shape: ${head(JSON.stringify(reply.body))}`;
-      } else {
-        failures = 0;
-        if (snapshot.state === "finished" && baseline !== null) {
-          const after = await remoteHeads(gitRemote, options.cwd, env, requestSignal(context));
-          if (after.kind === "failed" && options.mode === "read-only") {
-            return failed("child-failed", UNVERIFIED_PUSHES, after.detail);
-          }
-          if (after.kind === "ok") {
-            ev.remote = { ...ev.remote, pushedBranches: pushedBetween(baseline, after.heads) };
-          }
-        }
-        if (snapshot.state !== "pending") {
-          return terminalOutcome(options, ev, snapshot.state, snapshot, reply.body);
-        }
-      }
+      failures = 0;
     }
     if (failures >= MAX_CONSECUTIVE_POLL_FAILURES) {
-      return failed("child-failed", `${failures} consecutive poll requests failed`, lastFailure);
+      return { kind: "abandoned", outcome: failed("child-failed", `${failures} consecutive poll requests failed`, lastFailure) };
     }
-    const wake = await context.wait(endpoint.pollIntervalMs);
-    if (wake !== "ready") return cancel(wake, context);
+    const waited = await context.wait(pollIntervalMs);
+    if (waited !== "ready") return { kind: "abandoned", outcome: stoppedWhilePolling(waited, context) };
   }
 }
 
@@ -524,9 +576,9 @@ function cancelOnce(
   client: CursorClient,
   ev: HttpEvidence,
   runPath: string
-): (wake: "cancelled" | "timed-out", context: LaneContext) => Promise<LaneOutcome> {
+): () => Promise<string> {
   let pending: Promise<string> | null = null;
-  return async (wake, context) => {
+  return () => {
     if (pending === null) {
       const path = `${runPath}/cancel`;
       ev.argv = [...ev.argv, "POST", path];
@@ -538,32 +590,33 @@ function cancelOnce(
             : reply.kind === "failed"
               ? `cancel request failed: ${reply.detail}`
               : "cancel request exceeded its budget"
-        );
+        )
+        .catch((error: unknown) => `cancel request failed: ${describeError(error)}`);
     }
-    const evidence = await pending;
-    return failed(
-      "cancelled",
-      wake === "cancelled"
-        ? `launcher received ${context.cancellation.signal} while polling the cloud agent; cancel requested`
-        : "explicit deadline elapsed while polling the cloud agent; cancel requested",
-      evidence
-    );
+    return pending;
   };
 }
 
 function terminalOutcome(
   options: HttpRunnerOptions,
   ev: HttpEvidence,
-  state: Exclude<RunState, "pending">,
-  snapshot: RunSnapshot,
-  body: unknown
+  snapshot: TerminalSnapshot,
+  raw: string
 ): LaneOutcome {
-  const raw = head(JSON.stringify(body));
-  switch (state) {
+  switch (snapshot.state) {
     case "finished": {
-      const pushed = ev.remote.pushedBranches;
-      if (options.mode === "read-only" && pushed.length > 0) {
-        return failed("child-failed", `read-only lane pushed ${pushed.join(", ")}`, raw);
+      const heads = ev.remote.heads;
+      if (options.mode === "read-only") {
+        if (heads.kind !== "observed") {
+          return failed("child-failed", UNVERIFIED_HEADS, heads.kind === "unverified" ? heads.reason : "remote heads were not compared");
+        }
+        if (heads.changedBranches.length > 0) {
+          return failed(
+            "child-failed",
+            `could not verify read-only execution: remote heads changed: ${heads.changedBranches.join(", ")}`,
+            `The snapshots show new, moved, or deleted heads. The Cursor API cannot attribute these changes to this run or other actors.\n\n${raw}`
+          );
+        }
       }
       if (snapshot.text === null) {
         return failed("malformed-output", "finished run carried no result text", raw);
@@ -583,7 +636,5 @@ function terminalOutcome(
       return failed("child-failed", `cloud run ended with status ${snapshot.status}`, raw);
     case "cancelled":
       return failed("child-failed", "cloud run was cancelled remotely, not by this launcher", raw);
-    case "unknown":
-      return failed("child-failed", `cloud run reported an unknown status ${snapshot.status}`, raw);
   }
 }

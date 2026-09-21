@@ -5,12 +5,12 @@ import { createServer } from "node:http";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CURSOR_ENV } from "./http-lane.ts";
+import { CURSOR_ENV, httpLane } from "./http-lane.ts";
 import { findExecutable, runLane } from "./run.ts";
 import type { AccessMode, RunnerReceipt } from "./types.ts";
 import { matchObject } from "./match-object.test-helper.ts";
 
-type RunStatus = "CREATING" | "RUNNING" | "FINISHED" | "ERROR" | "CANCELLED" | "EXPIRED";
+type RunStatus = "CREATING" | "RUNNING" | "FINISHED" | "ERROR" | "CANCELLED" | "EXPIRED" | "PAUSED";
 
 /** Variants as `effort=high fast=true` lines; `defaultVariant` names the one the API flags isDefault. */
 interface FakeModel {
@@ -27,9 +27,12 @@ interface FakeScript {
   readonly result?: string;
   readonly branches?: readonly { readonly repoUrl: string; readonly branch?: string; readonly prUrl?: string }[];
   readonly pollStatus?: number;
+  readonly pollReplies?: readonly { readonly status: number; readonly body: unknown }[];
   readonly cancelStatus?: number;
+  readonly cancelHang?: boolean;
+  readonly beforePoll?: () => void;
   /** Runs right before the fake answers FINISHED; the push cases push from the work clone here. */
-  readonly beforeFinish?: () => void;
+  readonly beforeFinish?: () => void | Promise<void>;
 }
 
 interface RecordedRequest {
@@ -102,7 +105,7 @@ async function fakeCursor(script: FakeScript = {}): Promise<FakeCursor> {
     request.on("data", (chunk: string) => {
       raw += chunk;
     });
-    request.on("end", () => {
+    request.on("end", async () => {
       const method = request.method ?? "";
       const path = request.url ?? "";
       requests.push({
@@ -127,12 +130,17 @@ async function fakeCursor(script: FakeScript = {}): Promise<FakeCursor> {
           run: { id: "run_1", status: "CREATING", createdAt: "2026-09-21T12:00:00.000Z" },
         });
       } else if (method === "GET" && path === RUN_PATH) {
-        if (script.pollStatus !== undefined) {
+        script.beforePoll?.();
+        if (script.pollReplies !== undefined) {
+          const reply = script.pollReplies[Math.min(polls++, script.pollReplies.length - 1)];
+          assert.ok(reply !== undefined);
+          answer(reply.status, reply.body);
+        } else if (script.pollStatus !== undefined) {
           answer(script.pollStatus, { error: "poll refused" });
         } else {
           const status = runs[Math.min(polls, runs.length - 1)];
           polls += 1;
-          if (status === "FINISHED") script.beforeFinish?.();
+          if (status === "FINISHED") await script.beforeFinish?.();
           answer(200, {
             id: "run_1",
             agentId: "bc_1",
@@ -144,6 +152,7 @@ async function fakeCursor(script: FakeScript = {}): Promise<FakeCursor> {
           });
         }
       } else if (method === "POST" && path === `${RUN_PATH}/cancel`) {
+        if (script.cancelHang) return;
         answer(script.cancelStatus ?? 200, { id: "run_1" });
       } else {
         answer(404, { error: `no route for ${method} ${path}` });
@@ -188,6 +197,9 @@ let fixture = "";
 let bareRepo = "";
 let workClone = "";
 let gitLog = "";
+let gitHold = "";
+let gitStarted = "";
+let gitFail = "";
 let previousPath: string | undefined;
 
 const GIT_ENV = {
@@ -216,17 +228,50 @@ function lsRemoteCalls(): string[] {
     .filter((line) => line.startsWith("ls-remote --heads "));
 }
 
+async function waitForGit(): Promise<void> {
+  const deadline = performance.now() + 5_000;
+  while (!existsSync(gitStarted)) {
+    assert.ok(performance.now() < deadline, "final snapshot did not reach the Git barrier");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
 before(() => {
   fixture = mkdtempSync(join(tmpdir(), "pstack-http-lane-git-"));
   bareRepo = join(fixture, "remote.git");
   workClone = join(fixture, "work");
   gitLog = join(fixture, "git.log");
+  gitHold = join(fixture, "git.hold");
+  gitStarted = join(fixture, "git.started");
+  gitFail = join(fixture, "git.fail");
   const realGit = findExecutable("git", process.env.PATH, fixture);
   assert.ok(realGit !== null, "git is required on PATH");
   mkdirSync(join(fixture, "bin"));
   writeFileSync(
     join(fixture, "bin", "git"),
-    `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(gitLog)}\nexec ${JSON.stringify(realGit)} "$@"\n`,
+    `#!${process.execPath}
+const fs = require("node:fs");
+const { spawnSync } = require("node:child_process");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(gitLog)}, args.join(" ") + "\\n");
+function run() {
+  if (args[0] === "ls-remote" && fs.existsSync(${JSON.stringify(gitFail)})) {
+    process.stderr.write("snapshot unavailable");
+    process.exit(1);
+  }
+  const child = spawnSync(${JSON.stringify(realGit)}, args, { stdio: "inherit" });
+  process.exit(child.status ?? 1);
+}
+if (args[0] === "ls-remote" && fs.existsSync(${JSON.stringify(gitHold)})) {
+  fs.writeFileSync(${JSON.stringify(gitStarted)}, "started");
+  const timer = setInterval(() => {
+    if (!fs.existsSync(${JSON.stringify(gitHold)})) {
+      clearInterval(timer);
+      run();
+    }
+  }, 5);
+} else run();
+`,
     { mode: 0o755 }
   );
   git(fixture, "init", "--quiet", "--bare", "--initial-branch=main", bareRepo);
@@ -257,6 +302,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  for (const path of [gitHold, gitStarted, gitFail]) rmSync(path, { force: true });
   for (const key of ENV_KEYS) {
     if (previousEnv[key] === undefined) delete process.env[key];
     else process.env[key] = previousEnv[key];
@@ -341,7 +387,7 @@ describe("cursor http lane", () => {
         evidence: "authenticated; model composer-2.5 available as fast=false",
       },
       argv: ["POST", "/v1/agents", "composer-2.5", "high"],
-      remote: { agentId: "bc_1", runId: "run_1", agentUrl: "https://cursor.com/agents/bc_1", pushedBranches: [] },
+      remote: { agentId: "bc_1", runId: "run_1", agentUrl: "https://cursor.com/agents/bc_1", heads: { kind: "observed", changedBranches: [] } },
     });
     assert.ok(!JSON.stringify(receipt).includes(fake.baseUrl));
     assert.ok(!JSON.stringify(receipt).includes("127.0.0.1"));
@@ -419,7 +465,7 @@ describe("cursor http lane", () => {
       preflight: { argv: ["GET", "/v1/models"], status: "not-run", evidence: "" },
       argv: ["POST", "/v1/agents", "composer-2.5", "high"],
       error: { message: "CURSOR_API_KEY is not set", evidence: "" },
-      remote: { agentId: null, runId: null, agentUrl: null, pushedBranches: [] },
+      remote: { agentId: null, runId: null, agentUrl: null, heads: { kind: "not-taken" } },
     });
     assert.deepEqual(paths(fake), []);
   });
@@ -499,9 +545,10 @@ describe("cursor http lane", () => {
     assert.ok(!paths(fake).includes(`POST ${RUN_PATH}/cancel`));
   });
 
-  it("cancels on the lane deadline, records the cancel request in argv, and receipts cancelled", async () => {
-    const fake = await fakeCursor({ runs: ["RUNNING"] });
-    const { exitCode, receipt, outputPath } = await runHttpLane(fake, { timeoutMs: 60 });
+  it("cancels on the lane deadline, records the cancel request in argv, and receipts cancelled", async (t) => {
+    const afterDeadline = Date.now() + 120_000;
+    const fake = await fakeCursor({ runs: ["RUNNING"], beforePoll: () => t.mock.method(Date, "now", () => afterDeadline) });
+    const { exitCode, receipt, outputPath } = await runHttpLane(fake, { timeoutMs: 60_000 });
     assert.equal(exitCode, 130);
     assert.equal(existsSync(outputPath), false);
     matchObject(receipt, {
@@ -535,7 +582,7 @@ describe("cursor http lane", () => {
     assert.deepEqual(paths(fake), []);
   });
 
-  it("takes the push verdict from the remote heads, not from the branch named in the run body", async () => {
+  it("observes unchanged heads even when the run names its working branch", async () => {
     const seen = lsRemoteCalls().length;
     const fake = await fakeCursor({
       runs: ["RUNNING", "FINISHED"],
@@ -544,7 +591,7 @@ describe("cursor http lane", () => {
     const { exitCode, receipt, outputPath } = await runHttpLane(fake);
     assert.equal(exitCode, 0);
     assert.equal(readFileSync(outputPath, "utf8"), "pong");
-    matchObject(receipt, { status: "complete", remote: { agentId: "bc_1", pushedBranches: [] } });
+    matchObject(receipt, { status: "complete", remote: { agentId: "bc_1", heads: { kind: "observed", changedBranches: [] } } });
     assert.deepEqual(lsRemoteCalls().slice(seen), [
       `ls-remote --heads ${bareRepo}`,
       `ls-remote --heads ${bareRepo}`,
@@ -552,15 +599,15 @@ describe("cursor http lane", () => {
     assert.ok(!JSON.stringify(receipt).includes(bareRepo));
   });
 
-  it("fails a read-only lane whose run pushed a new branch and records it on an isolated-write lane", async () => {
+  it("fails read-only verification on observed new heads and records them for isolated-write", async () => {
     const pushed = await fakeCursor({ beforeFinish: () => pushBranch("cursor/x") });
     const readOnly = await runHttpLane(pushed, { suffix: "read-only" });
     assert.equal(readOnly.exitCode, 70);
     assert.equal(existsSync(readOnly.outputPath), false);
     matchObject(readOnly.receipt, {
       status: "child-failed",
-      error: { message: "read-only lane pushed cursor/x" },
-      remote: { agentId: "bc_1", pushedBranches: ["cursor/x"] },
+      error: { message: "could not verify read-only execution: remote heads changed: cursor/x" },
+      remote: { agentId: "bc_1", heads: { kind: "observed", changedBranches: ["cursor/x"] } },
     });
 
     const writer = await fakeCursor({ beforeFinish: () => pushBranch("cursor/y") });
@@ -570,24 +617,24 @@ describe("cursor http lane", () => {
     matchObject(isolated.receipt, {
       status: "complete",
       mode: "isolated-write",
-      remote: { pushedBranches: ["cursor/y"] },
+      remote: { heads: { kind: "observed", changedBranches: ["cursor/y"] } },
     });
   });
 
-  it("counts a new commit on an existing branch as a push", async () => {
+  it("observes a changed commit on an existing branch without attributing the push", async () => {
     const pushed = await fakeCursor({ beforeFinish: () => pushBranch("main") });
     const readOnly = await runHttpLane(pushed, { suffix: "read-only" });
     assert.equal(readOnly.exitCode, 70);
     matchObject(readOnly.receipt, {
       status: "child-failed",
-      error: { message: "read-only lane pushed main" },
-      remote: { pushedBranches: ["main"] },
+      error: { message: "could not verify read-only execution: remote heads changed: main" },
+      remote: { heads: { kind: "observed", changedBranches: ["main"] } },
     });
 
     const writer = await fakeCursor({ beforeFinish: () => pushBranch("main") });
     const isolated = await runHttpLane(writer, { mode: "isolated-write", suffix: "isolated-write" });
     assert.equal(isolated.exitCode, 0);
-    matchObject(isolated.receipt, { status: "complete", remote: { pushedBranches: ["main"] } });
+    matchObject(isolated.receipt, { status: "complete", remote: { heads: { kind: "observed", changedBranches: ["main"] } } });
   });
 
   it("fails a read-only lane closed before launch when the remote cannot be read, and lets an isolated-write lane complete", async () => {
@@ -601,8 +648,8 @@ describe("cursor http lane", () => {
       status: "child-failed",
       preflight: { status: "passed" },
       argv: ["POST", "/v1/agents", "composer-2.5", "high"],
-      error: { message: "could not verify pushed branches" },
-      remote: { agentId: null, runId: null, pushedBranches: [] },
+      error: { message: "could not verify read-only execution: remote head snapshot unavailable" },
+      remote: { agentId: null, runId: null, heads: { kind: "unverified" } },
     });
     assert.ok(readOnly.receipt.error?.evidence.includes(missing));
     assert.deepEqual(paths(readOnlyFake), ["GET /v1/models"]);
@@ -612,11 +659,11 @@ describe("cursor http lane", () => {
     const isolated = await runHttpLane(writerFake, { mode: "isolated-write", suffix: "isolated-write", gitRemote: missing });
     assert.equal(isolated.exitCode, 0);
     assert.equal(readFileSync(isolated.outputPath, "utf8"), "pong");
-    matchObject(isolated.receipt, { status: "complete", remote: { agentId: "bc_1", pushedBranches: [] } });
+    matchObject(isolated.receipt, { status: "complete", remote: { agentId: "bc_1", heads: { kind: "unverified" } } });
     assert.equal(lsRemoteCalls().length - seen, 2);
   });
 
-  it("gives up after five consecutive failed poll requests", async () => {
+  it("cancels once after five consecutive failed poll requests", async () => {
     const fake = await fakeCursor({ pollStatus: 500 });
     const { exitCode, receipt } = await runHttpLane(fake);
     assert.equal(exitCode, 70);
@@ -627,7 +674,237 @@ describe("cursor http lane", () => {
     });
     assert.ok(receipt.error?.evidence.startsWith("HTTP 500:"));
     assert.equal(paths(fake).filter((path) => path === `GET ${RUN_PATH}`).length, 5);
+    assert.equal(paths(fake).filter((path) => path === `POST ${RUN_PATH}/cancel`).length, 1);
+    assert.match(receipt.error?.evidence ?? "", /cancel acknowledged$/);
+  });
+
+  it("keeps the poll failure when cancellation is refused", async () => {
+    const fake = await fakeCursor({ pollStatus: 500, cancelStatus: 503 });
+    const { receipt, outputPath } = await runHttpLane(fake);
+    matchObject(receipt, {
+      status: "child-failed",
+      error: { message: "5 consecutive poll requests failed" },
+      remote: { agentId: "bc_1", runId: "run_1" },
+      argv: ["POST", "/v1/agents", "composer-2.5", "high", "POST", `${RUN_PATH}/cancel`],
+    });
+    assert.match(receipt.error?.evidence ?? "", /^HTTP 500:.*\n\ncancel request failed: HTTP 503:/);
+    assert.equal(paths(fake).filter((path) => path === `POST ${RUN_PATH}/cancel`).length, 1);
+    assert.equal(existsSync(outputPath), false);
+  });
+
+  it("bounds cleanup with an independent ten-second request budget", async (t) => {
+    const timeout = AbortSignal.timeout;
+    const budgets: number[] = [];
+    t.mock.method(AbortSignal, "timeout", (duration: number) => {
+      budgets.push(duration);
+      return timeout(duration === 10_000 ? 10 : duration);
+    });
+    const fake = await fakeCursor({ pollStatus: 500, cancelHang: true });
+    const { receipt, outputPath } = await runHttpLane(fake);
+    matchObject(receipt, { status: "child-failed", error: { message: "5 consecutive poll requests failed" } });
+    assert.match(receipt.error?.evidence ?? "", /cancel request exceeded its budget$/);
+    assert.equal(budgets.filter((duration) => duration === 10_000).length, 1);
+    assert.equal(paths(fake).filter((path) => path === `POST ${RUN_PATH}/cancel`).length, 1);
+    assert.equal(existsSync(outputPath), false);
+  });
+
+  it("cancels once after five malformed poll replies", async () => {
+    const fake = await fakeCursor({ pollReplies: [{ status: 200, body: { status: null } }] });
+    const { receipt, outputPath } = await runHttpLane(fake);
+    matchObject(receipt, { status: "child-failed", error: { message: "5 consecutive poll requests failed" } });
+    assert.match(receipt.error?.evidence ?? "", /^unexpected run shape:.*\n\ncancel acknowledged$/);
+    assert.equal(paths(fake).filter((path) => path === `GET ${RUN_PATH}`).length, 5);
+    assert.equal(paths(fake).filter((path) => path === `POST ${RUN_PATH}/cancel`).length, 1);
+    assert.equal(existsSync(outputPath), false);
+  });
+
+  it("cancels an unknown remote state without calling it terminal", async () => {
+    const fake = await fakeCursor({ runs: ["PAUSED"] });
+    const { receipt } = await runHttpLane(fake);
+    matchObject(receipt, { status: "child-failed", error: { message: "cloud run reported an unknown status PAUSED" } });
+    assert.match(receipt.error?.evidence ?? "", /cancel acknowledged$/);
+    assert.equal(paths(fake).filter((path) => path === `GET ${RUN_PATH}`).length, 1);
+    assert.equal(paths(fake).filter((path) => path === `POST ${RUN_PATH}/cancel`).length, 1);
+  });
+
+  it("does not mistake object prototype names for known remote states", async () => {
+    const fake = await fakeCursor({ pollReplies: [{ status: 200, body: { status: "toString" } }] });
+    const { receipt } = await runHttpLane(fake);
+    matchObject(receipt, { status: "child-failed", error: { message: "cloud run reported an unknown status toString" } });
+    assert.equal(paths(fake).filter((path) => path === `POST ${RUN_PATH}/cancel`).length, 1);
+  });
+
+  it("resets consecutive failures after a valid pending poll", async () => {
+    const errors = Array.from({ length: 4 }, () => ({ status: 500, body: { error: "try later" } }));
+    const fake = await fakeCursor({ pollReplies: [
+      ...errors,
+      { status: 200, body: { status: "RUNNING" } },
+      ...errors,
+      { status: 200, body: { status: "FINISHED", result: "pong" } },
+    ] });
+    const { receipt, outputPath } = await runHttpLane(fake);
+    assert.equal(receipt.status, "complete");
+    assert.equal(readFileSync(outputPath, "utf8"), "pong");
+    assert.equal(paths(fake).filter((path) => path === `GET ${RUN_PATH}`).length, 10);
     assert.ok(!paths(fake).includes(`POST ${RUN_PATH}/cancel`));
+  });
+
+  for (const mode of ["read-only", "isolated-write"] as const) {
+    it(`reports cancellation during final verification in ${mode}`, async () => {
+      const fake = await fakeCursor({ beforeFinish: () => writeFileSync(gitHold, "hold") });
+      const running = runHttpLane(fake, { mode });
+      try {
+        await waitForGit();
+        process.emit("SIGINT");
+      } finally {
+        rmSync(gitHold, { force: true });
+      }
+      const { receipt, exitCode, outputPath } = await running;
+      assert.equal(exitCode, 130);
+      assert.equal(existsSync(outputPath), false);
+      matchObject(receipt, {
+        status: "cancelled",
+        error: { message: "launcher received SIGINT after the cloud run reached FINISHED; no cancel needed" },
+        remote: { heads: { kind: "unverified" } },
+      });
+      assert.ok(!paths(fake).includes(`POST ${RUN_PATH}/cancel`));
+    });
+
+    it(`reports a deadline after a successful final snapshot in ${mode}`, async (t) => {
+      const fake = await fakeCursor({ beforeFinish: () => writeFileSync(gitHold, "hold") });
+      const running = runHttpLane(fake, { mode, timeoutMs: 60_000 });
+      try {
+        await waitForGit();
+        const afterDeadline = Date.now() + 120_000;
+        t.mock.method(Date, "now", () => afterDeadline);
+      } finally {
+        rmSync(gitHold, { force: true });
+      }
+      const { receipt, exitCode, outputPath } = await running;
+      assert.equal(exitCode, 130);
+      assert.equal(existsSync(outputPath), false);
+      matchObject(receipt, {
+        status: "cancelled",
+        error: { message: "explicit deadline elapsed after the cloud run reached FINISHED; no cancel needed" },
+        remote: { heads: { kind: "observed", changedBranches: [] } },
+      });
+      assert.ok(!paths(fake).includes(`POST ${RUN_PATH}/cancel`));
+    });
+  }
+
+  it("checks the deadline after a successful baseline before launching", async (t) => {
+    writeFileSync(gitHold, "hold");
+    const fake = await fakeCursor();
+    const running = runHttpLane(fake, { timeoutMs: 60_000 });
+    try {
+      await waitForGit();
+      const afterDeadline = Date.now() + 120_000;
+      t.mock.method(Date, "now", () => afterDeadline);
+    } finally {
+      rmSync(gitHold, { force: true });
+    }
+    const { receipt, exitCode, outputPath } = await running;
+    assert.equal(exitCode, 124);
+    assert.equal(existsSync(outputPath), false);
+    matchObject(receipt, { status: "timed-out", remote: { agentId: null, runId: null } });
+    assert.deepEqual(paths(fake), ["GET /v1/models"]);
+  });
+
+  it("prefers a latched signal over the deadline after launch", async (t) => {
+    const afterDeadline = Date.now() + 120_000;
+    const fake = await fakeCursor({ runs: ["RUNNING"], beforePoll: () => {
+      t.mock.method(Date, "now", () => afterDeadline);
+      process.emit("SIGTERM");
+    } });
+    const { receipt, outputPath } = await runHttpLane(fake, { timeoutMs: 60_000 });
+    matchObject(receipt, {
+      status: "cancelled",
+      error: { message: "launcher received SIGTERM while polling the cloud agent; cancel requested", evidence: "cancel acknowledged" },
+    });
+    assert.equal(existsSync(outputPath), false);
+    assert.equal(paths(fake).filter((path) => path === `POST ${RUN_PATH}/cancel`).length, 1);
+  });
+
+  it("fails read-only verification when another actor deletes a head", async () => {
+    pushBranch("cursor/deleted");
+    const fake = await fakeCursor({ beforeFinish: () => git(workClone, "push", "--quiet", "origin", ":refs/heads/cursor/deleted") });
+    const { receipt, outputPath } = await runHttpLane(fake);
+    matchObject(receipt, {
+      status: "child-failed",
+      error: { message: "could not verify read-only execution: remote heads changed: cursor/deleted" },
+      remote: { heads: { kind: "observed", changedBranches: ["cursor/deleted"] } },
+    });
+    assert.match(receipt.error?.evidence ?? "", /cannot attribute/);
+    assert.equal(existsSync(outputPath), false);
+    assert.ok(!("pushedBranches" in (receipt.remote ?? {})));
+  });
+
+  it("reports one foreign push as an observation in two overlapping lanes", async () => {
+    let finished = 0;
+    const bothFinished = Promise.withResolvers<void>();
+    const fake = await fakeCursor({ beforeFinish: async () => {
+      if (++finished === 2) {
+        pushBranch("cursor/foreign");
+        bothFinished.resolve();
+      }
+      await bothFinished.promise;
+    } });
+    const lanes = [runHttpLane(fake, { suffix: "first" }), runHttpLane(fake, { suffix: "second" })];
+    for (const { receipt, outputPath } of await Promise.all(lanes)) {
+      matchObject(receipt, {
+        status: "child-failed",
+        error: { message: "could not verify read-only execution: remote heads changed: cursor/foreign" },
+        remote: { heads: { kind: "observed", changedBranches: ["cursor/foreign"] } },
+      });
+      assert.match(receipt.error?.evidence ?? "", /cannot attribute/);
+      assert.equal(existsSync(outputPath), false);
+      assert.ok(!("pushedBranches" in (receipt.remote ?? {})));
+    }
+  });
+
+  it("keeps an unavailable final comparison in both access modes", async () => {
+    for (const mode of ["read-only", "isolated-write"] as const) {
+      const fake = await fakeCursor({ beforeFinish: () => writeFileSync(gitFail, "fail") });
+      const { receipt, outputPath } = await runHttpLane(fake, { mode, suffix: mode });
+      matchObject(receipt, { remote: { heads: { kind: "unverified", reason: "snapshot unavailable" } } });
+      assert.equal(receipt.status, mode === "read-only" ? "child-failed" : "complete");
+      assert.equal(existsSync(outputPath), mode === "isolated-write");
+      assert.ok(!paths(fake).includes(`POST ${RUN_PATH}/cancel`));
+      rmSync(gitFail, { force: true });
+    }
+  });
+
+  it("cancels an addressable run when polling throws and preserves the failure", async () => {
+    const fake = await fakeCursor({ runs: ["RUNNING"] });
+    const lane = httpLane({
+      parent: "claude", provider: "cursor", model: "composer-2.5", effort: "high", mode: "read-only",
+      promptPath: join(scratch, "prompt.md"), cwd: scratch,
+      outputPath: join(scratch, "throw.out"), receiptPath: join(scratch, "throw.receipt.json"),
+      timeoutMs: null, target: { owner: "acme", name: "app", pullNumber: 7 },
+    }, {
+      ...process.env,
+      [CURSOR_ENV.apiKey]: "test-key",
+      [CURSOR_ENV.baseUrl]: fake.baseUrl,
+      [CURSOR_ENV.gitRemote]: bareRepo,
+      [CURSOR_ENV.pollIntervalMs]: "5",
+    });
+    const outcome = await lane.run({
+      prompt: "pong", deadlineAt: null,
+      cancellation: {
+        signal: null, abortSignal: new AbortController().signal,
+        promise: new Promise(() => {}), dispose() {},
+      },
+      wait: async (delayMs) => {
+        if (delayMs > 0) throw new Error("poll wait failed");
+        return "ready";
+      },
+    });
+    matchObject(outcome, {
+      kind: "failed", status: "child-failed",
+      error: { message: "poll wait failed", evidence: "cancel acknowledged" },
+    });
+    assert.equal(paths(fake).filter((path) => path === `POST ${RUN_PATH}/cancel`).length, 1);
+    matchObject(lane.evidence, { remote: { agentId: "bc_1", runId: "run_1" } });
   });
 
   it("refuses to complete a finished run that carried no result text", async () => {

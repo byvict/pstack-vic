@@ -144,13 +144,18 @@ export interface ReceiptError {
   readonly evidence: string;
 }
 
+export type HeadsEvidence =
+  | { readonly kind: "not-taken" }
+  | { readonly kind: "unverified"; readonly reason: string }
+  | { readonly kind: "observed"; readonly changedBranches: readonly string[] };
+
 /** The cloud run behind an http lane. Ids are null until launch answers. */
 export interface RemoteRun {
   readonly agentId: string | null;
   readonly runId: string | null;
   readonly agentUrl: string | null;
-  /** Branches the agent pushed. Always recorded; a read-only lane fails on a non-empty list. */
-  readonly pushedBranches: readonly string[];
+  /** Repository head observations cannot attribute pushes to this run. */
+  readonly heads: HeadsEvidence;
 }
 
 interface ReceiptBase {
@@ -246,7 +251,7 @@ export interface CliEvidence {
 export interface HttpEvidence {
   readonly kind: "http";
   preflight: PreflightRecord;
-  /** ["POST", "/v1/agents", <model id>, <effort>], plus the cancel request when the lane cancelled. Indices 0 to 3 are the pin. */
+  /** ["POST", "/v1/agents", <model id>, <effort>], plus the cancel request when the lane abandoned the run. Indices 0 to 3 are the pin. */
   argv: readonly string[];
   remote: RemoteRun;
 }
