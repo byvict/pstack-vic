@@ -1,14 +1,10 @@
-// Copied from open-pstack 1.4.1 (de67e6b) runner/commands.test.ts; bun:test
-// replaced by node:test and node:assert/strict. Added: the Astra family shares
-// Sol's Codex argv except for --model, and an unknown provider is refused.
-
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { invocationCommand, preflightCommand } from "./commands.ts";
-import type { RunnerOptions } from "./types.ts";
+import type { LaneOptionsBase, RunnerOptions } from "./types.ts";
 import { arrayContaining } from "./match-object.test-helper.ts";
 
-function options(overrides: Partial<RunnerOptions> = {}): RunnerOptions {
+function options(overrides: Partial<LaneOptionsBase> = {}): RunnerOptions {
   return {
     parent: "claude",
     provider: "codex",
@@ -21,6 +17,7 @@ function options(overrides: Partial<RunnerOptions> = {}): RunnerOptions {
     receiptPath: "/tmp/receipt.json",
     timeoutMs: null,
     ...overrides,
+    target: null,
   };
 }
 
@@ -216,5 +213,13 @@ describe("invocationCommand", () => {
       /provider gemini has no CLI in model-matrix.json/
     );
     assert.throws(() => preflightCommand("gemini"), /no CLI in model-matrix.json/);
+  });
+
+  it("names the http transport instead of building a command for an http provider", () => {
+    assert.throws(
+      () => invocationCommand(options({ provider: "cursor", model: "composer-2.5", effort: "high" })),
+      /provider cursor uses the http transport; its lane is built in http-lane.ts/
+    );
+    assert.throws(() => preflightCommand("cursor"), /provider cursor uses the http transport/);
   });
 });

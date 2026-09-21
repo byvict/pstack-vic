@@ -103,10 +103,21 @@ Nada é declarado em manifest. O que as skills usam:
 
 - **Node 24** — runner externo, scripts da matriz, `check-plan.mjs` e a suíte de testes rodam TypeScript direto, sem build e sem Bun.
 - **CLIs `claude`, `codex` e `grok`** — autenticados, só os que o sheet de modelos usa. O runner recusa provider igual ao do pai (essa lane é nativa).
+- **`CURSOR_API_KEY`** — só para o provider `cursor` (lanes http na API de cloud agents da Cursor; famílias `cursor-grok` e `composer`). Sem a variável a lane cai como dropout `unavailable-cli` (exit 69). Lanes http exigem `--repo` e `--pr`; veja a seção *HTTP lanes* de `provider-dispatch.md`.
 - **`gh`** — forge padrão dos playbooks de PR e da skill `babysit`; `origin` é usado quando resolve o repositório; `gt` só no playbook Orchestrate.
 - **`bun`** — só para `watch-pr` e `orch`, que vieram da Cursor como estão.
 - **`jq` e `rg`** — só para `worktree-audit.sh` (playbook Worktree cleanup); sem eles o audit avisa e deixa colunas em branco.
 - **`run`, `verify`, `loop`** — built-ins do Claude Code; **`skill-creator`** — skill oficial da Anthropic para autoria de SKILL.md. Os quatro têm substituto em `codex-tools.md`.
+
+## Probes HTTP
+
+Quando o plano de setup contém um par HTTP, `probe` recebe o PR autorizado em `--repo <owner/name> --pr <number>`. Os dois argumentos são obrigatórios nesse caso. Um plano sem pares HTTP recusa esses argumentos. O destino vale para essa execução e não fica salvo no plano nem no sheet. Em um plano misto, somente os filhos HTTP recebem o destino.
+
+```shell
+npm run setup-pstack -- probe --dir <dir> --repo <owner/name> --pr <number>
+```
+
+O provider Cursor requer `CURSOR_API_KEY` e acesso de leitura ao remoto Git. O recibo registra `remote.heads` como `not-taken`, `unverified` com motivo ou `observed` com `changedBranches`. A comparação observa branches adicionadas, movidas ou removidas durante a execução. Ela não identifica quem fez essas alterações. Uma lane read-only falha se houver alteração observada ou se a comparação não puder ser concluída. A seção [HTTP lanes](../skills/poteto-mode/references/provider-dispatch.md#http-lanes) define o contrato completo do recibo.
 
 ## Skills
 

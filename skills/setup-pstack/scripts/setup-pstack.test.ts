@@ -345,13 +345,14 @@ describe("buildPlan", () => {
 
 // --- Probe, attest, write ------------------------------------------------------
 
-import { chmodSync, statSync } from "node:fs";
+import { chmodSync, readdirSync, statSync } from "node:fs";
 import {
   CLAUDE_INCLUDE_LINE,
   CODEX_BLOCK_BEGIN,
   CODEX_BLOCK_END,
   attestNative,
   integrationPathFor,
+  loadPlan,
   runProbes,
   savePlan,
   verifyProbes,
@@ -705,13 +706,33 @@ describe("writeSheet", () => {
 
 // --- Command line ---------------------------------------------------------------
 
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { createServer } from "node:http";
+import { CURSOR_ENV } from "../../poteto-mode/scripts/runner/http-lane.ts";
 
 const SCRIPT = join(import.meta.dirname, "setup-pstack.ts");
 
 function cli(args: string[], env: NodeJS.ProcessEnv = process.env) {
   const result = spawnSync(process.execPath, [SCRIPT, ...args], { encoding: "utf8", env });
   return { code: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+function cliAsync(args: string[], env: NodeJS.ProcessEnv = process.env): Promise<{ code: number; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [SCRIPT, ...args], { env });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.on("error", reject);
+    child.on("close", (status) => {
+      resolve({ code: status ?? 1, stdout, stderr });
+    });
+  });
 }
 
 describe("command line", () => {
@@ -801,6 +822,8 @@ describe("command line", () => {
     assert.equal(help.code, 0);
     assert.match(help.stdout, /Usage: setup-pstack/);
     assert.match(help.stdout, /--pair <family>@<effort>/);
+    assert.match(help.stdout, /--repo <owner\/name>/);
+    assert.match(help.stdout, /--pr <number>/);
     assert.doesNotMatch(help.stdout, /--family <family>/);
   });
 
@@ -828,5 +851,322 @@ describe("command line", () => {
     assert.match(result.stderr, /plan/);
     assert.match(result.stderr, /run plan again with this version of the script/);
     assert.equal(existsSync(join(home, ".claude", "pstack-models.md")), false);
+  });
+});
+
+const GIT_ENV = {
+  GIT_TERMINAL_PROMPT: "0",
+  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_AUTHOR_NAME: "test",
+  GIT_AUTHOR_EMAIL: "test@example.invalid",
+  GIT_COMMITTER_NAME: "test",
+  GIT_COMMITTER_EMAIL: "test@example.invalid",
+} as const;
+
+interface FakeCursor {
+  readonly baseUrl: string;
+  readonly launch: unknown;
+  close(): Promise<void>;
+}
+
+async function fakeCursor(modelsStatus?: number): Promise<FakeCursor> {
+  let prompt = "";
+  let launch: unknown = null;
+  const server = createServer((request, response) => {
+    let raw = "";
+    request.setEncoding("utf8");
+    request.on("data", (chunk: string) => {
+      raw += chunk;
+    });
+    request.on("end", () => {
+      const method = request.method ?? "";
+      const path = request.url ?? "";
+      const answer = (status: number, body: unknown): void => {
+        response.writeHead(status, { "content-type": "application/json", connection: "close" });
+        response.end(JSON.stringify(body));
+      };
+      if (method === "GET" && path === "/v1/models") {
+        if (modelsStatus !== undefined) {
+          answer(modelsStatus, { error: "refused" });
+          return;
+        }
+        answer(200, {
+          items: [
+            {
+              id: "grok-4.6",
+              displayName: "grok-4.6",
+              parameters: [
+                { id: "effort", displayName: "effort", values: [{ value: "high" }] },
+                { id: "fast", displayName: "fast", values: [{ value: "false" }] },
+              ],
+              variants: [
+                { params: [{ id: "effort", value: "high" }, { id: "fast", value: "false" }] },
+              ],
+            },
+          ],
+        });
+        return;
+      }
+      if (method === "POST" && path === "/v1/agents") {
+        const body: unknown = JSON.parse(raw);
+        launch = body;
+        if (typeof body === "object" && body !== null && "prompt" in body) {
+          const field = body.prompt;
+          if (typeof field === "object" && field !== null && "text" in field && typeof field.text === "string") {
+            prompt = field.text;
+          }
+        }
+        answer(200, {
+          agent: { id: "bc_1", status: "CREATING", url: "https://cursor.com/agents/bc_1", latestRunId: "run_1" },
+          run: { id: "run_1", status: "CREATING", createdAt: "2026-09-21T12:00:00.000Z" },
+        });
+        return;
+      }
+      if (method === "GET" && path === "/v1/agents/bc_1/runs/run_1") {
+        const marker = (prompt.match(/PSTACK-SETUP-[A-Za-z0-9-]+/) ?? ["missing"])[0];
+        answer(200, {
+          id: "run_1",
+          agentId: "bc_1",
+          status: "FINISHED",
+          createdAt: "2026-09-21T12:00:00.000Z",
+          updatedAt: "2026-09-21T12:00:01.000Z",
+          result: marker,
+          git: { branches: [{ repoUrl: "https://github.com/acme/app" }] },
+        });
+        return;
+      }
+      answer(404, { error: `no route for ${method} ${path}` });
+    });
+  });
+  server.unref();
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("fake did not bind a port");
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    get launch() {
+      return launch;
+    },
+    close: () =>
+      new Promise((resolve) => {
+        server.closeAllConnections();
+        server.close(() => resolve());
+      }),
+  };
+}
+
+function gitBare(root: string): string {
+  mkdirSync(root, { recursive: true });
+  const bare = join(root, "remote.git");
+  const work = join(root, "work");
+  const git = (cwd: string, args: readonly string[]): void => {
+    execFileSync("git", args, { cwd, env: { ...process.env, ...GIT_ENV }, stdio: ["ignore", "pipe", "pipe"] });
+  };
+  git(root, ["init", "--quiet", "--bare", "--initial-branch=main", bare]);
+  git(root, ["clone", "--quiet", bare, work]);
+  git(work, ["commit", "--allow-empty", "--quiet", "-m", "main"]);
+  git(work, ["push", "--quiet", "origin", "HEAD:refs/heads/main"]);
+  return bare;
+}
+
+function mixedPlan(): Plan {
+  return buildPlan({
+    parent: "claude",
+    home,
+    matrix,
+    roles: { "bug-fix": ["cursor:grok-4.6@high"] },
+  });
+}
+
+function cursorEnv(fake: FakeCursor, gitRemote: string): Record<string, string> {
+  return {
+    [CURSOR_ENV.apiKey]: "test-key",
+    [CURSOR_ENV.baseUrl]: fake.baseUrl,
+    [CURSOR_ENV.pollIntervalMs]: "5",
+    [CURSOR_ENV.gitRemote]: gitRemote,
+  };
+}
+
+describe("probe target", () => {
+  const fakes: FakeCursor[] = [];
+
+  afterEach(async () => {
+    await Promise.all(fakes.splice(0).map((fake) => fake.close()));
+  });
+
+  it("rejects partial and malformed --repo/--pr with exit 64 and only plan.json", () => {
+    savePlan(runDir, mixedPlan());
+    const cases: Array<{ readonly args: readonly string[]; readonly message: RegExp }> = [
+      { args: ["--repo", "acme/app"], message: /--pr is required with --repo/ },
+      { args: ["--pr", "7"], message: /--repo is required with --pr/ },
+      { args: ["--repo", "acme/app", "--pr", "0"], message: /--pr must be a positive integer/ },
+      { args: ["--repo", "acme/app", "--pr", "x"], message: /--pr must be a positive integer/ },
+    ];
+    for (const { args, message } of cases) {
+      const result = cli(["probe", "--dir", runDir, ...args], fakeEnv());
+      assert.equal(result.code, 64, args.join(" "));
+      assert.match(result.stderr, message, args.join(" "));
+      assert.match(result.stderr, /Usage: setup-pstack/);
+      assert.deepEqual(readdirSync(runDir), ["plan.json"], args.join(" "));
+    }
+    for (const repo of ["acme", "acme/", "/app", "https://github.com/acme/app", "acme/app/extra"]) {
+      const result = cli(["probe", "--dir", runDir, "--repo", repo, "--pr", "7"], fakeEnv());
+      assert.equal(result.code, 64, repo);
+      assert.match(result.stderr, /--repo must be owner\/name/, repo);
+      assert.deepEqual(readdirSync(runDir), ["plan.json"], repo);
+    }
+  });
+
+  it("rejects an http plan without a target before writing any probe file", async () => {
+    const plan = mixedPlan();
+    savePlan(runDir, plan);
+    const missing = cli(["probe", "--dir", runDir], fakeEnv());
+    assert.equal(missing.code, 64, missing.stderr);
+    assert.match(missing.stderr, /--repo and --pr are required for cursor \(http transport\)/);
+    assert.deepEqual(readdirSync(runDir), ["plan.json"]);
+
+    const fresh = join(home, "never-probed");
+    await assert.rejects(
+      () => runProbes(plan, { dir: fresh, env: fakeEnv() }),
+      (error: unknown) =>
+        error instanceof SetupError && /--repo and --pr are required for cursor \(http transport\)/.test(error.message)
+    );
+    assert.equal(existsSync(fresh), false);
+    await assert.rejects(
+      () => runProbes(plan, { dir: runDir, env: fakeEnv(), target: { owner: "acme", name: "app", pullNumber: 0 } }),
+      (error: unknown) => error instanceof SetupError && /--pr must be a positive integer/.test(error.message)
+    );
+    assert.deepEqual(readdirSync(runDir), ["plan.json"]);
+  });
+
+  it("rejects a target on a cli-only plan with exit 64 and names the rule", async () => {
+    const plan = buildPlan({ parent: "claude", home, matrix });
+    savePlan(runDir, plan);
+    const result = cli(["probe", "--dir", runDir, "--repo", "acme/app", "--pr", "7"], fakeEnv());
+    assert.equal(result.code, 64, result.stderr);
+    assert.match(result.stderr, /--repo and --pr are only accepted for: cursor/);
+    assert.deepEqual(readdirSync(runDir), ["plan.json"]);
+
+    await assert.rejects(
+      () => runProbes(plan, { dir: runDir, env: fakeEnv(), target: { owner: "acme", name: "app", pullNumber: 7 } }),
+      (error: unknown) =>
+        error instanceof SetupError && /--repo and --pr are only accepted for: cursor/.test(error.message)
+    );
+    assert.deepEqual(readdirSync(runDir), ["plan.json"]);
+  });
+
+  it("rejects --repo/--pr on every subcommand except probe", () => {
+    for (const args of [
+      ["state", "--parent", "claude", "--home", home, "--repo", "acme/app", "--pr", "7"],
+      ["plan", "--parent", "claude", "--home", home, "--dir", runDir, "--repo", "acme/app", "--pr", "7"],
+      ["attest", "--dir", runDir, "--pair", "fable@max", "--observed", "x", "--repo", "acme/app", "--pr", "7"],
+      ["write", "--dir", runDir, "--home", home, "--repo", "acme/app", "--pr", "7"],
+    ]) {
+      const result = cli(args);
+      assert.equal(result.code, 64, JSON.stringify(args));
+      assert.match(result.stderr, /--repo and --pr are only accepted on probe/);
+      assert.equal(existsSync(join(runDir, "plan.json")), false);
+    }
+  });
+
+  it("routes --repo/--pr only to the http child of a mixed grok and cursor-grok plan", { timeout: 30_000 }, async () => {
+    const plan = mixedPlan();
+    savePlan(runDir, plan);
+    const saved = loadPlan(runDir);
+    assert.equal(saved.schemaVersion, 2);
+    assert.equal("target" in saved, false);
+    assert.ok(saved.pairs.every((pair) => !("transport" in pair)));
+
+    const fake = await fakeCursor();
+    fakes.push(fake);
+    const bare = gitBare(join(home, "git"));
+    const probed = await cliAsync(["probe", "--dir", runDir, "--repo", "acme/app", "--pr", "7"], fakeEnv(cursorEnv(fake, bare)));
+    assert.equal(probed.code, 0, probed.stderr + probed.stdout);
+    const summary: unknown = JSON.parse(probed.stdout);
+    if (typeof summary !== "object" || summary === null || !("external" in summary) || !Array.isArray(summary.external)) {
+      assert.fail("expected probe summary with external results");
+    }
+    assert.equal("externalOk" in summary ? summary.externalOk : undefined, true);
+    assert.deepEqual(
+      summary.external.map((result: unknown) =>
+        typeof result === "object" && result !== null && "pair" in result && "status" in result
+          ? [result.pair, result.status]
+          : result
+      ),
+      [
+        ["astra@max", "passed"],
+        ["grok@xhigh", "passed"],
+        ["cursor-grok@high", "passed"],
+      ]
+    );
+
+    const grokReceipt = JSON.parse(readFileSync(join(runDir, "probe-grok@xhigh.receipt.json"), "utf8"));
+    assert.equal(grokReceipt.status, "complete");
+    assert.equal(grokReceipt.remote, null);
+    const cursorReceipt = JSON.parse(readFileSync(join(runDir, "probe-cursor-grok@high.receipt.json"), "utf8"));
+    assert.equal(cursorReceipt.status, "complete");
+    assert.equal(cursorReceipt.mode, "read-only");
+    assert.equal(cursorReceipt.modelEvidence, "pinned-argv");
+    assert.equal(cursorReceipt.remote.agentUrl, "https://cursor.com/agents/bc_1");
+    assert.equal(cursorReceipt.remote.agentId, "bc_1");
+    const launch = fake.launch;
+    if (typeof launch !== "object" || launch === null) assert.fail("expected a launch body");
+    assert.deepEqual(
+      {
+        name: "name" in launch ? launch.name : undefined,
+        repos: "repos" in launch ? launch.repos : undefined,
+      },
+      {
+        name: "pstack acme/app#7 grok-4.6@high",
+        repos: [{ url: "https://github.com/acme/app", prUrl: "https://github.com/acme/app/pull/7" }],
+      }
+    );
+    const after = loadPlan(runDir);
+    assert.equal(after.schemaVersion, 2);
+    assert.equal("target" in after, false);
+  });
+
+  it("keeps the grok cli result when the cursor http lane is unauthenticated", { timeout: 30_000 }, async () => {
+    const plan = mixedPlan();
+    savePlan(runDir, plan);
+    const fake = await fakeCursor(401);
+    fakes.push(fake);
+    const bare = gitBare(join(home, "git"));
+    const probed = await cliAsync(["probe", "--dir", runDir, "--repo", "acme/app", "--pr", "7"], fakeEnv(cursorEnv(fake, bare)));
+    assert.equal(probed.code, 1, probed.stderr + probed.stdout);
+    const summary: unknown = JSON.parse(probed.stdout);
+    if (typeof summary !== "object" || summary === null || !("external" in summary) || !Array.isArray(summary.external)) {
+      assert.fail("expected probe summary with external results");
+    }
+    assert.equal("externalOk" in summary ? summary.externalOk : undefined, false);
+    assert.deepEqual(
+      summary.external.map((result: unknown) =>
+        typeof result === "object" && result !== null && "family" in result && "status" in result
+          ? [result.family, result.status]
+          : result
+      ),
+      [
+        ["astra", "passed"],
+        ["grok", "passed"],
+        ["cursor-grok", "failed"],
+      ]
+    );
+    const cursor = summary.external.find(
+      (result: unknown) =>
+        typeof result === "object" && result !== null && "family" in result && result.family === "cursor-grok"
+    );
+    assert.match(
+      typeof cursor === "object" && cursor !== null && "detail" in cursor && typeof cursor.detail === "string"
+        ? cursor.detail
+        : "",
+      /unauthenticated/
+    );
+    const grokReceipt = JSON.parse(readFileSync(join(runDir, "probe-grok@xhigh.receipt.json"), "utf8"));
+    assert.equal(grokReceipt.status, "complete");
+    assert.equal(grokReceipt.remote, null);
+    const cursorReceipt = JSON.parse(readFileSync(join(runDir, "probe-cursor-grok@high.receipt.json"), "utf8"));
+    assert.equal(cursorReceipt.status, "unauthenticated");
+    assert.equal(fake.launch, null);
   });
 });

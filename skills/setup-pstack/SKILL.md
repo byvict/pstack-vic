@@ -1,6 +1,6 @@
 ---
 name: setup-pstack
-description: Configure pstack's provider-qualified models, per-lane requested effort, and parent-owned routes per role. Verifies every distinct family-and-effort pair on native and external Claude, Codex, and Grok lanes before writing the override sheet. Use for /setup-pstack, "configure pstack models", or changing pstack's model choices.
+description: Configure pstack's provider-qualified models, per-lane requested effort, and parent-owned routes per role. Verifies every distinct family-and-effort pair on native Claude and Codex lanes, external CLI lanes, and Cursor cloud lanes before writing the override sheet. Use for /setup-pstack, "configure pstack models", or changing pstack's model choices.
 ---
 
 # Setup pstack
@@ -72,10 +72,13 @@ The output carries `dir` (a fresh run directory holding `plan.json`; pass `--dir
 ### 6. Probe every pair
 
 ```shell
-node scripts/setup-pstack.ts probe --dir <dir> [--timeout <seconds>]
+node scripts/setup-pstack.ts probe --dir <dir> [--timeout <seconds>] \
+  [--repo <owner/name> --pr <number>]
 ```
 
-External pairs (route `runner`) run at once through the external runner in `read-only` mode, each with its own prompt, output, and receipt named after the pair under the run directory, after the CLI proves credentials (`claude auth status --json`, `codex login status`, or `grok models` listing the requested model). A pair passes only when its receipt is `complete` for exactly the requested provider, model, and effort, the model is verified (provider report) or pinned by argv (Codex), and the output carries the pair's unique marker. Exit code 1 means at least one external pair failed: report the failing pair, provider, and `detail`, stop, and write nothing. There is no implicit timeout; pass `--timeout` only when the operator gives a real deadline.
+External pairs (route `runner`) run at once through the external runner in `read-only` mode, each with its own prompt, output, and receipt named after the pair under the run directory, after the provider preflight proves credentials (`claude auth status --json`, `codex login status`, `grok models` listing the requested model, or, for the `cursor` provider, `GET /v1/models` on the Cursor cloud agents API with `CURSOR_API_KEY` from the environment). A pair passes only when its receipt is `complete` for exactly the requested provider, model, and effort, the model is verified (provider report) or pinned by argv (Codex and Cursor), and the output carries the pair's unique marker. Exit code 1 means at least one external pair failed: report the failing pair, provider, and `detail`, stop, and write nothing. There is no implicit timeout; pass `--timeout` only when the operator gives a real deadline.
+
+When the plan contains an HTTP pair, pass both `--repo <owner/name>` and `--pr <number>` to `probe` for its authorized pull request. These flags belong only to `probe`; the target is not saved in the plan or sheet. The script validates the target before creating probe artifacts or launching any pair and forwards it only to HTTP lanes. Omit both flags for a plan without HTTP pairs. Cursor probes require `CURSOR_API_KEY` and Git read access to the remote repository. See [HTTP lanes](../poteto-mode/references/provider-dispatch.md#http-lanes) for authentication, remote-head evidence, and its attribution limit.
 
 Native pairs (route `native`) are listed under `native` with the `pair` id and the `prompt` to send. Run each one yourself through the parent's primitive: on Claude Code, one turn of the mapped `pstack-<stem>-<effort>` agent (`Agent` with that `subagent_type`); on Codex, one `spawn_agent` turn with the listed `model` and `reasoning_effort`. Two native pairs of one family are two agents (`pstack-fable-medium` and `pstack-fable-max`), one turn each. When the Codex parent has no `multi_agent` (so `spawn_agent` is unavailable), run the same prompt as one turn of the parent's own CLI instead: `codex exec --model <model> --config 'model_reasoning_effort="<effort>"' --sandbox read-only --skip-git-repo-check --ephemeral`; the Codex CLI is the parent's native process, not the external launcher. Then record the exact reply:
 

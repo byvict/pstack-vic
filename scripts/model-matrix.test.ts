@@ -194,6 +194,32 @@ describe("model-matrix.json", () => {
     assert.throws(() => validateMatrix(raw), /routes\.claude\.grok is native/);
   });
 
+  it("accepts cli null only for an http provider", () => {
+    const cursor = matrix.providers.cursor;
+    assert.deepEqual(cursor, { cli: null, transport: "http", nativeIn: null });
+    assert.equal(matrix.providers.grok.transport, "cli");
+    for (const parent of Object.keys(matrix.parents)) {
+      assert.equal(routeFor(matrix, parent, "cursor"), "runner");
+    }
+    const withProvider = (spec: Record<string, unknown>): unknown => {
+      const raw = rawMatrix();
+      (raw.providers as Record<string, unknown>).cursor = spec;
+      return raw;
+    };
+    assert.throws(
+      () => validateMatrix(withProvider({ cli: null, nativeIn: null })),
+      /providers\.cursor\.cli must be a non-empty string when transport is cli/
+    );
+    assert.throws(
+      () => validateMatrix(withProvider({ cli: "agent", transport: "http", nativeIn: null })),
+      /providers\.cursor\.cli must be null when transport is http/
+    );
+    assert.throws(
+      () => validateMatrix(withProvider({ cli: null, transport: "ssh", nativeIn: null })),
+      /providers\.cursor\.transport must be "cli" or "http"/
+    );
+  });
+
   it("rejects a duplicate family name or provider:model pair", () => {
     assert.throws(
       () => validateMatrix(withFamilies((fs) => fs.push({ ...fs[0] }))),
