@@ -381,13 +381,19 @@ export async function plantCase(request: PlantRequest): Promise<OwnedCase> {
     const guardedCommand = ['gh', 'pr', 'create', '--repo', repo, '--base', 'main', '--head', ref, '--title', request.entry.natural.title, '--body-file', bodyPath, '--label', 'needs-victor']
       .map(shellLiteral).join(' ');
     command('node', [join(workRoot, 'tools', 'guard-pr-create.js')], JSON.stringify({ cwd: workRoot, tool_input: { command: guardedCommand } }));
-    const existing = array(JSON.parse(command('gh', ['pr', 'list', '--repo', repo, '--head', ref, '--state', 'all', '--json', 'number,headRefOid,headRefName,url'])));
-    if (existing.length > 1) throw new Error('Multiple pull requests exist for the owned ref');
-    if (existing.length === 1) {
-      const recovered = object(existing[0], 'pull request');
-      if (string(recovered.headRefName) !== ref || sha(recovered.headRefOid) !== state.expectedHead) throw new Error('Existing pull request does not match the owned head');
+    const existing = array(JSON.parse(command('gh', ['pr', 'list', '--repo', repo, '--head', ref, '--state', 'all', '--json', 'number,state,headRefOid,headRefName,url'])))
+      .map(value => object(value, 'pull request'));
+    const open = existing.filter(candidate => oneOf(candidate.state, ['OPEN', 'CLOSED', 'MERGED']) === 'OPEN');
+    if (open.length > 1) throw new Error('Multiple open pull requests exist for the owned ref');
+    if (open.length === 1) {
+      const recovered = open[0];
+      if (string(recovered.headRefName) !== ref || sha(recovered.headRefOid) !== state.expectedHead) throw new Error('Open pull request does not match the owned head');
       pr = integer(recovered.number);
     } else {
+      if (state.state === 'pr-create-uncertain' && existing.some(candidate =>
+        string(candidate.headRefName) === ref && sha(candidate.headRefOid) === state.expectedHead)) {
+        throw new Error('Created pull request is no longer open');
+      }
       intent = save({ ...state, state: 'pr-create-uncertain' });
       const created = command('gh', [
         'pr', 'create', '--repo', repo, '--base', 'main', '--head', ref,
@@ -400,9 +406,10 @@ export async function plantCase(request: PlantRequest): Promise<OwnedCase> {
     intent = save({ ...state, state: 'pr-created', pr });
   }
   if (!pr) throw new Error('Plant intent has no pull request identity');
-  const view = object(JSON.parse(command('gh', ['pr', 'view', String(pr), '--repo', repo, '--json', 'number,headRefOid,headRefName,url'])));
+  const view = object(JSON.parse(command('gh', ['pr', 'view', String(pr), '--repo', repo, '--json', 'number,state,headRefOid,headRefName,url'])));
   const head = sha(view.headRefOid);
-  if (integer(view.number) !== pr || string(view.headRefName) !== ref || head !== state.expectedHead) throw new Error('Created PR identity mismatch');
+  if (integer(view.number) !== pr || oneOf(view.state, ['OPEN', 'CLOSED', 'MERGED']) !== 'OPEN'
+    || string(view.headRefName) !== ref || head !== state.expectedHead) throw new Error('Created PR identity mismatch');
   const trunk = sha(state.trunk);
   const createdResource = writeImmutable(join(evidenceRoot, 'owned', `${request.entry.privateId}.json`), {
     schemaVersion: 1, repo, pr, ref, head, trunk, ownerId: request.ownerId, privateId: request.entry.privateId,

@@ -208,7 +208,7 @@ test('deterministic C detectors fire for delete, secret, injection, documentary,
   assert.equal(expectedDisplay(byId['dashboard-row'].expected), 'NOT VERIFIED');
 });
 
-test('plantCase reserves the ref, records identities and never impersonates Dependabot', async t => {
+test('plantCase ignores a historical closed PR on the reused ref and never impersonates Dependabot', async t => {
   const f = tree(); t.after(f.cleanup);
   const work = join(f.directory, 'work');
   mkdirSync(work);
@@ -252,10 +252,12 @@ test('plantCase reserves the ref, records identities and never impersonates Depe
       return (revision === 'HEAD' ? (committed ? head : trunk) : trunk) + '\n';
     }
     if (binary === 'git' && args.includes('push')) { pushed = true; return ''; }
-    if (binary === 'gh' && args[0] === 'pr' && args[1] === 'list') return '[]';
+    if (binary === 'gh' && args[0] === 'pr' && args[1] === 'list') {
+      return JSON.stringify([{ number: 12, state: 'CLOSED', headRefOid: trunk, headRefName: 'converge-proof/login-pitch', url: 'https://github.com/Clinextapp/clinext/pull/12' }]);
+    }
     if (binary === 'gh' && args[0] === 'pr' && args[1] === 'create') return 'https://github.com/Clinextapp/clinext/pull/91\n';
     if (binary === 'gh' && args[0] === 'pr' && args[1] === 'view') {
-      return JSON.stringify({ number: 91, headRefOid: head, headRefName: 'converge-proof/login-pitch', url: 'https://github.com/Clinextapp/clinext/pull/91' });
+      return JSON.stringify({ number: 91, state: 'OPEN', headRefOid: head, headRefName: 'converge-proof/login-pitch', url: 'https://github.com/Clinextapp/clinext/pull/91' });
     }
     return '';
   };
