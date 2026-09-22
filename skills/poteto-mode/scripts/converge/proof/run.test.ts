@@ -122,6 +122,7 @@ function harness(t: { after: (fn: () => void) => void }, now: () => Date = () =>
   let pr = 90;
   let laneRuns = 0;
   const events: string[] = [];
+  const lifecycleCommandOverrides: string[] = [];
   const refs = new Map<string, string | null>();
   const reports = new Map<number, Report>();
   let failPublish = false;
@@ -140,7 +141,8 @@ function harness(t: { after: (fn: () => void) => void }, now: () => Date = () =>
       if (args[2] === 'rev-parse') return head;
       throw new Error(`unexpected command: ${file} ${args.join(' ')}`);
     },
-    async plant({ entry, ownerId, evidenceRoot: root, onIntent }) {
+    async plant({ entry, ownerId, evidenceRoot: root, onIntent, command }) {
+      if (command) lifecycleCommandOverrides.push(`plant:${entry.privateId}`);
       events.push(`plant:${entry.privateId}`);
       pr += 1;
       const ref = `converge-proof/${entry.privateId}`;
@@ -159,7 +161,8 @@ function harness(t: { after: (fn: () => void) => void }, now: () => Date = () =>
       onIntent?.(owned.creationIntent);
       return owned;
     },
-    async close({ owned }) {
+    async close({ owned, command }) {
+      if (command) lifecycleCommandOverrides.push(`close:${owned.privateId}`);
       refs.set(owned.ref, null);
       const absence = { path: join(evidenceRoot, 'cleanup', owned.privateId + '.json'), sha256: digest64('c') };
       mkdirSync(dirname(absence.path), { recursive: true });
@@ -203,7 +206,7 @@ function harness(t: { after: (fn: () => void) => void }, now: () => Date = () =>
       return { ...priced.sources[0], originalReceipt: { path: receiptPath, sha256: hash(readFileSync(receiptPath)) }, remoteRun: { agentId: 'bc-fixture', runId: receipt.remote.runId } };
     },
   };
-  return { directory, workRoot, evidenceRoot, pool: poolFile(directory), epochPath, services, events, laneRuns: () => laneRuns, setFailPublish() { failPublish = true; } };
+  return { directory, workRoot, evidenceRoot, pool: poolFile(directory), epochPath, services, events, lifecycleCommandOverrides, laneRuns: () => laneRuns, setFailPublish() { failPublish = true; } };
 }
 
 function readExisting(path: string) {
@@ -492,6 +495,7 @@ test('runProof plants every catalog case before awaiting the first exact-head CI
     'checkout:login-pitch',
     'wait:login-pitch',
   ]);
+  assert.deepEqual(h.lifecycleCommandOverrides, []);
 });
 
 test('resume recovers publication-uncertain without a closure and refuses to reuse a closure for a new publication', async t => {
@@ -606,6 +610,7 @@ test('a complete suite under 90 minutes prints ten result lines after every publ
   assert.equal(boundary.summary.wallMilliseconds, 89 * 60 * 1000);
   assert.equal(boundary.summary.completePass, true);
   assert.equal(boundary.summary.resources, 'all-owned-resources-closed');
+  assert.deepEqual(h.lifecycleCommandOverrides, []);
   assert.match(text, /required-lanes-1-9:/);
   assert.match(text, /catalog-including-human-update:/);
 });

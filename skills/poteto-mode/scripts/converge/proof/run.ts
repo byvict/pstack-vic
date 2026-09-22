@@ -783,7 +783,6 @@ async function cleanCase(envelope: Envelope, phase: Extract<Phase, { kind: 'clea
   const cleanup = await services.close({
     owned: phase.owned,
     evidenceRoot: envelope.evidenceRoot,
-    command: services.command,
     drainReaders: () => services.drainReaders(phase.owned, phase.attempts),
     observeHead: () => services.observeHead(phase.owned),
     now: () => services.now().toISOString(),
@@ -854,7 +853,7 @@ async function plantCatalog(envelope: Envelope, services: ProofServices, runFile
       const owned = await services.plant({
         repo: envelope.repo, workRoot: envelope.workRoot, evidenceRoot: envelope.evidenceRoot,
         entry, catalog: envelope.catalog, ownerId: envelope.ownerId, repositoryEpoch: envelope.repositoryEpoch,
-        command: services.command, now: () => services.now().toISOString(),
+        now: () => services.now().toISOString(),
         onIntent(intent) {
           envelope = persist(runFile, { ...envelope, pendingMutation: intent, phase: { ...phase, intent } });
         },
