@@ -37,8 +37,8 @@ stop suspend new launches without preventing publication recovery, reader
 drain, or cleanup. Cleanup requires the same repository epoch, checkout,
 origin, ref and head; it reads the PR back as `CLOSED` before ordinary deletion.
 
-The live catalog keeps exact-head CI for every distinct PR. The suite wall
-budget is four hours including cleanup. The first live attempt measured 56
-minutes for three complete cases, so the former 90-minute budget could not hold
-ten sequential exact-head runs. Reusing CI across heads or replacing live runs
-with fixtures would test a weaker contract.
+The live catalog keeps exact-head CI for every distinct PR. The runner plants
+all ten held PRs with one writer before it waits for the first result, so their
+independent workflows can overlap. Lane execution, publication and cleanup stay
+serial. The suite wall budget remains 90 minutes including cleanup. Reusing CI
+across heads or replacing live runs with fixtures would test a weaker contract.

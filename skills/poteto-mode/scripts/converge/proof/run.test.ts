@@ -121,12 +121,27 @@ function harness(t: { after: (fn: () => void) => void }, now: () => Date = () =>
   }
   let pr = 90;
   let laneRuns = 0;
+  const events: string[] = [];
   const refs = new Map<string, string | null>();
   const reports = new Map<number, Report>();
   let failPublish = false;
   const services: ProofServices = {
     now,
+    command(file, args) {
+      assert.equal(file, 'git');
+      if (args[2] === 'status') return '';
+      if (args[2] === 'checkout') {
+        const ref = args[3];
+        assert.ok(ref);
+        events.push(`checkout:${ref.replace('converge-proof/', '')}`);
+        return '';
+      }
+      if (args[2] === 'branch') return `converge-proof/${events.at(-1)?.replace('checkout:', '')}`;
+      if (args[2] === 'rev-parse') return head;
+      throw new Error(`unexpected command: ${file} ${args.join(' ')}`);
+    },
     async plant({ entry, ownerId, evidenceRoot: root, onIntent }) {
+      events.push(`plant:${entry.privateId}`);
       pr += 1;
       const ref = `converge-proof/${entry.privateId}`;
       refs.set(ref, head);
@@ -177,7 +192,7 @@ function harness(t: { after: (fn: () => void) => void }, now: () => Date = () =>
       const dossier = dossierFor(report);
       return { dossier, commentUrl: `https://github.com/Clinextapp/clinext/pull/${report.round.pr}#issuecomment-1`, statusId: 77, mustEndTurn: true as const };
     },
-    async waitChecks() {},
+    async waitChecks(owned) { events.push(`wait:${owned.privateId}`); },
     async drainReaders() { return 'drained'; },
     async observeHead(owned) { return refs.get(owned.ref) ?? null; },
     async recordUsage({ receiptPath, evidenceDirectory }) {
@@ -188,7 +203,7 @@ function harness(t: { after: (fn: () => void) => void }, now: () => Date = () =>
       return { ...priced.sources[0], originalReceipt: { path: receiptPath, sha256: hash(readFileSync(receiptPath)) }, remoteRun: { agentId: 'bc-fixture', runId: receipt.remote.runId } };
     },
   };
-  return { directory, workRoot, evidenceRoot, pool: poolFile(directory), epochPath, services, laneRuns: () => laneRuns, setFailPublish() { failPublish = true; } };
+  return { directory, workRoot, evidenceRoot, pool: poolFile(directory), epochPath, services, events, laneRuns: () => laneRuns, setFailPublish() { failPublish = true; } };
 }
 
 function readExisting(path: string) {
@@ -462,6 +477,23 @@ test('runProof stops at publication and resumes only with a host-observed closur
   assert.equal(resumed.kind, 'end-turn');
 });
 
+test('runProof plants every catalog case before awaiting the first exact-head CI', async t => {
+  const h = harness(t);
+  const boundary = await runProof({
+    kind: 'start', repo: 'Clinextapp/clinext', workRoot: h.workRoot, evidenceRoot: h.evidenceRoot,
+    parent: 'claude', repositoryEpoch: h.epochPath,
+    roles: { 'pr verifier': 'cursor:composer-2.5@high', 'pr reviewer': 'cursor:grok-4.7@high' },
+    pool: h.pool, ownerId: 'owner-1', services: h.services,
+  });
+
+  assert.equal(boundary.kind, 'end-turn');
+  assert.deepEqual(h.events.slice(0, 12), [
+    ...catalog.map(entry => `plant:${entry.privateId}`),
+    'checkout:login-pitch',
+    'wait:login-pitch',
+  ]);
+});
+
 test('resume recovers publication-uncertain without a closure and refuses to reuse a closure for a new publication', async t => {
   const h = harness(t);
   h.setFailPublish();
@@ -548,7 +580,37 @@ test('an expired pool still permits cleanup before suspending the next launch', 
   assert.equal(envelope.completed[0].cleanup.kind, 'closed-and-deleted');
 });
 
-test('a complete suite resume prints ten result lines after every publication turn has closed', async t => {
+test('a complete suite under 90 minutes prints ten result lines after every publication turn has closed', async t => {
+  let clock = new Date('2026-09-22T05:00:00.000Z');
+  const h = harness(t, () => clock);
+  let boundary = await runProof({
+    kind: 'start', repo: 'Clinextapp/clinext', workRoot: h.workRoot, evidenceRoot: h.evidenceRoot,
+    parent: 'claude', repositoryEpoch: h.epochPath,
+    roles: { 'pr verifier': 'cursor:composer-2.5@high', 'pr reviewer': 'cursor:grok-4.7@high' },
+    pool: h.pool, ownerId: 'owner-1', services: h.services,
+  });
+  for (let i = 0; i < 10; i++) {
+    assert.equal(boundary.kind, 'end-turn', 'turn ' + i);
+    if (boundary.kind !== 'end-turn' || boundary.publication === 'uncertain') throw new Error('expected recorded publication');
+    const runId = JSON.parse(readFileSync(boundary.continuation, 'utf8')).runId;
+    const closed = closureFor(boundary.publication, 'owner-1', runId, h.directory);
+    if (i === 9) clock = new Date('2026-09-22T06:29:00.000Z');
+    boundary = await runProof({ kind: 'resume', runFile: boundary.continuation, pool: h.pool, turnClosure: closed, services: h.services });
+  }
+  assert.equal(boundary.kind, 'complete');
+  if (boundary.kind !== 'complete') return;
+  const text = renderSuite(boundary.summary);
+  for (const entry of catalog) assert.match(text, new RegExp(`entry ${entry.privateId}: expected .+ got .+ ok`));
+  assert.equal(boundary.summary.entries.length, 10);
+  assert.equal(boundary.summary.entries.every(e => e.ok), true);
+  assert.equal(boundary.summary.wallMilliseconds, 89 * 60 * 1000);
+  assert.equal(boundary.summary.completePass, true);
+  assert.equal(boundary.summary.resources, 'all-owned-resources-closed');
+  assert.match(text, /required-lanes-1-9:/);
+  assert.match(text, /catalog-including-human-update:/);
+});
+
+test('a complete suite over 90 minutes remains a failed performance gate', async t => {
   let clock = new Date('2026-09-22T05:00:00.000Z');
   const h = harness(t, () => clock);
   let boundary = await runProof({
@@ -565,17 +627,9 @@ test('a complete suite resume prints ten result lines after every publication tu
     if (i === 9) clock = new Date('2026-09-22T06:31:00.000Z');
     boundary = await runProof({ kind: 'resume', runFile: boundary.continuation, pool: h.pool, turnClosure: closed, services: h.services });
   }
-  assert.equal(boundary.kind, 'complete');
-  if (boundary.kind !== 'complete') return;
-  const text = renderSuite(boundary.summary);
-  for (const entry of catalog) assert.match(text, new RegExp(`entry ${entry.privateId}: expected .+ got .+ ok`));
-  assert.equal(boundary.summary.entries.length, 10);
-  assert.equal(boundary.summary.entries.every(e => e.ok), true);
-  assert.equal(boundary.summary.wallMilliseconds, 91 * 60 * 1000);
-  assert.equal(boundary.summary.completePass, true);
-  assert.equal(boundary.summary.resources, 'all-owned-resources-closed');
-  assert.match(text, /required-lanes-1-9:/);
-  assert.match(text, /catalog-including-human-update:/);
+
+  assert.equal(boundary.kind, 'blocked');
+  if (boundary.kind === 'blocked') assert.equal(boundary.reason, 'Suite exceeded 90 minutes including cleanup');
 });
 
 test('parseTurnClosure rejects process restart and self-declaration', t => {

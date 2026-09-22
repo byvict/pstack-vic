@@ -59,6 +59,7 @@ export type Envelope = Readonly<{
   catalog: Original;
   repositoryEpoch: Original;
   pool: Original;
+  planted: readonly OwnedCase[];
   completed: readonly CaseSummary[];
   originalAttempts: readonly Attempt[];
   launches: readonly LaunchRecord[];
@@ -77,7 +78,7 @@ export type RunBoundary =
 
 export type ProofServices = Readonly<{
   now: () => Date;
-  command?: Command;
+  command: Command;
   plant: typeof plantCase;
   close: typeof closeOwnedCase;
   reconcile: typeof reconcile;
@@ -90,7 +91,7 @@ export type ProofServices = Readonly<{
   recordUsage: typeof recordUsage;
 }>;
 
-const WALL_LIMIT_MS = 4 * 60 * 60 * 1000;
+const WALL_LIMIT_MS = 90 * 60 * 1000;
 
 export function rejectWorkLabel(path: string): void {
   if (/\b(?:eval|test|judge|experiment|rubric|score|compare|benchmark|candidate|arena)\b/i.test(path)) {
@@ -275,6 +276,7 @@ export function parseEnvelope(value: unknown): Envelope {
     catalog: parseOriginal(v.catalog),
     repositoryEpoch: parseOriginal(v.repositoryEpoch),
     pool: parseOriginal(v.pool),
+    planted: v.planted === undefined ? [] : array(v.planted).map(parseOwned),
     completed: array(v.completed).map(item => {
       const c = object(item, 'case summary');
       return {
@@ -490,6 +492,7 @@ export function defaultServices(): ProofServices {
   const command = githubCommand;
   return {
     now: () => new Date(),
+    command,
     plant: plantCase,
     close: closeOwnedCase,
     reconcile,
@@ -809,20 +812,19 @@ async function prepareCase(envelope: Envelope, phase: Extract<Phase, { kind: 'pr
   const pool = retainPoolObservation(poolPath, envelope, services.now());
   if (pool.kind === 'denied') return { kind: 'blocked', continuation: runFile, reason: pool.reason, retainedEvidence: [pool.observation, envelope.pool] };
   envelope = persist(runFile, { ...envelope, pool: pool.permit.observation });
-  let owned: OwnedCase;
-  try {
-    owned = await services.plant({
-      repo: envelope.repo, workRoot: envelope.workRoot, evidenceRoot: envelope.evidenceRoot,
-      entry, catalog: envelope.catalog, ownerId: envelope.ownerId, repositoryEpoch: envelope.repositoryEpoch, command: services.command, now: () => services.now().toISOString(),
-      onIntent(intent) {
-        envelope = persist(runFile, { ...envelope, pendingMutation: intent, phase: { ...phase, intent } });
-      },
-    });
-  } catch (error) {
-    const retainedEvidence = envelope.pendingMutation ? [envelope.pendingMutation] : [];
-    return { kind: 'blocked', continuation: runFile, reason: error instanceof Error ? error.message : 'Plant lifecycle failed', retainedEvidence };
+  const owned = envelope.planted.find(candidate => candidate.privateId === entry.privateId);
+  if (!owned) {
+    return {
+      kind: 'blocked', continuation: runFile, reason: `Catalog case ${entry.privateId} was not planted before CI collection`,
+      retainedEvidence: envelope.planted.map(candidate => candidate.createdResource),
+    };
   }
-  envelope = persist(runFile, { ...envelope, pendingMutation: owned.creationIntent, phase: { ...phase, intent: owned.creationIntent } });
+  const status = services.command('git', ['-C', owned.workRoot, 'status', '--porcelain', '--untracked-files=all']).trim();
+  if (status) throw new Error(`Work root is dirty before selecting ${entry.privateId}`);
+  services.command('git', ['-C', owned.workRoot, 'checkout', owned.ref]);
+  const currentRef = services.command('git', ['-C', owned.workRoot, 'branch', '--show-current']).trim();
+  const currentHead = sha(services.command('git', ['-C', owned.workRoot, 'rev-parse', 'HEAD']).trim());
+  if (currentRef !== owned.ref || currentHead !== owned.head) throw new Error(`Work root did not select ${entry.privateId} at its recorded head`);
   await services.waitChecks(owned);
   const reportPath = join(envelope.evidenceRoot, envelope.runId, entry.privateId, 'report.json');
   mkdirSync(join(envelope.evidenceRoot, envelope.runId, entry.privateId), { recursive: true, mode: 0o700 });
@@ -832,6 +834,49 @@ async function prepareCase(envelope: Envelope, phase: Extract<Phase, { kind: 'pr
     ...envelope,
     selectedRoleReport: reportOriginal,
     phase: { kind: 'collecting', owned, report: reportOriginal, attempts: [], selectedRoles: report.lanes },
+  });
+}
+
+async function plantCatalog(envelope: Envelope, services: ProofServices, runFile: string, catalog: readonly CatalogCase[], poolPath: string): Promise<Envelope | RunBoundary> {
+  for (const entry of catalog) {
+    if (envelope.planted.some(candidate => candidate.privateId === entry.privateId)
+      || envelope.completed.some(candidate => candidate.id === entry.privateId)) continue;
+    const pool = retainPoolObservation(poolPath, envelope, services.now());
+    if (pool.kind === 'denied') {
+      return {
+        kind: 'blocked', continuation: runFile, reason: pool.reason,
+        retainedEvidence: [pool.observation, envelope.pool, ...envelope.planted.map(candidate => candidate.createdResource)],
+      };
+    }
+    const phase: Extract<Phase, { kind: 'preparing' }> = { kind: 'preparing', caseId: entry.privateId, intent: null };
+    envelope = persist(runFile, { ...envelope, pool: pool.permit.observation, phase });
+    try {
+      const owned = await services.plant({
+        repo: envelope.repo, workRoot: envelope.workRoot, evidenceRoot: envelope.evidenceRoot,
+        entry, catalog: envelope.catalog, ownerId: envelope.ownerId, repositoryEpoch: envelope.repositoryEpoch,
+        command: services.command, now: () => services.now().toISOString(),
+        onIntent(intent) {
+          envelope = persist(runFile, { ...envelope, pendingMutation: intent, phase: { ...phase, intent } });
+        },
+      });
+      envelope = persist(runFile, {
+        ...envelope,
+        planted: [...envelope.planted, owned],
+        pendingMutation: owned.creationIntent,
+        phase: { ...phase, intent: owned.creationIntent },
+      });
+    } catch (error) {
+      const retainedEvidence = [
+        ...envelope.planted.map(candidate => candidate.createdResource),
+        ...(envelope.pendingMutation ? [envelope.pendingMutation] : []),
+      ];
+      return { kind: 'blocked', continuation: runFile, reason: error instanceof Error ? error.message : 'Plant lifecycle failed', retainedEvidence };
+    }
+  }
+  const next = nextCaseId(envelope);
+  return persist(runFile, {
+    ...envelope,
+    phase: next ? { kind: 'preparing', caseId: next, intent: null } : { kind: 'complete' },
   });
 }
 
@@ -878,6 +923,7 @@ export async function runProof(request: RunRequest): Promise<RunBoundary> {
         catalog: originalOf(retainedCatalogPath, catalogBytes),
         repositoryEpoch,
         pool: initialPool.kind === 'permit' ? initialPool.permit.observation : initialPool.observation,
+        planted: [],
         completed: [],
         originalAttempts: [],
         launches: [],
@@ -897,7 +943,7 @@ export async function runProof(request: RunRequest): Promise<RunBoundary> {
       if (phase.kind === 'complete') {
         const summary = finishSummary(envelope, services.now());
         if (summary.wallMilliseconds > WALL_LIMIT_MS) {
-          return { kind: 'blocked', continuation: runFile, reason: 'Suite exceeded four hours including cleanup', retainedEvidence: [] };
+          return { kind: 'blocked', continuation: runFile, reason: 'Suite exceeded 90 minutes including cleanup', retainedEvidence: [] };
         }
         return { kind: 'complete', summary };
       }
@@ -929,6 +975,13 @@ export async function runProof(request: RunRequest): Promise<RunBoundary> {
         continue;
       }
       if (phase.kind === 'preparing') {
+        const knownCases = new Set([...envelope.completed.map(item => item.id), ...envelope.planted.map(item => item.privateId)]);
+        if (catalog.some(entry => !knownCases.has(entry.privateId))) {
+          const planted = await plantCatalog(envelope, services, runFile, catalog, request.pool);
+          if ('continuation' in planted) return planted;
+          envelope = planted;
+          continue;
+        }
         const next = nextCaseId(envelope) ?? phase.caseId;
         const prepared = await prepareCase(envelope, { ...phase, caseId: next }, services, runFile, catalog, request.pool);
         if ('continuation' in prepared) return prepared;
