@@ -36,3 +36,9 @@ into immutable evidence before admission. Pool expiry and the fixed 80 percent
 stop suspend new launches without preventing publication recovery, reader
 drain, or cleanup. Cleanup requires the same repository epoch, checkout,
 origin, ref and head; it reads the PR back as `CLOSED` before ordinary deletion.
+
+The live catalog keeps exact-head CI for every distinct PR. The suite wall
+budget is four hours including cleanup. The first live attempt measured 56
+minutes for three complete cases, so the former 90-minute budget could not hold
+ten sequential exact-head runs. Reusing CI across heads or replacing live runs
+with fixtures would test a weaker contract.

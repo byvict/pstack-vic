@@ -95,6 +95,21 @@ test('catalog has ten parent-only entries and hides expected labels from natural
   }
 });
 
+test('catalog verification sections use only claims the reconciler can attribute', () => {
+  for (const entry of catalog) {
+    const report = analyze(snapshotFor(entry), {
+      id: '12345678-1234-1234-1234-123456789abc',
+      configPath: '.cursor/converge.json',
+      execution: 'verdict-only',
+    });
+    assert.equal(
+      report.claims.some(claim => claim.kind === 'unsupported'),
+      false,
+      entry.privateId,
+    );
+  }
+});
+
 for (const entry of catalog) {
   test(`applies ${entry.privateId} to a fixture tree and fails on trunk drift`, t => {
     const f = tree(); t.after(f.cleanup);
@@ -114,6 +129,44 @@ for (const entry of catalog) {
     }
   });
 }
+
+test('ready-check survives the real generated-doc pre-push contract', t => {
+  const f = tree(); t.after(f.cleanup);
+  const work = join(f.directory, 'work');
+  const remote = join(f.directory, 'origin.git');
+  mkdirSync(work);
+  const git = (...args: string[]) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  git('init', '--bare', remote);
+  git('init', '-b', 'main', work);
+  git('-C', work, 'config', 'user.email', 'local@example.invalid');
+  git('-C', work, 'config', 'user.name', 'Local fixture');
+  mkdirSync(join(work, 'docs', 'gerado'), { recursive: true });
+  writeFileSync(join(work, 'docs', 'gerado', 'STRUCTURE.md'), '│   │   ├── r2-backup-freshness.test.js\n│   │   ├── repair-roubo-ancora.test.js\n');
+  git('-C', work, 'add', '.');
+  git('-C', work, 'commit', '-m', 'base');
+  git('-C', work, 'remote', 'add', 'origin', remote);
+  git('-C', work, 'push', '-u', 'origin', 'main');
+  git('-C', work, 'checkout', '-b', 'converge-proof/ready-check');
+
+  const entry = catalog.find(candidate => candidate.privateId === 'ready-check');
+  assert.ok(entry);
+  applyEdits(work, entry.natural.edits);
+  git('-C', work, 'add', '--', ...entry.natural.edits.map(edit => edit.path));
+  git('-C', work, 'commit', '-m', entry.natural.title);
+  const hook = join(work, '.git', 'hooks', 'pre-push');
+  writeFileSync(hook, `#!/bin/sh
+# clinext-pre-push-v1
+set -e
+cd "$(git rev-parse --show-toplevel)"
+if [ -f tools/tests/ready-check.test.js ]; then
+  printf '│   │   ├── r2-backup-freshness.test.js\\n│   │   ├── ready-check.test.js\\n│   │   ├── repair-roubo-ancora.test.js\\n' > docs/gerado/STRUCTURE.md
+fi
+git diff --exit-code HEAD --
+`, { mode: 0o755 });
+
+  git('-C', work, 'push', '-u', 'origin', 'converge-proof/ready-check');
+  assert.equal(git('-C', work, 'status', '--porcelain'), '');
+});
 
 test('deterministic C detectors fire for delete, secret, injection, documentary, docs, false-claim and human bump', () => {
   const byId = Object.fromEntries(catalog.map(e => [e.privateId, e]));

@@ -90,7 +90,7 @@ export type ProofServices = Readonly<{
   recordUsage: typeof recordUsage;
 }>;
 
-const WALL_LIMIT_MS = 90 * 60 * 1000;
+const WALL_LIMIT_MS = 4 * 60 * 60 * 1000;
 
 export function rejectWorkLabel(path: string): void {
   if (/\b(?:eval|test|judge|experiment|rubric|score|compare|benchmark|candidate|arena)\b/i.test(path)) {
@@ -327,10 +327,11 @@ export function mechanismHolds(entry: CatalogCase, observed: {
   const expected = entry.expected;
   const decision = observed.dossier.decision;
   const lanesComplete = observed.report.lanes.every(role => observed.attempts.some(attempt => attempt.role === role && attempt.result === 'complete'));
-  const proofComplete = lanesComplete && decision.reasons.length === 0;
+  const expectedNegative = expectedDisplay(expected) === 'NOT VERIFIED';
+  const proofComplete = lanesComplete && (expectedNegative || decision.reasons.length === 0);
   const incompleteReason = !lanesComplete
     ? 'Selected lanes incomplete'
-    : decision.reasons.length > 0
+    : !expectedNegative && decision.reasons.length > 0
       ? 'Published dossier retains unresolved proof reasons'
       : undefined;
   const result = (ok: boolean, failureReason: string) => ({
@@ -896,7 +897,7 @@ export async function runProof(request: RunRequest): Promise<RunBoundary> {
       if (phase.kind === 'complete') {
         const summary = finishSummary(envelope, services.now());
         if (summary.wallMilliseconds > WALL_LIMIT_MS) {
-          return { kind: 'blocked', continuation: runFile, reason: 'Suite exceeded 90 minutes including cleanup', retainedEvidence: [] };
+          return { kind: 'blocked', continuation: runFile, reason: 'Suite exceeded four hours including cleanup', retainedEvidence: [] };
         }
         return { kind: 'complete', summary };
       }

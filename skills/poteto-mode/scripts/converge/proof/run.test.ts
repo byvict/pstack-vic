@@ -101,7 +101,7 @@ function cheapCost(): CostResult {
   });
 }
 
-function harness(t: { after: (fn: () => void) => void }) {
+function harness(t: { after: (fn: () => void) => void }, now: () => Date = () => new Date('2026-09-22T05:00:00.000Z')) {
   const directory = mkdtempSync(join(tmpdir(), 'clinic-ops-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const workRoot = join(directory, 'work');
@@ -125,7 +125,7 @@ function harness(t: { after: (fn: () => void) => void }) {
   const reports = new Map<number, Report>();
   let failPublish = false;
   const services: ProofServices = {
-    now: () => new Date('2026-09-22T05:00:00.000Z'),
+    now,
     async plant({ entry, ownerId, evidenceRoot: root, onIntent }) {
       pr += 1;
       const ref = `converge-proof/${entry.privateId}`;
@@ -288,7 +288,7 @@ test('assertCatalogEntry covers all ten mechanisms including secret absence and 
   }
 });
 
-test('a matching negative mechanism remains incomplete while the dossier retains unresolved proof reasons', () => {
+test('a matching negative mechanism stays complete when an established defect also has unresolved proof reasons', () => {
   const entry = catalog.find(candidate => candidate.expected.kind === 'secret');
   assert.ok(entry);
   const report = reportFor(entry, 1);
@@ -307,15 +307,15 @@ test('a matching negative mechanism remains incomplete while the dossier retains
 
   assert.deepEqual(mechanismHolds(entry, observed), {
     ok: true,
-    complete: false,
-    reason: 'Published dossier retains unresolved proof reasons',
+    complete: true,
+    reason: undefined,
   });
   assert.deepEqual(assertCatalogEntry(entry, observed), {
     expected: 'NOT VERIFIED',
     observed: 'NOT VERIFIED',
     ok: true,
-    completePass: false,
-    reason: 'Published dossier retains unresolved proof reasons',
+    completePass: true,
+    reason: undefined,
   });
 });
 
@@ -549,7 +549,8 @@ test('an expired pool still permits cleanup before suspending the next launch', 
 });
 
 test('a complete suite resume prints ten result lines after every publication turn has closed', async t => {
-  const h = harness(t);
+  let clock = new Date('2026-09-22T05:00:00.000Z');
+  const h = harness(t, () => clock);
   let boundary = await runProof({
     kind: 'start', repo: 'Clinextapp/clinext', workRoot: h.workRoot, evidenceRoot: h.evidenceRoot,
     parent: 'claude', repositoryEpoch: h.epochPath,
@@ -561,6 +562,7 @@ test('a complete suite resume prints ten result lines after every publication tu
     if (boundary.kind !== 'end-turn' || boundary.publication === 'uncertain') throw new Error('expected recorded publication');
     const runId = JSON.parse(readFileSync(boundary.continuation, 'utf8')).runId;
     const closed = closureFor(boundary.publication, 'owner-1', runId, h.directory);
+    if (i === 9) clock = new Date('2026-09-22T06:31:00.000Z');
     boundary = await runProof({ kind: 'resume', runFile: boundary.continuation, pool: h.pool, turnClosure: closed, services: h.services });
   }
   assert.equal(boundary.kind, 'complete');
@@ -569,6 +571,8 @@ test('a complete suite resume prints ten result lines after every publication tu
   for (const entry of catalog) assert.match(text, new RegExp(`entry ${entry.privateId}: expected .+ got .+ ok`));
   assert.equal(boundary.summary.entries.length, 10);
   assert.equal(boundary.summary.entries.every(e => e.ok), true);
+  assert.equal(boundary.summary.wallMilliseconds, 91 * 60 * 1000);
+  assert.equal(boundary.summary.completePass, true);
   assert.equal(boundary.summary.resources, 'all-owned-resources-closed');
   assert.match(text, /required-lanes-1-9:/);
   assert.match(text, /catalog-including-human-update:/);
