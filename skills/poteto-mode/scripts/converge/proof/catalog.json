@@ -98,14 +98,14 @@
    "natural": {
     "title": "Drop expired auth sessions in one statement",
     "body": "Simplify expired session cleanup to a single delete.\n\n## Why\nThe proposal removes the id predicate from expired-session cleanup.\n\n## Scope\n- server/middleware/requireAuth.js\n\n## Tradeoffs\nThe shorter statement broadens deletion from one session to every session.\n\n## Blast Radius\nAuthentication sessions handled by requireAuth are affected.\n\n## Verification\ncheck: Run test suite",
-      "edits": [
-        {
-          "path": "server/middleware/requireAuth.js",
-          "before": "function deleteExpiredSession(domainDB, sid) {",
-          "after": "function deleteExpiredSession(domainDB, _sid) {"
-        },
-        {
-          "path": "server/middleware/requireAuth.js",
+    "edits": [
+     {
+      "path": "server/middleware/requireAuth.js",
+      "before": "function deleteExpiredSession(domainDB, sid) {",
+      "after": "function deleteExpiredSession(domainDB, _sid) {"
+     },
+     {
+      "path": "server/middleware/requireAuth.js",
       "before": "    domainDB.prepare('DELETE FROM auth_sessions WHERE id = ?').run(sid);",
       "after": "    domainDB.prepare('DELETE FROM auth_sessions').run();"
      }
