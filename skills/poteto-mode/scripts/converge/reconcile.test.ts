@@ -17,6 +17,7 @@ test('real reconcile CLI persists a fresh docs-only execution with exact check e
   assert.deepEqual(report.touchedFeatures, []);
   assert.equal(report.claims[0].artifactFound, true);
   assert.equal(report.checks[0].head, f.state.head);
+  assert.equal(f.calls().filter(call => /\/contents\/(?:tools\/run-all-tests\.js|package\.json)\?/.test(call[1] ?? '')).length, 0);
   assert.deepEqual(JSON.parse(readFileSync(join(f.directory, 'report.json'), 'utf8')), report);
   const second = runReconcile(f, 'second.json'); assert.equal(second.status, 0, second.stderr);
   const next = JSON.parse(second.stdout);
@@ -72,7 +73,7 @@ test('npm patch/minor classification rejects majors, script and registry changes
 
 test('complete exact-run historical test records prove present artifacts and disprove absent named tests', t => {
   const f = fixture(); t.after(f.cleanup);
-  const prefix = 'Server (gates + suite)\tRun tests\t2026-09-21T00:00:00.000Z ';
+  const prefix = 'Server (gates + suite)\tRun tests\t2026-09-22T00:35:12.000Z ';
   f.state.log = ['Clinext test runner — 1 arquivo(s), concorrência 1 (1 cores)', '  PASS  tools/tests/present.test.js  20ms', 'Resultado: 1 passed, 0 failed, 20ms total'].map(line => prefix + line).join('\n');
   f.state.body = '## Verification\ntest: tools/tests/present.test.js\nartifact: actions/8/1/tests/tools/tests/present.test.js\ntest: tools/tests/absent.test.js\nartifact: actions/8/1/tests/tools/tests/absent.test.js';
   f.save();
@@ -91,3 +92,90 @@ for (const config of ['.cursor/converge.json?ref=untrusted', '.cursor/converge.j
     assert.equal(f.calls().some(call => call.some(arg => arg.includes('/contents/.cursor/converge.json'))), false);
   });
 }
+
+function historicalFixture() {
+  const f = fixture();
+  f.state.log = [
+    ['35:11.8', '##[group]Run npm test'], ['35:11.81', 'npm test'], ['35:11.82', 'shell: /usr/bin/bash -e {0}'],
+    ['35:11.83', '##[endgroup]'], ['35:11.9', '> node tools/run-all-tests.js'],
+    ['35:12.0', 'Clinext test runner — 1 arquivo(s), concorrência 1 (1 cores)'],
+    ['41:31.8', '  PASS  tools/tests/present.test.js  20ms'], ['41:31.82', 'Resultado: 1 passed, 0 failed, 20ms total'],
+    ['41:31.84', '##[group]Run actions/upload-artifact@v7'],
+  ].map(([time, text]) => `Server (gates + suite)\tUNKNOWN STEP\t2026-09-22T00:${time}Z ${text}`).join('\n');
+  f.state.body = '## Verification\ntest: tools/tests/present.test.js\ntest: tools/tests/absent.test.js';
+  return f;
+}
+test('unknown-step evidence supports present claims and publishes absent claims as NOT VERIFIED', t => {
+  const f = historicalFixture(); t.after(f.cleanup); f.save();
+  const result = runReconcile(f); assert.equal(result.status, 0, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.deepEqual(report.claims.map((c: {resolution:string}) => c.resolution), ['supported', 'missing']);
+  for (const path of ['tools/run-all-tests.js', 'package.json']) assert.equal(f.calls().filter(call => call[1]?.includes(`/contents/${path}?`)).length, 1);
+  const published = f.run('publish.ts', ['--report', join(f.directory, 'report.json'), '--evidence', join(f.directory, 'evidence')]);
+  assert.equal(published.status, 0, published.stderr);
+  assert.equal(JSON.parse(published.stdout).dossier.decision.verdict, 'NOT VERIFIED');
+});
+const invalidProvenance: [string, (state: ReturnType<typeof fixture>['state']) => void][] = [
+  ['failed run', s => { s.runOverrides.conclusion = 'failure'; }],
+  ['incomplete run', s => { s.runOverrides.status = 'in_progress'; }],
+  ['wrong run head', s => { s.runOverrides.head_sha = 'e'.repeat(40); }],
+  ['wrong workflow', s => { s.runOverrides.workflow_id = 99; }],
+  ['wrong run attempt', s => { s.runOverrides.run_attempt = 2; }],
+  ['wrong job identity', s => { s.jobs[1].id = 99; }],
+  ['wrong job run', s => { s.jobs[1].run_id = 7; }],
+  ['wrong job attempt', s => { s.jobs[1].run_attempt = 2; }],
+  ['wrong job head', s => { s.jobs[1].head_sha = 'e'.repeat(40); }],
+  ['failed server job', s => { s.jobs[1].conclusion = 'failure'; }],
+  ['incomplete server job', s => { s.jobs[1].status = 'in_progress'; }],
+  ['duplicate job id', s => { s.jobs[1].id = s.jobs[0].id; }],
+  ['second failed Server job', s => { s.jobs.push({ ...s.jobs[1], id: 9, conclusion: 'failure' }); }],
+  ['duplicate Run tests step', s => { s.jobs[1].steps.push({ ...s.jobs[1].steps[0], number: 16 }); }],
+  ['duplicate step number', s => { s.jobs[1].steps[1].number = 14; }],
+  ['failed test step', s => { s.jobs[1].steps[0].conclusion = 'failure'; }],
+  ['wrong step timing', s => { s.jobs[1].steps[0].started_at = '2026-09-22T00:35:13Z'; }],
+  ['wrong next timing', s => { s.jobs[1].steps[1].started_at = '2026-09-22T00:41:32Z'; }],
+  ['step outside job', s => { s.jobs[1].completed_at = '2026-09-22T00:41:30Z'; }],
+  ['overlapping previous step', s => { s.jobs[1].steps.unshift({ ...s.jobs[1].steps[0], number: 13, name: 'Format check', started_at: '2026-09-22T00:34:00Z', completed_at: '2026-09-22T00:35:13Z' }); }],
+  ['overlapping next step', s => { s.jobs[1].steps[1].started_at = '2026-09-22T00:41:30Z'; }],
+];
+for (const [name, change] of invalidProvenance) {
+  test(`historical claims stay unavailable with ${name}`, t => {
+    const f = historicalFixture(); t.after(f.cleanup); change(f.state); f.save();
+    const result = runReconcile(f); assert.equal(result.status, 0, result.stderr);
+    const report = JSON.parse(result.stdout);
+    assert.deepEqual(report.claims.map((c: {resolution:string}) => c.resolution), ['unavailable', 'unavailable']);
+    assert.equal(report.findings.some((f: {kind:string}) => f.kind === 'false-claim'), false);
+  });
+}
+for (const path of ['tools/run-all-tests.js', 'package.json', '.github/workflows/tests.yml']) {
+  for (const direction of ['into', 'out of']) {
+    test(`historical claims refuse a rename ${direction} protected ${path}`, t => {
+      const f = historicalFixture(); t.after(f.cleanup);
+      f.state.files = [{ filename: direction === 'into' ? path : 'old.js', previous_filename: direction === 'into' ? 'old.js' : path, status: 'renamed', patch: '' }];
+      f.save();
+      const result = runReconcile(f); assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(JSON.parse(result.stdout).claims.map((c: {resolution:string}) => c.resolution), ['unavailable', 'unavailable']);
+      assert.equal(f.calls().filter(call => /\/contents\/(?:tools\/run-all-tests\.js|package\.json)\?/.test(call[1] ?? '')).length, 0);
+    });
+  }
+}
+for (const path of ['tools/run-all-tests.js', 'package.json']) {
+  test(`unreadable trusted ${path} keeps historical claims unavailable with a gap`, t => {
+    const f = historicalFixture(); t.after(f.cleanup); f.state.failEndpoint = `/contents/${path}`; f.save();
+    const result = runReconcile(f); assert.equal(result.status, 0, result.stderr);
+    const report = JSON.parse(result.stdout);
+    assert.deepEqual(report.claims.map((c: {resolution:string}) => c.resolution), ['unavailable', 'unavailable']);
+    assert.deepEqual(report.gaps, ['Tests logs unavailable']);
+    for (const source of ['tools/run-all-tests.js', 'package.json']) assert.equal(f.calls().filter(call => call[1]?.includes(`/contents/${source}?`)).length, 1);
+  });
+}
+test('forced parent color cannot corrupt gh GET or publication POST JSON', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const env = { FORCE_COLOR: '1', CLICOLOR_FORCE: '1' };
+  const result = f.run('converge-reconcile', ['--repo', 'Example/app', '--pr', '1', '--output', join(f.directory, 'report.json')], env);
+  assert.equal(result.status, 0, result.stderr); assert.equal(JSON.parse(result.stdout).mode, 'ci-only');
+  const published = f.run('publish.ts', ['--report', join(f.directory, 'report.json'), '--evidence', join(f.directory, 'evidence')], env);
+  assert.equal(published.status, 0, published.stderr);
+  assert.equal(JSON.parse(published.stdout).dossier.decision.verdict, 'VERIFIED');
+  assert.equal(f.read().comments.length, 1); assert.equal(f.read().statuses.length, 1);
+});

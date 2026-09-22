@@ -2,15 +2,23 @@ import { spawnSync, execFile } from 'node:child_process';
 import { posix } from 'node:path';
 import { array, integer, object, parseContract, relativePath, repoName, sha, string, jsonHash, hash, type Contract, type Check, type Feature } from './contract.ts';
 import { dependencyOnly } from './dependencies.ts';
-import { parseClinextTests, type TestEvidence } from './claims.ts';
+import { parseClinextTests, type TestEvidence, type ClinextProvenance, type StepWindow } from './claims.ts';
+
+function childEnvironment(binary: string): NodeJS.ProcessEnv {
+  if (binary !== 'gh') return process.env;
+  const env: NodeJS.ProcessEnv = { ...process.env, NO_COLOR: '1', CLICOLOR: '0' };
+  delete env.FORCE_COLOR;
+  delete env.CLICOLOR_FORCE;
+  return env;
+}
 
 export function command(binary: string, args: string[], input?: string): string {
-  const result = spawnSync(binary, args, { input, encoding: 'utf8', maxBuffer: 24 * 1024 * 1024, timeout: 90_000 });
+  const result = spawnSync(binary, args, { input, encoding: 'utf8', env: childEnvironment(binary), maxBuffer: 24 * 1024 * 1024, timeout: 90_000 });
   if (result.error || result.status !== 0) throw new Error(`${binary} request failed`);
   return result.stdout;
 }
 export function commandAsync(binary: string, args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => execFile(binary, args, { encoding: 'utf8', maxBuffer: 24 * 1024 * 1024, timeout: 90_000 }, (error, stdout) => error ? reject(new Error(`${binary} request failed`)) : resolve(stdout)));
+  return new Promise((resolve, reject) => execFile(binary, args, { encoding: 'utf8', env: childEnvironment(binary), maxBuffer: 24 * 1024 * 1024, timeout: 90_000 }, (error, stdout) => error ? reject(new Error(`${binary} request failed`)) : resolve(stdout)));
 }
 export async function api(endpoint: string, body?: unknown): Promise<unknown> {
   if (body !== undefined) return JSON.parse(command('gh', ['api', endpoint, '--method', 'POST', '--input', '-'], JSON.stringify(body)));
@@ -122,21 +130,50 @@ export async function workflowRun(t: Trusted, head: string, event?: 'push'): Pro
     .sort((a, b) => integer(b.id) - integer(a.id) || integer(b.run_attempt) - integer(a.run_attempt));
   return runs[0] ?? null;
 }
+function stepWindow(value: Record<string, unknown>): StepWindow {
+  const times = [value.started_at, value.completed_at].map(value => {
+    const text = string(value);
+    const milliseconds = Date.parse(text);
+    if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(text) || !Number.isFinite(milliseconds) || new Date(milliseconds).toISOString() !== text.replace('Z', '.000Z')) throw new Error('Invalid job timing');
+    return milliseconds / 1000;
+  });
+  if (times[1] < times[0]) throw new Error('Reversed job timing');
+  return { startedSecond: times[0], completedSecond: times[1] };
+}
+function testProvenance(run: Record<string, unknown>, jobs: Record<string, unknown>[], head: string): ClinextProvenance | null {
+  const runId = integer(run.id), attempt = integer(run.run_attempt);
+  if (!runId || !attempt || run.head_sha !== head || run.status !== 'completed' || run.conclusion !== 'success') return null;
+  const ids = jobs.map(j => integer(j.id));
+  if (ids.some(id => !id) || new Set(ids).size !== ids.length) return null;
+  const servers = jobs.filter(j => j.name === 'Server (gates + suite)');
+  if (servers.length !== 1) return null;
+  const server = servers[0];
+  if (server.run_id !== runId || server.run_attempt !== attempt || server.head_sha !== head || server.status !== 'completed' || server.conclusion !== 'success' || !string(server.check_run_url).endsWith('/' + integer(server.id))) return null;
+  const jobWindow = stepWindow(server);
+  const steps = array(server.steps).map(v => object(v));
+  const numbers = steps.map(s => integer(s.number));
+  if (numbers.some(number => !number) || new Set(numbers).size !== numbers.length || steps.filter(s => s.name === 'Run tests').length !== 1) return null;
+  const executed = steps.filter(s => s.conclusion !== 'skipped').sort((a, b) => integer(a.number) - integer(b.number));
+  const windows = executed.map(s => {
+    if (s.status !== 'completed') throw new Error('Incomplete job step');
+    const window = stepWindow(s);
+    if (window.startedSecond < jobWindow.startedSecond || window.completedSecond > jobWindow.completedSecond) throw new Error('Step outside job timing');
+    return window;
+  });
+  if (windows.some((w, i) => i > 0 && w.startedSecond < windows[i - 1].completedSecond)) return null;
+  const index = executed.findIndex(s => s.name === 'Run tests');
+  if (index < 0 || executed[index].conclusion !== 'success') return null;
+  return { runId, attempt, jobId: integer(server.id), tests: windows[index], next: windows[index + 1] ?? null };
+}
+type TestSources = { kind: 'unused' | 'unavailable' } | { kind: 'ready'; provenance: ClinextProvenance; runnerSource: string; packageSource: string };
 export async function snapshot(repo: string, prNumber: number, configPath: string, proof: boolean): Promise<Snapshot> {
   const [t, p] = await Promise.all([trusted(repo, configPath), pull(repo, prNumber)]);
   admitPull(p, t.config, p.head, proof);
   const runPromise = workflowRun(t, p.head);
-  const runEvidencePromise = runPromise.then(async run => {
-    if (!run) return { jobs: [], log: null };
-    const runId = integer(run.id);
-    const attempt = integer(run.run_attempt);
-    const [logResult, jobValues] = await Promise.all([
-      run.status === 'completed' ? commandAsync('gh', ['run', 'view', String(runId), '--repo', repo, '--attempt', String(attempt), '--log']).then(text => ({ text }), () => ({ text: null })) : Promise.resolve({ text: null }),
-      pages(`repos/${repo}/actions/runs/${runId}/attempts/${attempt}/jobs`, 'jobs'),
-    ]);
-    return { jobs: jobValues.map(v => object(v)), log: logResult.text };
-  });
-  const runEvidenceSettlement = runEvidencePromise.then(() => undefined, () => undefined);
+  const runJobsPromise = runPromise.then(async run => run ? (await pages(`repos/${repo}/actions/runs/${integer(run.id)}/attempts/${integer(run.run_attempt)}/jobs`, 'jobs')).map(v => object(v)) : []);
+  const runLogPromise = runPromise.then(run => run?.status === 'completed' ? commandAsync('gh', ['run', 'view', String(integer(run.id)), '--repo', repo, '--attempt', String(integer(run.run_attempt)), '--log']).catch(() => null) : null);
+  const runEvidencePromise = Promise.all([runJobsPromise, runLogPromise]).then(([jobs, log]) => ({ jobs, log }));
+  const runEvidenceSettlement = Promise.allSettled([runJobsPromise, runLogPromise, runEvidencePromise]);
   const prepared = await Promise.all([
     api(`repos/${repo}/compare/${t.sha}...${p.head}`), pages(`repos/${repo}/pulls/${prNumber}/files`),
     commandAsync('gh', ['pr', 'diff', String(prNumber), '--repo', repo]), principal(), comments(repo, prNumber), checks(repo, p.head), runPromise,
@@ -146,13 +183,31 @@ export async function snapshot(repo: string, prNumber: number, configPath: strin
     if (files.length >= 3000) throw new Error('PR files truncated');
     const patch = command('git', ['patch-id', '--stable'], diff).trim().split(/\s+/)[0];
     if (!patch) throw new Error('Empty PR diff');
-    const [featureList, runEvidence] = await Promise.all([features(t, new Set(files.flatMap(f => f.previous ? [f.path, f.previous] : [f.path]))), runEvidencePromise]);
-    return { base, files, diff, author, allComments, observedChecks, run, patch, featureList, runEvidence };
+    const testSourcesPromise = runJobsPromise.then(async (jobs): Promise<TestSources> => {
+      if (!run) return { kind: 'unused' };
+      const provenance = testProvenance(run, jobs, p.head);
+      const testCheck = observedChecks.find(c => c.context === 'Run test suite');
+      const job = jobs.find(j => j.name === 'Run test suite' && string(j.check_run_url).endsWith(`/${testCheck?.id}`));
+      const protectedPaths = new Set(['tools/run-all-tests.js', 'package.json', t.workflowPath]);
+      if (!provenance || !testCheck || job?.conclusion !== 'success' || !/(?:test|artifact):/.test(p.body) || files.some(f => protectedPaths.has(f.path) || (f.previous !== null && protectedPaths.has(f.previous)))) return { kind: 'unused' };
+      const reads = [blob(repo, t.sha, 'tools/run-all-tests.js'), blob(repo, t.sha, 'package.json')];
+      const [runnerSource, packageSource] = await Promise.all(reads).catch(async error => {
+        await Promise.allSettled(reads);
+        throw error;
+      });
+      return { kind: 'ready', provenance, runnerSource, packageSource };
+    }).catch((): TestSources => ({ kind: 'unavailable' }));
+    const featurePromise = features(t, new Set(files.flatMap(f => f.previous ? [f.path, f.previous] : [f.path])));
+    const [featureList, runEvidence, testSources] = await Promise.all([featurePromise, runEvidencePromise, testSourcesPromise]).catch(async error => {
+      await Promise.allSettled([featurePromise, runEvidencePromise, testSourcesPromise]);
+      throw error;
+    });
+    return { base, files, diff, author, allComments, observedChecks, run, patch, featureList, runEvidence, testSources };
   }).catch(async error => {
     await runEvidenceSettlement;
     throw error;
   });
-  const { base, files, diff, author, allComments, observedChecks, run, patch, featureList, runEvidence } = prepared;
+  const { base, files, diff, author, allComments, observedChecks, run, patch, featureList, runEvidence, testSources } = prepared;
   const visibleComments = allComments.filter(c => !isPublication(c, author));
   const sources: TextSource[] = [{ source: 'body', id: 'body', text: p.body }, ...visibleComments.map(c => ({ source: 'comment' as const, id: String(integer(c.id)), text: string(c.body) }))];
   const gaps: string[] = files.filter(f => f.patch === null).map(() => 'Changed file has no readable patch');
@@ -170,13 +225,13 @@ export async function snapshot(repo: string, prNumber: number, configPath: strin
       try {
         if (log === null) throw new Error('Tests logs unavailable');
         sources.push({ source: 'log', id: `${runId}/${attempt}`, text: log });
-        const server = jobs.find(j => j.name === 'Server (gates + suite)' && j.conclusion === 'success' && j.head_sha === p.head && array(j.steps).some(s => object(s).name === 'Run tests' && object(s).conclusion === 'success'));
-        if (server && /(?:test|artifact):/.test(p.body) && !files.some(f => ['tools/run-all-tests.js', 'package.json', t.workflowPath].includes(f.path))) {
-          const [runnerSource, packageSource] = await Promise.all([blob(repo, t.sha, 'tools/run-all-tests.js'), blob(repo, t.sha, 'package.json')]);
+        if (testSources.kind === 'unavailable') throw new Error('Trusted test sources unavailable');
+        if (testSources.kind === 'ready') {
+          const { provenance, runnerSource, packageSource } = testSources;
           if (object(object(JSON.parse(packageSource)).scripts).test === 'node tools/run-all-tests.js' && runnerSource.includes('function printOneResult(') && runnerSource.includes('function printRunnerFooter(')) {
             t.files.set('tools/run-all-tests.js', runnerSource);
             t.files.set('package.json', packageSource);
-            testEvidence = parseClinextTests(log, { runId, attempt, jobId: integer(server.id) });
+            testEvidence = parseClinextTests(log, provenance);
           }
         }
       }

@@ -52,3 +52,17 @@ test('a text artifact alone cannot prove a live drive', async t => {
   const result = await admitLane(join(i.directory, 'manifest.json'), i.report, join(i.directory, 'admitted'));
   assert.deepEqual(result.coverage, []); assert.deepEqual(result.gaps, ['Live user path was not driven with evidence']);
 });
+for (const fault of ['stale-length', 'invented-obligation']) {
+  test(`admission retains refusal for ${fault}`, async t => {
+    const i = input(); t.after(i.cleanup);
+    const output = { ...i.output, riskProofs: fault === 'invented-obligation' ? [{ obligation: { source: 'diff', path: 'client/Login.jsx', line: 156, rule: 'login-user-path-unchanged' }, result: 'proved-safe', artifactIds: ['action'] }] : [] };
+    if (fault === 'stale-length') output.artifacts[1].bytes -= 1;
+    writeFileSync(join(i.directory, 'output.json'), JSON.stringify(output));
+    writeFileSync(join(i.directory, 'receipt.json'), JSON.stringify({ ...i.receipt, provider: 'codex', model: 'gpt-6-astra', remote: null }));
+    const manifest = JSON.parse(readFileSync(join(i.directory, 'manifest.json'), 'utf8')); manifest.descriptor = 'codex:gpt-6-astra@high';
+    writeFileSync(join(i.directory, 'manifest.json'), JSON.stringify(manifest));
+    mkdirSync(join(i.directory, i.prefix), { recursive: true });
+    writeFileSync(join(i.directory, i.prefix, 'screen.png'), i.png); writeFileSync(join(i.directory, i.prefix, 'action.json'), i.action);
+    await assert.rejects(admitLane(join(i.directory, 'manifest.json'), i.report, join(i.directory, 'admitted')), fault === 'stale-length' ? /Artifact bytes differ/ : /does not identify a requested obligation/);
+  });
+}

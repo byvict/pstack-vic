@@ -4,7 +4,11 @@ const file = process.env.CONVERGE_FIXTURE;
 const state = JSON.parse(readFileSync(file, 'utf8'));
 const args = process.argv.slice(2);
 appendFileSync(file + '.calls', JSON.stringify(args) + '\n');
-function send(value) { process.stdout.write(JSON.stringify(args.includes('--slurp') ? [value] : value)); }
+function send(value) {
+  const color = (process.env.FORCE_COLOR && process.env.FORCE_COLOR !== '0') || (process.env.CLICOLOR_FORCE && process.env.CLICOLOR_FORCE !== '0');
+  const text = JSON.stringify(args.includes('--slurp') ? [value] : value);
+  process.stdout.write(color ? '\x1b[32m' + text + '\x1b[0m' : text);
+}
 function save() { writeFileSync(file, JSON.stringify(state)); }
 function fail() { process.exit(1); }
 const repo = 'Example/app';
@@ -39,10 +43,10 @@ else if (args[0] === 'api') {
     send({ type: 'file', encoding: 'base64', size: Buffer.byteLength(content), content: Buffer.from(content).toString('base64') });
   } else if (endpoint.startsWith(`${root}/compare/`)) send({ merge_base_commit: { sha: state.base } });
   else if (endpoint === `${root}/pulls/1/files`) send(state.files);
-  else if (endpoint === `${root}/actions/workflows`) send({ workflows: [{ id: 5, name: 'Tests', path: '.github/workflows/tests.yml', state: 'active' }] });
+  else if (endpoint === `${root}/actions/workflows`) send({ workflows: [{ id: state.workflowId, name: 'Tests', path: '.github/workflows/tests.yml', state: 'active' }] });
   else if (endpoint.includes('/check-runs')) send({ check_runs: state.checks.map(c => ({ ...c, head_sha: state.head })) });
-  else if (endpoint === `${root}/actions/workflows/5/runs`) send({ workflow_runs: [{ id: 8, workflow_id: 5, head_sha: query.get('head_sha'), event: query.get('event') ?? 'pull_request', head_branch: 'main', run_attempt: 1, status: 'completed', conclusion: state.trunkRed && query.get('event') === 'push' ? 'failure' : 'success' }] });
-  else if (endpoint === `${root}/actions/runs/8/attempts/1/jobs`) send({ jobs: [{ id: 4, name: 'Run test suite', head_sha: state.trunk, conclusion: 'success', check_run_url: `https://api.github.com/repos/${repo}/check-runs/11` }, { id: 6, name: 'Server (gates + suite)', head_sha: state.head, conclusion: 'success', steps: [{name:'Run tests', conclusion:'success'}] }] });
+  else if (endpoint === `${root}/actions/workflows/${state.workflowId}/runs`) send({ workflow_runs: [{ id: 8, workflow_id: state.workflowId, head_sha: query.get('head_sha'), event: query.get('event') ?? 'pull_request', head_branch: 'main', run_attempt: 1, status: 'completed', conclusion: state.trunkRed && query.get('event') === 'push' ? 'failure' : 'success', ...state.runOverrides }] });
+  else if (endpoint === `${root}/actions/runs/${state.runOverrides.id ?? 8}/attempts/${state.runOverrides.run_attempt ?? 1}/jobs`) send({ jobs: state.jobs });
   else if (endpoint === `${root}/issues/1/comments`) send(state.comments);
   else if (endpoint === `${root}/pulls/1/comments`) send([]);
   else if (endpoint.startsWith(`${root}/issues/comments/`)) send(state.comments.find(c => c.id === Number(endpoint.split('/').at(-1))) ?? {});
