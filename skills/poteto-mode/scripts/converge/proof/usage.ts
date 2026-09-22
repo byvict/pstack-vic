@@ -35,7 +35,6 @@ export type PoolDecision =
 
 const AUDIT_MS = 30 * 60 * 1000;
 const STOP_THRESHOLD_PERCENT = 80;
-const FULL_PASS_LIMIT_NANO = 500_000_000n;
 const PRICE: Readonly<Record<string, Readonly<{ input: bigint; cacheRead: bigint; output: bigint }>>> = {
   'composer-2.5': { input: 500n, cacheRead: 200n, output: 2500n },
   'grok-4.6': { input: 2000n, cacheRead: 500n, output: 6000n },
@@ -105,10 +104,6 @@ export function formatUsd(nano: bigint): string {
   const whole = nano / 1_000_000_000n;
   const frac = (nano % 1_000_000_000n).toString().padStart(9, '0').replace(/0+$/, '') || '0';
   return `${whole}.${frac}`;
-}
-
-export function fullPassUnderLimit(cost: CostResult): boolean {
-  return cost.kind === 'known' && cost.equivalentNanoUSD < FULL_PASS_LIMIT_NANO;
 }
 
 export function parsePoolObservation(value: unknown, file: Original, now: Date): PoolDecision {

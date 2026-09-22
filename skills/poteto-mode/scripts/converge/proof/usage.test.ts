@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { hash } from '../contract.ts';
 import {
-  admitLaunch, combineCosts, formatUsd, fullPassUnderLimit, parseUsageResponse, priceUsage, recordUsage, USAGE_HOST,
+  admitLaunch, combineCosts, formatUsd, parseUsageResponse, priceUsage, recordUsage, USAGE_HOST,
   type Usage,
 } from './usage.ts';
 
@@ -52,14 +52,12 @@ test('prices Composer and Grok calibrations in nano-USD and refuses nonzero cach
   assert.equal(grokPriced.kind, 'known');
   if (grokPriced.kind === 'known') {
     assert.equal(grokPriced.equivalentNanoUSD, 475952000n);
-    assert.equal(fullPassUnderLimit(grokPriced), true);
   }
   const grok47Priced = priceUsage(usage('grok-4.7', grok.tokens, 'run-grok-4-7'));
   assert.equal(grok47Priced.kind, 'known');
   if (grok47Priced.kind === 'known') assert.equal(grok47Priced.equivalentNanoUSD, 475952000n);
   const cacheWrite = priceUsage(usage('composer-2.5', { input: 1n, cacheRead: 0n, cacheWrite: 8n, output: 1n }, 'run-cache'));
   assert.equal(cacheWrite.kind, 'unavailable');
-  assert.equal(fullPassUnderLimit({ kind: 'unavailable', reason: 'missing', originalEvidence: [] }), false);
   assert.throws(() => parseUsageResponse(composerResponse, 'run-other'), /Exact run usage is missing/);
 });
 

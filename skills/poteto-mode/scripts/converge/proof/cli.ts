@@ -27,7 +27,7 @@ export function printBoundary(boundary: RunBoundary): number {
   const summary: SuiteSummary = boundary.summary;
   process.stdout.write(renderSuite(summary));
   const failed = !summary.completePass || summary.entries.some(entry => !entry.ok || !entry.completePass) || summary.resources !== 'all-owned-resources-closed'
-    || summary.costs.perFullPass.some(pass => pass.cost.kind === 'unavailable' || (pass.cost.kind === 'known' && pass.cost.equivalentNanoUSD >= 500_000_000n));
+    || summary.costs.perFullPass.some(pass => pass.cost.kind === 'unavailable');
   return failed ? 1 : 0;
 }
 

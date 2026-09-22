@@ -101,7 +101,7 @@ function cheapCost(): CostResult {
   });
 }
 
-function harness(t: { after: (fn: () => void) => void }, now: () => Date = () => new Date('2026-09-22T05:00:00.000Z')) {
+function harness(t: { after: (fn: () => void) => void }, now: () => Date = () => new Date('2026-09-22T05:00:00.000Z'), fixtureCost: CostResult = cheapCost()) {
   const directory = mkdtempSync(join(tmpdir(), 'clinic-ops-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const workRoot = join(directory, 'work');
@@ -206,7 +206,7 @@ function harness(t: { after: (fn: () => void) => void }, now: () => Date = () =>
     async recordUsage({ receiptPath, evidenceDirectory }) {
       mkdirSync(evidenceDirectory, { recursive: true });
       const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
-      const priced = cheapCost();
+      const priced = fixtureCost;
       if (priced.kind !== 'known' || !priced.sources[0]) throw new Error('expected known');
       return { ...priced.sources[0], originalReceipt: { path: receiptPath, sha256: hash(readFileSync(receiptPath)) }, remoteRun: { agentId: 'bc-fixture', runId: receipt.remote.runId } };
     },
@@ -622,7 +622,12 @@ test('an expired pool still permits cleanup before suspending the next launch', 
 
 test('a complete suite under 90 minutes prints ten result lines after every publication turn has closed', async t => {
   let clock = new Date('2026-09-22T05:00:00.000Z');
-  const h = harness(t, () => clock);
+  const expensive = priceUsage({
+    originalReceipt: { path: 'r', sha256: digest64('1') }, remoteRun: { agentId: 'bc-fixture', runId: 'run-1' },
+    rawResponse: { path: 'u', sha256: digest64('2') }, requestedAt: 't', receivedAt: 't', model: 'composer-2.5',
+    tokens: { input: 2_000_000n, cacheRead: 0n, cacheWrite: 0n, output: 0n }, apiMoney: { rawCostCents: '0', chargedCents: '0' },
+  });
+  const h = harness(t, () => clock, expensive);
   let boundary = await runProof({
     kind: 'start', repo: 'Clinextapp/clinext', workRoot: h.workRoot, evidenceRoot: h.evidenceRoot,
     parent: 'claude', repositoryEpoch: h.epochPath,
@@ -645,6 +650,10 @@ test('a complete suite under 90 minutes prints ten result lines after every publ
   assert.equal(boundary.summary.entries.every(e => e.ok), true);
   assert.equal(boundary.summary.wallMilliseconds, 89 * 60 * 1000);
   assert.equal(boundary.summary.completePass, true);
+  assert.equal(boundary.summary.costs.perFullPass[0]?.cost.kind, 'known');
+  if (boundary.summary.costs.perFullPass[0]?.cost.kind === 'known') {
+    assert.equal(boundary.summary.costs.perFullPass[0].cost.equivalentNanoUSD, 1_000_000_000n);
+  }
   assert.equal(boundary.summary.resources, 'all-owned-resources-closed');
   assert.deepEqual(h.lifecycleCommandOverrides, []);
   assert.match(text, /required-lanes-1-9:/);

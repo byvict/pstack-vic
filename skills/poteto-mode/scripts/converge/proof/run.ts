@@ -12,7 +12,7 @@ import {
   alignDependencies, catalogPath, closeOwnedCase, expectedDisplay, loadCatalog, originalOf, plantCase,
   type CatalogCase, type CleanupResult, type Command, type Original, type OwnedCase,
 } from './plant.ts';
-import { admitLaunch, combineCosts, formatUsd, fullPassUnderLimit, priceUsage, recordUsage, type CostResult, type CostSummary } from './usage.ts';
+import { admitLaunch, combineCosts, formatUsd, priceUsage, recordUsage, type CostResult, type CostSummary } from './usage.ts';
 
 export type Attempt = Readonly<{
   id: string; role: Role; manifest: string; receipt: Original; output: Original | null;
@@ -817,7 +817,7 @@ async function cleanCase(envelope: Envelope, phase: Extract<Phase, { kind: 'clea
   }
   const summary: CaseSummary = {
     id: entry.privateId, expected: assertion.expected, observed: assertion.observed, ok: assertion.ok,
-    completePass: assertion.completePass && cost.kind === 'known' && fullPassUnderLimit(cost),
+    completePass: assertion.completePass && cost.kind === 'known',
     reason: assertion.reason, cleanup, cost, owned: phase.owned,
   };
   const completed = [...envelope.completed, summary];
