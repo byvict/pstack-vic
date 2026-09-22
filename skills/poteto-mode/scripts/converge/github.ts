@@ -125,16 +125,34 @@ export async function workflowRun(t: Trusted, head: string, event?: 'push'): Pro
 export async function snapshot(repo: string, prNumber: number, configPath: string, proof: boolean): Promise<Snapshot> {
   const [t, p] = await Promise.all([trusted(repo, configPath), pull(repo, prNumber)]);
   admitPull(p, t.config, p.head, proof);
-  const [comparisonValue, fileValues, diff, author, allComments, observedChecks, run] = await Promise.all([
+  const runPromise = workflowRun(t, p.head);
+  const runEvidencePromise = runPromise.then(async run => {
+    if (!run) return { jobs: [], log: null };
+    const runId = integer(run.id);
+    const attempt = integer(run.run_attempt);
+    const [logResult, jobValues] = await Promise.all([
+      run.status === 'completed' ? commandAsync('gh', ['run', 'view', String(runId), '--repo', repo, '--attempt', String(attempt), '--log']).then(text => ({ text }), () => ({ text: null })) : Promise.resolve({ text: null }),
+      pages(`repos/${repo}/actions/runs/${runId}/attempts/${attempt}/jobs`, 'jobs'),
+    ]);
+    return { jobs: jobValues.map(v => object(v)), log: logResult.text };
+  });
+  const runEvidenceSettlement = runEvidencePromise.then(() => undefined, () => undefined);
+  const prepared = await Promise.all([
     api(`repos/${repo}/compare/${t.sha}...${p.head}`), pages(`repos/${repo}/pulls/${prNumber}/files`),
-    commandAsync('gh', ['pr', 'diff', String(prNumber), '--repo', repo]), principal(), comments(repo, prNumber), checks(repo, p.head), workflowRun(t, p.head),
-  ]);
-  const base = sha(object(object(comparisonValue).merge_base_commit).sha);
-  const files = fileValues.map(value => { const f = object(value); return { path: relativePath(f.filename), previous: f.previous_filename === undefined ? null : relativePath(f.previous_filename), patch: f.patch === undefined ? null : string(f.patch), status: string(f.status) }; });
-  if (files.length >= 3000) throw new Error('PR files truncated');
-  const patch = command('git', ['patch-id', '--stable'], diff).trim().split(/\s+/)[0];
-  if (!patch) throw new Error('Empty PR diff');
-  const featureList = await features(t, new Set(files.flatMap(f => f.previous ? [f.path, f.previous] : [f.path])));
+    commandAsync('gh', ['pr', 'diff', String(prNumber), '--repo', repo]), principal(), comments(repo, prNumber), checks(repo, p.head), runPromise,
+  ]).then(async ([comparisonValue, fileValues, diff, author, allComments, observedChecks, run]) => {
+    const base = sha(object(object(comparisonValue).merge_base_commit).sha);
+    const files = fileValues.map(value => { const f = object(value); return { path: relativePath(f.filename), previous: f.previous_filename === undefined ? null : relativePath(f.previous_filename), patch: f.patch === undefined ? null : string(f.patch), status: string(f.status) }; });
+    if (files.length >= 3000) throw new Error('PR files truncated');
+    const patch = command('git', ['patch-id', '--stable'], diff).trim().split(/\s+/)[0];
+    if (!patch) throw new Error('Empty PR diff');
+    const [featureList, runEvidence] = await Promise.all([features(t, new Set(files.flatMap(f => f.previous ? [f.path, f.previous] : [f.path]))), runEvidencePromise]);
+    return { base, files, diff, author, allComments, observedChecks, run, patch, featureList, runEvidence };
+  }).catch(async error => {
+    await runEvidenceSettlement;
+    throw error;
+  });
+  const { base, files, diff, author, allComments, observedChecks, run, patch, featureList, runEvidence } = prepared;
   const visibleComments = allComments.filter(c => !isPublication(c, author));
   const sources: TextSource[] = [{ source: 'body', id: 'body', text: p.body }, ...visibleComments.map(c => ({ source: 'comment' as const, id: String(integer(c.id)), text: string(c.body) }))];
   const gaps: string[] = files.filter(f => f.patch === null).map(() => 'Changed file has no readable patch');
@@ -143,15 +161,13 @@ export async function snapshot(repo: string, prNumber: number, configPath: strin
   else {
     const runId = integer(run.id);
     const attempt = integer(run.run_attempt);
-    const logPromise = run.status === 'completed' ? commandAsync('gh', ['run', 'view', String(runId), '--repo', repo, '--attempt', String(attempt), '--log']).then(text => ({ text }), () => ({ text: null })) : Promise.resolve({ text: null });
-    const jobs = (await pages(`repos/${repo}/actions/runs/${runId}/attempts/${attempt}/jobs`, 'jobs')).map(v => object(v));
+    const { jobs, log } = runEvidence;
     const testCheck = observedChecks.find(c => c.context === 'Run test suite');
     const job = jobs.find(j => j.name === 'Run test suite' && string(j.check_run_url).endsWith(`/${testCheck?.id}`));
     if (!testCheck || !job || run.status !== 'completed' || run.conclusion !== 'success' || job.conclusion !== 'success') gaps.push('Exact-head Tests workflow is not successful');
     else { testCheck.runId = runId; testCheck.attempt = attempt; }
     if (run.status === 'completed') {
       try {
-        const { text: log } = await logPromise;
         if (log === null) throw new Error('Tests logs unavailable');
         sources.push({ source: 'log', id: `${runId}/${attempt}`, text: log });
         const server = jobs.find(j => j.name === 'Server (gates + suite)' && j.conclusion === 'success' && j.head_sha === p.head && array(j.steps).some(s => object(s).name === 'Run tests' && object(s).conclusion === 'success'));
