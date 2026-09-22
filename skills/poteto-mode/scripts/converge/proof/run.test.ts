@@ -395,6 +395,7 @@ if (args[0] === 'models') {
     repo: 'Clinextapp/clinext', pr: 1, ref: 'converge-proof/one', head, trunk, ownerId: 'owner-1', privateId: 'one',
     workRoot: directory, origin: 'https://github.com/Clinextapp/clinext.git', repositoryEpoch: original, creationIntent: original, createdResource: original,
   };
+  assert.equal(await defaultServices().drainReaders(owned, [unavailable]), 'drained');
   assert.equal(await defaultServices().drainReaders(owned, [result]), 'drained');
   const activeReceipt = join(directory, 'active-receipt.json');
   writeFileSync(activeReceipt, JSON.stringify({ schemaVersion: 1, status: 'running', completedAt: null }));

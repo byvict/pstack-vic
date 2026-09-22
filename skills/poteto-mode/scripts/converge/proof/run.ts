@@ -438,6 +438,11 @@ function laneOutputUnavailable(path: string): boolean {
   }
 }
 
+function attemptResult(status: string, outputPath: string | null): Attempt['result'] {
+  if (status === 'complete') return outputPath !== null && laneOutputUnavailable(outputPath) ? 'unavailable' : 'complete';
+  return ['unavailable-cli', 'unauthenticated', 'unavailable-model'].includes(status) ? 'unavailable' : 'failed';
+}
+
 function attemptFromReceipt(launchId: string, role: Role, manifestPath: string): Attempt {
   const manifest = object(JSON.parse(readFileSync(manifestPath, 'utf8')), 'lane manifest');
   const directory = dirname(manifestPath);
@@ -446,9 +451,7 @@ function attemptFromReceipt(launchId: string, role: Role, manifestPath: string):
   const receipt = object(JSON.parse(readFileSync(receiptPath, 'utf8')), 'runner receipt');
   const status = string(receipt.status);
   const output = existsSync(outputPath) ? originalOf(outputPath) : null;
-  const result = status === 'complete'
-    ? output !== null && laneOutputUnavailable(output.path) ? 'unavailable' : 'complete'
-    : ['unavailable-cli', 'unauthenticated', 'unavailable-model'].includes(status) ? 'unavailable' : 'failed';
+  const result = attemptResult(status, output?.path ?? null);
   if (result === 'complete' && output === null) throw new Error('Complete runner receipt has no output');
   const receiptOriginal = originalOf(receiptPath);
   return { id: launchId, role, manifest: manifestPath, receipt: receiptOriginal, output, result, evidence: output ? [receiptOriginal, output] : [receiptOriginal] };
@@ -530,10 +533,10 @@ export function defaultServices(): ProofServices {
           if (!existsSync(attempt.receipt.path) || hash(readFileSync(attempt.receipt.path)) !== attempt.receipt.sha256) return 'active';
           const receipt = object(JSON.parse(readFileSync(attempt.receipt.path, 'utf8')), 'runner receipt');
           const status = oneOf(receipt.status, ['complete', 'cancelled', 'unavailable-cli', 'unauthenticated', 'unavailable-model', 'timed-out', 'child-failed', 'malformed-output']);
-          const result = status === 'complete' ? 'complete' : ['unavailable-cli', 'unauthenticated', 'unavailable-model'].includes(status) ? 'unavailable' : 'failed';
           const completedAt = string(receipt.completedAt);
-          if (result !== attempt.result || !Number.isFinite(Date.parse(completedAt))) return 'active';
           if (attempt.output && (!existsSync(attempt.output.path) || hash(readFileSync(attempt.output.path)) !== attempt.output.sha256)) return 'active';
+          const result = attemptResult(status, attempt.output?.path ?? null);
+          if (result !== attempt.result || !Number.isFinite(Date.parse(completedAt))) return 'active';
           const provider = string(receipt.provider);
           if (receipt.remote === null) {
             if (provider !== 'cursor') continue;
