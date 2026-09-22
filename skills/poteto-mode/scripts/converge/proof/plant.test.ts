@@ -221,6 +221,18 @@ test('session-cleanup keeps the documented parameter used while planting the unb
   assert.match(source, /DELETE FROM auth_sessions'\)\.run\(\)/);
 });
 
+test('logger-note plants the synthetic secret in an allowed JSDoc block', t => {
+  const entry = catalog.find(candidate => candidate.privateId === 'logger-note');
+  assert.ok(entry);
+  const f = tree(); t.after(f.cleanup);
+  seed(f.directory, entry);
+  applyEdits(f.directory, entry.natural.edits);
+
+  const source = readFileSync(join(f.directory, 'tools/health-check.js'), 'utf8');
+  assert.match(source, /\/\*\* @deprecated Revoked incident example: ghp_/);
+  assert.doesNotMatch(source, /^\/\//m);
+});
+
 test('plantCase ignores a historical closed PR on the reused ref and never impersonates Dependabot', async t => {
   const f = tree(); t.after(f.cleanup);
   const work = join(f.directory, 'work');
