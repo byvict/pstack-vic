@@ -1,0 +1,149 @@
+{
+  "suppliedHead": "df0bd38f529dbc47063cd4a506637e78fd337781",
+  "suppliedBase": "ca168b6e2119cba31a0f8fcbeac8c8b34bf4eaea",
+  "originalCheckoutBefore": {
+    "commands": [
+      {
+        "cmd": "cd /workspace && git rev-parse HEAD",
+        "exitCode": 0,
+        "stdout": "6097ed64059953c30cb767528a9cf21205a7fbc2\n",
+        "stderr": ""
+      },
+      {
+        "cmd": "cd /workspace && git status --porcelain",
+        "exitCode": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      {
+        "cmd": "cd /workspace && git branch --show-current",
+        "exitCode": 0,
+        "stdout": "converge-proof/session-b214690cd322\n",
+        "stderr": ""
+      }
+    ]
+  },
+  "resolveHead": {
+    "cmd": "git cat-file -t df0bd38f529dbc47063cd4a506637e78fd337781 (before fetch)",
+    "exitCode": 128,
+    "stdout": "",
+    "stderr": "fatal: git cat-file: could not get object info\n"
+  },
+  "resolveBase": {
+    "cmd": "git cat-file -t ca168b6e2119cba31a0f8fcbeac8c8b34bf4eaea",
+    "exitCode": 0,
+    "stdout": "commit\n",
+    "stderr": ""
+  },
+  "fetchHead": {
+    "cmd": "cd /workspace && git fetch origin df0bd38f529dbc47063cd4a506637e78fd337781",
+    "exitCode": 0,
+    "stdout": "From https://github.com/Clinextapp/clinext\n * branch              df0bd38f529dbc47063cd4a506637e78fd337781 -> FETCH_HEAD\n",
+    "stderr": ""
+  },
+  "revParse": {
+    "commands": [
+      {
+        "cmd": "git rev-parse df0bd38f529dbc47063cd4a506637e78fd337781",
+        "exitCode": 0,
+        "stdout": "df0bd38f529dbc47063cd4a506637e78fd337781\n",
+        "stderr": ""
+      },
+      {
+        "cmd": "git rev-parse ca168b6e2119cba31a0f8fcbeac8c8b34bf4eaea",
+        "exitCode": 0,
+        "stdout": "ca168b6e2119cba31a0f8fcbeac8c8b34bf4eaea\n",
+        "stderr": ""
+      }
+    ]
+  },
+  "ancestorCheck": {
+    "cmd": "git merge-base --is-ancestor ca168b6e2119cba31a0f8fcbeac8c8b34bf4eaea df0bd38f529dbc47063cd4a506637e78fd337781",
+    "exitCode": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  "worktreeAdd": {
+    "cmd": "cd /workspace && git worktree add --detach /tmp/patient-work-0941fe3b-e5cd-476e-abda-80f64be47143 df0bd38f529dbc47063cd4a506637e78fd337781",
+    "exitCode": 0,
+    "stdout": "Preparing worktree (detached HEAD df0bd38f)\nHEAD is now at df0bd38f fix(pacientes): clear debounce timer on unmount in usePacientesList\n",
+    "stderr": ""
+  },
+  "worktreeReads": {
+    "commands": [
+      {
+        "cmd": "git -C /tmp/patient-work-0941fe3b-e5cd-476e-abda-80f64be47143 rev-parse HEAD",
+        "exitCode": 0,
+        "stdout": "df0bd38f529dbc47063cd4a506637e78fd337781\n",
+        "stderr": ""
+      },
+      {
+        "cmd": "git -C /tmp/patient-work-0941fe3b-e5cd-476e-abda-80f64be47143 rev-parse HEAD^{tree}",
+        "exitCode": 0,
+        "stdout": "78d8848443f0926d90292589829841e3fcc4ccc1\n",
+        "stderr": ""
+      },
+      {
+        "cmd": "git -C /tmp/patient-work-0941fe3b-e5cd-476e-abda-80f64be47143 status --porcelain",
+        "exitCode": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      {
+        "cmd": "git -C /tmp/patient-work-0941fe3b-e5cd-476e-abda-80f64be47143 diff --name-only ca168b6e2119cba31a0f8fcbeac8c8b34bf4eaea HEAD",
+        "exitCode": 0,
+        "stdout": "client/src/pages/pacientes/hooks/usePacientesList.js\nfactory/LEDGER.md\nfactory/runtime/models.json\nfactory/skills/architect/SKILL.md\nfactory/skills/arena/SKILL.md\nfactory/skills/how/SKILL.md\nfactory/skills/interrogate/SKILL.md\nfactory/skills/poteto-mode/SKILL.md\nfactory/skills/reflect/SKILL.md\nfactory/skills/swarm/SKILL.md\nfactory/skills/why/SKILL.md\ntools/tests/factory-models.test.js\ntools/tests/factory-setup.test.js\n",
+        "stderr": ""
+      }
+    ],
+    "changedPaths": [
+      "client/src/pages/pacientes/hooks/usePacientesList.js",
+      "factory/LEDGER.md",
+      "factory/runtime/models.json",
+      "factory/skills/architect/SKILL.md",
+      "factory/skills/arena/SKILL.md",
+      "factory/skills/how/SKILL.md",
+      "factory/skills/interrogate/SKILL.md",
+      "factory/skills/poteto-mode/SKILL.md",
+      "factory/skills/reflect/SKILL.md",
+      "factory/skills/swarm/SKILL.md",
+      "factory/skills/why/SKILL.md",
+      "tools/tests/factory-models.test.js",
+      "tools/tests/factory-setup.test.js"
+    ]
+  },
+  "worktreeRemove": {
+    "cmd": "cd /workspace && git worktree remove /tmp/patient-work-0941fe3b-e5cd-476e-abda-80f64be47143",
+    "exitCode": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  "pathAbsentCheck": {
+    "cmd": "test ! -e /tmp/patient-work-0941fe3b-e5cd-476e-abda-80f64be47143 && echo path_absent=yes",
+    "exitCode": 0,
+    "stdout": "path_absent=yes\n",
+    "stderr": ""
+  },
+  "originalCheckoutAfter": {
+    "commands": [
+      {
+        "cmd": "cd /workspace && git rev-parse HEAD",
+        "exitCode": 0,
+        "stdout": "6097ed64059953c30cb767528a9cf21205a7fbc2\n",
+        "stderr": ""
+      },
+      {
+        "cmd": "cd /workspace && git status --porcelain",
+        "exitCode": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      {
+        "cmd": "cd /workspace && git worktree list",
+        "exitCode": 0,
+        "stdout": "/workspace  6097ed64 [converge-proof/session-b214690cd322]\n",
+        "stderr": ""
+      }
+    ]
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "parent": "codex",
+  "provider": "cursor",
+  "model": "composer-2.5",
+  "effort": "high",
+  "mode": "read-only",
+  "cwd": "/Users/victorbaccega/Dev/clinext-converge-d-transport",
+  "promptPath": "/tmp/converge-session/pr-d/transport-qualification/request.txt",
+  "outputPath": "/tmp/converge-session/pr-d/transport-qualification/output.json",
+  "status": "complete",
+  "startedAt": "2026-09-22T05:04:09.555Z",
+  "completedAt": "2026-09-22T05:05:47.373Z",
+  "elapsedMs": 97818,
+  "executable": null,
+  "preflight": {
+    "argv": [
+      "GET",
+      "/v1/models"
+    ],
+    "status": "passed",
+    "evidence": "authenticated; model composer-2.5 available; selected params: fast=false; requested effort high is not selectable; this matrix label maps to the provider default"
+  },
+  "argv": [
+    "POST",
+    "/v1/agents",
+    "composer-2.5",
+    "high"
+  ],
+  "exitCode": null,
+  "signal": null,
+  "reportedModel": null,
+  "modelVerified": false,
+  "modelEvidence": "pinned-argv",
+  "sessionId": "bc-3f4221be-c5c5-40b1-93d0-857993e9412f",
+  "usage": null,
+  "costUsd": null,
+  "error": null,
+  "remote": {
+    "agentId": "bc-3f4221be-c5c5-40b1-93d0-857993e9412f",
+    "runId": "run-84dda53d-0381-47e3-9044-102cdfafba99",
+    "agentUrl": "https://cursor.com/agents/bc-3f4221be-c5c5-40b1-93d0-857993e9412f",
+    "heads": {
+      "kind": "observed",
+      "changedBranches": []
+    }
+  }
+}

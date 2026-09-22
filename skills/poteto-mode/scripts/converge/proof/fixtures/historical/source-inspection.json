@@ -1,0 +1,13 @@
+{
+  "callId": "source-inspection",
+  "name": "read_file",
+  "status": "completed",
+  "args": {
+    "path": "/tmp/patient-work/0941fe3b-e5cd/client/src/pages/pacientes/hooks/usePacientesList.js"
+  },
+  "result": {
+    "success": {
+      "content": "export function usePacientesList() { const timer = setTimeout(load, 250); return timer; }\n"
+    }
+  }
+}

@@ -17,3 +17,22 @@ Keep this labelled corpus outside the workspace and prompt that a blind role
 can read. Supply that role only the pinned revision, its verified base, the
 change under review, and the ordinary role instructions. Score its returned
 finding paths against this file after it finishes.
+
+The proof harness lives in this directory plus `../converge-proof`. Parent-only
+catalog expectations stay in `catalog.json` and never travel in PR titles,
+prompts, or candidate worktrees. Historical bases for the 15 records are in
+`historical-revisions.json`.
+
+`run` requires a parent harness and a root-issued repository epoch. Its default
+services plant held PRs, wait for exact-head checks to become terminal, prepare
+and execute the supplied descriptors through the shared runner, call C's
+publisher, and clean only the recorded PR and branch. The injected service
+object is a process/network test seam. Every runner launch and publisher call
+has a durable pre-call record. A launch left in the unknown state stays blocked
+until its terminal receipt is recovered.
+
+The run envelope retains the selected catalog bytes and copies every pool audit
+into immutable evidence before admission. Pool expiry and the fixed 80 percent
+stop suspend new launches without preventing publication recovery, reader
+drain, or cleanup. Cleanup requires the same repository epoch, checkout,
+origin, ref and head; it reads the PR back as `CLOSED` before ordinary deletion.

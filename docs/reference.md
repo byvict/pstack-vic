@@ -130,6 +130,25 @@ node skills/poteto-mode/scripts/converge/converge-arm --repo Clinextapp/clinext 
 
 Os comandos usam Node 24, `gh` e `git`, sem checkout local do repositório alvo. O reconciliador lê o contrato fixado no trunk e preserva uma identidade nova por execução. O dry-run faz as leituras reais e falha quando falta algum requisito. `prepare-lane.ts` prepara prompts completos e manifests exclusivos; `publish.ts` admite recibos e bytes de artefatos antes de calcular o veredito. Veja os argumentos e formatos no contrato. O modo `verdict-only` publica status de erro mesmo quando a prova passa, sem autorização de merge.
 
+O harness de prova D é `converge-proof`. Ele planta PRs descartáveis a partir de um catálogo pai, chama C em `verdict-only` e pontua papéis cegos no corpus histórico. Não há um segundo redutor: o publicador de C continua sendo o único autor do comentário e do status.
+
+```shell
+node skills/poteto-mode/scripts/converge/converge-proof run --repo Clinextapp/clinext --work-root <checkout-isolado> --evidence <privado> --pool-observation <auditoria-root> --repository-epoch <epoch-root> --parent codex --verifier cursor:composer-2.5@high --reviewer cursor:grok-4.7@high
+# exit 20; JSON kind=end-turn com continuation e publicação ou uncertain
+node skills/poteto-mode/scripts/converge/converge-proof run --resume <run.json> --after-turn <observacao-do-host> --pool-observation <auditoria-root>
+node skills/poteto-mode/scripts/converge/converge-proof judge --repo Clinextapp/clinext --work-root <patient-work> --evidence <privado> --pool-observation <auditoria-root> --carrier-pr <numero> --carrier-head <sha> --parent codex --verifier cursor:composer-2.5@high --reviewer cursor:grok-4.7@high
+```
+
+`run` avança um caso até a publicação e devolve `end-turn`. O dono da publicação envia a mensagem final naquele turno. O host raiz retém o handle nativo, observa o evento terminal real, grava owner + turno + fronteira + identidade da publicação, e só então dispara o turno seguinte com `--after-turn`. Reinício de processo, UUID, atraso ou o próprio dono atestando o turno anterior não fecham o turno. Estados `preparing`, `collecting` e `publication-uncertain` retomam sem essa observação. Se a recuperação chama o publicador de C e ele devolve `mustEndTurn`, aquele turno também termina. Uma closure não autoriza uma publicação nova nem a limpeza que viria depois.
+
+A retomada final, depois da última limpeza, imprime dez linhas `entry <id>: expected <veredito>, got <veredito>, ok, complete-pass yes|no` e os totais de custo. Exit 0 exige `complete-pass yes` em cada entrada, as lanes selecionadas, a limpeza das refs próprias e custos mensuráveis. `CI-only` é o `displayResult` de docs; o veredito de máquina segue `VERIFIED`. O bump de dependência autorado por humano permanece humano e em modo full.
+
+A limpeza confirma repo/PR/ref/head, checkout/origin, o hold, auto-merge desligado, leitores remotos terminais e o epoch exclusivo emitido pelo root. Ela fecha o PR, lê de volta o estado `CLOSED` e executa `git -C <work-root> push origin --delete <ref>` depois de uma leitura imediata do head remoto. Head que se moveu, PR `MERGED`, dono ambíguo ou recusa do guard mantêm a branch e relatam limpeza bloqueada. O hook de force não é alterado.
+
+`judge` pontua os 15 records do corpus por papel, sem deduplicar PRs repetidos. Admissão histórica exige recibo original, ferramenta de checkout/readback, artefato baixado e envelope final em que `observedCarrierHead`, `observedHead` e `observedBase` batem com a tupla esperada. Um envelope que repete o head histórico no campo do carrier é rejeitado, mesmo com evidência de checkout correta; o custo da tentativa conta e o papel não marca ponto. Corpo histórico permanece indisponível.
+
+Uso suplementar vem de `GET https://api.cursor.com/v1/agents/{agentId}/usage?runId={runId}` ao lado do recibo original, que permanece com `usage` nulo. Cache-write diferente de zero sem tabela autorizada torna o custo indisponível. O pool é uma observação de dashboard do root, válida por 30 minutos, com percentuais entre 0 e 100 e limite fixo de 80%. Cada leitura é copiada para evidência imutável. Expiração ou 80% interrompe lançamentos novos, mas permite recuperar publicação, drenar leitores e limpar recursos já criados. Testes de fixture não substituem prova ao vivo.
+
 ## Skills
 
 Nomes curtos; no Claude Code cada uma aparece com o prefixo do plugin (`/pstack:poteto-mode`) e no Codex como `pstack:poteto-mode`.
