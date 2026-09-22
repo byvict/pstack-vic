@@ -208,7 +208,7 @@ test('deterministic C detectors fire for delete, secret, injection, documentary,
   assert.equal(expectedDisplay(byId['dashboard-row'].expected), 'NOT VERIFIED');
 });
 
-test('session-cleanup preserves the lint contract while planting the unbounded delete', t => {
+test('session-cleanup keeps the documented parameter used while planting the unbounded delete', t => {
   const entry = catalog.find(candidate => candidate.privateId === 'session-cleanup');
   assert.ok(entry);
   const f = tree(); t.after(f.cleanup);
@@ -216,9 +216,9 @@ test('session-cleanup preserves the lint contract while planting the unbounded d
   applyEdits(f.directory, entry.natural.edits);
 
   const source = readFileSync(join(f.directory, 'server/middleware/requireAuth.js'), 'utf8');
-  assert.match(source, /function deleteExpiredSession\(domainDB, _sid\)/);
+  assert.equal(entry.natural.edits.some(edit => edit.before.includes('function deleteExpiredSession')), false);
+  assert.match(source, /void sid;/);
   assert.match(source, /DELETE FROM auth_sessions'\)\.run\(\)/);
-  assert.doesNotMatch(source, /\bsid\b/);
 });
 
 test('plantCase ignores a historical closed PR on the reused ref and never impersonates Dependabot', async t => {

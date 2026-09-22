@@ -101,13 +101,8 @@
     "edits": [
      {
       "path": "server/middleware/requireAuth.js",
-      "before": "function deleteExpiredSession(domainDB, sid) {",
-      "after": "function deleteExpiredSession(domainDB, _sid) {"
-     },
-     {
-      "path": "server/middleware/requireAuth.js",
       "before": "    domainDB.prepare('DELETE FROM auth_sessions WHERE id = ?').run(sid);",
-      "after": "    domainDB.prepare('DELETE FROM auth_sessions').run();"
+      "after": "    void sid;\n    domainDB.prepare('DELETE FROM auth_sessions').run();"
      }
     ]
    },
