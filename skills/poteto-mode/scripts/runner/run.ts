@@ -1,17 +1,3 @@
-// Copied from open-pstack 1.4.1 (de67e6b) runner/run.ts. Changes from the
-// original:
-// - Node 24 instead of Bun: node:child_process.spawn replaces Bun.spawn, a PATH
-//   lookup replaces Bun.which, Node readable streams replace ReadableStream
-//   readers. Exit codes for signal-killed children are 128 + signal number,
-//   matching what Bun's `exited` resolved to.
-// - validateOptions consults model-matrix.json: the parent/provider route must
-//   be "runner", the (provider, model) pair must be a matrix family, the effort
-//   must be selectable for it, and a model matching another family's
-//   reportedModel pattern is a version pin that must be normalized first.
-// Every contract of the original is kept: parent owns the route, no fallback,
-// no implicit timeout, authentication preflight before execution, one Grok
-// preflight retry, exclusive output and receipt reservations.
-
 import { spawn, type ChildProcess } from "node:child_process";
 import {
   accessSync,
@@ -34,16 +20,31 @@ import {
   type Family,
 } from "../../../../scripts/model-matrix.ts";
 import { invocationCommand, preflightCommand, type CommandSpec } from "./commands.ts";
+import { httpLane } from "./http-lane.ts";
 import { parseProviderOutput, reportedModelMatches } from "./parse-output.ts";
 import {
   cliFor,
   familyOf,
+  laneOptions,
   MATRIX,
   UsageError,
+  type CancellationSignal,
+  type CliEvidence,
+  type CliRunnerOptions,
+  type Lane,
+  type LaneContext,
+  type LaneEvidence,
+  type LaneFailure,
+  type LaneOutcome,
+  type ParsedOutput,
+  type PreflightRecord,
   type Provider,
+  type ReceiptError,
   type ReceiptStatus,
+  type RunCancellation,
   type RunnerOptions,
   type RunnerReceipt,
+  type WaitOutcome,
 } from "./types.ts";
 
 const ERROR_EVIDENCE_LIMIT = 4_000;
@@ -58,16 +59,6 @@ interface ProcessResult {
   readonly timedOut: boolean;
   readonly cancelledBy: CancellationSignal | null;
 }
-
-type CancellationSignal = "SIGINT" | "SIGTERM";
-
-interface RunCancellation {
-  readonly promise: Promise<CancellationSignal>;
-  readonly signal: CancellationSignal | null;
-  dispose(): void;
-}
-
-type RetryWaitResult = "ready" | "cancelled" | "timed-out";
 
 export interface RunResult {
   readonly exitCode: number;
@@ -124,11 +115,13 @@ function installRunCancellation(): RunCancellation {
   const promise = new Promise<CancellationSignal>((resolve) => {
     resolveCancellation = resolve;
   });
+  const controller = new AbortController();
 
   const receive = (next: CancellationSignal): void => {
     if (signal === null) {
       signal = next;
       resolveCancellation(next);
+      controller.abort(next);
     }
   };
   const onInterrupt = (): void => receive("SIGINT");
@@ -141,6 +134,7 @@ function installRunCancellation(): RunCancellation {
     get signal() {
       return signal;
     },
+    abortSignal: controller.signal,
     dispose() {
       globalThis.process.off("SIGINT", onInterrupt);
       globalThis.process.off("SIGTERM", onTerminate);
@@ -419,23 +413,25 @@ async function runProcess(
   }
 }
 
-async function waitForGrokPreflightRetry(
+async function waitFor(
+  delayMs: number,
   deadlineAt: number | null,
   cancellation: RunCancellation
-): Promise<RetryWaitResult> {
+): Promise<WaitOutcome> {
   if (cancellation.signal !== null) return "cancelled";
 
   const now = Date.now();
   if (deadlineAt !== null && now >= deadlineAt) return "timed-out";
+  if (delayMs <= 0) return "ready";
 
-  const retryAt = now + GROK_PREFLIGHT_RETRY_DELAY_MS;
-  const wakeAt = deadlineAt === null ? retryAt : Math.min(retryAt, deadlineAt);
-  const timerResult: RetryWaitResult = wakeAt < retryAt ? "timed-out" : "ready";
+  const readyAt = now + delayMs;
+  const wakeAt = deadlineAt === null ? readyAt : Math.min(readyAt, deadlineAt);
+  const timerResult: WaitOutcome = wakeAt < readyAt ? "timed-out" : "ready";
   let timer: ReturnType<typeof setTimeout> | null = null;
   try {
     const result = await Promise.race([
-      cancellation.promise.then((): RetryWaitResult => "cancelled"),
-      new Promise<RetryWaitResult>((resolveWait) => {
+      cancellation.promise.then((): WaitOutcome => "cancelled"),
+      new Promise<WaitOutcome>((resolveWait) => {
         timer = setTimeout(() => resolveWait(timerResult), wakeAt - now);
       }),
     ]);
@@ -478,7 +474,7 @@ function successfulPreflightEvidence(provider: Provider, model: string): string 
     : "authenticated";
 }
 
-function unavailableStatus(value: string): ReceiptStatus {
+function unavailableStatus(value: string): LaneFailure {
   if (/not logged in|unauthenticated|authentication|sign in|login required/i.test(value)) {
     return "unauthenticated";
   }
@@ -492,7 +488,7 @@ function preflightFailureStatus(
   provider: Provider,
   model: string,
   value: string
-): ReceiptStatus {
+): LaneFailure {
   const status = unavailableStatus(value);
   if (status !== "child-failed") return status;
   return cliFor(provider) === "grok" && !value.includes(model)
@@ -533,15 +529,17 @@ function statusExitCode(status: ReceiptStatus): number {
   }
 }
 
+interface ModelProof {
+  readonly reportedModel: string | null;
+  readonly modelVerified: boolean;
+  readonly modelEvidence: "provider-report" | "pinned-argv" | null;
+}
+
 function modelProof(
   provider: Provider,
   requested: string,
   reported: string | null
-): {
-  readonly reportedModel: string | null;
-  readonly modelVerified: boolean;
-  readonly modelEvidence: "provider-report" | "pinned-argv" | null;
-} {
+): ModelProof {
   if (reportedModelMatches(provider, requested, reported)) {
     return {
       reportedModel: reported,
@@ -564,12 +562,36 @@ function modelProof(
   };
 }
 
-function completeReceipt(
-  options: RunnerOptions,
-  partial: Omit<RunnerReceipt, "schemaVersion" | "parent" | "provider" | "model" | "effort" | "mode" | "cwd" | "promptPath" | "outputPath">
-): RunnerReceipt {
+type Terminal =
+  | { readonly kind: "complete"; readonly parsed: ParsedOutput; readonly proof: ModelProof }
+  | { readonly kind: "failed"; readonly status: LaneFailure; readonly error: ReceiptError };
+
+function applyModelProof(options: RunnerOptions, outcome: LaneOutcome): Terminal {
+  if (outcome.kind === "failed") return outcome;
+  const proof = modelProof(options.provider, options.model, outcome.parsed.reportedModel);
+  if (proof.modelVerified || proof.modelEvidence === "pinned-argv") {
+    return { kind: "complete", parsed: outcome.parsed, proof };
+  }
   return {
-    schemaVersion: 1,
+    kind: "failed",
+    status: "malformed-output",
+    error: {
+      message: `requested model ${options.model} was not reported by ${options.provider}`,
+      evidence: `reported model: ${outcome.parsed.reportedModel ?? "none"}`,
+    },
+  };
+}
+
+function finish(
+  options: RunnerOptions,
+  started: number,
+  evidence: LaneEvidence,
+  outcome: LaneOutcome
+): RunResult {
+  const terminal = applyModelProof(options, outcome);
+  const completed = Date.now();
+  const identity = {
+    schemaVersion: 1 as const,
     parent: options.parent,
     provider: options.provider,
     model: options.model,
@@ -578,8 +600,63 @@ function completeReceipt(
     cwd: options.cwd,
     promptPath: options.promptPath,
     outputPath: options.outputPath,
-    ...partial,
   };
+  const status: ReceiptStatus = terminal.kind === "complete" ? "complete" : terminal.status;
+  const timing = {
+    startedAt: new Date(started).toISOString(),
+    completedAt: new Date(completed).toISOString(),
+    elapsedMs: completed - started,
+  };
+  const fields = terminal.kind === "complete"
+    ? {
+      ...terminal.proof,
+      sessionId: terminal.parsed.sessionId,
+      usage: terminal.parsed.usage,
+      costUsd: terminal.parsed.costUsd,
+      error: null,
+    }
+    : {
+      reportedModel: null,
+      modelVerified: false,
+      modelEvidence: null,
+      sessionId: null,
+      usage: null,
+      costUsd: null,
+      error: terminal.error,
+    };
+  const receipt: RunnerReceipt = evidence.kind === "cli"
+    ? {
+      ...identity,
+      status,
+      ...timing,
+      executable: evidence.executable,
+      preflight: evidence.preflight,
+      argv: evidence.argv,
+      exitCode: evidence.exitCode,
+      signal: evidence.signal,
+      ...fields,
+      remote: null,
+    }
+    : {
+      ...identity,
+      status,
+      ...timing,
+      executable: null,
+      preflight: evidence.preflight,
+      argv: evidence.argv,
+      exitCode: null,
+      signal: null,
+      ...fields,
+      remote: evidence.remote,
+    };
+
+  if (terminal.kind === "complete") {
+    writeFileSync(options.outputPath, terminal.parsed.text, { encoding: "utf8", mode: 0o600 });
+  } else {
+    removeIfExists(options.outputPath);
+  }
+  writeReceipt(options.receiptPath, receipt);
+  return { exitCode: statusExitCode(status), receipt };
 }
 
 /**
@@ -603,9 +680,10 @@ export function validateOptions(options: RunnerOptions): void {
   if (!(options.parent in MATRIX.parents)) {
     throw new UsageError(`parent ${options.parent} is not in model-matrix.json`);
   }
-  if (cliFor(options.provider) === null) {
+  if (!(options.provider in MATRIX.providers)) {
     throw new UsageError(`provider ${options.provider} is not in model-matrix.json`);
   }
+  laneOptions(options, options.target);
   if (routeFor(MATRIX, options.parent, options.provider) === "native") {
     throw new UsageError(
       `provider ${options.provider} is native to parent ${options.parent}; use the parent subagent primitive`
@@ -649,106 +727,71 @@ export function validateOptions(options: RunnerOptions): void {
   }
 }
 
-interface LaneProgress {
-  executable: string | null;
-  preflight: RunnerReceipt["preflight"];
-  argv: readonly string[];
+function stoppedBeforeChild(
+  ev: CliEvidence,
+  wake: "cancelled" | "timed-out",
+  cancellation: RunCancellation,
+  phase: string
+): LaneOutcome {
+  if (ev.preflight.status === "not-run") ev.preflight = { ...ev.preflight, status: wake };
+  return {
+    kind: "failed",
+    status: wake,
+    error: {
+      message: wake === "cancelled"
+        ? `launcher received ${cancellation.signal} ${phase}`
+        : `explicit deadline elapsed ${phase}`,
+      evidence: "",
+    },
+  };
 }
 
-async function executeLane(
-  options: RunnerOptions,
-  cancellation: RunCancellation,
-  started: number,
-  deadlineAt: number | null,
+function cliLane(options: CliRunnerOptions): Lane {
+  const invocation = invocationCommand(options);
+  const preflight = preflightCommand(options.provider);
+  const ev: CliEvidence = {
+    kind: "cli",
+    executable: null,
+    preflight: {
+      argv: [preflight.command, ...preflight.args],
+      status: "not-run",
+      evidence: "",
+    },
+    argv: [invocation.command, ...invocation.args],
+    exitCode: null,
+    signal: null,
+  };
+  return { evidence: ev, run: (context) => runCliLane(options, invocation, preflight, ev, context) };
+}
+
+async function runCliLane(
+  options: CliRunnerOptions,
   invocation: CommandSpec,
   preflight: CommandSpec,
-  progress: LaneProgress
-): Promise<RunResult> {
-  const startedAt = new Date(started).toISOString();
-  const prompt = readFileSync(options.promptPath, "utf8");
+  ev: CliEvidence,
+  context: LaneContext
+): Promise<LaneOutcome> {
+  const { deadlineAt, cancellation } = context;
   const env = childEnvironment(options.provider);
   const executable = findExecutable(invocation.command, env.PATH, options.cwd);
-  progress.executable = executable;
-  progress.argv = [executable ?? invocation.command, ...invocation.args];
+  ev.executable = executable;
+  ev.argv = [executable ?? invocation.command, ...invocation.args];
 
-  let preflightState = progress.preflight;
-  let receipt: RunnerReceipt;
-
-  const finishWithoutChild = (
-    status: "cancelled" | "timed-out",
-    phase: string
-  ): RunResult => {
-    const completed = Date.now();
-    const receivedSignal = status === "cancelled" ? cancellation.signal : null;
-    const terminalPreflight = preflightState.status === "not-run"
-      ? { ...preflightState, status }
-      : preflightState;
-    receipt = completeReceipt(options, {
-      status,
-      startedAt,
-      completedAt: new Date(completed).toISOString(),
-      elapsedMs: completed - started,
-      executable,
-      preflight: terminalPreflight,
-      argv: [executable ?? invocation.command, ...invocation.args],
-      exitCode: null,
-      signal: null,
-      reportedModel: null,
-      modelVerified: false,
-      modelEvidence: null,
-      sessionId: null,
-      usage: null,
-      costUsd: null,
-      error: {
-        message: receivedSignal === null
-          ? `explicit deadline elapsed ${phase}`
-          : `launcher received ${receivedSignal} ${phase}`,
-        evidence: "",
-      },
-    });
-    removeIfExists(options.outputPath);
-    writeReceipt(options.receiptPath, receipt);
-    return { exitCode: statusExitCode(status), receipt };
-  };
-
-  if (cancellation.signal !== null) {
-    return finishWithoutChild("cancelled", "before authentication preflight");
-  }
-  if (deadlineAt !== null && Date.now() >= deadlineAt) {
-    return finishWithoutChild("timed-out", "before authentication preflight");
+  const beforePreflight = await context.wait(0);
+  if (beforePreflight !== "ready") {
+    return stoppedBeforeChild(ev, beforePreflight, cancellation, "before authentication preflight");
   }
 
   if (executable === null) {
-    const completed = Date.now();
-    receipt = completeReceipt(options, {
+    return {
+      kind: "failed",
       status: "unavailable-cli",
-      startedAt,
-      completedAt: new Date(completed).toISOString(),
-      elapsedMs: completed - started,
-      executable: null,
-      preflight: preflightState,
-      argv: [invocation.command, ...invocation.args],
-      exitCode: null,
-      signal: null,
-      reportedModel: null,
-      modelVerified: false,
-      modelEvidence: null,
-      sessionId: null,
-      usage: null,
-      costUsd: null,
-      error: {
-        message: `${invocation.command} executable not found`,
-        evidence: "",
-      },
-    });
-    removeIfExists(options.outputPath);
-    writeReceipt(options.receiptPath, receipt);
-    return { exitCode: statusExitCode(receipt.status), receipt };
+      error: { message: `${invocation.command} executable not found`, evidence: "" },
+    };
   }
 
-  const preflightExecutable = executable;
   let preflightResult = await runProcess(
-    preflightExecutable,
+    executable,
     preflight,
     options.cwd,
     env,
@@ -770,29 +813,21 @@ async function executeLane(
     preflightFailureStatus(options.provider, options.model, rawPreflightEvidence) ===
       "unauthenticated"
   ) {
-    preflightState = {
-      argv: [preflightExecutable, ...preflight.args],
+    ev.preflight = {
+      argv: [executable, ...preflight.args],
       status: "failed",
       evidence: rawPreflightEvidence,
     };
-    progress.preflight = preflightState;
 
-    const retryWait = await waitForGrokPreflightRetry(deadlineAt, cancellation);
+    const retryWait = await context.wait(GROK_PREFLIGHT_RETRY_DELAY_MS);
     if (retryWait !== "ready") {
-      preflightState = {
-        ...preflightState,
-        status: retryWait === "cancelled" ? "cancelled" : "timed-out",
-      };
-      progress.preflight = preflightState;
-      return finishWithoutChild(
-        retryWait === "cancelled" ? "cancelled" : "timed-out",
-        "during authentication preflight retry delay"
-      );
+      ev.preflight = { ...ev.preflight, status: retryWait };
+      return stoppedBeforeChild(ev, retryWait, cancellation, "during authentication preflight retry delay");
     }
 
     const firstPreflightEvidence = rawPreflightEvidence;
     preflightResult = await runProcess(
-      preflightExecutable,
+      executable,
       preflight,
       options.cwd,
       env,
@@ -811,8 +846,8 @@ async function executeLane(
     );
   }
 
-  preflightState = {
-    argv: [preflightExecutable, ...preflight.args],
+  const preflightState: PreflightRecord = {
+    argv: [executable, ...preflight.args],
     status: preflightResult.cancelledBy !== null
       ? "cancelled"
       : preflightResult.timedOut
@@ -822,36 +857,19 @@ async function executeLane(
           : "failed",
     evidence: preflightEvidence,
   };
-  progress.preflight = preflightState;
+  ev.preflight = preflightState;
 
   if (preflightState.status !== "passed") {
-    const completed = Date.now();
-    const preflightFailure = preflightFailureStatus(
-      options.provider,
-      options.model,
-      rawPreflightEvidence
-    );
-    const status: ReceiptStatus = preflightResult.cancelledBy !== null
+    ev.exitCode = preflightResult.exitCode;
+    ev.signal = preflightResult.signal;
+    const status: LaneFailure = preflightResult.cancelledBy !== null
       ? "cancelled"
       : preflightResult.timedOut
         ? "timed-out"
-        : preflightFailure;
-    receipt = completeReceipt(options, {
+        : preflightFailureStatus(options.provider, options.model, rawPreflightEvidence);
+    return {
+      kind: "failed",
       status,
-      startedAt,
-      completedAt: new Date(completed).toISOString(),
-      elapsedMs: completed - started,
-      executable,
-      preflight: preflightState,
-      argv: [executable, ...invocation.args],
-      exitCode: preflightResult.exitCode,
-      signal: preflightResult.signal,
-      reportedModel: null,
-      modelVerified: false,
-      modelEvidence: null,
-      sessionId: null,
-      usage: null,
-      costUsd: null,
       error: {
         message: preflightResult.cancelledBy !== null
           ? `launcher received ${preflightResult.cancelledBy} during preflight`
@@ -860,17 +878,12 @@ async function executeLane(
             : "authentication or model preflight failed",
         evidence: preflightEvidence,
       },
-    });
-    removeIfExists(options.outputPath);
-    writeReceipt(options.receiptPath, receipt);
-    return { exitCode: statusExitCode(status), receipt };
+    };
   }
 
-  if (cancellation.signal !== null) {
-    return finishWithoutChild("cancelled", "before model execution");
-  }
-  if (deadlineAt !== null && Date.now() >= deadlineAt) {
-    return finishWithoutChild("timed-out", "before model execution");
+  const beforeModel = await context.wait(0);
+  if (beforeModel !== "ready") {
+    return stoppedBeforeChild(ev, beforeModel, cancellation, "before model execution");
   }
 
   const result = await runProcess(
@@ -878,39 +891,23 @@ async function executeLane(
     invocation,
     options.cwd,
     env,
-    prompt,
+    context.prompt,
     deadlineAt,
     cancellation
   );
-  const completed = Date.now();
-  const base = {
-    startedAt,
-    completedAt: new Date(completed).toISOString(),
-    elapsedMs: completed - started,
-    executable,
-    preflight: preflightState,
-    argv: [executable, ...invocation.args],
-    exitCode: result.exitCode,
-    signal: result.signal,
-  } as const;
+  ev.exitCode = result.exitCode;
+  ev.signal = result.signal;
 
   if (result.cancelledBy !== null || result.timedOut || result.exitCode !== 0) {
     const rawFailureEvidence = `${result.stderr}\n${result.stdout}`;
-    const failureEvidence = evidence(rawFailureEvidence);
-    const status: ReceiptStatus = result.cancelledBy !== null
+    const status: LaneFailure = result.cancelledBy !== null
       ? "cancelled"
       : result.timedOut
         ? "timed-out"
         : unavailableStatus(rawFailureEvidence);
-    receipt = completeReceipt(options, {
-      ...base,
+    return {
+      kind: "failed",
       status,
-      reportedModel: null,
-      modelVerified: false,
-      modelEvidence: null,
-      sessionId: null,
-      usage: null,
-      costUsd: null,
       error: {
         message: result.cancelledBy !== null
           ? result.signal === result.cancelledBy
@@ -919,12 +916,9 @@ async function executeLane(
           : result.timedOut
             ? `launcher exceeded the explicit ${options.timeoutMs}ms deadline`
             : `child exited with status ${result.exitCode}`,
-        evidence: failureEvidence,
+        evidence: evidence(rawFailureEvidence),
       },
-    });
-    removeIfExists(options.outputPath);
-    writeReceipt(options.receiptPath, receipt);
-    return { exitCode: statusExitCode(status), receipt };
+    };
   }
 
   try {
@@ -934,47 +928,21 @@ async function executeLane(
       result.stderr,
       options.model
     );
-    const proof = modelProof(
-      options.provider,
-      options.model,
-      parsed.reportedModel
-    );
-    if (!proof.modelVerified && proof.modelEvidence !== "pinned-argv") {
-      throw new Error(
-        `requested model ${options.model} was not reported by ${options.provider}`
-      );
-    }
-    writeFileSync(options.outputPath, parsed.text, { encoding: "utf8", mode: 0o600 });
-    receipt = completeReceipt(options, {
-      ...base,
-      status: "complete",
-      ...proof,
-      sessionId: parsed.sessionId,
-      usage: parsed.usage,
-      costUsd: parsed.costUsd,
-      error: null,
-    });
+    return { kind: "produced", parsed };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    removeIfExists(options.outputPath);
-    receipt = completeReceipt(options, {
-      ...base,
+    return {
+      kind: "failed",
       status: "malformed-output",
-      reportedModel: null,
-      modelVerified: false,
-      modelEvidence: null,
-      sessionId: null,
-      usage: null,
-      costUsd: null,
       error: {
-        message,
+        message: error instanceof Error ? error.message : String(error),
         evidence: evidence(`${result.stderr}\n${result.stdout}`),
       },
-    });
+    };
   }
+}
 
-  writeReceipt(options.receiptPath, receipt);
-  return { exitCode: statusExitCode(receipt.status), receipt };
+function laneFor(options: RunnerOptions): Lane {
+  return options.target === null ? cliLane(options) : httpLane(options);
 }
 
 export async function runLane(
@@ -983,58 +951,33 @@ export async function runLane(
 ): Promise<RunResult> {
   validateOptions(options);
   const deadlineAt = options.timeoutMs === null ? null : started + options.timeoutMs;
-  const invocation = invocationCommand(options);
-  const preflight = preflightCommand(options.provider);
-  const progress: LaneProgress = {
-    executable: null,
-    preflight: {
-      argv: [preflight.command, ...preflight.args],
-      status: "not-run",
-      evidence: "",
-    },
-    argv: [invocation.command, ...invocation.args],
-  };
+  const lane = laneFor(options);
   const cancellation = installRunCancellation();
   try {
     reserveOutputs(options);
     try {
-      return await executeLane(
-        options,
-        cancellation,
-        started,
+      const context: LaneContext = {
+        prompt: readFileSync(options.promptPath, "utf8"),
         deadlineAt,
-        invocation,
-        preflight,
-        progress
-      );
+        cancellation,
+        wait: (delayMs) => waitFor(delayMs, deadlineAt, cancellation),
+      };
+      return finish(options, started, lane.evidence, await lane.run(context));
     } catch (error) {
-      const completed = Date.now();
       const signal = cancellation.signal;
-      const status: ReceiptStatus = signal !== null
+      const status: LaneFailure = signal !== null
         ? "cancelled"
-        : deadlineAt !== null && completed >= deadlineAt
+        : deadlineAt !== null && Date.now() >= deadlineAt
           ? "timed-out"
           : "child-failed";
       const message = error instanceof Error ? error.message : String(error);
-      const terminalPreflight = progress.preflight.status === "not-run" && status !== "child-failed"
-        ? { ...progress.preflight, status }
-        : progress.preflight;
-      const receipt = completeReceipt(options, {
+      const ev = lane.evidence;
+      if (ev.preflight.status === "not-run" && status !== "child-failed") {
+        ev.preflight = { ...ev.preflight, status };
+      }
+      return finish(options, started, ev, {
+        kind: "failed",
         status,
-        startedAt: new Date(started).toISOString(),
-        completedAt: new Date(completed).toISOString(),
-        elapsedMs: completed - started,
-        executable: progress.executable,
-        preflight: terminalPreflight,
-        argv: progress.argv,
-        exitCode: null,
-        signal: null,
-        reportedModel: null,
-        modelVerified: false,
-        modelEvidence: null,
-        sessionId: null,
-        usage: null,
-        costUsd: null,
         error: {
           message: status === "cancelled"
             ? `launcher received ${signal} after reserving output paths`
@@ -1044,9 +987,6 @@ export async function runLane(
           evidence: evidence(message),
         },
       });
-      removeIfExists(options.outputPath);
-      writeReceipt(options.receiptPath, receipt);
-      return { exitCode: statusExitCode(status), receipt };
     }
   } finally {
     cancellation.dispose();

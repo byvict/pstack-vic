@@ -15,7 +15,7 @@
 //   setup-pstack.ts state  --parent <claude|codex> [--home <dir>]
 //   setup-pstack.ts plan   --parent <p> [--home <dir>] [--dir <run dir>]
 //                          [--effort <family>=<effort>]... [--role "<label>=<lane>, <lane>"]...
-//   setup-pstack.ts probe  --dir <run dir> [--timeout <seconds>]
+//   setup-pstack.ts probe  --dir <run dir> [--timeout <seconds>] [--repo <owner/name> --pr <number>]
 //   setup-pstack.ts attest --dir <run dir> --pair <family>@<effort> --observed <text>
 //   setup-pstack.ts write  --dir <run dir> [--home <dir>]
 //
@@ -39,6 +39,7 @@ import {
   type ModelMatrix,
   type Route,
 } from "../../../scripts/model-matrix.ts";
+import type { RepoTarget } from "../../poteto-mode/scripts/runner/types.ts";
 
 export class SetupError extends Error {}
 
@@ -491,6 +492,37 @@ export interface ProbeOptions {
   readonly dir: string;
   readonly env?: NodeJS.ProcessEnv;
   readonly timeoutSeconds?: number | null;
+  /** Required when any runner pair uses http transport, rejected otherwise. Not written to the plan. */
+  readonly target?: RepoTarget;
+}
+
+function transportOf(matrix: ModelMatrix, provider: string): "cli" | "http" {
+  return matrix.providers[provider]?.transport ?? "cli";
+}
+
+function probeTargetProblem(plan: Plan, target: RepoTarget | undefined, matrix: ModelMatrix): string | null {
+  if (target !== undefined) {
+    const segments = `${target.owner}/${target.name}`.split("/");
+    if (segments.length !== 2 || segments.some((segment) => segment.trim().length === 0)) {
+      return "--repo must be owner/name";
+    }
+    if (!Number.isSafeInteger(target.pullNumber) || target.pullNumber <= 0) {
+      return "--pr must be a positive integer";
+    }
+  }
+  const http: string[] = [];
+  for (const pair of plan.pairs) {
+    if (pair.route !== "runner" || transportOf(matrix, pair.provider) !== "http") continue;
+    if (!http.includes(pair.provider)) http.push(pair.provider);
+  }
+  if (http.length > 0 && target === undefined) {
+    return `--repo and --pr are required for ${http.join(", ")} (http transport)`;
+  }
+  if (http.length === 0 && target !== undefined) {
+    const accepted = Object.keys(matrix.providers).filter((provider) => transportOf(matrix, provider) === "http");
+    return `--repo and --pr are only accepted for: ${accepted.join(", ")}`;
+  }
+  return null;
 }
 
 function probePrompt(marker: string): string {
@@ -559,7 +591,7 @@ function judgeExternal(pair: ProbePair, receiptPath: string, outputPath: string)
   return { passed: true, detail: `complete, ${evidence}, marker echoed` };
 }
 
-function runLane(pair: ProbePair, plan: Plan, options: ProbeOptions): Promise<ExternalProbeResult> {
+function runLane(pair: ProbePair, plan: Plan, options: ProbeOptions, matrix: ModelMatrix): Promise<ExternalProbeResult> {
   const paths = probePaths(options.dir, pair.pair);
   writeFileSync(paths.prompt, probePrompt(pair.marker), { mode: 0o600 });
   const args = [
@@ -575,6 +607,9 @@ function runLane(pair: ProbePair, plan: Plan, options: ProbeOptions): Promise<Ex
     "--receipt", paths.receipt,
   ];
   if (options.timeoutSeconds) args.push("--timeout", String(options.timeoutSeconds));
+  if (options.target !== undefined && transportOf(matrix, pair.provider) === "http") {
+    args.push("--repo", `${options.target.owner}/${options.target.name}`, "--pr", String(options.target.pullNumber));
+  }
   return new Promise((resolve) => {
     const child = spawn(process.execPath, args, {
       env: options.env ?? process.env,
@@ -638,8 +673,12 @@ function nativeStatus(
  * once, each with its own prompt, output, and receipt under `dir`. Native
  * pairs are not run here (the parent's primitive is the skill's job); they are
  * listed with the prompt to send and whether `attest` has recorded them.
+ * Target presence is checked before mkdir, artifact writes, or spawn.
  */
 export async function runProbes(plan: Plan, options: ProbeOptions): Promise<ProbeSummary> {
+  const matrix = loadMatrix();
+  const problem = probeTargetProblem(plan, options.target, matrix);
+  if (problem !== null) fail(problem);
   mkdirSync(options.dir, { recursive: true });
   const runnerPairs = plan.pairs.filter((p) => p.route === "runner");
   for (const pair of runnerPairs) {
@@ -648,7 +687,7 @@ export async function runProbes(plan: Plan, options: ProbeOptions): Promise<Prob
       if (existsSync(path)) fail(`${path} already exists; use a fresh run directory or remove the previous probe artifacts`);
     }
   }
-  const external = await Promise.all(runnerPairs.map((pair) => runLane(pair, plan, options)));
+  const external = await Promise.all(runnerPairs.map((pair) => runLane(pair, plan, options, matrix)));
   const native = plan.pairs.flatMap((p) => (p.native === null ? [] : [nativeStatus(plan, options.dir, p, p.native)]));
   const externalOk = external.every((r) => r.status === "passed");
   return { external, native, externalOk, ok: externalOk && native.every((n) => n.attested) };
@@ -847,8 +886,9 @@ const USAGE = `Usage: setup-pstack <state|plan|probe|attest|write> [options]
          [--effort <family>=<effort>]... [--role "<label>=<lane>[, <lane>]"]...
          Render the new sheet in memory and save plan.json (creates a run dir when --dir is omitted).
          --effort rewrites every lane of that family; --role overlays after, each lane keeping its effort.
-  probe  --dir <run dir> [--timeout <seconds>]
+  probe  --dir <run dir> [--timeout <seconds>] [--repo <owner/name> --pr <number>]
          Run every external pair of the plan through the runner; list native pairs to attest.
+         --repo and --pr are required when a runner pair uses http transport and refused otherwise.
   attest --dir <run dir> --pair <family>@<effort> --observed <reply text>
          Record a native one-turn probe whose reply carries the pair's marker.
   write  --dir <run dir> [--home <dir>]
@@ -886,6 +926,21 @@ function parseRoleChanges(values: readonly string[] | undefined): Record<string,
   return out;
 }
 
+function parseProbeTarget(repo: string | undefined, pr: string | undefined): RepoTarget | undefined {
+  if (repo === undefined && pr === undefined) return undefined;
+  if (repo === undefined) usage("--repo is required with --pr");
+  if (pr === undefined) usage("--pr is required with --repo");
+  const segments = repo.split("/");
+  if (segments.length !== 2 || segments.some((segment) => segment.trim().length === 0)) {
+    usage("--repo must be owner/name");
+  }
+  const pullNumber = /^[0-9]+$/.test(pr) ? Number(pr) : Number.NaN;
+  if (!Number.isSafeInteger(pullNumber) || pullNumber <= 0) {
+    usage("--pr must be a positive integer");
+  }
+  return { owner: segments[0], name: segments[1], pullNumber };
+}
+
 export async function main(argv: readonly string[], io: Io = {
   stdout: (v) => process.stdout.write(v),
   stderr: (v) => process.stderr.write(v),
@@ -907,6 +962,8 @@ export async function main(argv: readonly string[], io: Io = {
           pair: { type: "string" },
           observed: { type: "string" },
           timeout: { type: "string" },
+          repo: { type: "string" },
+          pr: { type: "string" },
           help: { type: "boolean", short: "h", default: false },
         },
       });
@@ -919,6 +976,11 @@ export async function main(argv: readonly string[], io: Io = {
     }
     const [command, ...rest] = parsed.positionals;
     if (rest.length > 0) usage(`unexpected arguments: ${rest.join(" ")}`);
+    const repo = typeof parsed.values.repo === "string" ? parsed.values.repo : undefined;
+    const pr = typeof parsed.values.pr === "string" ? parsed.values.pr : undefined;
+    if (command !== "probe" && (repo !== undefined || pr !== undefined)) {
+      usage("--repo and --pr are only accepted on probe");
+    }
     const home = typeof parsed.values.home === "string" ? parsed.values.home : homedir();
     const requireParent = (): string => {
       const parent = parsed.values.parent;
@@ -951,13 +1013,16 @@ export async function main(argv: readonly string[], io: Io = {
       }
       case "probe": {
         const dir = requireDir();
-        const plan = loadPlan(dir);
         const timeoutValue = parsed.values.timeout;
         const timeoutSeconds = typeof timeoutValue === "string" ? Number(timeoutValue) : null;
         if (timeoutSeconds !== null && (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0)) {
           usage("--timeout must be a number greater than zero");
         }
-        const summary = await runProbes(plan, { dir, timeoutSeconds });
+        const target = parseProbeTarget(repo, pr);
+        const plan = loadPlan(dir);
+        const problem = probeTargetProblem(plan, target, loadMatrix());
+        if (problem !== null) usage(problem);
+        const summary = await runProbes(plan, { dir, timeoutSeconds, target });
         emit(summary);
         return summary.externalOk ? 0 : 1;
       }

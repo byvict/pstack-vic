@@ -1,0 +1,6 @@
+#!/usr/bin/env node
+const { main } = await import('./reconcile.ts');
+const args = process.argv.slice(2);
+const result = await main(args);
+process.exitCode = result;
+export {};

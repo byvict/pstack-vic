@@ -1,25 +1,25 @@
-// Copied from open-pstack 1.4.1 (de67e6b) runner/cli.ts. Change from the
-// original: PARENTS, PROVIDERS, and EFFORTS come from model-matrix.json through
-// types.ts, so the usage text and the choice lists are derived, not literal.
-
 import { parseArgs as parseNodeArgs } from "node:util";
 import { resolvedOptions, runLane } from "./run.ts";
 import {
   ACCESS_MODES,
   EFFORTS,
+  HTTP_PROVIDERS,
+  laneOptions,
   PARENTS,
   PROVIDERS,
   type AccessMode,
   type Effort,
   type Parent,
   type Provider,
+  type RepoTarget,
   type RunnerOptions,
   UsageError,
 } from "./types.ts";
 
 const HELP = `Usage: pstack-runner --parent <${PARENTS.join("|")}> --provider <${PROVIDERS.join("|")}> \\
   --model <slug> --effort <${EFFORTS.join("|")}> --mode <${ACCESS_MODES.join("|")}> \\
-  --prompt <file> --cwd <dir> --output <file> --receipt <file> [--timeout <seconds>]
+  --prompt <file> --cwd <dir> --output <file> --receipt <file> [--timeout <seconds>] \\
+  [--repo <owner/name> --pr <number>]
 
 Runs exactly one external model lane. Same-provider calls are rejected; use the
 parent harness's native subagent primitive for those lanes. The (provider, model)
@@ -28,6 +28,11 @@ it. Output and receipt paths must not already exist. There is no implicit
 timeout. Pass --timeout only when the user or task supplies a real deadline; it
 is one end-to-end launcher deadline shared by setup, preflight, and model
 execution.
+
+--repo and --pr name the GitHub pull request a cloud lane works on. They are
+required for ${HTTP_PROVIDERS.join(", ")} and refused for every other provider;
+that list comes from model-matrix.json like the provider list above. A cloud
+lane authenticates with CURSOR_API_KEY from the environment.
 `;
 
 interface Io {
@@ -62,6 +67,21 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+function repoTarget(repo: string | undefined, pr: string | undefined): RepoTarget | null {
+  if (repo === undefined && pr === undefined) return null;
+  if (repo === undefined) throw new UsageError("--repo is required with --pr");
+  if (pr === undefined) throw new UsageError("--pr is required with --repo");
+  const segments = repo.split("/");
+  if (segments.length !== 2 || segments.some((segment) => segment.trim().length === 0)) {
+    throw new UsageError("--repo must be owner/name");
+  }
+  const pullNumber = /^[0-9]+$/.test(pr) ? Number(pr) : Number.NaN;
+  if (!Number.isSafeInteger(pullNumber) || pullNumber <= 0) {
+    throw new UsageError("--pr must be a positive integer");
+  }
+  return { owner: segments[0], name: segments[1], pullNumber };
+}
+
 export function parseArgs(argv: readonly string[]): RunnerOptions | null {
   let parsed: ReturnType<typeof parseNodeArgs>;
   try {
@@ -80,6 +100,8 @@ export function parseArgs(argv: readonly string[]): RunnerOptions | null {
         output: { type: "string" },
         receipt: { type: "string" },
         timeout: { type: "string" },
+        repo: { type: "string" },
+        pr: { type: "string" },
         help: { type: "boolean", short: "h", default: false },
       },
     });
@@ -100,7 +122,7 @@ export function parseArgs(argv: readonly string[]): RunnerOptions | null {
   ) {
     throw new UsageError("timeout must be a number greater than zero");
   }
-  return resolvedOptions({
+  const base = {
     parent: oneOf("parent", stringValue(parsed.values.parent), PARENTS) as Parent,
     provider: oneOf("provider", stringValue(parsed.values.provider), PROVIDERS) as Provider,
     model: required("model", stringValue(parsed.values.model)),
@@ -111,7 +133,10 @@ export function parseArgs(argv: readonly string[]): RunnerOptions | null {
     outputPath: required("output", stringValue(parsed.values.output)),
     receiptPath: required("receipt", stringValue(parsed.values.receipt)),
     timeoutMs: timeoutSeconds === null ? null : timeoutSeconds * 1_000,
-  });
+  };
+  return resolvedOptions(
+    laneOptions(base, repoTarget(stringValue(parsed.values.repo), stringValue(parsed.values.pr)))
+  );
 }
 
 export async function main(

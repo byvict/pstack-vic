@@ -19,15 +19,21 @@ The matrix lives in [`model-matrix.json`](../../../model-matrix.json) at the plu
 | sol | codex | `gpt-5.6-sol` | max | low medium high xhigh max | codex | - | `gpt-5.6-sol-{effort}` |
 | astra | codex | `gpt-6-astra` | max | low medium high xhigh max | codex | - | - |
 | grok | grok | `grok-4.6` | xhigh | low medium high xhigh max | - | - | `grok-4.6-fast-{effort}` |
+| cursor-grok | cursor | `grok-4.7` | high | low medium high xhigh | - | - | - |
+| composer | cursor | `composer-2.5` | high | high | - | - | - |
+| kimi | cursor | `kimi-k3` | high | low high | - | - | - |
+| glm | cursor | `glm-5.2` | high | high | - | - | - |
+| gemini-pro | cursor | `gemini-3.1-pro` | high | high | - | - | - |
+| muse | cursor | `muse-spark-1.3` | high | low high xhigh | - | - | - |
 
 The allowed effort universe is exactly `low`, `medium`, `high`, `xhigh`, `max`. First-run requested efforts are the Default effort cell of each row. A Claude-native agent stem of `-` means the family has no Claude-native agent. Otherwise the shipped agent name is `pstack-<stem>-<effort>`. Aliases `inherit-parent` and `auto` are not families and carry no effort.
 
 ### Route table
 
-| Parent | `claude:*` | `codex:*` | `grok:*` |
-|---|---|---|---|
-| Claude Code | native `Agent` | external runner | external runner |
-| Codex | external runner | native `spawn_agent` | external runner |
+| Parent | `claude:*` | `codex:*` | `cursor:*` | `grok:*` |
+|---|---|---|---|---|
+| Claude Code | native `Agent` | external runner | external runner | external runner |
+| Codex | external runner | native `spawn_agent` | external runner | external runner |
 
 <!-- model-matrix:end -->
 
@@ -62,6 +68,11 @@ Skills name roles by the labels below, the same labels `/setup-pstack` writes to
 | `swarm workers` | Default worker for every swarm lane: coverage matrices, races, gauntlets, exploration partitions. | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
 | `architect runners` | Each lane proposes a design (types, module shape) for the same problem before implementation. One lane per entry. | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:opus@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:opus@xhigh` |
 | `interrogate reviewers` | Each lane reviews the diff adversarially from its own angle; a different provider per lane widens the blind spots covered. | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:opus@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:opus@xhigh` |
+| `pr verifier` | Runs the gates and the live lane of a ready PR and reconciles evidence against claims; never writes code. | `cursor:composer-2.5@high` | `cursor:composer-2.5@high` |
+| `pr reviewer` | Reads the base-to-head diff of a PR that touches an irreversible or contained class and reports regressions with a failure scenario and file and line. | `cursor:grok-4.7@high` | `cursor:grok-4.7@high` |
+| `pr fixer, simple` | Repairs one named cause of a single file, a lint or type failure, or a confirmed finding with a concrete disproof, in the PR branch. | `cursor:composer-2.5@high` | `cursor:composer-2.5@high` |
+| `pr fixer, complex` | Repairs a cross-file or behavior-changing cause in the PR branch; the second and last attempt. | `cursor:grok-4.7@xhigh` | `cursor:grok-4.7@xhigh` |
+| `pr diagnosis pool` | Read-only diagnosers that each name the root cause of a failed fix with evidence; two that agree decide. | `cursor:muse-spark-1.3@high`, `cursor:glm-5.2@high`, `cursor:gemini-3.1-pro@high`, `cursor:kimi-k3@high` | `cursor:muse-spark-1.3@high`, `cursor:glm-5.2@high`, `cursor:gemini-3.1-pro@high`, `cursor:kimi-k3@high` |
 
 A list is a panel: one lane per entry, in this order. A role whose two columns differ takes the parent's native frontier family. Aliases run on the parent model through its native subagent primitive.
 
@@ -101,7 +112,7 @@ The launcher lives at `skills/poteto-mode/scripts/runner/pstack-runner` under th
 ```text
 pstack-runner \
   --parent <claude|codex> \
-  --provider <claude|codex|grok> \
+  --provider <claude|codex|cursor|grok> \
   --model <real CLI model> \
   --effort <low|medium|high|xhigh|max> \
   --mode <read-only|isolated-write> \
@@ -109,12 +120,35 @@ pstack-runner \
   --cwd <repository or dedicated worktree> \
   --output <unique final-response file> \
   --receipt <unique receipt file> \
-  [--timeout <seconds>]
+  [--timeout <seconds>] \
+  [--repo <owner/name> --pr <number>]
 ```
 
 Pass arguments as an argv array or quote every path. Never interpolate prompt text into a shell command. The launcher preflights the assigned CLI and authentication, invokes the model exactly once, disables recursive agents and ambient skill dispatch where the CLI supports it, restricts the built-in tool surface, and records the exact provider/model/effort flags. External lanes do not receive the parent's MCP surface. Keep MCP-dependent Why and Reflect roles on `inherit-parent` or `auto`. The launcher never falls back.
 
 Grok authentication preflight has one bounded retry. If the first `grok models` result would be classified as unauthenticated, the runner waits five seconds and tries the same preflight once more. A second failure is terminal. The delay and second attempt share the runner's absolute deadline and cancellation latch, and the receipt keeps evidence from both attempts. Model execution is never retried.
+
+## HTTP lanes
+
+A provider whose matrix row says `transport: "http"` has no CLI binary. Today that is `cursor`, the Cursor cloud agents API. The generated family table above lists every `cursor` family. The launcher reaches it from `skills/poteto-mode/scripts/runner/http-lane.ts` and shares everything else with a CLI lane: the exclusive output and receipt reservation, the one absolute deadline, the SIGINT and SIGTERM latch, receipt writing, and `modelProof`.
+
+An http lane needs `--repo <owner/name>` and `--pr <number>`, the GitHub pull request the cloud agent works on. A CLI lane refuses both flags. `CURSOR_API_KEY` must be in the launcher's environment. Without it the lane exits 69 with an `unavailable-cli` receipt whose message is `CURSOR_API_KEY is not set`, the same dropout shape as a missing binary.
+
+The lane runs in this order. Preflight is `GET /v1/models` with Basic auth from the key. A 401 or 403 is `unauthenticated`. A model id absent from the inventory is `unavailable-model`, with the inventory ids in the error evidence.
+
+The Cursor `cursor-grok` family uses `grok-4.7`. Its inventory on 2026-09-22 exposes `reasoning_effort` values low, medium, high, and xhigh, with a default 500k context. The runner retains that context and selects `fast=false`.
+
+The selector starts with the model's one declared default variant. It replaces `effort`, `reasoning`, or `reasoning_effort` with the requested effort and pins a declared `fast` parameter to `false`. Other parameter values stay at the provider default. The selector then requires one exact advertised match and sends that match in its advertised order. Multiple defaults, duplicate exact matches, malformed variant data for the selected model, multiple effort axes, and undeclared control axes fail before launch. A table without a default is valid only when `effort`, `reasoning`, or `reasoning_effort` and `fast` control every dimension. A table without an effort axis is valid only when the matrix lists one matching effort and the inventory declares one default. In that case, preflight evidence says that the requested effort is not selectable and that the matrix label maps to the provider default. The evidence also records the complete selected parameter list, including `[]`.
+
+Launch is `POST /v1/agents` with the prompt file's text, `workOnCurrentBranch: true`, and `autoCreatePR: false`. Poll is `GET /v1/agents/{id}/runs/{runId}` every 30 seconds until `FINISHED`, `ERROR`, `CANCELLED`, or `EXPIRED`. `FINISHED` writes the run's `result` to `--output`. `ERROR` and `EXPIRED` are `child-failed`. A `CANCELLED` the launcher did not request is `child-failed` too, because a `cancelled` receipt promises that this launcher received a signal or reached its deadline.
+
+When the deadline or the latch fires after launch, the launcher writes a `cancelled` receipt. Unless a terminal API status was already observed, it sends `POST /v1/agents/{id}/runs/{runId}/cancel` once. Five consecutive poll failures, an unknown status, or an unexpected polling error also trigger that cleanup, while preserving the original failure. The cancel request has an independent ten-second budget. Its acknowledgement confirms acceptance of the request, not that the run stopped. Cancellation during final head verification still produces a `cancelled` receipt and no output, without cancelling a run already known to be terminal. Before launch, a deadline is `timed-out` and a signal is `cancelled`, as on a CLI lane.
+
+The receipt keeps `schemaVersion: 1`. On an http lane `executable`, `exitCode`, and `signal` are null, `preflight.argv` is `["GET", "/v1/models"]`, and `argv` starts with `["POST", "/v1/agents", "<model id>", "<effort>"]`. A cancel request is appended after those four, and `error.evidence` records its result. `remote` carries `agentId`, `runId`, `agentUrl`, and `heads`. The `heads` record is `{ kind: "not-taken" }` before a comparison, `{ kind: "unverified", reason }` when a snapshot fails, or `{ kind: "observed", changedBranches }` after two successful snapshots. On a CLI lane `remote` is null. The Cursor API reports no served model, so a complete http receipt has `reportedModel: null` and `modelEvidence: "pinned-argv"`, like Codex. For an HTTP lane, `pinned-argv` establishes only the requested model identity. It does not prove the selected effort, the served model, or the internal reasoning level. The HTTP preflight evidence records the exact requested variant and whether the API exposes a selectable effort parameter.
+
+Read-only verification happens after the fact. The prompt carries the read-only clause, and the launcher snapshots the repository's remote heads with `git ls-remote --heads` before launch and after a `FINISHED` run. New, moved, and deleted heads appear in the sorted `remote.heads.changedBranches` list in both modes. The snapshots cannot attribute those changes to this run. Another actor's push, even to the same branch, makes read-only verification fail closed with `child-failed` and `could not verify read-only execution: remote heads changed: <branches>`. A failed snapshot produces `child-failed` with `could not verify read-only execution: remote head snapshot unavailable`. Isolated-write may complete while recording the same observation or snapshot failure. Unchanged snapshots show no observed head changes; they cannot detect a write that was restored between snapshots or changes outside branch heads. The run body's `git.branches[]` names the working branch even without a push (measured 2026-09-21), so the launcher does not use it for attribution.
+
+Three environment variables exist for tests: `PSTACK_CURSOR_BASE_URL` points the client at a fake server and is honored only when the host is loopback, and `PSTACK_CURSOR_POLL_MS` and `PSTACK_CURSOR_GIT_REMOTE` shorten the poll interval and redirect the `ls-remote` snapshots only alongside an accepted override. A non-loopback override is ignored.
 
 The parent tool sandbox still governs whether a subscribed child CLI can reach its credentials and network. Run setup's live probe from the actual parent profile. A blocked external CLI is a loud dropout, not a reason to elevate permissions or substitute a model silently.
 
@@ -139,7 +173,7 @@ Success requires all of these:
 
 1. Exit status `0`.
 2. Receipt status `complete`.
-3. Either `modelVerified: true` with `modelEvidence: "provider-report"`, or a Codex receipt with `reportedModel: null`, `modelVerified: false`, and `modelEvidence: "pinned-argv"`. For Claude's `fable` and `opus` aliases, the concrete provider report must match the family's `reportedModel` pattern. Codex 0.154.0 accepts the exact `--model` argument but does not report the served model in its `--json` stream (measured 2026-09-17 with `gpt-6-astra`).
+3. Either `modelVerified: true` with `modelEvidence: "provider-report"`, or a Codex or Cursor receipt with `reportedModel: null`, `modelVerified: false`, and `modelEvidence: "pinned-argv"`. For Claude's `fable` and `opus` aliases, the concrete provider report must match the family's `reportedModel` pattern. Codex 0.154.0 accepts the exact `--model` argument but does not report the served model in its `--json` stream (measured 2026-09-17 with `gpt-6-astra`). The Cursor cloud agents API reports no served model either (measured 2026-09-21). Cursor's `pinned-argv` value therefore proves only the requested model identity. Its preflight evidence records the advertised request parameters and the effort mapping.
 4. A non-empty output file.
 
 The receipt also carries elapsed time, token usage when the CLI exposes it, and cost when available. Keep it with the arena or review artifacts so parent-harness comparisons are evidence-based.

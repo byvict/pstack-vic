@@ -8,7 +8,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "test": "node --test 'scripts/**/*.test.ts' 'skills/poteto-mode/scripts/runner/*.test.ts' 'skills/setup-pstack/scripts/*.test.ts'",
+    "test": "node --test 'scripts/**/*.test.ts' 'skills/poteto-mode/scripts/runner/*.test.ts' 'skills/setup-pstack/scripts/*.test.ts' 'skills/poteto-mode/scripts/converge/**/*.test.ts'",
     "matrix:render": "node scripts/render-model-matrix.ts",
     "matrix:check": "node scripts/render-model-matrix.ts --check",
     "agents:generate": "node scripts/generate-agents.ts",

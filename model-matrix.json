@@ -5,6 +5,7 @@
     "A family is one line below. Adding a family = adding one line; the test suite derives everything else from this file.",
     "efforts is the closed universe. Codex also exposes `ultra` (automatic task delegation); it is excluded because a pstack child never delegates.",
     "cursorSlug is the Cursor pstack 0.15.2 selector this family replaces, with {effort} where the effort token goes; null when upstream has no such family.",
+    "transport is how the runner reaches a provider: `cli` (default) spawns providers.<name>.cli; `http` calls the provider's agents API from skills/poteto-mode/scripts/runner/http-lane.ts and needs cli null. The Cursor cloud API reports no served model, so its families pin by argv.",
     "reportedModel is the regex a runner receipt's provider-reported model must match to count as verified; null when the CLI does not report the served model (Codex pins by argv). Grok Build CLI 1.0.5 reports the served model with a build suffix (`grok-4.6-build`, measured 2026-09-17), so the grok pattern accepts one.",
     "roles are the per-role first-run defaults every skill cites by label (the same labels /setup-pstack writes to the model sheet). A value is an alias, `family@effort`, a list of those for a panel, or an object keyed by parent when the default depends on the parent (frontier solo roles use the parent's native frontier family). Skills never spell descriptors; they name the role and point at the rendered role table in provider-dispatch.md. description is the one-line account of what a lane in that role does; /setup-pstack shows it in the question for the role and the role table renders it."
   ],
@@ -17,18 +18,25 @@
   "providers": {
     "claude": { "cli": "claude", "nativeIn": "claude" },
     "codex": { "cli": "codex", "nativeIn": "codex" },
+    "cursor": { "cli": null, "transport": "http", "nativeIn": null },
     "grok": { "cli": "grok", "nativeIn": null }
   },
   "routes": {
-    "claude": { "claude": "native", "codex": "runner", "grok": "runner" },
-    "codex": { "claude": "runner", "codex": "native", "grok": "runner" }
+    "claude": { "claude": "native", "codex": "runner", "cursor": "runner", "grok": "runner" },
+    "codex": { "claude": "runner", "codex": "native", "cursor": "runner", "grok": "runner" }
   },
   "families": [
     { "family": "fable", "provider": "claude", "model": "fable", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "max", "agentStem": "fable", "cursorSlug": "claude-fable-5-1-thinking-{effort}", "reportedModel": "^claude-fable-[0-9]+(-[0-9]+)*$" },
     { "family": "opus", "provider": "claude", "model": "opus", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "xhigh", "agentStem": "opus", "cursorSlug": "claude-opus-5-thinking-{effort}", "reportedModel": "^claude-opus-[0-9]+(-[0-9]+)*$" },
     { "family": "sol", "provider": "codex", "model": "gpt-5.6-sol", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "max", "agentStem": null, "cursorSlug": "gpt-5.6-sol-{effort}", "reportedModel": null },
     { "family": "astra", "provider": "codex", "model": "gpt-6-astra", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "max", "agentStem": null, "cursorSlug": null, "reportedModel": null },
-    { "family": "grok", "provider": "grok", "model": "grok-4.6", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "xhigh", "agentStem": null, "cursorSlug": "grok-4.6-fast-{effort}", "reportedModel": "^grok-4\\.6(-[a-z0-9]+)*$" }
+    { "family": "grok", "provider": "grok", "model": "grok-4.6", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "xhigh", "agentStem": null, "cursorSlug": "grok-4.6-fast-{effort}", "reportedModel": "^grok-4\\.6(-[a-z0-9]+)*$" },
+    { "family": "cursor-grok", "provider": "cursor", "model": "grok-4.7", "efforts": ["low", "medium", "high", "xhigh"], "defaultEffort": "high", "agentStem": null, "cursorSlug": null, "reportedModel": null },
+    { "family": "composer", "provider": "cursor", "model": "composer-2.5", "efforts": ["high"], "defaultEffort": "high", "agentStem": null, "cursorSlug": null, "reportedModel": null },
+    { "family": "kimi", "provider": "cursor", "model": "kimi-k3", "efforts": ["low", "high"], "defaultEffort": "high", "agentStem": null, "cursorSlug": null, "reportedModel": null },
+    { "family": "glm", "provider": "cursor", "model": "glm-5.2", "efforts": ["high"], "defaultEffort": "high", "agentStem": null, "cursorSlug": null, "reportedModel": null },
+    { "family": "gemini-pro", "provider": "cursor", "model": "gemini-3.1-pro", "efforts": ["high"], "defaultEffort": "high", "agentStem": null, "cursorSlug": null, "reportedModel": null },
+    { "family": "muse", "provider": "cursor", "model": "muse-spark-1.3", "efforts": ["low", "high", "xhigh"], "defaultEffort": "high", "agentStem": null, "cursorSlug": null, "reportedModel": null }
   ],
   "roles": [
     { "role": "feature, refactoring", "description": "Writes the code of a feature or a behavior-preserving refactor in its own worktree; the parent reviews the diff.", "default": "grok@xhigh" },
@@ -47,6 +55,11 @@
     { "role": "arena cross-judge pool", "description": "Judges the arena candidates; the arena picks a provider different from the parent and the base candidate when possible.", "default": ["fable@max", "astra@max", "grok@xhigh", "opus@xhigh"] },
     { "role": "swarm workers", "description": "Default worker for every swarm lane: coverage matrices, races, gauntlets, exploration partitions.", "default": "grok@xhigh" },
     { "role": "architect runners", "description": "Each lane proposes a design (types, module shape) for the same problem before implementation. One lane per entry.", "default": ["fable@max", "astra@max", "grok@xhigh", "opus@xhigh"] },
-    { "role": "interrogate reviewers", "description": "Each lane reviews the diff adversarially from its own angle; a different provider per lane widens the blind spots covered.", "default": ["fable@max", "astra@max", "grok@xhigh", "opus@xhigh"] }
+    { "role": "interrogate reviewers", "description": "Each lane reviews the diff adversarially from its own angle; a different provider per lane widens the blind spots covered.", "default": ["fable@max", "astra@max", "grok@xhigh", "opus@xhigh"] },
+    { "role": "pr verifier", "description": "Runs the gates and the live lane of a ready PR and reconciles evidence against claims; never writes code.", "default": "composer@high" },
+    { "role": "pr reviewer", "description": "Reads the base-to-head diff of a PR that touches an irreversible or contained class and reports regressions with a failure scenario and file and line.", "default": "cursor-grok@high" },
+    { "role": "pr fixer, simple", "description": "Repairs one named cause of a single file, a lint or type failure, or a confirmed finding with a concrete disproof, in the PR branch.", "default": "composer@high" },
+    { "role": "pr fixer, complex", "description": "Repairs a cross-file or behavior-changing cause in the PR branch; the second and last attempt.", "default": "cursor-grok@xhigh" },
+    { "role": "pr diagnosis pool", "description": "Read-only diagnosers that each name the root cause of a failed fix with evidence; two that agree decide.", "default": ["muse@high", "glm@high", "gemini-pro@high", "kimi@high"] }
   ]
 }
