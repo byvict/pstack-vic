@@ -443,6 +443,12 @@ function attemptResult(status: string, outputPath: string | null): Attempt['resu
   return ['unavailable-cli', 'unauthenticated', 'unavailable-model'].includes(status) ? 'unavailable' : 'failed';
 }
 
+function definitelyRateLimitedBeforeLaunch(receipt: Record<string, unknown>, status: string): boolean {
+  if (status !== 'child-failed' || typeof receipt.error !== 'object' || receipt.error === null || Array.isArray(receipt.error)) return false;
+  return 'message' in receipt.error && receipt.error.message === 'the launch request failed'
+    && 'evidence' in receipt.error && typeof receipt.error.evidence === 'string' && /^HTTP 429\b/.test(receipt.error.evidence);
+}
+
 function attemptFromReceipt(launchId: string, role: Role, manifestPath: string): Attempt {
   const manifest = object(JSON.parse(readFileSync(manifestPath, 'utf8')), 'lane manifest');
   const directory = dirname(manifestPath);
@@ -540,6 +546,7 @@ export function defaultServices(): ProofServices {
           const provider = string(receipt.provider);
           if (receipt.remote === null) {
             if (provider !== 'cursor') continue;
+            if (definitelyRateLimitedBeforeLaunch(receipt, status)) continue;
             const preflight = object(receipt.preflight, 'runner preflight');
             if (oneOf(preflight.status, ['not-run', 'failed', 'timed-out', 'cancelled', 'passed']) === 'passed') return 'active';
             continue;
@@ -547,6 +554,7 @@ export function defaultServices(): ProofServices {
           if (provider !== 'cursor') return 'active';
           const remote = object(receipt.remote, 'runner remote');
           if (remote.agentId === null && remote.runId === null) {
+            if (definitelyRateLimitedBeforeLaunch(receipt, status)) continue;
             const preflight = object(receipt.preflight, 'runner preflight');
             if (oneOf(preflight.status, ['not-run', 'failed', 'timed-out', 'cancelled', 'passed']) === 'passed') return 'active';
             continue;

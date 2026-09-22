@@ -483,6 +483,16 @@ test('default reader drain requires and preserves exact remote terminal observat
   };
   assert.equal(await defaultServices().drainReaders(owned, [cursorWithoutRemote('passed')]), 'active');
   assert.equal(await defaultServices().drainReaders(owned, [cursorWithoutRemote('failed')]), 'drained');
+
+  const rejectedBytes = JSON.stringify({
+    schemaVersion: 1, status: 'child-failed', completedAt: '2026-09-22T06:44:35.873Z', provider: 'cursor',
+    preflight: { status: 'passed' },
+    error: { message: 'the launch request failed', evidence: 'HTTP 429: rate limited' },
+    remote: { agentId: null, runId: null, agentUrl: null, heads: { kind: 'not-taken' } },
+  });
+  writeFileSync(receiptPath, rejectedBytes);
+  const rejectedLaunch = { ...attemptRecord, receipt: { path: receiptPath, sha256: hash(rejectedBytes) } };
+  assert.equal(await defaultServices().drainReaders(owned, [rejectedLaunch]), 'drained');
 });
 
 test('runProof stops at publication and resumes only with a host-observed closure', async t => {

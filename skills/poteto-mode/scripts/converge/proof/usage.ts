@@ -162,6 +162,7 @@ function receiptRemote(receipt: unknown): { agentId: string; runId: string; mode
   const v = object(receipt, 'receipt');
   if (v.remote === null || v.remote === undefined) return null;
   const remote = object(v.remote, 'receipt remote');
+  if (remote.agentId === null && remote.runId === null) return null;
   const agentId = string(remote.agentId);
   const runId = string(remote.runId);
   if (!/^[A-Za-z0-9_-]+$/.test(agentId) || !/^[A-Za-z0-9_-]+$/.test(runId)) throw new Error('Invalid Cursor run identity');

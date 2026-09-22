@@ -145,6 +145,14 @@ test('recordUsage treats a missing remote as unavailable and retains malformed r
   const local = await recordUsage({ receiptPath: localReceipt, evidenceDirectory: join(directory, 'usage') });
   assert.equal('kind' in local && local.kind, 'unavailable');
 
+  const failedLaunchReceipt = join(directory, 'failed-launch.json');
+  writeFileSync(failedLaunchReceipt, JSON.stringify({
+    schemaVersion: 1, model: 'composer-2.5',
+    remote: { agentId: null, runId: null, agentUrl: null, heads: { kind: 'not-taken' } },
+  }));
+  const failedLaunch = await recordUsage({ receiptPath: failedLaunchReceipt, evidenceDirectory: join(directory, 'usage') });
+  assert.equal('kind' in failedLaunch && failedLaunch.kind, 'unavailable');
+
   const remoteReceipt = join(directory, 'remote.json');
   writeFileSync(remoteReceipt, JSON.stringify({ schemaVersion: 1, model: 'composer-2.5', remote: { agentId: 'agent-1', runId: 'run-malformed' } }));
   const malformed = await recordUsage({
