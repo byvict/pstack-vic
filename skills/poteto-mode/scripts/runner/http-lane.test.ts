@@ -55,7 +55,7 @@ const GROK_VARIANTS = ["low", "medium", "high", "xhigh"].flatMap((effort) =>
 
 const INVENTORY: readonly FakeModel[] = [
   { id: "composer-2.5", variants: ["fast=true", "fast=false"], defaultVariant: "fast=true" },
-  { id: "grok-4.6", variants: GROK_VARIANTS, defaultVariant: "effort=high fast=true" },
+  { id: "grok-4.7", variants: GROK_VARIANTS, defaultVariant: "effort=high fast=true" },
 ];
 
 const MUSE_MODEL: FakeModel = {
@@ -520,16 +520,16 @@ describe("cursor http lane", () => {
 
   it("quotes the listed variant with the requested effort and fast off, never fast on", async () => {
     const grok = await fakeCursor();
-    const grokLane = await runHttpLane(grok, { model: "grok-4.6", effort: "xhigh", suffix: "grok" });
+    const grokLane = await runHttpLane(grok, { model: "grok-4.7", effort: "xhigh", suffix: "grok" });
     assert.equal(grokLane.exitCode, 0);
     matchObject(grokLane.receipt, {
-      argv: ["POST", "/v1/agents", "grok-4.6", "xhigh"],
+      argv: ["POST", "/v1/agents", "grok-4.7", "xhigh"],
       preflight: {
-        evidence: "authenticated; model grok-4.6 available; selected params: effort=xhigh fast=false; requested effort xhigh selects effort=xhigh",
+        evidence: "authenticated; model grok-4.7 available; selected params: effort=xhigh fast=false; requested effort xhigh selects effort=xhigh",
       },
     });
     assert.deepEqual(launchModel(grok), {
-      id: "grok-4.6",
+      id: "grok-4.7",
       params: [{ id: "effort", value: "xhigh" }, { id: "fast", value: "false" }],
     });
 
@@ -548,16 +548,16 @@ describe("cursor http lane", () => {
     }
 
     const fastOnly = await fakeCursor({
-      models: [{ id: "grok-4.6", variants: ["effort=low fast=false", "effort=xhigh fast=true"] }],
+      models: [{ id: "grok-4.7", variants: ["effort=low fast=false", "effort=xhigh fast=true"] }],
     });
-    const refused = await runHttpLane(fastOnly, { model: "grok-4.6", effort: "xhigh", suffix: "fast-only" });
+    const refused = await runHttpLane(fastOnly, { model: "grok-4.7", effort: "xhigh", suffix: "fast-only" });
     assert.equal(refused.exitCode, 69);
     matchObject(refused.receipt, {
       status: "unavailable-model",
       preflight: { status: "failed" },
       error: {
-        message: "model grok-4.6 has no exact variant for effort=xhigh",
-        evidence: "model grok-4.6 variants:\neffort=low fast=false\neffort=xhigh fast=true",
+        message: "model grok-4.7 has no exact variant for effort=xhigh",
+        evidence: "model grok-4.7 variants:\neffort=low fast=false\neffort=xhigh fast=true",
       },
       remote: { agentId: null, runId: null },
     });
@@ -639,6 +639,44 @@ describe("cursor http lane", () => {
     for (const expected of cases) await assertSuccessfulSelection(expected);
   });
 
+  it("selects Grok 4.7 reasoning_effort while retaining the default 500k context", async () => {
+    for (const effort of ["low", "medium", "high", "xhigh"]) {
+      await assertSuccessfulSelection({
+        model: "grok-4.7",
+        effort,
+        inventory: [{
+          id: "grok-4.7",
+          variants: ["256k", "500k"].flatMap((context) =>
+            ["low", "medium", "high", "xhigh"].flatMap((level) =>
+              ["false", "true"].map((fast) => `context=${context} reasoning_effort=${level} fast=${fast}`)
+            )
+          ),
+          defaultVariant: "context=500k reasoning_effort=high fast=true",
+        }],
+        params: [{ id: "context", value: "500k" }, { id: "reasoning_effort", value: effort }, { id: "fast", value: "false" }],
+        evidence: `authenticated; model grok-4.7 available; selected params: context=500k reasoning_effort=${effort} fast=false; requested effort ${effort} selects reasoning_effort=${effort}`,
+        suffix: `grok-47-${effort}`,
+      });
+    }
+  });
+
+  it("rejects undeclared or conflicting reasoning_effort controls", async () => {
+    for (const declared of [[], ["effort"], ["reasoning"]]) {
+      const parameters = declared.length === 0 ? [] : [...declared, "reasoning_effort"];
+      await assertSelectionRefused({
+        script: { rawModels: [inventoryItem("grok-4.7", parameters, [
+          { line: [...declared.map((id) => `${id}=high`), "reasoning_effort=high"].join(" "), isDefault: true },
+        ])] },
+        model: "grok-4.7",
+        effort: "high",
+        suffix: `grok-47-invalid-${declared[0] ?? "hidden"}`,
+        message: declared.length === 0
+          ? "model grok-4.7 has undeclared control parameters: reasoning_effort"
+          : `model grok-4.7 advertises both ${declared[0]} and reasoning_effort parameters`,
+      });
+    }
+  });
+
   it("uses default metadata instead of variant or parameter order", async () => {
     await assertSuccessfulSelection({
       model: "muse-spark-1.3",
@@ -660,11 +698,11 @@ describe("cursor http lane", () => {
 
   it("keeps controlled-only inventories compatible without a default marker", async () => {
     await assertSuccessfulSelection({
-      model: "grok-4.6",
+      model: "grok-4.7",
       effort: "xhigh",
-      inventory: [{ id: "grok-4.6", variants: ["effort=low fast=false", "effort=xhigh fast=false"] }],
+      inventory: [{ id: "grok-4.7", variants: ["effort=low fast=false", "effort=xhigh fast=false"] }],
       params: [{ id: "effort", value: "xhigh" }, { id: "fast", value: "false" }],
-      evidence: "authenticated; model grok-4.6 available; selected params: effort=xhigh fast=false; requested effort xhigh selects effort=xhigh",
+      evidence: "authenticated; model grok-4.7 available; selected params: effort=xhigh fast=false; requested effort xhigh selects effort=xhigh",
       suffix: "grok-controlled-only",
     });
   });
@@ -682,15 +720,15 @@ describe("cursor http lane", () => {
         message: "model composer-2.5 advertises multiple default variants",
       },
       {
-        script: { rawModels: [inventoryItem("grok-4.6", ["effort", "fast"], [
+        script: { rawModels: [inventoryItem("grok-4.7", ["effort", "fast"], [
           { line: "effort=low fast=false", isDefault: true },
           { line: "effort=high fast=true", isDefault: true },
           { line: "effort=high fast=false" },
         ])] },
-        model: "grok-4.6",
+        model: "grok-4.7",
         effort: "high",
         suffix: "unrelated-default",
-        message: "model grok-4.6 advertises multiple default variants",
+        message: "model grok-4.7 advertises multiple default variants",
       },
     ];
 
@@ -767,14 +805,14 @@ describe("cursor http lane", () => {
       },
       {
         script: { models: [{
-          id: "grok-4.6",
+          id: "grok-4.7",
           variants: ["effort=high reasoning=high fast=false"],
           defaultVariant: "effort=high reasoning=high fast=false",
         }] },
-        model: "grok-4.6",
+        model: "grok-4.7",
         effort: "high",
         suffix: "both-axes",
-        message: "model grok-4.6 advertises both effort and reasoning parameters",
+        message: "model grok-4.7 advertises both effort and reasoning parameters",
       },
       {
         script: { models: [{ id: "kimi-k3", variants: ["reasoning=max"], defaultVariant: "reasoning=max" }] },
@@ -784,22 +822,22 @@ describe("cursor http lane", () => {
         message: "model kimi-k3 has no exact variant for reasoning=high",
       },
       {
-        script: { rawModels: [inventoryItem("grok-4.6", ["effort"], [
+        script: { rawModels: [inventoryItem("grok-4.7", ["effort"], [
           { line: "effort=high fast=false", isDefault: true },
         ])] },
-        model: "grok-4.6",
+        model: "grok-4.7",
         effort: "high",
         suffix: "hidden-fast",
-        message: "model grok-4.6 has undeclared control parameters: fast",
+        message: "model grok-4.7 has undeclared control parameters: fast",
       },
       {
-        script: { rawModels: [inventoryItem("grok-4.6", ["effort", "fast"], [
+        script: { rawModels: [inventoryItem("grok-4.7", ["effort", "fast"], [
           { line: "effort=high reasoning=high fast=false", isDefault: true },
         ])] },
-        model: "grok-4.6",
+        model: "grok-4.7",
         effort: "high",
         suffix: "hidden-reasoning",
-        message: "model grok-4.6 has undeclared control parameters: reasoning",
+        message: "model grok-4.7 has undeclared control parameters: reasoning",
       },
     ];
 
@@ -910,16 +948,16 @@ describe("cursor http lane", () => {
 
   it("reports a model absent from the inventory and lists every inventory id", async () => {
     const fake = await fakeCursor({
-      models: [{ id: "composer-9" }, { id: "grok-4.6", variants: ["effort=high fast=false"] }],
+      models: [{ id: "composer-9" }, { id: "grok-4.7", variants: ["effort=high fast=false"] }],
     });
     const { exitCode, receipt } = await runHttpLane(fake);
     assert.equal(exitCode, 69);
     matchObject(receipt, {
       status: "unavailable-model",
-      preflight: { status: "failed", evidence: "available models: composer-9, grok-4.6" },
+      preflight: { status: "failed", evidence: "available models: composer-9, grok-4.7" },
       error: {
         message: "model composer-2.5 is not in the Cursor inventory",
-        evidence: "available models: composer-9, grok-4.6",
+        evidence: "available models: composer-9, grok-4.7",
       },
     });
     assert.deepEqual(paths(fake), ["GET /v1/models"]);

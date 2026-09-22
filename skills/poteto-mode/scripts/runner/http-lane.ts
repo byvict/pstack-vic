@@ -248,10 +248,11 @@ type ModelSelection =
 type SelectionRequest = Pick<HttpRunnerOptions, "provider" | "model" | "effort">;
 
 type EffortBinding =
-  | { readonly kind: "selectable"; readonly id: "effort" | "reasoning" }
+  | { readonly kind: "selectable"; readonly id: "effort" | "reasoning" | "reasoning_effort" }
   | { readonly kind: "provider-default" };
 
-const CONTROL_IDS = new Set(["effort", "reasoning", "fast"]);
+const EFFORT_IDS: readonly ("effort" | "reasoning" | "reasoning_effort")[] = ["effort", "reasoning", "reasoning_effort"];
+const CONTROL_IDS = new Set<string>([...EFFORT_IDS, "fast"]);
 
 function describeVariants(entry: ModelEntry): string {
   return entry.variants
@@ -291,19 +292,19 @@ function selectModel(models: ModelInventory, request: SelectionRequest): ModelSe
     );
   }
 
-  const hasEffort = entry.parameters.has("effort");
-  const hasReasoning = entry.parameters.has("reasoning");
-  if (hasEffort && hasReasoning) {
+  const effortIds = EFFORT_IDS.filter((id) => entry.parameters.has(id));
+  if (effortIds.length > 1) {
     return unavailable(
       request.model,
       entry,
-      `model ${request.model} advertises both effort and reasoning parameters`
+      `model ${request.model} advertises both ${effortIds.join(" and ")} parameters`
     );
   }
 
   let effortBinding: EffortBinding;
-  if (hasEffort || hasReasoning) {
-    effortBinding = { kind: "selectable", id: hasEffort ? "effort" : "reasoning" };
+  const effortId = effortIds[0];
+  if (effortId !== undefined) {
+    effortBinding = { kind: "selectable", id: effortId };
   } else {
     const family = familyOf(request.provider, request.model);
     if (

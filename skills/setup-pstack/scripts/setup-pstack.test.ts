@@ -209,8 +209,8 @@ describe("buildPlan", () => {
         ["opus", "opus@xhigh", "claude:opus@xhigh", "native"],
         ["astra", "astra@max", "codex:gpt-6-astra@max", "runner"],
         ["grok", "grok@xhigh", "grok:grok-4.6@xhigh", "runner"],
-        ["cursor-grok", "cursor-grok@high", "cursor:grok-4.6@high", "runner"],
-        ["cursor-grok", "cursor-grok@xhigh", "cursor:grok-4.6@xhigh", "runner"],
+        ["cursor-grok", "cursor-grok@high", "cursor:grok-4.7@high", "runner"],
+        ["cursor-grok", "cursor-grok@xhigh", "cursor:grok-4.7@xhigh", "runner"],
         ["composer", "composer@high", "cursor:composer-2.5@high", "runner"],
         ["kimi", "kimi@high", "cursor:kimi-k3@high", "runner"],
         ["glm", "glm@high", "cursor:glm-5.2@high", "runner"],
@@ -384,9 +384,9 @@ describe("buildPlan", () => {
       "claude:opus@xhigh",
     ]);
     assert.deepEqual(lanesOf(plan, "pr verifier"), ["cursor:composer-2.5@high"]);
-    assert.deepEqual(lanesOf(plan, "pr reviewer"), ["cursor:grok-4.6@high"]);
+    assert.deepEqual(lanesOf(plan, "pr reviewer"), ["cursor:grok-4.7@high"]);
     assert.deepEqual(lanesOf(plan, "pr fixer, simple"), ["cursor:composer-2.5@high"]);
-    assert.deepEqual(lanesOf(plan, "pr fixer, complex"), ["cursor:grok-4.6@xhigh"]);
+    assert.deepEqual(lanesOf(plan, "pr fixer, complex"), ["cursor:grok-4.7@xhigh"]);
     assert.deepEqual(lanesOf(plan, "pr diagnosis pool"), [
       "cursor:muse-spark-1.3@high",
       "cursor:glm-5.2@high",
@@ -982,14 +982,14 @@ async function fakeCursor(modelsStatus?: number): Promise<FakeCursor> {
         answer(200, {
           items: [
             {
-              id: "grok-4.6",
-              displayName: "grok-4.6",
+              id: "grok-4.7",
+              displayName: "grok-4.7",
               parameters: [
-                { id: "effort", displayName: "effort", values: [{ value: "high" }] },
+                { id: "reasoning_effort", displayName: "reasoning_effort", values: [{ value: "high" }] },
                 { id: "fast", displayName: "fast", values: [{ value: "false" }] },
               ],
               variants: [
-                { params: [{ id: "effort", value: "high" }, { id: "fast", value: "false" }] },
+                { params: [{ id: "reasoning_effort", value: "high" }, { id: "fast", value: "false" }] },
               ],
             },
           ],
@@ -1063,7 +1063,7 @@ function mixedPlan(): Plan {
     parent: "claude",
     home,
     matrix,
-    roles: { ...CLI_ONLY_ROLES, "bug-fix": ["cursor:grok-4.6@high"] },
+    roles: { ...CLI_ONLY_ROLES, "bug-fix": ["cursor:grok-4.7@high"] },
   });
 }
 
@@ -1215,7 +1215,7 @@ describe("probe target", () => {
         repos: "repos" in launch ? launch.repos : undefined,
       },
       {
-        name: "pstack acme/app#7 grok-4.6@high",
+        name: "pstack acme/app#7 grok-4.7@high",
         repos: [{ url: "https://github.com/acme/app", prUrl: "https://github.com/acme/app/pull/7" }],
       }
     );

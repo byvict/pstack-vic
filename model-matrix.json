@@ -31,7 +31,7 @@
     { "family": "sol", "provider": "codex", "model": "gpt-5.6-sol", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "max", "agentStem": null, "cursorSlug": "gpt-5.6-sol-{effort}", "reportedModel": null },
     { "family": "astra", "provider": "codex", "model": "gpt-6-astra", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "max", "agentStem": null, "cursorSlug": null, "reportedModel": null },
     { "family": "grok", "provider": "grok", "model": "grok-4.6", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "xhigh", "agentStem": null, "cursorSlug": "grok-4.6-fast-{effort}", "reportedModel": "^grok-4\\.6(-[a-z0-9]+)*$" },
-    { "family": "cursor-grok", "provider": "cursor", "model": "grok-4.6", "efforts": ["low", "high", "xhigh"], "defaultEffort": "high", "agentStem": null, "cursorSlug": null, "reportedModel": null },
+    { "family": "cursor-grok", "provider": "cursor", "model": "grok-4.7", "efforts": ["low", "medium", "high", "xhigh"], "defaultEffort": "high", "agentStem": null, "cursorSlug": null, "reportedModel": null },
     { "family": "composer", "provider": "cursor", "model": "composer-2.5", "efforts": ["high"], "defaultEffort": "high", "agentStem": null, "cursorSlug": null, "reportedModel": null },
     { "family": "kimi", "provider": "cursor", "model": "kimi-k3", "efforts": ["low", "high"], "defaultEffort": "high", "agentStem": null, "cursorSlug": null, "reportedModel": null },
     { "family": "glm", "provider": "cursor", "model": "glm-5.2", "efforts": ["high"], "defaultEffort": "high", "agentStem": null, "cursorSlug": null, "reportedModel": null },

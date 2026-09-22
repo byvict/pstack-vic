@@ -482,9 +482,9 @@ describe("roles", () => {
         assert.deepEqual(roleDefault(matrix, label, parent), mixedPanel, `${label}/${parent}`);
       }
       assert.deepEqual(roleDefault(matrix, "pr verifier", parent), ["cursor:composer-2.5@high"]);
-      assert.deepEqual(roleDefault(matrix, "pr reviewer", parent), ["cursor:grok-4.6@high"]);
+      assert.deepEqual(roleDefault(matrix, "pr reviewer", parent), ["cursor:grok-4.7@high"]);
       assert.deepEqual(roleDefault(matrix, "pr fixer, simple", parent), ["cursor:composer-2.5@high"]);
-      assert.deepEqual(roleDefault(matrix, "pr fixer, complex", parent), ["cursor:grok-4.6@xhigh"]);
+      assert.deepEqual(roleDefault(matrix, "pr fixer, complex", parent), ["cursor:grok-4.7@xhigh"]);
       assert.deepEqual(roleDefault(matrix, "pr diagnosis pool", parent), diagnosis);
       const lanes = roleDefault(matrix, "pr diagnosis pool", parent);
       const providers = new Set(lanes.map((l) => parseDescriptor(l)?.provider));
