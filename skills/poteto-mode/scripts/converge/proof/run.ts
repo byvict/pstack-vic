@@ -429,6 +429,15 @@ function safeFailure(error: unknown): { name: string; message: string } {
   return { name, message };
 }
 
+function laneOutputUnavailable(path: string): boolean {
+  try {
+    const value: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    return typeof value === 'object' && value !== null && 'kind' in value && value.kind === 'unavailable';
+  } catch {
+    return false;
+  }
+}
+
 function attemptFromReceipt(launchId: string, role: Role, manifestPath: string): Attempt {
   const manifest = object(JSON.parse(readFileSync(manifestPath, 'utf8')), 'lane manifest');
   const directory = dirname(manifestPath);
@@ -436,8 +445,10 @@ function attemptFromReceipt(launchId: string, role: Role, manifestPath: string):
   const outputPath = resolve(directory, relativePath(manifest.output));
   const receipt = object(JSON.parse(readFileSync(receiptPath, 'utf8')), 'runner receipt');
   const status = string(receipt.status);
-  const result = status === 'complete' ? 'complete' : ['unavailable-cli', 'unauthenticated', 'unavailable-model'].includes(status) ? 'unavailable' : 'failed';
   const output = existsSync(outputPath) ? originalOf(outputPath) : null;
+  const result = status === 'complete'
+    ? output !== null && laneOutputUnavailable(output.path) ? 'unavailable' : 'complete'
+    : ['unavailable-cli', 'unauthenticated', 'unavailable-model'].includes(status) ? 'unavailable' : 'failed';
   if (result === 'complete' && output === null) throw new Error('Complete runner receipt has no output');
   const receiptOriginal = originalOf(receiptPath);
   return { id: launchId, role, manifest: manifestPath, receipt: receiptOriginal, output, result, evidence: output ? [receiptOriginal, output] : [receiptOriginal] };

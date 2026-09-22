@@ -854,4 +854,6 @@ test('historical prompt stays organic', () => {
   const prompt = historicalPromptFor(identity(), '0941fe3b-e5cd');
   assert.equal(prompt.includes('corpus'), false);
   assert.equal(/\b(?:eval|benchmark|judge)\b/i.test(prompt), false);
+  assert.match(prompt, /structured read_file\/read-file\/read tool call/i);
+  assert.match(prompt, /every file you may report as a finding/i);
 });

@@ -39,6 +39,7 @@ const FULL_PASS_LIMIT_NANO = 500_000_000n;
 const PRICE: Readonly<Record<string, Readonly<{ input: bigint; cacheRead: bigint; output: bigint }>>> = {
   'composer-2.5': { input: 500n, cacheRead: 200n, output: 2500n },
   'grok-4.6': { input: 2000n, cacheRead: 500n, output: 6000n },
+  'grok-4.7': { input: 2000n, cacheRead: 500n, output: 6000n },
 };
 
 export const USAGE_HOST = 'https://api.cursor.com';

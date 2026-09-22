@@ -354,13 +354,19 @@ if (args[0] === 'models') {
   process.stdout.write('You are logged in with grok.com.\\nAvailable models:\\n  * grok-4.6 (default)\\n');
 } else {
   process.stdout.write(JSON.stringify({type:'assistant',message:{content:[{type:'text',text:'progress'}]}}) + '\\n');
-  process.stdout.write(JSON.stringify({type:'result',subtype:'success',is_error:false,result:'GROK_OK',session_id:'g1',usage:{input_tokens:30,output_tokens:4,total_tokens:34},total_cost_usd:0.02,modelUsage:{'grok-4.6':{}}}) + '\\n');
+  process.stdout.write(JSON.stringify({type:'result',subtype:'success',is_error:false,result:process.env.PROOF_FAKE_RESULT ?? 'GROK_OK',session_id:'g1',usage:{input_tokens:30,output_tokens:4,total_tokens:34},total_cost_usd:0.02,modelUsage:{'grok-4.6':{}}}) + '\\n');
 }
 `);
   chmodSync(executable, 0o755);
   const previousPath = process.env.PATH;
+  const previousFakeResult = process.env.PROOF_FAKE_RESULT;
   process.env.PATH = bin + ':' + previousPath;
-  t.after(() => { process.env.PATH = previousPath; });
+  delete process.env.PROOF_FAKE_RESULT;
+  t.after(() => {
+    process.env.PATH = previousPath;
+    if (previousFakeResult === undefined) delete process.env.PROOF_FAKE_RESULT;
+    else process.env.PROOF_FAKE_RESULT = previousFakeResult;
+  });
   writeFileSync(join(directory, 'prompt.txt'), 'read only');
   const manifestPath = join(directory, 'manifest.json');
   writeFileSync(manifestPath, JSON.stringify({ descriptor: 'grok:grok-4.6@xhigh', prompt: 'prompt.txt', output: 'output.json', receipt: 'receipt.json' }));
@@ -371,6 +377,19 @@ if (args[0] === 'models') {
   assert.equal(result.result, 'complete');
   assert.equal(result.output?.path, join(directory, 'output.json'));
   assert.equal(readFileSync(join(directory, 'output.json'), 'utf8'), 'GROK_OK');
+
+  const unavailableDirectory = join(directory, 'unavailable');
+  mkdirSync(unavailableDirectory);
+  writeFileSync(join(unavailableDirectory, 'prompt.txt'), 'read only');
+  const unavailableManifest = join(unavailableDirectory, 'manifest.json');
+  writeFileSync(unavailableManifest, JSON.stringify({ descriptor: 'grok:grok-4.6@xhigh', prompt: 'prompt.txt', output: 'output.json', receipt: 'receipt.json' }));
+  process.env.PROOF_FAKE_RESULT = JSON.stringify({ schemaVersion: 1, kind: 'unavailable', reason: 'model unavailable' });
+  const unavailable = await defaultServices().runLane({
+    launchId: 'launch-2', manifestPath: unavailableManifest, repo: 'Clinextapp/clinext', pr: 1,
+    role: 'pr reviewer', evidenceRoot: unavailableDirectory, parent: 'codex', workRoot: directory,
+  });
+  assert.equal(unavailable.result, 'unavailable');
+
   const original = { path: result.receipt.path, sha256: result.receipt.sha256 };
   const owned: OwnedCase = {
     repo: 'Clinextapp/clinext', pr: 1, ref: 'converge-proof/one', head, trunk, ownerId: 'owner-1', privateId: 'one',
