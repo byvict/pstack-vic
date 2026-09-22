@@ -233,6 +233,14 @@ test('logger-note plants the synthetic secret in an allowed JSDoc block', t => {
   assert.doesNotMatch(source, /^\/\//m);
 });
 
+test('anthropic-sdk tightens only the declared range and keeps the installed lock entry stable', () => {
+  const entry = catalog.find(candidate => candidate.privateId === 'anthropic-sdk');
+  assert.ok(entry);
+  assert.equal(entry.natural.edits.length, 2);
+  assert.equal(entry.natural.edits.every(edit => edit.after.includes('~0.125.0')), true);
+  assert.equal(entry.natural.edits.some(edit => edit.before.includes('"version"')), false);
+});
+
 test('plantCase ignores a historical closed PR on the reused ref and never impersonates Dependabot', async t => {
   const f = tree(); t.after(f.cleanup);
   const work = join(f.directory, 'work');
