@@ -9,7 +9,7 @@ import { runLane as executeLane, resolvedOptions } from '../../runner/run.ts';
 import { laneOptions, transportFor } from '../../runner/types.ts';
 import { loadMatrix, resolveDescriptor } from '../../../../../scripts/model-matrix.ts';
 import {
-  catalogPath, closeOwnedCase, expectedDisplay, loadCatalog, originalOf, plantCase,
+  alignDependencies, catalogPath, closeOwnedCase, expectedDisplay, loadCatalog, originalOf, plantCase,
   type CatalogCase, type CleanupResult, type Command, type Original, type OwnedCase,
 } from './plant.ts';
 import { admitLaunch, combineCosts, formatUsd, fullPassUnderLimit, priceUsage, recordUsage, type CostResult, type CostSummary } from './usage.ts';
@@ -79,6 +79,7 @@ export type RunBoundary =
 export type ProofServices = Readonly<{
   now: () => Date;
   command: Command;
+  alignDependencies: (workRoot: string) => void;
   plant: typeof plantCase;
   close: typeof closeOwnedCase;
   reconcile: typeof reconcile;
@@ -493,6 +494,7 @@ export function defaultServices(): ProofServices {
   return {
     now: () => new Date(),
     command,
+    alignDependencies,
     plant: plantCase,
     close: closeOwnedCase,
     reconcile,
@@ -821,6 +823,7 @@ async function prepareCase(envelope: Envelope, phase: Extract<Phase, { kind: 'pr
   const status = services.command('git', ['-C', owned.workRoot, 'status', '--porcelain', '--untracked-files=all']).trim();
   if (status) throw new Error(`Work root is dirty before selecting ${entry.privateId}`);
   services.command('git', ['-C', owned.workRoot, 'checkout', owned.ref]);
+  services.alignDependencies(owned.workRoot);
   const currentRef = services.command('git', ['-C', owned.workRoot, 'branch', '--show-current']).trim();
   const currentHead = sha(services.command('git', ['-C', owned.workRoot, 'rev-parse', 'HEAD']).trim());
   if (currentRef !== owned.ref || currentHead !== owned.head) throw new Error(`Work root did not select ${entry.privateId} at its recorded head`);

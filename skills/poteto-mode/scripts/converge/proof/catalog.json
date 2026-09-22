@@ -194,18 +194,23 @@
   {
    "privateId": "anthropic-sdk",
    "natural": {
-    "title": "Pin @anthropic-ai/sdk to the 0.125 patch line",
-    "body": "Tighten the Anthropic SDK dependency range from caret to tilde.\n\n## Why\nThe checkout already resolves 0.125.0, and the narrower range keeps future installs on the same minor line.\n\n## Scope\n- package.json\n- package-lock.json\n\n## Tradeoffs\nFuture 0.126 releases will require an explicit update and therefore this remains a human-authored full review.\n\n## Blast Radius\nCode paths that install @anthropic-ai/sdk and the dependency installation policy are affected.\n\n## Verification\ncheck: Run test suite",
+    "title": "Bump @anthropic-ai/sdk from 0.125.0 to 0.127.0",
+    "body": "Update the Anthropic SDK dependency and lockfile to 0.127.0.\n\n## Why\nThe public npm registry publishes 0.127.0 while this checkout resolves 0.125.0.\n\n## Scope\n- package.json\n- package-lock.json\n\n## Tradeoffs\nThe minor update can change SDK behavior and therefore remains a human-authored full review.\n\n## Blast Radius\nCode paths that call @anthropic-ai/sdk and the dependency installation graph are affected.\n\n## Verification\ncheck: Run test suite",
     "edits": [
      {
       "path": "package.json",
       "before": "    \"@anthropic-ai/sdk\": \"^0.125.0\",",
-      "after": "    \"@anthropic-ai/sdk\": \"~0.125.0\","
+      "after": "    \"@anthropic-ai/sdk\": \"^0.127.0\","
      },
      {
       "path": "package-lock.json",
       "before": "        \"@anthropic-ai/sdk\": \"^0.125.0\",",
-      "after": "        \"@anthropic-ai/sdk\": \"~0.125.0\","
+      "after": "        \"@anthropic-ai/sdk\": \"^0.127.0\","
+     },
+     {
+      "path": "package-lock.json",
+      "before": "      \"version\": \"0.125.0\",\n      \"resolved\": \"https://registry.npmjs.org/@anthropic-ai/sdk/-/sdk-0.125.0.tgz\",\n      \"integrity\": \"sha512-Hq5wYlXupzJ9M1Fzqjqa3hObcuigEXVZJqSYDgeZGM3wF4qrNERM5Z1OOAeoT9rlod8awJ3uYyJjbQXp1ckIGg==\",",
+      "after": "      \"version\": \"0.127.0\",\n      \"resolved\": \"https://registry.npmjs.org/@anthropic-ai/sdk/-/sdk-0.127.0.tgz\",\n      \"integrity\": \"sha512-OKiVbG9LHCxjn4fBJZJFy/Bz3hqE1RYpwaeSEDNheQnvz0XNKmGT/Lhkz2Sf1a27Ldt3vVv+BkU81I0U/8EpoQ==\","
      }
     ]
    },

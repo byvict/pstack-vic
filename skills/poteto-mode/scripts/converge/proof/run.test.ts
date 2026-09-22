@@ -123,6 +123,7 @@ function harness(t: { after: (fn: () => void) => void }, now: () => Date = () =>
   let laneRuns = 0;
   const events: string[] = [];
   const lifecycleCommandOverrides: string[] = [];
+  let selectedRef = '';
   const refs = new Map<string, string | null>();
   const reports = new Map<number, Report>();
   let failPublish = false;
@@ -134,12 +135,16 @@ function harness(t: { after: (fn: () => void) => void }, now: () => Date = () =>
       if (args[2] === 'checkout') {
         const ref = args[3];
         assert.ok(ref);
+        selectedRef = ref;
         events.push(`checkout:${ref.replace('converge-proof/', '')}`);
         return '';
       }
-      if (args[2] === 'branch') return `converge-proof/${events.at(-1)?.replace('checkout:', '')}`;
+      if (args[2] === 'branch') return selectedRef;
       if (args[2] === 'rev-parse') return head;
       throw new Error(`unexpected command: ${file} ${args.join(' ')}`);
+    },
+    alignDependencies() {
+      events.push(`deps:${events.at(-1)?.replace('checkout:', '')}`);
     },
     async plant({ entry, ownerId, evidenceRoot: root, onIntent, command }) {
       if (command) lifecycleCommandOverrides.push(`plant:${entry.privateId}`);
@@ -490,9 +495,10 @@ test('runProof plants every catalog case before awaiting the first exact-head CI
   });
 
   assert.equal(boundary.kind, 'end-turn');
-  assert.deepEqual(h.events.slice(0, 12), [
+  assert.deepEqual(h.events.slice(0, 13), [
     ...catalog.map(entry => `plant:${entry.privateId}`),
     'checkout:login-pitch',
+    'deps:login-pitch',
     'wait:login-pitch',
   ]);
   assert.deepEqual(h.lifecycleCommandOverrides, []);

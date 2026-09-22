@@ -45,6 +45,16 @@ function lifecycleCommand(binary: string, args: string[], input?: string): strin
   throw new Error(`${binary} command failed${evidence ? `:\n${evidence}` : ''}`);
 }
 
+export function alignDependencies(workRoot: string, command: Command = lifecycleCommand): void {
+  const args = ['--prefix', resolve(workRoot), 'run'];
+  try {
+    command('npm', [...args, 'deps:check']);
+    return;
+  } catch { /* a failed check is the signal to synchronize */ }
+  command('npm', [...args, 'deps:sync']);
+  command('npm', [...args, 'deps:check']);
+}
+
 export function originalOf(path: string, bytes?: string | Uint8Array): Original {
   const data = bytes ?? readFileSync(path);
   return { path, sha256: hash(typeof data === 'string' ? data : data) };
@@ -289,6 +299,7 @@ export async function plantCase(request: PlantRequest): Promise<OwnedCase> {
   const workRoot = resolve(request.workRoot);
   const evidenceRoot = resolve(request.evidenceRoot);
   const now = request.now ?? (() => new Date().toISOString());
+  const changesDependencies = request.entry.natural.edits.some(edit => edit.path === 'package.json' || edit.path === 'package-lock.json');
   const epoch = parseEpoch(request.repositoryEpoch, { repo, workRoot, ownerId: request.ownerId }, now());
   verifyWorkRoot(command, workRoot, epoch);
   const intentPath = join(evidenceRoot, 'intents', `${request.entry.privateId}.json`);
@@ -341,6 +352,7 @@ export async function plantCase(request: PlantRequest): Promise<OwnedCase> {
     intent = save({ ...state, state: 'edits-applied' });
   }
   if (state.state === 'edits-applied') {
+    if (changesDependencies) alignDependencies(workRoot, command);
     const currentHead = sha(command('git', ['-C', workRoot, 'rev-parse', 'HEAD']).trim());
     if (currentHead !== sha(state.trunk)) {
       assertCommittedCheckout(command, workRoot, { ...state, expectedHead: currentHead }, request.entry.natural.edits);
@@ -355,6 +367,7 @@ export async function plantCase(request: PlantRequest): Promise<OwnedCase> {
     }
   }
   if (state.state === 'committed' || state.state === 'push-uncertain') {
+    if (changesDependencies) alignDependencies(workRoot, command);
     const expectedHead = sha(state.expectedHead);
     assertCommittedCheckout(command, workRoot, state, request.entry.natural.edits);
     const observed = command('git', ['-C', workRoot, 'ls-remote', '--heads', 'origin', ref]).trim().split(/\s+/)[0] ?? '';

@@ -8,7 +8,7 @@ import { analyze } from '../reconcile.ts';
 import { hash } from '../contract.ts';
 import type { Snapshot } from '../github.ts';
 import {
-  applyEdits, catalogPath, closeOwnedCase, expectedDisplay, loadCatalog, organicCatalogPrompt,
+  alignDependencies, applyEdits, catalogPath, closeOwnedCase, expectedDisplay, loadCatalog, organicCatalogPrompt,
   organicInspectPrompt, originalOf, plantCase, type CatalogCase, type Command,
 } from './plant.ts';
 
@@ -233,12 +233,25 @@ test('logger-note plants the synthetic secret in an allowed JSDoc block', t => {
   assert.doesNotMatch(source, /^\/\//m);
 });
 
-test('anthropic-sdk tightens only the declared range and keeps the installed lock entry stable', () => {
+test('dependency alignment syncs only after the installed tree fails its check', () => {
+  const calls: string[][] = [];
+  let checks = 0;
+  const command: Command = (binary, args) => {
+    calls.push([binary, ...args]);
+    if (args.at(-1) === 'deps:check' && checks++ === 0) throw new Error('out of sync');
+    return '';
+  };
+
+  alignDependencies('/tmp/clinext-proof', command);
+
+  assert.deepEqual(calls.map(call => call.at(-1)), ['deps:check', 'deps:sync', 'deps:check']);
+});
+
+test('anthropic-sdk remains a real minor dependency bump', () => {
   const entry = catalog.find(candidate => candidate.privateId === 'anthropic-sdk');
   assert.ok(entry);
-  assert.equal(entry.natural.edits.length, 2);
-  assert.equal(entry.natural.edits.every(edit => edit.after.includes('~0.125.0')), true);
-  assert.equal(entry.natural.edits.some(edit => edit.before.includes('"version"')), false);
+  assert.equal(entry.natural.edits.length, 3);
+  assert.equal(entry.natural.edits.some(edit => edit.after.includes('"version": "0.127.0"')), true);
 });
 
 test('plantCase ignores a historical closed PR on the reused ref and never impersonates Dependabot', async t => {
