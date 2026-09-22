@@ -1,0 +1,361 @@
+{
+ "prsWithFail": [
+  2705,
+  2742,
+  2776,
+  2789,
+  2792,
+  2802,
+  2820,
+  2830,
+  2831,
+  2844,
+  2845,
+  2851,
+  2852,
+  2856,
+  2857
+ ],
+ "hits": [
+  {
+   "pr": 2776,
+   "failHead": "df0bd38f529dbc47063cd4a506637e78fd337781",
+   "failAt": "2026-09-10T22:07:21Z",
+   "mode": "full",
+   "findings": [
+    {
+     "kind": "false-claim",
+     "disposition": "Blast Radius claims no runtime code under client/ but diff adds usePacientesList.js debounce cleanup (fixer round 2, not reflected in body)",
+     "evidence": "client/src/pages/pacientes/hooks/usePacientesList.js:50"
+    },
+    {
+     "kind": "false-claim",
+     "disposition": "Scope lists five file groups; diff also touches usePacientesList.js and factory-setup.test.js (route count 8→10) without listing them",
+     "evidence": "tools/tests/factory-setup.test.js:234"
+    }
+   ],
+   "passHead": "df0bd38f529dbc47063cd4a506637e78fd337781",
+   "passVerdict": "PASS+NOTES"
+  },
+  {
+   "pr": 2789,
+   "failHead": "923538314426ee6083dd3e8901e9f2d1d01cc409",
+   "failAt": "2026-09-11T01:16:58Z",
+   "mode": "full",
+   "findings": [
+    {
+     "kind": "regression",
+     "disposition": "insertRunning fail-open still calls updateFinished with the in-memory id, so a failed insert overwrites another kind's persisted row",
+     "evidence": "server/domain/InMemoryJobRunner.js:155-163,251-260; server/domain/financial/FinancialJobStore.js:156-161"
+    }
+   ],
+   "passHead": "e949d0a132e014b275a3f0eea0453ac6881edb4e",
+   "passVerdict": "PASS+NOTES"
+  },
+  {
+   "pr": 2792,
+   "failHead": "167428fe3f34a99a6b7b3d2e239fb5f183b4f1b2",
+   "failAt": "2026-09-11T01:58:17Z",
+   "mode": "full",
+   "findings": [
+    {
+     "kind": "regression",
+     "disposition": "pino formatter emits textual status, then HTTP status in the same key overwrites it; Datadog JSON parse keeps 404/200 instead of info/warn",
+     "evidence": "server/lib/logger.js:50-54; server/middleware/errorHandler.js:107; server/middleware/slowRequestLog.js:24-26"
+    }
+   ],
+   "passHead": "046cbeaa80a6a3eb622d554e596e9992622bb2ef",
+   "passVerdict": "PASS+NOTES"
+  },
+  {
+   "pr": 2802,
+   "failHead": "80a13aac8af2a66b0e13dc2bf0bb116a91b0561b",
+   "failAt": "2026-09-11T21:20:48Z",
+   "mode": "full",
+   "findings": [
+    {
+     "kind": "regression",
+     "files": [
+      "tools/trail/ingest-pr-events.js",
+      "tools/trail/pr-events.js",
+      "tools/trail/weekly-metrics.sql"
+     ],
+     "disposition": "unresolved: CI-only comment+status both insert kind=verdict (comment live/audit null, status SKIP/SKIP); host collectEvents reproduces two rows; already in MotherDuck (e.g. PR 2786 / 6410f996). writeEvents is INSERT OR REPLACE, so stopping emission leaves legacy rows; the weekly query must collapse that state without DELETE to hide the failure",
+     "evidence": "tools/trail/ingest-pr-events.js:72-86"
+    }
+   ],
+   "passHead": "40ce83d789bdfd85e5bb89c2d4fec840dfe2170b",
+   "passVerdict": "PASS+NOTES"
+  },
+  {
+   "pr": 2830,
+   "failHead": "3779973f14b2bfd41e0f51d6a20219dcdbe265cf",
+   "failAt": "2026-09-14T20:32:54Z",
+   "mode": "full",
+   "findings": [
+    {
+     "kind": "regression",
+     "files": [
+      "client/src/pages/whatsapp/ConversationThread.jsx",
+      "client/src/pages/whatsapp/hooks/useSuggestReply.js",
+      "server/domain/atendimento/suggestionRecords.js",
+      "server/domain/atendimento/replyGeneration.js"
+     ],
+     "disposition": "Referenced send after Usar bypasses the parent sending lock; two clicks or two Enters before re-render both POST /send and GHL can deliver twice because usable() ignores sent_message_id.",
+     "evidence": "client/src/pages/whatsapp/ConversationThread.jsx:1549"
+    },
+    {
+     "kind": "regression",
+     "files": [
+      "client/src/pages/whatsapp/hooks/useSuggestReply.js"
+     ],
+     "disposition": "sendUsed success always setSendReference(null) and setOverlay without a convRef check, so a late send on A wipes B's restored send reference and the next send on B takes the unreferenced onSend path.",
+     "evidence": "client/src/pages/whatsapp/hooks/useSuggestReply.js:316"
+    }
+   ],
+   "passHead": null,
+   "passVerdict": null
+  },
+  {
+   "pr": 2830,
+   "failHead": "6ff714835dada00f188b9c323567c062690ff8da",
+   "failAt": "2026-09-14T22:22:51Z",
+   "mode": "full",
+   "findings": [
+    {
+     "kind": "regression",
+     "files": [
+      "client/src/pages/whatsapp/hooks/useSuggestReply.js",
+      "client/src/pages/whatsapp/ConversationThread.jsx"
+     ],
+     "disposition": "Referenced send that finishes after a conversation switch leaves a pending overlay; returning to A shows a stuck pending bubble and retry is a no-op because the reference was deleted on success.",
+     "evidence": "client/src/pages/whatsapp/hooks/useSuggestReply.js:205"
+    }
+   ],
+   "passHead": null,
+   "passVerdict": null
+  },
+  {
+   "pr": 2831,
+   "failHead": "60279120a9e12490c24a810f24fddf39394a8149",
+   "failAt": "2026-09-14T21:38:45Z",
+   "mode": "full",
+   "findings": [
+    {
+     "kind": "regression",
+     "files": [
+      "tools/trail/check-mode.js",
+      ".github/workflows/trail-check-mode.yml"
+     ],
+     "disposition": "economy classify sends every PR into Trail check mode, which posts verdict and arms squash auto-merge without reading needs-victor",
+     "evidence": "tools/trail/check-mode.js:117-153"
+    }
+   ],
+   "passHead": "9130f2fc39ae399c4ed1377cf1f5561b3117732e",
+   "passVerdict": "PASS+NOTES"
+  },
+  {
+   "pr": 2844,
+   "failHead": "0bb4e7a088df5b661b1c2f4af2b67b1f933173aa",
+   "failAt": "2026-09-15T13:14:00Z",
+   "mode": "local",
+   "findings": [
+    {
+     "kind": "regression",
+     "files": [
+      "tools/learnings/precheck.js"
+     ],
+     "disposition": "Unresolved: localVerifierRounds returns [] for the actual local PASS+NOTES verdict on PR #2842. The regex requires compact JSON with adjacent verdict/head fields and no newline before mode; valid spaced or multiline contract JSON is discarded, so the reader receives Local verifier rounds: 0. Parse the fenced JSON structurally.",
+     "evidence": "tools/learnings/precheck.js:380; reproduction.json roundParsing; 2842-comments.json"
+    },
+    {
+     "kind": "regression",
+     "files": [
+      "tools/learnings/precheck.js",
+      "tools/learnings/run.js",
+      "tools/learnings/reader.md"
+     ],
+     "disposition": "Unresolved: matches preserves inventory order, which groups Claude before Codex rather than sorting sessions by launch time. A Claude verification at 13:00 followed in inventory by a Codex verification at 12:00 produces [second.jsonl, first.jsonl]. run.js labels those files trail-1 and trail-2 and tells the reader they are in round order, reversing the chronology used to judge verifier-false-fail/verifier-miss. Sort the matched rounds by session launch time before numbering.",
+     "evidence": "tools/learnings/precheck.js:222; factory/runtime/transcripts.js:139; tools/learnings/run.js:35; reproduction.json roundOrdering"
+    }
+   ],
+   "passHead": "46e2db5908f8f8017c2bbc06b70f3973d5103101",
+   "passVerdict": "PASS+NOTES"
+  },
+  {
+   "pr": 2845,
+   "failHead": "d1440232da4c6a88f25253b357e996cb39683883",
+   "failAt": "2026-09-15T13:27:05Z",
+   "mode": "local",
+   "findings": [
+    {
+     "kind": "false-claim",
+     "files": [
+      "docs/agents/issue-tracker.md"
+     ],
+     "disposition": "unresolved: the body says of initiatives, project label groups, project statuses, views and auto-archive that 'none is reachable through the MCP', and the shipped doc repeats 'label groups ... are not on the MCP'; the hosted Linear MCP exposes mcp__linear__save_project_label {name, isGroup, parent} (plus list/retire/restore_project_label with includeGroups), which creates a label group and its children, so the quantifier is false for label groups and the §Admin section routes an MCP-native operation through the raw-key door; the other four objects are absent from the MCP as stated (Tradeoffs already lists only those four)",
+     "evidence": "docs/agents/issue-tracker.md:30; evidence/mcp-save_project_label-schema.json"
+    }
+   ],
+   "passHead": "353c72c1ad962a774a6cdef5780530c47592c7a1",
+   "passVerdict": "PASS+NOTES"
+  },
+  {
+   "pr": 2852,
+   "failHead": "b4ec365d03f38ab8522d7b7abe035c54affbf08e",
+   "failAt": "2026-09-15T22:29:18Z",
+   "mode": "local",
+   "findings": [
+    {
+     "kind": "regression",
+     "files": [
+      "server/domain/ConversationsService.js"
+     ],
+     "disposition": "Unresolved: when conversation sync has a newer inbound summary but message sync has not caught up, the unconditional cached-body preference replaces the fresh summary with an older preview. Base returns NEW inbound at 12:00; head returns OLD cached from 11:00 with the 12:00 date. Prefer the cache only when it represents the latest real message, accounting for summary timestamp drift.",
+     "evidence": "server/domain/ConversationsService.js:1163; evidence/reproduce.cjs and evidence/reproduce.txt"
+    },
+    {
+     "kind": "regression",
+     "files": [
+      "server/engine/migrations/20260916-cache-conversations-message-poll-state.js"
+     ],
+     "disposition": "Unresolved: migration stamps every GHL conversation as polled, including a conversation older than 720h with no cached messages. Base selects that conversation; migrated head selects no target, so its existing history stays missing until another summary advance or recent activity. Do not seed a successful poll for a conversation whose messages were never fetched. This differs from the documented exclusion of new outbound messages on dormant threads.",
+     "evidence": "server/engine/migrations/20260916-cache-conversations-message-poll-state.js:79; evidence/reproduce.cjs and evidence/reproduce.txt"
+    },
+    {
+     "kind": "regression",
+     "files": [
+      "server/engine/connectors/GHLConnector.js"
+     ],
+     "disposition": "Unresolved, also acknowledged under Tradeoffs: the connector durably stamps the poll before yielding messages to DataEngine. Stop after the first yield and before the engine commits its buffer for a newly imported cold conversation: base retries the missing message, head makes no second request, and both caches still contain zero messages. Commit the poll marker with the fetched records, or retain a retry condition for an incomplete commit.",
+     "evidence": "server/engine/connectors/GHLConnector.js:325; server/engine/DataEngine.js:787; evidence/retry-probe.cjs and evidence/retry-probe.txt"
+    }
+   ],
+   "passHead": "10d8b9310606654b9c4eb12b35b340393bac20aa",
+   "passVerdict": "PASS+NOTES"
+  },
+  {
+   "pr": 2852,
+   "failHead": "3930615496c9ac1dc97d9ae6a15735e752a6b9e8",
+   "failAt": "2026-09-15T23:00:36Z",
+   "mode": "local",
+   "findings": [
+    {
+     "kind": "regression",
+     "files": [
+      "server/engine/migrations/20260916-cache-conversations-message-poll-state.js"
+     ],
+     "disposition": "Unresolved: migration treats any cached message as proof that the current summary was polled. For a conversation with Jan 1 summary and only a Dec 1 cached message, base selects it; migrated head stamps Jan 1 and skips it outside 720h. The missing Jan 1 message remains unfetched until the summary advances or recent activity returns. Preserve eligibility when existing cache does not cover the source summary, or close a real poll before seeding. This differs from the documented exclusion of future outbound sends on dormant threads.",
+     "evidence": "server/engine/migrations/20260916-cache-conversations-message-poll-state.js:79; server/engine/connectors/ghlConnectorHelpers.js:535; evidence/partial-cache-probe.cjs and evidence/partial-cache-probe.txt"
+    }
+   ],
+   "passHead": "10d8b9310606654b9c4eb12b35b340393bac20aa",
+   "passVerdict": "PASS+NOTES"
+  },
+  {
+   "pr": 2856,
+   "failHead": "aea9273b5bfb14ed07bc7621a1901afbee2457e6",
+   "failAt": "2026-09-16T04:25:17Z",
+   "mode": "local",
+   "findings": [
+    {
+     "kind": "regression",
+     "files": [
+      "factory/skills/poteto-mode/playbooks/local-verifier.md",
+      "tools/tests/factory-models.test.js"
+     ],
+     "disposition": "Unresolved: on a Codex lead under economy, model --role local verifier resolves Sol through the native Codex route, so the result has route.native but no route.cli or route.model. Step 3 requires the absent fields to select and fill an external launch command, leaving the local Verifier unlaunchable from an explicitly supported Codex lead. Resolve a headless launch route explicitly and cover the exact playbook-facing output.",
+     "evidence": "factory/skills/poteto-mode/playbooks/local-verifier.md:7; factory/runtime/models.js:259; tools/tests/factory-models.test.js:540; /Users/victorbaccega/.factory/local-verifier/2856-aea9273/evidence/route-resolution.json"
+    }
+   ],
+   "passHead": "75981917546e6787dc2c075e8c64a99535a05cad",
+   "passVerdict": "PASS+NOTES"
+  },
+  {
+   "pr": 2857,
+   "failHead": "de957ef6cbd57874bb381450c9caa616d866c35e",
+   "failAt": "2026-09-16T07:00:58Z",
+   "mode": "local",
+   "findings": [
+    {
+     "kind": "regression",
+     "files": [
+      "factory/runtime/delegation.js",
+      "factory/runtime/children.js",
+      "factory/skills/poteto-mode/SKILL.md"
+     ],
+     "disposition": "Unresolved: repeated documented task --role calls derive the same ID, and enqueue returns the stale row instead of launching the new child; this breaks repeated loop attempts and fresh playbook activations.",
+     "evidence": "factory/runtime/delegation.js:26"
+    },
+    {
+     "kind": "regression",
+     "files": [
+      "tools/guard-child-launch.js"
+     ],
+     "disposition": "Unresolved: the flat token scan blocks safe commands whose argument is a launcher name (for example rg codex) while allowing a quoted nested launch such as sh -c 'codex exec hi'.",
+     "evidence": "tools/guard-child-launch.js:98"
+    }
+   ],
+   "passHead": "080a38115231747e7831ad918f12130d7001e643",
+   "passVerdict": "PASS+NOTES"
+  },
+  {
+   "pr": 2857,
+   "failHead": "e6c8cda3bc51ab35754dd831cd3956972a462827",
+   "failAt": "2026-09-16T07:42:31Z",
+   "mode": "local",
+   "findings": [
+    {
+     "kind": "false-claim",
+     "files": [
+      "factory/skills/poteto-mode/playbooks/autopilot-full.md",
+      "factory/skills/poteto-mode/playbooks/autopilot-stack.md",
+      "factory/runtime/delegation.js"
+     ],
+     "disposition": "Unresolved: steps that explicitly spawn PR owners have no [child] marker, so step done admits them with an empty child registry; the stated playbook backstop is incomplete.",
+     "evidence": "/Users/victorbaccega/.factory/local-verifier/2857-e6c8cda/evidence/delegation-marker-proof.json"
+    },
+    {
+     "kind": "regression",
+     "files": [
+      "tools/guard-child-launch.js",
+      "tools/tests/factory-delegation.test.js"
+     ],
+     "disposition": "Unresolved: shell operators are discarded before only one primary token is inspected, so true && codex exec hi, a semicolon plus claude, and a pipe to grok are allowed in a carrier pane.",
+     "evidence": "/Users/victorbaccega/.factory/local-verifier/2857-e6c8cda/evidence/guard-proof/report.json"
+    }
+   ],
+   "passHead": "080a38115231747e7831ad918f12130d7001e643",
+   "passVerdict": "PASS+NOTES"
+  },
+  {
+   "pr": 2857,
+   "failHead": "d8b3b51d18074c81640c6af517868f7a571d1f07",
+   "failAt": "2026-09-16T08:09:16Z",
+   "mode": "local",
+   "findings": [
+    {
+     "kind": "regression",
+     "files": [
+      "tools/guard-child-launch.js",
+      "tools/tests/factory-delegation.test.js"
+     ],
+     "disposition": "Unresolved: env -i codex exec hi is allowed because wrapper parsing stops at the env option, so a primary Codex launch escapes the carrier guard.",
+     "evidence": "/Users/victorbaccega/.factory/local-verifier/2857-d8b3b51/evidence/guard-proof/report.json"
+    },
+    {
+     "kind": "regression",
+     "files": [
+      "tools/guard-child-launch.js",
+      "tools/tests/factory-delegation.test.js"
+     ],
+     "disposition": "Unresolved: node tools/learnings/run.js && codex exec hi is allowed because the learnings exemption is applied to the merged command instead of only its own shell segment.",
+     "evidence": "/Users/victorbaccega/.factory/local-verifier/2857-d8b3b51/evidence/guard-proof/report.json"
+    }
+   ],
+   "passHead": "080a38115231747e7831ad918f12130d7001e643",
+   "passVerdict": "PASS+NOTES"
+  }
+ ],
+ "total": 22
+}
