@@ -1,7 +1,7 @@
 import { parseArgs } from 'node:util';
 import { array, integer, jsonHash, object, repoName, sha, string, type Dossier } from './contract.ts';
-import { admitPull, api, checks, command, comments, isPublication, pages, principal, pull, trusted, workflowRun, type Trusted } from './github.ts';
-import { dossierFromComment, statuses } from './publish.ts';
+import { admitPull, api, checks, command, comments, cursorAppId, isPublication, pages, principal, pull, trusted, workflowRun, type Trusted } from './github.ts';
+import { dossierFromComment, verdictRuns } from './publish.ts';
 
 async function trunkHealth(t: Trusted): Promise<void> {
   const tip = sha(object(await api(`repos/${t.repo}/commits/${encodeURIComponent(t.config.trunk)}`)).sha);
@@ -24,24 +24,25 @@ async function protection(t: Trusted, head: string): Promise<void> {
   }
   for (const context of t.config.requiredChecks) if (!required.some(c => c.context === context)) throw new Error('Branch protection missing required context: ' + context);
   const observed = await checks(t.repo, head);
+  const verdictApp = await cursorAppId();
   const latestTests = await workflowRun(t, head);
   if (!latestTests || latestTests.status !== 'completed' || latestTests.conclusion !== 'success') throw new Error('Latest exact-head Tests attempt is not successful');
   for (const c of required) {
-    if (c.context === 'verdict') { if (c.appId !== null) throw new Error('Verdict context has unsupported app binding'); continue; }
+    if (c.context === 'verdict') { if (c.appId !== verdictApp) throw new Error('Verdict check must be bound to the Cursor app'); continue; }
     if (!observed.some(check => check.context === c.context && check.head === head && check.state === 'success' && (c.appId === null || c.appId === check.appId))) throw new Error('Required protected check is not successful: ' + c.context);
   }
 }
 async function verdict(t: Trusted, pr: number, head: string, author: number): Promise<Dossier> {
-  const status = (await statuses(t.repo, head)).find(s => s.context === 'verdict');
-  if (!status || status.state !== 'success' || status.description !== 'VERIFIED by converge' || integer(object(status.creator).id) !== author) throw new Error('Latest verdict status is not trusted VERIFIED');
-  const url = string(status.target_url);
+  const check = (await verdictRuns(t.repo, head))[0];
+  if (!check || check.status !== 'completed' || check.conclusion !== 'success' || integer(object(check.app).id) !== await cursorAppId()) throw new Error('Latest verdict check is not trusted VERIFIED');
+  const url = string(check.details_url);
   const prefix = `https://github.com/${t.repo}/pull/${pr}#issuecomment-`;
   if (!url.startsWith(prefix) || !/^\d+$/.test(url.slice(prefix.length))) throw new Error('Verdict status does not link to this PR');
   const comment = object(await api(`repos/${t.repo}/issues/comments/${url.slice(prefix.length)}`));
   if (integer(object(comment.user).id) !== author) throw new Error('Verdict comment author is untrusted');
   const dossier = dossierFromComment(comment);
   const r = dossier.round;
-  if (r.repo !== t.repo || r.pr !== pr || r.head !== head || r.contract !== t.sha || r.execution !== 'converge' || dossier.decision.verdict !== 'VERIFIED') throw new Error('Verdict identity or execution does not authorize merge');
+  if (r.repo !== t.repo || r.pr !== pr || r.head !== head || r.contract !== t.sha || r.execution !== 'converge' || dossier.decision.verdict !== 'VERIFIED' || check.external_id !== `converge:v1:${r.id}`) throw new Error('Verdict identity or execution does not authorize merge');
   const all = await comments(t.repo, pr);
   const publications = all.filter(c => isPublication(c, author));
   const newest = publications.sort((a, b) => integer(b.id) - integer(a.id))[0];

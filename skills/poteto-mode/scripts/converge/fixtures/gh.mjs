@@ -27,11 +27,12 @@ else if (args[0] === 'api') {
       const id = 100 + state.comments.length;
       const comment = { id, body: body.body, user: { id: 7 }, html_url: `https://github.com/${repo}/pull/1#issuecomment-${id}`, updated_at: '2026-09-21T00:00:00Z' };
       state.comments.push(comment); save(); send(comment);
-    } else if (endpoint === `${root}/statuses/${state.head}`) {
-      const status = { ...body, id: 200 + state.statuses.length, creator: { id: 7 } };
-      state.statuses.unshift(status); save(); send(status);
+    } else if (endpoint === `${root}/check-runs`) {
+      const check = { ...body, id: 200 + state.verdictChecks.length, app: { id: 1210556 } };
+      state.verdictChecks.unshift(check); save(); send(check);
     } else fail();
   } else if (endpoint === 'graphql') send({ data: { viewer: { databaseId: 7 } } });
+  else if (endpoint === 'apps/cursor') send({ id: 1210556 });
   else if (endpoint.startsWith('repos/byvict/pstack-vic/commits/')) {
     if (state.invalidTooling) fail();
     send({ sha: endpoint.slice('repos/byvict/pstack-vic/commits/'.length) });
@@ -48,14 +49,13 @@ else if (args[0] === 'api') {
   } else if (endpoint.startsWith(`${root}/compare/`)) send({ merge_base_commit: { sha: state.base } });
   else if (endpoint === `${root}/pulls/1/files`) send(state.files);
   else if (endpoint === `${root}/actions/workflows`) send({ workflows: [{ id: state.workflowId, name: 'Tests', path: '.github/workflows/tests.yml', state: 'active' }] });
-  else if (endpoint.includes('/check-runs')) send({ check_runs: state.checks.map(c => ({ ...c, head_sha: state.head })) });
+  else if (endpoint.includes('/check-runs')) send({ check_runs: [...state.verdictChecks, ...state.checks].map(c => ({ ...c, head_sha: state.head })) });
   else if (endpoint === `${root}/actions/workflows/${state.workflowId}/runs`) send({ workflow_runs: [{ id: 8, workflow_id: state.workflowId, head_sha: query.get('head_sha'), event: query.get('event') ?? 'pull_request', head_branch: 'main', run_attempt: 1, status: 'completed', conclusion: state.trunkRed && query.get('event') === 'push' ? 'failure' : 'success', ...state.runOverrides }] });
   else if (endpoint === `${root}/actions/runs/${state.runOverrides.id ?? 8}/attempts/${state.runOverrides.run_attempt ?? 1}/jobs`) send({ jobs: state.jobs });
   else if (endpoint === `${root}/issues/1/comments`) send(state.comments);
   else if (endpoint === `${root}/pulls/1/comments`) send([]);
   else if (endpoint.startsWith(`${root}/issues/comments/`)) send(state.comments.find(c => c.id === Number(endpoint.split('/').at(-1))) ?? {});
-  else if (endpoint.endsWith('/statuses')) send(state.statuses);
-  else if (endpoint === `${root}/branches/main/protection`) send({ required_status_checks: { contexts: state.protected, checks: state.protected.map(context => ({ context, app_id: context === 'verdict' ? null : 15368 })) } });
+  else if (endpoint === `${root}/branches/main/protection`) send({ required_status_checks: { contexts: state.protected, checks: state.protected.map(context => ({ context, app_id: context === 'verdict' ? state.verdictAppId : 15368 })) } });
   else if (endpoint === `${root}/rules/branches/main`) send([]);
   else fail();
 } else fail();

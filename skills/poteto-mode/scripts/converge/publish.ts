@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { array, digest, integer, jsonHash, object, oneOf, parseFinding, parseReport, parseRound, parseObligation, riskObligation, sameObligation, string, strings, sha, parseExecutionId, type Decision, type Dossier, type Finding, type Report } from './contract.ts';
-import { admitPull, api, comments, isPublication, pages, principal, pull, snapshot } from './github.ts';
+import { admitPull, api, comments, cursorAppId, isPublication, pages, principal, pull, snapshot } from './github.ts';
 import { analyze } from './reconcile.ts';
 import { admitLane, type AdmittedLane } from './evidence.ts';
 
@@ -57,10 +57,11 @@ export function dossierFromComment(value: unknown): Dossier {
   if (dossier.round.id !== match[1]) throw new Error('Verdict marker identity mismatch');
   return dossier;
 }
-export async function statuses(repo: string, head: string): Promise<Record<string, unknown>[]> {
-  return (await pages(`repos/${repo}/commits/${head}/statuses`)).map(v => object(v)).sort((a, b) => integer(b.id) - integer(a.id));
+export async function verdictRuns(repo: string, head: string): Promise<Record<string, unknown>[]> {
+  return (await pages(`repos/${repo}/commits/${head}/check-runs?filter=all`, 'check_runs')).map(v => object(v))
+    .filter(v => v.name === 'verdict' && v.head_sha === head).sort((a, b) => integer(b.id) - integer(a.id));
 }
-export async function publishVerdict(options: { reportFile: string; laneFiles: string[]; evidenceDirectory: string; retainCommentUrl?: string }): Promise<{ dossier: Dossier; commentUrl: string; statusId: number }> {
+export async function publishVerdict(options: { reportFile: string; laneFiles: string[]; evidenceDirectory: string; retainCommentUrl?: string }): Promise<{ dossier: Dossier; commentUrl: string; checkRunId: number }> {
   const report = parseReport(JSON.parse(readFileSync(options.reportFile, 'utf8')));
   const r = report.round;
   const current = await snapshot(r.repo, r.pr, r.configPath, r.execution === 'verdict-only');
@@ -77,8 +78,8 @@ export async function publishVerdict(options: { reportFile: string; laneFiles: s
     if (integer(object(comment.user).id) !== author) throw new Error('Retained verdict author is untrusted');
     const old = dossierFromComment(comment);
     if (old.round.repo !== r.repo || old.round.pr !== r.pr || old.round.patch_id !== r.patch_id || old.round.verificationDigest !== r.verificationDigest || old.round.execution !== r.execution || old.decision.verdict !== 'VERIFIED') throw new Error('Retained code evidence does not match this patch and policy');
-    const oldStatus = (await statuses(r.repo, old.round.head)).find(s => s.context === 'verdict');
-    if (!oldStatus || oldStatus.target_url !== options.retainCommentUrl || integer(object(oldStatus.creator).id) !== author || oldStatus.description !== 'VERIFIED by converge' || oldStatus.state !== (r.execution === 'converge' ? 'success' : 'error')) throw new Error('Retained verdict status is not authoritative');
+    const oldCheck = (await verdictRuns(r.repo, old.round.head))[0];
+    if (!oldCheck || oldCheck.details_url !== options.retainCommentUrl || integer(object(oldCheck.app).id) !== await cursorAppId() || oldCheck.external_id !== `converge:v1:${old.round.id}` || oldCheck.conclusion !== (r.execution === 'converge' ? 'success' : 'action_required')) throw new Error('Retained verdict check is not authoritative');
     retainedFrom = { round: old.round.id, head: old.round.head, commentUrl: options.retainCommentUrl };
     for (const role of report.lanes) admitted.push({ role, coverage: old.coverage, risks: old.riskAdjudication, findings: [], gaps: [], artifacts: old.artifactIds.map(id => ({ id, path: options.retainCommentUrl ?? '', digest: old.evidenceDigest, mediaType: 'retained' })), receiptDigest: old.evidenceDigest });
   }
@@ -94,14 +95,18 @@ export async function publishVerdict(options: { reportFile: string; laneFiles: s
   const comment = existing[0] ?? object(await api(`repos/${r.repo}/issues/${r.pr}/comments`, { body }));
   const commentUrl = string(comment.html_url);
   if (!new RegExp(`^https://github\\.com/${r.repo}/pull/${r.pr}#issuecomment-[0-9]+$`, 'i').test(commentUrl)) throw new Error('Unexpected verdict comment URL');
-  const state = r.execution === 'verdict-only' ? 'error' : dossier.decision.verdict === 'VERIFIED' ? 'success' : dossier.decision.verdict === 'NOT VERIFIED' ? 'failure' : 'error';
-  const description = `${dossier.decision.verdict} by converge`;
-  const prior = (await statuses(r.repo, r.head)).filter(s => s.context === 'verdict' && s.target_url === commentUrl && integer(object(s.creator).id) === author);
-  if (prior.some(s => s.state !== state || s.description !== description)) throw new Error('Divergent status already published for this round');
-  const status = prior[0] ?? object(await api(`repos/${r.repo}/statuses/${r.head}`, { context: 'verdict', state, description, target_url: commentUrl }));
+  const conclusion = r.execution === 'verdict-only' ? 'action_required' : dossier.decision.verdict === 'VERIFIED' ? 'success' : dossier.decision.verdict === 'NOT VERIFIED' ? 'failure' : 'action_required';
+  const externalId = `converge:v1:${r.id}`;
+  const appId = await cursorAppId();
+  const prior = (await verdictRuns(r.repo, r.head)).filter(c => c.external_id === externalId && c.details_url === commentUrl && integer(object(c.app).id) === appId);
+  if (prior.some(c => c.conclusion !== conclusion || c.status !== 'completed')) throw new Error('Divergent verdict check already published for this round');
+  const check = prior[0] ?? object(await api(`repos/${r.repo}/check-runs`, {
+    name: 'verdict', head_sha: r.head, status: 'completed', conclusion, details_url: commentUrl, external_id: externalId,
+    output: { title: `${dossier.decision.verdict} by converge`, summary: `See the authenticated Converge dossier at ${commentUrl}` },
+  }));
   const commentRead = object(await api(`repos/${r.repo}/issues/comments/${integer(comment.id)}`));
-  if (commentRead.body !== body || integer(object(commentRead.user).id) !== author || !(await statuses(r.repo, r.head)).some(s => s.id === status.id && s.state === state && s.target_url === commentUrl && integer(object(s.creator).id) === author)) throw new Error('Publication read-back failed; recover before any other action');
-  return { dossier, commentUrl, statusId: integer(status.id) };
+  if (commentRead.body !== body || integer(object(commentRead.user).id) !== author || !(await verdictRuns(r.repo, r.head)).some(c => c.id === check.id && c.conclusion === conclusion && c.details_url === commentUrl && c.external_id === externalId && integer(object(c.app).id) === appId)) throw new Error('Publication read-back failed; recover before any other action');
+  return { dossier, commentUrl, checkRunId: integer(check.id) };
 }
 async function main(args: string[]): Promise<number> {
   try {
