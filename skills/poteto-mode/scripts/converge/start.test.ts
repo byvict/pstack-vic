@@ -34,6 +34,8 @@ test('ready PR handoff persists intent before launch and returns the same receip
     const body = JSON.parse(String(init?.body));
     assert.deepEqual(body.model, { id: 'grok-4.7', params: [{ id: 'reasoning_effort', value: 'high' }, { id: 'fast', value: 'false' }] });
     assert.equal(body.envVars.PSTACK_AGENT_TOKEN, 'test-key');
+    assert.match(body.prompt.text, /GH_TOKEN from the Cursor runtime secret PSTACK_GITHUB_TOKEN/);
+    assert.match(body.prompt.text, /git -c credential\.helper= -c credential\.helper='!gh auth git-credential' push/);
     assert.equal(body.autoCreatePR, false);
     return Response.json({ agent: { id: 'bc_test', url: 'https://cursor.com/agents/bc_test' }, run: { id: 'run_test' } });
   });
