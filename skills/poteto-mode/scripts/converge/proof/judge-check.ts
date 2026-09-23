@@ -165,11 +165,11 @@ export function historicalPromptFor(identity: HistoricalIdentity, opaqueId: stri
     `8. test ! -e ${worktree}`,
     '9. cd /workspace && git rev-parse HEAD',
     `10. sha256sum ${absoluteArtifact} after writing the artifact; this must be the final executable in its successful shell call.`,
-    `The initial and final carrier reads must both equal ${identity.carrierHead}; the ancestry marker must be ancestor_exit_code=0; the worktree HEAD must equal ${identity.head}. Create the worktree parent in an earlier separate call if needed. If the historical object is absent, fetch only that exact head into the local object store without writing a remote ref or FETCH_HEAD, then retry the worktree add in its own call.`,
-    'Between worktree add and removal, inspect nonempty source content for every file you may report as a finding with a structured read_file/read-file/read tool call using an absolute path under the worktree. If a structured read returns only a blob reference or empty content, repeat a bounded source read. A shell listing or Git diff alone is not source inspection.',
+    `The initial and final carrier reads must both equal ${identity.carrierHead}; the ancestry marker must be ancestor_exit_code=0; the worktree HEAD must equal ${identity.head}. Step 8 must be the only executable in its tool call; do not append echo. Create the worktree parent in an earlier separate call if needed. If the historical object is absent, fetch only that exact head into the local object store without writing a remote ref or FETCH_HEAD, then retry the worktree add in its own call.`,
+    'Between worktree add and removal, inspect nonempty source content for every file you may report as a finding with a structured read_file/read-file/read tool call using an absolute path under the worktree. If a structured read returns only a blob reference or empty content, repeat a bounded source read. Omit a finding if its exact file still has no nonempty structured read. Read dotfiles by absolute path if a glob omits them. A shell listing or Git diff alone is not source inspection.',
     `After removal, write the command and result evidence to ${absoluteArtifact}, then measure its real positive byte count and lowercase SHA256. Historical pull request body is unavailable. Do not retrieve old verdict comments, other agents outputs, or unrelated local source.`,
     'Do not change source, remote refs, pull requests, labels, comments, statuses, or branches. The named role must perform its own direct tool calls; do not delegate or change models.',
-    `Return exactly one JSON object. For a completed inspection use kind: "complete"; otherwise use kind: "unavailable" with empty findings. Include observedHead, observedBase, observedCarrierHead as full 40-character SHAs, worktreeRemoved as a boolean, findings as an array of objects {path, line, description}, and artifacts as an array of objects {path, bytes, sha256, mediaType}. Each finding path is a repo-relative file actually read; line is a nonnegative integer. The checkout artifact has path: "${artifact}", real bytes and SHA256, and mediaType: "application/json". Do not claim completion after any required operation fails.`,
+    `Return exactly one JSON object without Markdown fences or prose. For a completed inspection use kind: "complete"; otherwise use kind: "unavailable" with empty findings. Include observedHead, observedBase, observedCarrierHead as full 40-character SHAs, worktreeRemoved as a boolean, findings as an array of objects {path, line, description}, and artifacts as an array of objects {path, bytes, sha256, mediaType}. Each finding path is a repo-relative file actually read; line is a nonnegative integer. The checkout artifact has path: "${artifact}", real bytes and SHA256, and mediaType: "application/json". Do not claim completion after any required operation fails.`,
   ].join('\n');
 }
 
@@ -347,7 +347,13 @@ function proveHistoricalCheckout(tools: readonly CompletedTool[], identity: Hist
 
 function contaminated(tools: readonly CompletedTool[]): boolean {
   const text = tools.map(toolText).join('\n');
-  return /corpus\.json|historical-revisions|converge-proof\/catalog|<!-- converge:v1|\bexpectedPaths\b/.test(text);
+  return /(?:^|[\/\\])corpus\.json|historical-revisions|converge-proof\/catalog|<!-- converge:v1|\bexpectedPaths\b/.test(text);
+}
+
+function parseHistoricalOutput(bytes: Buffer): unknown {
+  const text = bytes.toString('utf8');
+  const fenced = /^```json\r?\n([\s\S]*?)\r?\n```$/.exec(text.trim());
+  return JSON.parse(fenced ? fenced[1] : text);
 }
 
 function sourceInspectionPaths(tools: readonly CompletedTool[], proof: Extract<CheckoutProof, { kind: 'ok' }>): Set<string> {
@@ -513,7 +519,7 @@ export function admitHistoricalAttempt(bundle: HistoricalBundle): HistoricalResu
     return miss('receipt-mismatch', originals);
   }
   let output: unknown;
-  try { output = JSON.parse(outputFile.bytes.toString('utf8')); }
+  try { output = parseHistoricalOutput(outputFile.bytes); }
   catch { return miss('malformed', originals); }
   if (!isRecord(output) || output.kind !== 'complete') return miss('malformed', originals);
   let observedHead: string, observedBase: string, observedCarrierHead: string;

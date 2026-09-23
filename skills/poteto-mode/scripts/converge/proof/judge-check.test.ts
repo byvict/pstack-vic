@@ -71,6 +71,7 @@ function remoteWithResult(result: string): string {
 
 function bundle(directory: string, opts: {
   outputName: string;
+  output?: string | Buffer;
   tools?: string | Buffer;
   remote?: string;
   listing?: string | Buffer;
@@ -79,7 +80,7 @@ function bundle(directory: string, opts: {
   downloaded?: boolean;
   inspected?: boolean;
 }): HistoricalBundle {
-  const output = readFileSync(join(FIXTURES, opts.outputName));
+  const output = Buffer.from(opts.output ?? readFileSync(join(FIXTURES, opts.outputName)));
   const toolsValue = opts.tools === undefined
     ? JSON.parse(readFileSync(join(FIXTURES, 'tools-positive.json'), 'utf8'))
     : typeof opts.tools === 'string' || Buffer.isBuffer(opts.tools)
@@ -298,6 +299,27 @@ test('admits a consistent envelope only after reading the finding source inside 
   }
 });
 
+test('admits a single JSON fence when the original remote output and source proof agree', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'proof-admit-fenced-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const json = readFileSync(join(FIXTURES, 'output-consistent.json'), 'utf8').trimEnd();
+  const admitted = admitHistoricalAttempt(bundle(directory, {
+    outputName: 'output-consistent.json', output: `\`\`\`json\n${json}\n\`\`\``,
+  }));
+  assert.equal(admitted.kind, 'complete');
+});
+
+test('rejects commentary outside a fenced historical JSON object', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'proof-admit-fenced-prose-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const json = readFileSync(join(FIXTURES, 'output-consistent.json'), 'utf8').trimEnd();
+  const admitted = admitHistoricalAttempt(bundle(directory, {
+    outputName: 'output-consistent.json', output: `Here is the result:\n\`\`\`json\n${json}\n\`\`\``,
+  }));
+  assert.equal(admitted.kind, 'miss');
+  if (admitted.kind === 'miss') assert.equal(admitted.reason, 'malformed');
+});
+
 test('a shell Git diff cannot replace a structured source read', t => {
   const directory = mkdtempSync(join(tmpdir(), 'proof-admit-full-diff-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
@@ -500,6 +522,19 @@ test('contaminated tool traces that retrieve parent answer material are misses',
   const rejected = admitHistoricalAttempt(bundle(directory, { outputName: 'output-consistent.json', tools: JSON.stringify(tools) }));
   assert.equal(rejected.kind, 'miss');
   if (rejected.kind === 'miss') assert.equal(rejected.reason, 'contaminated');
+});
+
+test('a subject fixture filename in a grep listing does not contaminate a historical review', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'proof-admit-subject-fixture-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const tools = JSON.parse(readFileSync(join(FIXTURES, 'tools-positive.json'), 'utf8'));
+  tools.tools.push({
+    callId: 'subject-listing', name: 'grep_search', status: 'completed',
+    args: { pattern: 'owner', path: '/tmp/patient-work/0941fe3b-e5cd/factory/runtime/children.js' },
+    result: { workspaceResults: { '/workspace': [{ file: './client/src/pages/contatos/__fixtures__/titularidade-corpus.json' }] } },
+  });
+  const admitted = admitHistoricalAttempt(bundle(directory, { outputName: 'output-consistent.json', tools: JSON.stringify(tools) }));
+  assert.equal(admitted.kind, 'complete');
 });
 
 test('exit-42 command results cannot prove a checkout even when every command string is correct', t => {
@@ -856,6 +891,10 @@ test('historical prompt stays organic', () => {
   assert.equal(/\b(?:eval|benchmark|judge)\b/i.test(prompt), false);
   assert.match(prompt, /structured read_file\/read-file\/read tool call/i);
   assert.match(prompt, /every file you may report as a finding/i);
+  assert.match(prompt, /Omit a finding if its exact file still has no nonempty structured read/);
+  assert.match(prompt, /Read dotfiles by absolute path/);
+  assert.match(prompt, /without Markdown fences or prose/);
+  assert.match(prompt, /Step 8 must be the only executable in its tool call/);
   assert.ok(prompt.includes(`git merge-base --is-ancestor ${base} ${head}; echo ancestor_exit_code=$?`));
   assert.ok(prompt.includes(`git -C /tmp/patient-work/0941fe3b-e5cd diff --name-only ${base} HEAD`));
   assert.ok(prompt.includes('git -C /tmp/patient-work/0941fe3b-e5cd rev-parse HEAD^{tree}'));
