@@ -26,6 +26,20 @@ test('receipt recovery distinguishes definite preflight failure from partial rem
   writeFileSync(receipt, JSON.stringify({ status: 'child-failed', remote: { agentId: null, runId: null } }));
   assert.equal(recoverReceipt(receipt).kind, 'unknown');
 
+  writeFileSync(receipt, JSON.stringify({
+    status: 'child-failed', argv: ['POST', '/v1/agents', 'composer-2.5', 'high'],
+    remote: { agentId: null, runId: null },
+    error: { message: 'the launch request failed', evidence: 'HTTP 429: {"error":{"code":"rate_limit_exceeded","message":"GitHub rate limited"}}' },
+  }));
+  assert.equal(recoverReceipt(receipt).kind, 'definite-no-launch');
+
+  writeFileSync(receipt, JSON.stringify({
+    status: 'child-failed', argv: ['POST', '/v1/agents'],
+    remote: { agentId: null, runId: null },
+    error: { message: 'the launch request did not answer', evidence: 'HTTP 429: {"error":{"code":"rate_limit_exceeded"}}' },
+  }));
+  assert.equal(recoverReceipt(receipt).kind, 'unknown');
+
   writeFileSync(receipt, JSON.stringify({ status: 'failed', remote: { agentId: 'accepted-agent', runId: null } }));
   const partial = recoverReceipt(receipt);
   assert.equal(partial.kind, 'unknown');

@@ -310,6 +310,14 @@ export function recoverReceipt(receiptPath: string): ReceiptRecovery {
     if (noAgent && noRun && receipt.status === 'unavailable-cli') {
       return { kind: 'definite-no-launch', receipt: receiptOriginal };
     }
+    const error = isRecord(receipt.error) ? receipt.error : null;
+    if (noAgent && noRun && receipt.status === 'child-failed'
+      && Array.isArray(receipt.argv) && receipt.argv[0] === 'POST' && receipt.argv[1] === '/v1/agents'
+      && error?.message === 'the launch request failed'
+      && typeof error.evidence === 'string'
+      && /^HTTP 429: \{"error":\{"code":"rate_limit_exceeded"[,}]/.test(error.evidence)) {
+      return { kind: 'definite-no-launch', receipt: receiptOriginal };
+    }
     return { kind: 'unknown', receipt: receiptOriginal, reason: 'Launch receipt has an incomplete remote identity' };
   }
   if (receipt.remote === null && receipt.status === 'unavailable-cli') {
