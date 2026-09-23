@@ -36,6 +36,11 @@ into immutable evidence before admission. Pool expiry and the fixed 80 percent
 stop suspend new launches without preventing publication recovery, reader
 drain, or cleanup. Cleanup requires the same repository epoch, checkout,
 origin, ref and head; it reads the PR back as `CLOSED` before ordinary deletion.
+When the operator explicitly takes responsibility for the pool, the same flag
+accepts an immutable control receipt with `control: "operator-managed"`,
+`authorizedAt`, and `source: "session-user-instruction"`. This path does not
+claim a usage reading or impose the 30-minute dashboard expiry; cost receipts
+are still recorded per lane.
 
 The live catalog keeps exact-head CI for every distinct PR. The runner plants
 all ten held PRs with one writer before it waits for the first result, so their

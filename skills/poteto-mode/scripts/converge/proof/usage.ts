@@ -24,11 +24,9 @@ export type CostSummary = Readonly<{
   historicalRoles: CostResult;
   organicEvaluation: CostResult;
 }>;
-export type PoolPermit = Readonly<{
-  observation: Original;
-  observedAt: string;
-  expiresAt: string;
-}>;
+export type PoolPermit =
+  | Readonly<{ control: 'observed'; observation: Original; observedAt: string; expiresAt: string }>
+  | Readonly<{ control: 'operator-managed'; observation: Original; authorizedAt: string }>;
 export type PoolDecision =
   | Readonly<{ kind: 'permit'; permit: PoolPermit }>
   | Readonly<{ kind: 'denied'; reason: string; observation: Original }>;
@@ -108,6 +106,13 @@ export function formatUsd(nano: bigint): string {
 
 export function parsePoolObservation(value: unknown, file: Original, now: Date): PoolDecision {
   const v = object(value, 'pool observation');
+  if (v.control === 'operator-managed') {
+    const authorizedAt = Date.parse(string(v.authorizedAt));
+    if (!Number.isFinite(authorizedAt) || authorizedAt > now.getTime() || v.source !== 'session-user-instruction') {
+      return { kind: 'denied', reason: 'Operator pool control receipt is invalid', observation: file };
+    }
+    return { kind: 'permit', permit: { control: 'operator-managed', observation: file, authorizedAt: new Date(authorizedAt).toISOString() } };
+  }
   const observedAt = Date.parse(string(v.at));
   if (!Number.isFinite(observedAt)) return { kind: 'denied', reason: 'Pool observation time is invalid', observation: file };
   if (observedAt > now.getTime()) return { kind: 'denied', reason: 'Pool observation is from the future', observation: file };
@@ -122,7 +127,7 @@ export function parsePoolObservation(value: unknown, file: Original, now: Date):
   if (percents.some(percent => percent >= stop)) {
     return { kind: 'denied', reason: 'Observed pool is at or above the stop threshold', observation: file };
   }
-  return { kind: 'permit', permit: { observation: file, observedAt: new Date(observedAt).toISOString(), expiresAt } };
+  return { kind: 'permit', permit: { control: 'observed', observation: file, observedAt: new Date(observedAt).toISOString(), expiresAt } };
 }
 
 export function admitLaunch(observationPath: string, now: Date): PoolDecision {

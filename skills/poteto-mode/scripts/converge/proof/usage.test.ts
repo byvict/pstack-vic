@@ -107,6 +107,24 @@ test('pool observations expire at 30 minutes and stop at 80 percent', t => {
   assert.equal(admitLaunch(path, new Date('2026-09-22T05:10:00.000Z')).kind, 'denied');
 });
 
+test('explicit operator pool control permits launches without invented usage readings', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'proof-pool-operator-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const path = join(directory, 'pool-control.json');
+  writeFileSync(path, JSON.stringify({
+    control: 'operator-managed', authorizedAt: '2026-09-23T19:37:00.000Z', source: 'session-user-instruction',
+  }));
+  const decision = admitLaunch(path, new Date('2026-09-24T20:00:00.000Z'));
+  assert.equal(decision.kind, 'permit');
+  if (decision.kind === 'permit') assert.equal(decision.permit.control, 'operator-managed');
+  writeFileSync(path, JSON.stringify({ control: 'operator-managed', authorizedAt: '2026-09-23T19:37:00.000Z' }));
+  assert.equal(admitLaunch(path, new Date('2026-09-24T20:00:00.000Z')).kind, 'denied');
+  writeFileSync(path, JSON.stringify({
+    control: 'operator-managed', authorizedAt: '2026-09-25T19:37:00.000Z', source: 'session-user-instruction',
+  }));
+  assert.equal(admitLaunch(path, new Date('2026-09-24T20:00:00.000Z')).kind, 'denied');
+});
+
 test('recordUsage keeps the original receipt bytes and binds the exact run', async t => {
   const directory = mkdtempSync(join(tmpdir(), 'proof-usage-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
