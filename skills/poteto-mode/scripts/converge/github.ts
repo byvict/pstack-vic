@@ -4,11 +4,15 @@ import { array, integer, object, parseContract, relativePath, repoName, sha, str
 import { dependencyOnly } from './dependencies.ts';
 import { parseClinextTests, type TestEvidence, type ClinextProvenance, type StepWindow } from './claims.ts';
 
-function childEnvironment(binary: string): NodeJS.ProcessEnv {
+function childEnvironment(binary: string, credential: 'writer' | 'installation' = 'writer'): NodeJS.ProcessEnv {
   if (binary !== 'gh') return process.env;
   const env: NodeJS.ProcessEnv = { ...process.env, NO_COLOR: '1', CLICOLOR: '0' };
   delete env.FORCE_COLOR;
   delete env.CLICOLOR_FORCE;
+  if (credential === 'installation') {
+    delete env.GH_TOKEN;
+    delete env.GITHUB_TOKEN;
+  }
   return env;
 }
 
@@ -17,15 +21,15 @@ export function command(binary: string, args: string[], input?: string): string 
   if (result.error || result.status !== 0) throw new Error(`${binary} request failed`);
   return result.stdout;
 }
-export function commandAsync(binary: string, args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => execFile(binary, args, { encoding: 'utf8', env: childEnvironment(binary), maxBuffer: 24 * 1024 * 1024, timeout: 90_000 }, (error, stdout) => error ? reject(new Error(`${binary} request failed`)) : resolve(stdout)));
+export function commandAsync(binary: string, args: string[], credential: 'writer' | 'installation' = 'writer'): Promise<string> {
+  return new Promise((resolve, reject) => execFile(binary, args, { encoding: 'utf8', env: childEnvironment(binary, credential), maxBuffer: 24 * 1024 * 1024, timeout: 90_000 }, (error, stdout) => error ? reject(new Error(`${binary} request failed`)) : resolve(stdout)));
 }
 export async function api(endpoint: string, body?: unknown): Promise<unknown> {
   if (body !== undefined) return JSON.parse(command('gh', ['api', endpoint, '--method', 'POST', '--input', '-'], JSON.stringify(body)));
   return JSON.parse(await commandAsync('gh', ['api', endpoint]));
 }
-export async function pages(endpoint: string, key?: string): Promise<unknown[]> {
-  const output = JSON.parse(await commandAsync('gh', ['api', endpoint + (endpoint.includes('?') ? '&' : '?') + 'per_page=100', '--paginate', '--slurp']));
+export async function pages(endpoint: string, key?: string, credential: 'writer' | 'installation' = 'writer'): Promise<unknown[]> {
+  const output = JSON.parse(await commandAsync('gh', ['api', endpoint + (endpoint.includes('?') ? '&' : '?') + 'per_page=100', '--paginate', '--slurp'], credential));
   return array(output).flatMap(page => key ? array(object(page)[key]) : array(page));
 }
 export interface Pull {
@@ -138,7 +142,7 @@ export function isPublication(comment: Record<string, unknown>, author: number):
   return integer(object(comment.user).id) === author && /^<!-- converge:v1 [a-f0-9-]{36} -->\n```json\n/.test(body);
 }
 export async function checks(repo: string, head: string): Promise<Check[]> {
-  const all = (await pages(`repos/${repo}/commits/${head}/check-runs?filter=all`, 'check_runs')).map(value => {
+  const all = (await pages(`repos/${repo}/commits/${head}/check-runs?filter=all`, 'check_runs', 'installation')).map(value => {
     const c = object(value);
     return { context: string(c.name), id: integer(c.id), head: sha(c.head_sha), appId: integer(object(c.app).id), state: c.status === 'completed' ? string(c.conclusion) : string(c.status), runId: null, attempt: null };
   });

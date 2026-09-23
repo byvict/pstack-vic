@@ -27,6 +27,13 @@ test('real reconcile CLI persists a fresh docs-only execution with exact check e
   assert.equal(next.round.inputDigest, report.round.inputDigest);
   assert.notEqual(runReconcile(f).status, 0);
 });
+test('private check runs use the installation credential while the writer token is present', t => {
+  const f = fixture(); t.after(f.cleanup);
+  f.state.requireInstallationChecks = true; f.save();
+  const result = f.run('converge-reconcile', ['--repo', 'Example/app', '--pr', '1', '--output', join(f.directory, 'report.json')], { GH_TOKEN: 'scoped-writer', GITHUB_TOKEN: 'scoped-writer' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout).checks.map((check: { context: string }) => check.context), ['Run test suite', 'Secrets scan']);
+});
 test('UI page joins the real Markdown page column without unrelated document work', t => {
   const f = fixture(); t.after(f.cleanup);
   f.state.files[0].filename = 'client/Login.jsx'; f.save();
