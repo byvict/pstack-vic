@@ -4,7 +4,8 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { main, printBoundary } from './cli.ts';
+import { main, printBoundary, printRecall } from './cli.ts';
+import { type RecallSummary } from './judge-check.ts';
 
 function poolFile(directory: string, extra: Record<string, unknown> = {}): string {
   const pool = join(directory, 'pool.json');
@@ -80,8 +81,32 @@ test('run CLI exit gate consumes the typed completePass summary field', t => {
   assert.equal(printBoundary({ kind: 'complete', summary: { ...base, completePass: true } }), 0);
   const costly = { ...costs, perFullPass: [{ passId: 'one', cost: { ...zero, equivalentNanoUSD: 814_303_000n } }] };
   assert.equal(printBoundary({ kind: 'complete', summary: { ...base, costs: costly, completePass: true } }), 0);
+  const unavailable = { kind: 'unavailable' as const, reason: 'Usage endpoint unavailable', originalEvidence: [] };
+  const unpriced = { ...costs, perFullPass: [{ passId: 'one', cost: unavailable }] };
+  assert.equal(printBoundary({ kind: 'complete', summary: { ...base, costs: unpriced, completePass: true } }), 0);
   assert.equal(printBoundary({ kind: 'complete', summary: { ...base, completePass: false } }), 1);
   assert.equal(printBoundary({ kind: 'complete', summary: { ...base, targetedCase: 'one', completePass: false } }), 0);
+});
+
+test('judge CLI uses recall thresholds when usage is explicitly unavailable', t => {
+  t.mock.method(process.stdout, 'write', () => true);
+  const unavailable = { kind: 'unavailable' as const, reason: 'Usage endpoint unavailable', originalEvidence: [] };
+  const summary = {
+    records: 15,
+    roles: {
+      'pr verifier': { hits: 10, denominator: 15, misses: [] },
+      'pr reviewer': { hits: 12, denominator: 15, misses: [] },
+    },
+    costs: {
+      perFullPass: [], requiredLanesOneToNine: unavailable, allCatalogIncludingHumanUpdate: unavailable,
+      historicalRoles: unavailable, organicEvaluation: unavailable,
+    },
+    originalEvidence: [], launchedAttempts: 30, continuation: '/tmp/historical-run.json',
+  } satisfies RecallSummary;
+  assert.equal(printRecall({ kind: 'complete', summary }), 0);
+  assert.equal(printRecall({ kind: 'complete', summary: {
+    ...summary, roles: { ...summary.roles, 'pr reviewer': { ...summary.roles['pr reviewer'], hits: 11 } },
+  } }), 1);
 });
 
 test('launcher prints usage on an unknown command', () => {

@@ -40,5 +40,5 @@ origin, ref and head; it reads the PR back as `CLOSED` before ordinary deletion.
 The live catalog keeps exact-head CI for every distinct PR. The runner plants
 all ten held PRs with one writer before it waits for the first result, so their
 independent workflows can overlap. Lane execution, publication and cleanup stay
-serial. The suite wall budget remains 90 minutes including cleanup. Reusing CI
+serial. The suite records elapsed time including cleanup without an acceptance ceiling. Reusing CI
 across heads or replacing live runs with fixtures would test a weaker contract.

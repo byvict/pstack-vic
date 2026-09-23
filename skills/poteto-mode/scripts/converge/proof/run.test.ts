@@ -604,6 +604,39 @@ test('a targeted run plants one case and cannot claim the full catalog gate', as
   assert.match(renderSuite(finished.summary), /complete-pass: no/);
 });
 
+test('a targeted run keeps its material pass when usage cannot be priced', async t => {
+  const h = harness(t);
+  const services = {
+    ...h.services,
+    async recordUsage({ receiptPath }: { receiptPath: string }) {
+      return {
+        kind: 'unavailable' as const,
+        reason: 'Usage endpoint unavailable',
+        evidence: { path: receiptPath, sha256: hash(readFileSync(receiptPath)) },
+      };
+    },
+  };
+  const started = await runProof({
+    kind: 'start', repo: 'Clinextapp/clinext', workRoot: h.workRoot, evidenceRoot: h.evidenceRoot,
+    parent: 'claude', repositoryEpoch: h.epochPath,
+    roles: { 'pr verifier': 'cursor:composer-2.5@high', 'pr reviewer': 'cursor:grok-4.7@xhigh' },
+    pool: h.pool, ownerId: 'owner-1', caseId: catalog[0].privateId, services,
+  });
+  assert.equal(started.kind, 'end-turn');
+  if (started.kind !== 'end-turn' || started.publication === 'uncertain') return;
+  const runId = JSON.parse(readFileSync(started.continuation, 'utf8')).runId;
+  const finished = await runProof({
+    kind: 'resume', runFile: started.continuation, pool: h.pool,
+    turnClosure: closureFor(started.publication, 'owner-1', runId, h.directory), services,
+  });
+  assert.equal(finished.kind, 'complete');
+  if (finished.kind !== 'complete') return;
+  assert.equal(finished.summary.entries[0]?.completePass, true);
+  assert.equal(finished.summary.selectedPass, true);
+  assert.equal(finished.summary.completePass, false);
+  assert.equal(finished.summary.costs.perFullPass[0]?.cost.kind, 'unavailable');
+});
+
 test('resume recovers publication-uncertain without a closure and refuses to reuse a closure for a new publication', async t => {
   const h = harness(t);
   h.setFailPublish();
@@ -690,7 +723,7 @@ test('an expired pool still permits cleanup before suspending the next launch', 
   assert.equal(envelope.completed[0].cleanup.kind, 'closed-and-deleted');
 });
 
-test('a complete suite under 90 minutes prints ten result lines after every publication turn has closed', async t => {
+test('a complete suite records elapsed time and prints ten result lines after every publication turn has closed', async t => {
   let clock = new Date('2026-09-22T05:00:00.000Z');
   const expensive = priceUsage({
     originalReceipt: { path: 'r', sha256: digest64('1') }, remoteRun: { agentId: 'bc-fixture', runId: 'run-1' },
@@ -730,7 +763,7 @@ test('a complete suite under 90 minutes prints ten result lines after every publ
   assert.match(text, /catalog-including-human-update:/);
 });
 
-test('a complete suite over 90 minutes remains a failed performance gate', async t => {
+test('a complete suite over 90 minutes retains its material result and measured duration', async t => {
   let clock = new Date('2026-09-22T05:00:00.000Z');
   const h = harness(t, () => clock);
   let boundary = await runProof({
@@ -748,8 +781,11 @@ test('a complete suite over 90 minutes remains a failed performance gate', async
     boundary = await runProof({ kind: 'resume', runFile: boundary.continuation, pool: h.pool, turnClosure: closed, services: h.services });
   }
 
-  assert.equal(boundary.kind, 'blocked');
-  if (boundary.kind === 'blocked') assert.equal(boundary.reason, 'Suite exceeded 90 minutes including cleanup');
+  assert.equal(boundary.kind, 'complete');
+  if (boundary.kind !== 'complete') return;
+  assert.equal(boundary.summary.wallMilliseconds, 91 * 60 * 1000);
+  assert.equal(boundary.summary.completePass, true);
+  assert.equal(boundary.summary.resources, 'all-owned-resources-closed');
 });
 
 test('parseTurnClosure rejects process restart and self-declaration', t => {

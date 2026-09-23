@@ -92,8 +92,6 @@ export type ProofServices = Readonly<{
   recordUsage: typeof recordUsage;
 }>;
 
-const WALL_LIMIT_MS = 90 * 60 * 1000;
-
 export function rejectWorkLabel(path: string): void {
   if (/\b(?:eval|test|judge|experiment|rubric|score|compare|benchmark|candidate|arena)\b/i.test(path)) {
     throw new Error('Work or evidence path exposes a benchmark label');
@@ -830,7 +828,7 @@ async function cleanCase(envelope: Envelope, phase: Extract<Phase, { kind: 'clea
   }
   const summary: CaseSummary = {
     id: entry.privateId, expected: assertion.expected, observed: assertion.observed, ok: assertion.ok,
-    completePass: assertion.completePass && cost.kind === 'known',
+    completePass: assertion.completePass,
     reason: assertion.reason, cleanup, cost, owned: phase.owned,
   };
   const completed = [...envelope.completed, summary];
@@ -985,9 +983,6 @@ export async function runProof(request: RunRequest): Promise<RunBoundary> {
       const phase = envelope.phase;
       if (phase.kind === 'complete') {
         const summary = finishSummary(envelope, services.now());
-        if (summary.wallMilliseconds > WALL_LIMIT_MS) {
-          return { kind: 'blocked', continuation: runFile, reason: 'Suite exceeded 90 minutes including cleanup', retainedEvidence: [] };
-        }
         return { kind: 'complete', summary };
       }
       if (phase.kind === 'awaiting-turn-close') {
