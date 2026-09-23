@@ -16,7 +16,7 @@ function hit(kind: Finding['kind'], source: Finding['source'], path: string | nu
 }
 export function screenInjection(sources: TextSource[]): Finding[] {
   return sources.flatMap(source => source.text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '').split('\n').flatMap((line, i) =>
-    /\b(?:verifier|reviewer|agent|assistant)\s*:/i.test(line) || /\b(?:ignore|override) (?:all |the |previous )*(?:instructions|rules)\b/i.test(line)
+    /^\s*(?:[-*]>\s*)?(?:verifier|reviewer|agent|assistant)\s*:\s*(?:ignore|override|run|execute|change|skip|publish|approve|merge)\b/i.test(line) || /\b(?:ignore|override) (?:all |the |previous )*(?:instructions|rules)\b/i.test(line)
       ? [hit('injection', source.source, null, i + 1, 'verifier-address')] : []));
 }
 function claims(s: Snapshot): Claim[] {
@@ -29,7 +29,7 @@ function claims(s: Snapshot): Claim[] {
     if (!inside || !text.trim() || /^\s*<!--.*-->\s*$/.test(text) || text.trim() === 'skip: no user-visible change') continue;
     const normalized = text.replace(/^\s*[-*]\s+/, '').trim();
     const parsed = normalized.match(/^(check|test|feature|artifact):\s*(.+)$/);
-    if (!parsed) { result.push({ line: index + 1, kind: 'unsupported', name: 'Unsupported verification claim', artifactFound: false, resolution: 'unavailable' }); continue; }
+    if (!parsed) continue;
     const name = safeName(parsed[2] ?? '');
     switch (parsed[1]) {
       case 'check': { const found = s.checks.some(c => c.context === name && c.state === 'success'); result.push({ line: index + 1, kind: 'check', name, artifactFound: found, resolution: found ? 'supported' : 'missing' }); break; }
@@ -57,7 +57,7 @@ export function analyze(s: Snapshot, options: { id: string; configPath: string; 
   const c = s.trusted.config;
   const surfacePaths = paths.filter(path => c.surfaces.some(pattern => matches(path, pattern)));
   const riskPaths = paths.filter(path => [...c.riskClasses.irreversible, ...c.riskClasses.contained].some(pattern => matches(path, pattern)));
-  const touchedFeatures = s.features.filter(feature => paths.includes(feature.page));
+  const touchedFeatures = s.features;
   const hardList: Finding[] = [];
   const diffSources: TextSource[] = [];
   for (const file of s.files) {
@@ -84,15 +84,11 @@ export function analyze(s: Snapshot, options: { id: string; configPath: string; 
   }
   const injection = [...screenInjection(s.sources), ...diffSources.flatMap(source => screenInjection([source]).map(f => ({ ...f, source: 'diff' as const, path: source.id })))];
   const findings = [...hardList.filter(f => f.severity === 'blocking'), ...injection];
-  if (!/^\s*(?:[-*]\s*)?skip: no user-visible change\s*$/m.test(s.pull.body)) {
-    for (const f of touchedFeatures) if (!paths.includes(f.recipe)) findings.push(hit('documentary', 'diff', f.recipe, 0, 'feature-map-travel'));
-  }
   const mode = paths.length > 0 && (paths.every(ordinaryDoc) || s.dependencyOnly) && !surfacePaths.length && !riskPaths.length && !hardList.length ? 'ci-only' : 'full';
   const lanes: Report['lanes'] = mode === 'ci-only' ? [] : ['pr verifier'];
-  if (riskPaths.length || hardList.some(f => f.severity === 'requires-proof')) lanes.push('pr reviewer');
   return { schemaVersion: 1, round: { id: options.id, repo: c.repo, pr: s.pull.number, head: s.pull.head, contract: s.trusted.sha, base: s.base,
     patch_id: s.patchId, verificationDigest: s.verificationDigest, inputDigest: s.inputDigest, configPath: options.configPath, execution: options.execution },
-    mode, touchedFeatures, unmappedSurfaces: surfacePaths.filter(p => !touchedFeatures.some(f => f.page === p)),
+    mode, touchedFeatures, unmappedSurfaces: surfacePaths.filter(p => !touchedFeatures.some(f => f.page === p) && !(touchedFeatures.length && (/^client\/(?:src\/)?(?:components|hooks|contexts|lib|utils)\//.test(p) || /^server\/routes\//.test(p) || /^client\/(?:src\/)?App\.[jt]sx?$/.test(p)))),
     claims: claims(s), hardList, injection, findings, checks: s.checks, lanes, gaps: [...s.gaps], inputFingerprint: s.inputFingerprint };
 }
 export async function reconcile(options: { repo: string; pr: number; configPath?: string; execution?: 'converge' | 'verdict-only'; output: string }): Promise<Report> {

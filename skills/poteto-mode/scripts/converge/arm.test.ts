@@ -17,7 +17,7 @@ function arm(f: ReturnType<typeof fixture>, dry = true) {
 test('publisher computes CI-only verdict and retry recovers the same comment and status', t => {
   const f = fixture(); t.after(f.cleanup);
   const first = publish(f);
-  assert.equal(first.dossier.decision.displayResult, 'CI-only'); assert.equal(first.mustEndTurn, true);
+  assert.equal(first.dossier.decision.displayResult, 'CI-only'); assert.equal('mustEndTurn' in first, false);
   const retry = f.run('publish.ts', ['--report', join(f.directory, 'report.json'), '--evidence', join(f.directory, 'evidence')]);
   assert.equal(retry.status, 0, retry.stderr);
   assert.equal(JSON.parse(retry.stdout).statusId, first.statusId);

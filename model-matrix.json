@@ -56,10 +56,7 @@
     { "role": "swarm workers", "description": "Default worker for every swarm lane: coverage matrices, races, gauntlets, exploration partitions.", "default": "grok@xhigh" },
     { "role": "architect runners", "description": "Each lane proposes a design (types, module shape) for the same problem before implementation. One lane per entry.", "default": ["fable@max", "astra@max", "grok@xhigh", "opus@xhigh"] },
     { "role": "interrogate reviewers", "description": "Each lane reviews the diff adversarially from its own angle; a different provider per lane widens the blind spots covered.", "default": ["fable@max", "astra@max", "grok@xhigh", "opus@xhigh"] },
-    { "role": "pr verifier", "description": "Runs the gates and the live lane of a ready PR and reconciles evidence against claims; never writes code.", "default": "composer@high" },
-    { "role": "pr reviewer", "description": "Reads the base-to-head diff of a PR that touches an irreversible or contained class and reports regressions with a failure scenario and file and line.", "default": "cursor-grok@high" },
-    { "role": "pr fixer, simple", "description": "Repairs one named cause of a single file, a lint or type failure, or a confirmed finding with a concrete disproof, in the PR branch.", "default": "composer@high" },
-    { "role": "pr fixer, complex", "description": "Repairs a cross-file or behavior-changing cause in the PR branch; the second and last attempt.", "default": "cursor-grok@xhigh" },
-    { "role": "pr diagnosis pool", "description": "Read-only diagnosers that each name the root cause of a failed fix with evidence; two that agree decide.", "default": ["muse@high", "glm@high", "gemini-pro@high", "kimi@high"] }
+    { "role": "pr owner", "description": "Owns a ready PR in Cursor Cloud through verification, repair and merge; selects high or xhigh from task complexity.", "default": "cursor-grok@high" },
+    { "role": "pr verifier", "description": "Independently checks risk, tests and user behavior of the exact PR head without writing code.", "default": "cursor-grok@high" }
   ]
 }

@@ -47,12 +47,13 @@ export async function admitLane(manifestFile: string, report: Report, evidenceDi
   if (jsonHash(parseRound(manifest.round)) !== jsonHash(report.round)) throw new Error('Lane manifest belongs to another round');
   const laneId = relativePath(manifest.laneId);
   if (laneId.includes('/')) throw new Error('Invalid lane id');
-  const role = oneOf(manifest.role, ['pr verifier', 'pr reviewer']);
+  const role = oneOf(manifest.role, ['pr verifier']);
   const promptPath = relativePath(manifest.prompt);
   if (hash(readOwned(promptPath, root)) !== digest(manifest.promptDigest)) throw new Error('Lane prompt changed');
   const receiptBytes = readOwned(relativePath(manifest.receipt), root);
   const receipt = object(JSON.parse(receiptBytes.toString('utf8')));
   const expected = resolveDescriptor(loadMatrix(), string(manifest.descriptor));
+  if (expected.family.provider !== 'cursor' || expected.family.model !== 'grok-4.7' || !['high', 'xhigh'].includes(expected.descriptor.effort)) throw new Error('Converge evidence requires Cursor Grok 4.7 high or xhigh');
   if (receipt.schemaVersion !== 1 || receipt.status !== 'complete' || receipt.mode !== 'read-only' || !((receipt.modelEvidence === 'provider-report' && receipt.modelVerified === true && reportedModelMatches(expected.family, string(receipt.reportedModel))) || (receipt.modelEvidence === 'pinned-argv' && receipt.modelVerified === false && receipt.reportedModel === null && expected.family.reportedModel === null))) throw new Error('Lane receipt does not prove independent completion');
   if (receipt.provider !== expected.family.provider || receipt.model !== expected.family.model || receipt.effort !== expected.descriptor.effort) throw new Error('Lane receipt model differs from dispatch');
   const outputPath = relativePath(manifest.output);

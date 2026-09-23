@@ -60,7 +60,7 @@ export function parseExecutionId(value: unknown): string {
   return result;
 }
 export type Execution = 'converge' | 'verdict-only';
-export type Role = 'pr verifier' | 'pr reviewer';
+export type Role = 'pr verifier';
 export interface Contract {
   repo: string; trunk: string; requiredChecks: string[]; holdLabels: string[];
   surfaces: string[]; riskClasses: { irreversible: string[]; contained: string[] };
@@ -146,7 +146,7 @@ export function parseReport(value: unknown): Report {
     claims: array(v.claims).map(value => { const c = object(value); return { line: integer(c.line), kind: oneOf(c.kind, ['check', 'test', 'feature', 'artifact', 'unsupported']), name: string(c.name), artifactFound: boolean(c.artifactFound), resolution: oneOf(c.resolution, ['supported', 'missing', 'unavailable', 'current-feature']) }; }),
     hardList: array(v.hardList).map(parseFinding), injection: array(v.injection).map(parseFinding), findings: array(v.findings).map(parseFinding),
     checks: array(v.checks).map(value => { const c = object(value); return { context: string(c.context), id: integer(c.id), head: sha(c.head), appId: integer(c.appId), state: string(c.state), runId: c.runId === null ? null : integer(c.runId), attempt: c.attempt === null ? null : integer(c.attempt) }; }),
-    lanes: array(v.lanes).map(v => oneOf(v, ['pr verifier', 'pr reviewer'])), gaps: strings(v.gaps), inputFingerprint: digest(v.inputFingerprint) };
+    lanes: array(v.lanes).map(v => oneOf(v, ['pr verifier'])), gaps: strings(v.gaps), inputFingerprint: digest(v.inputFingerprint) };
 }
 export type Decision =
   | { verdict: 'VERIFIED'; displayResult: 'VERIFIED' | 'CI-only'; findings: []; reasons: [] }

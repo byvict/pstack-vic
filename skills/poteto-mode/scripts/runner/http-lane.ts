@@ -392,6 +392,15 @@ function selectModel(models: ModelInventory, request: SelectionRequest): ModelSe
   };
 }
 
+export function selectCursorModel(inventory: unknown, model: string, effort: "high" | "xhigh"):
+  { readonly params: Params; readonly evidence: string } {
+  const models = decodeInventory(inventory, model);
+  if (models === null) throw new Error("Cursor model inventory had an unexpected shape");
+  const selection = selectModel(models, { provider: "cursor", model, effort });
+  if (selection.kind === "missing") throw new Error(selection.message);
+  return selection;
+}
+
 function decodeLaunch(body: unknown): RemoteRun {
   const agent = isRecord(body) && isRecord(body.agent) ? body.agent : {};
   const run = isRecord(body) && isRecord(body.run) ? body.run : {};
@@ -431,21 +440,19 @@ function decodeSnapshot(body: unknown): RunSnapshot | null {
   }
 }
 
-/** Branch name to commit SHA, from `git ls-remote --heads`. */
+/** The pull request's published head to commit SHA. */
 type RemoteHeads = ReadonlyMap<string, string>;
 
 type HeadsReply =
   | { readonly kind: "ok"; readonly heads: RemoteHeads }
   | { readonly kind: "failed"; readonly detail: string };
 
-const HEAD_PREFIX = "refs/heads/";
-
 function parseHeads(text: string): RemoteHeads {
   const heads = new Map<string, string>();
   for (const line of text.split("\n")) {
     const [sha, ref] = line.split("\t");
-    if (sha !== undefined && sha.length > 0 && ref !== undefined && ref.startsWith(HEAD_PREFIX)) {
-      heads.set(ref.slice(HEAD_PREFIX.length), sha);
+    if (sha !== undefined && /^[a-f0-9]{40}$/.test(sha) && ref !== undefined && /^refs\/pull\/[0-9]+\/head$/.test(ref)) {
+      heads.set(ref, sha);
     }
   }
   return heads;
@@ -453,12 +460,13 @@ function parseHeads(text: string): RemoteHeads {
 
 function remoteHeads(
   url: string,
+  pullNumber: number,
   cwd: string,
   env: NodeJS.ProcessEnv,
   signal: AbortSignal
 ): Promise<HeadsReply> {
   return new Promise((resolve) => {
-    const child = spawn("git", ["ls-remote", "--heads", url], {
+    const child = spawn("git", ["ls-remote", url, `refs/pull/${pullNumber}/head`], {
       cwd,
       env: { ...env, GIT_TERMINAL_PROMPT: "0" },
       stdio: ["ignore", "pipe", "pipe"],
@@ -478,7 +486,9 @@ function remoteHeads(
     });
     child.once("close", (code) => {
       if (failure === null && code === 0) {
-        resolve({ kind: "ok", heads: parseHeads(stdout) });
+        const heads = parseHeads(stdout);
+        if (heads.size !== 1) { resolve({ kind: "failed", detail: "PR head ref unavailable" }); return; }
+        resolve({ kind: "ok", heads });
         return;
       }
       resolve({
@@ -579,7 +589,7 @@ async function runCursorLane(
   const { owner, name, pullNumber } = options.target;
   const repoUrl = `https://github.com/${owner}/${name}`;
   const gitRemote = endpoint.gitRemote ?? repoUrl;
-  const before = await remoteHeads(gitRemote, options.cwd, env, requestSignal(context));
+  const before = await remoteHeads(gitRemote, pullNumber, options.cwd, env, requestSignal(context));
   if (before.kind === "failed") {
     ev.remote = { ...ev.remote, heads: { kind: "unverified", reason: before.detail } };
   }
@@ -638,7 +648,7 @@ async function runCursorLane(
   }
 
   if (end.snapshot.state === "finished" && baseline !== null) {
-    const after = await remoteHeads(gitRemote, options.cwd, env, requestSignal(context));
+    const after = await remoteHeads(gitRemote, pullNumber, options.cwd, env, requestSignal(context));
     ev.remote = {
       ...ev.remote,
       heads: after.kind === "ok"
