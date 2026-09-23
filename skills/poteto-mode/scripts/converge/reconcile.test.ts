@@ -200,5 +200,5 @@ test('forced parent color cannot corrupt gh GET or publication POST JSON', t => 
   const published = f.run('publish.ts', ['--report', join(f.directory, 'report.json'), '--evidence', join(f.directory, 'evidence')], env);
   assert.equal(published.status, 0, published.stderr);
   assert.equal(JSON.parse(published.stdout).dossier.decision.verdict, 'VERIFIED');
-  assert.equal(f.read().comments.length, 1); assert.equal(f.read().verdictChecks.length, 1);
+  assert.equal(f.read().comments.length, 1); assert.equal(f.read().statuses.length, 1);
 });

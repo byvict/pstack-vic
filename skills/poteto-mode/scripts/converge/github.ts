@@ -130,9 +130,6 @@ export async function principal(): Promise<number> {
   const response = object(JSON.parse(await commandAsync('gh', ['api', 'graphql', '-f', 'query=query { viewer { databaseId } }'])));
   return integer(object(object(response.data).viewer).databaseId);
 }
-export async function cursorAppId(): Promise<number> {
-  return integer(object(await api('apps/cursor')).id);
-}
 export async function comments(repo: string, pr: number): Promise<Record<string, unknown>[]> {
   return (await Promise.all([pages(`repos/${repo}/issues/${pr}/comments`), pages(`repos/${repo}/pulls/${pr}/comments`)])).flat().map(v => object(v));
 }
@@ -141,7 +138,7 @@ export function isPublication(comment: Record<string, unknown>, author: number):
   return integer(object(comment.user).id) === author && /^<!-- converge:v1 [a-f0-9-]{36} -->\n```json\n/.test(body);
 }
 export async function checks(repo: string, head: string): Promise<Check[]> {
-  const all = (await pages(`repos/${repo}/commits/${head}/check-runs?filter=all`, 'check_runs')).filter(value => object(value).name !== 'verdict').map(value => {
+  const all = (await pages(`repos/${repo}/commits/${head}/check-runs?filter=all`, 'check_runs')).map(value => {
     const c = object(value);
     return { context: string(c.name), id: integer(c.id), head: sha(c.head_sha), appId: integer(object(c.app).id), state: c.status === 'completed' ? string(c.conclusion) : string(c.status), runId: null, attempt: null };
   });
