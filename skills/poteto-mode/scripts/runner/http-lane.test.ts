@@ -267,13 +267,14 @@ function git(cwd: string, ...args: string[]): void {
 function pushBranch(branch: string): void {
   git(workClone, "commit", "--allow-empty", "--quiet", "-m", branch);
   git(workClone, "push", "--quiet", "origin", `HEAD:refs/heads/${branch}`);
+  if (branch === "main") git(workClone, "push", "--quiet", "origin", "HEAD:refs/pull/7/head");
 }
 
 function lsRemoteCalls(): string[] {
   if (!existsSync(gitLog)) return [];
   return readFileSync(gitLog, "utf8")
     .split("\n")
-    .filter((line) => line.startsWith("ls-remote --heads "));
+    .filter((line) => line.startsWith("ls-remote "));
 }
 
 async function waitForGit(): Promise<void> {
@@ -1040,21 +1041,20 @@ describe("cursor http lane", () => {
     assert.equal(readFileSync(outputPath, "utf8"), "pong");
     matchObject(receipt, { status: "complete", remote: { agentId: "bc_1", heads: { kind: "observed", changedBranches: [] } } });
     assert.deepEqual(lsRemoteCalls().slice(seen), [
-      `ls-remote --heads ${bareRepo}`,
-      `ls-remote --heads ${bareRepo}`,
+      `ls-remote ${bareRepo} refs/pull/7/head`,
+      `ls-remote ${bareRepo} refs/pull/7/head`,
     ]);
     assert.ok(!JSON.stringify(receipt).includes(bareRepo));
   });
 
-  it("fails read-only verification on observed new heads and records them for isolated-write", async () => {
+  it("ignores pushes to branches unrelated to the PR", async () => {
     const pushed = await fakeCursor({ beforeFinish: () => pushBranch("cursor/x") });
     const readOnly = await runHttpLane(pushed, { suffix: "read-only" });
-    assert.equal(readOnly.exitCode, 70);
-    assert.equal(existsSync(readOnly.outputPath), false);
+    assert.equal(readOnly.exitCode, 0);
+    assert.equal(existsSync(readOnly.outputPath), true);
     matchObject(readOnly.receipt, {
-      status: "child-failed",
-      error: { message: "could not verify read-only execution: remote heads changed: cursor/x" },
-      remote: { agentId: "bc_1", heads: { kind: "observed", changedBranches: ["cursor/x"] } },
+      status: "complete",
+      remote: { agentId: "bc_1", heads: { kind: "observed", changedBranches: [] } },
     });
 
     const writer = await fakeCursor({ beforeFinish: () => pushBranch("cursor/y") });
@@ -1064,7 +1064,7 @@ describe("cursor http lane", () => {
     matchObject(isolated.receipt, {
       status: "complete",
       mode: "isolated-write",
-      remote: { heads: { kind: "observed", changedBranches: ["cursor/y"] } },
+      remote: { heads: { kind: "observed", changedBranches: [] } },
     });
   });
 
@@ -1074,14 +1074,14 @@ describe("cursor http lane", () => {
     assert.equal(readOnly.exitCode, 70);
     matchObject(readOnly.receipt, {
       status: "child-failed",
-      error: { message: "could not verify read-only execution: remote heads changed: main" },
-      remote: { heads: { kind: "observed", changedBranches: ["main"] } },
+      error: { message: "could not verify read-only execution: remote heads changed: refs/pull/7/head" },
+      remote: { heads: { kind: "observed", changedBranches: ["refs/pull/7/head"] } },
     });
 
     const writer = await fakeCursor({ beforeFinish: () => pushBranch("main") });
     const isolated = await runHttpLane(writer, { mode: "isolated-write", suffix: "isolated-write" });
     assert.equal(isolated.exitCode, 0);
-    matchObject(isolated.receipt, { status: "complete", remote: { heads: { kind: "observed", changedBranches: ["main"] } } });
+    matchObject(isolated.receipt, { status: "complete", remote: { heads: { kind: "observed", changedBranches: ["refs/pull/7/head"] } } });
   });
 
   it("fails a read-only lane closed before launch when the remote cannot be read, and lets an isolated-write lane complete", async () => {
@@ -1272,21 +1272,19 @@ describe("cursor http lane", () => {
     assert.equal(paths(fake).filter((path) => path === `POST ${RUN_PATH}/cancel`).length, 1);
   });
 
-  it("fails read-only verification when another actor deletes a head", async () => {
-    pushBranch("cursor/deleted");
-    const fake = await fakeCursor({ beforeFinish: () => git(workClone, "push", "--quiet", "origin", ":refs/heads/cursor/deleted") });
+  it("fails read-only verification when the PR head ref disappears", async () => {
+    const fake = await fakeCursor({ beforeFinish: () => git(workClone, "push", "--quiet", "origin", ":refs/pull/7/head") });
     const { receipt, outputPath } = await runHttpLane(fake);
     matchObject(receipt, {
       status: "child-failed",
-      error: { message: "could not verify read-only execution: remote heads changed: cursor/deleted" },
-      remote: { heads: { kind: "observed", changedBranches: ["cursor/deleted"] } },
+      error: { message: "could not verify read-only execution: remote head snapshot unavailable" },
+      remote: { heads: { kind: "unverified" } },
     });
-    assert.match(receipt.error?.evidence ?? "", /cannot attribute/);
     assert.equal(existsSync(outputPath), false);
-    assert.ok(!("pushedBranches" in (receipt.remote ?? {})));
+    git(workClone, "push", "--quiet", "origin", "HEAD:refs/pull/7/head");
   });
 
-  it("reports one foreign push as an observation in two overlapping lanes", async () => {
+  it("allows two overlapping lanes when another PR branch moves", async () => {
     let finished = 0;
     const bothFinished = Promise.withResolvers<void>();
     const fake = await fakeCursor({ beforeFinish: async () => {
@@ -1298,13 +1296,8 @@ describe("cursor http lane", () => {
     } });
     const lanes = [runHttpLane(fake, { suffix: "first" }), runHttpLane(fake, { suffix: "second" })];
     for (const { receipt, outputPath } of await Promise.all(lanes)) {
-      matchObject(receipt, {
-        status: "child-failed",
-        error: { message: "could not verify read-only execution: remote heads changed: cursor/foreign" },
-        remote: { heads: { kind: "observed", changedBranches: ["cursor/foreign"] } },
-      });
-      assert.match(receipt.error?.evidence ?? "", /cannot attribute/);
-      assert.equal(existsSync(outputPath), false);
+      matchObject(receipt, { status: "complete", remote: { heads: { kind: "observed", changedBranches: [] } } });
+      assert.equal(existsSync(outputPath), true);
       assert.ok(!("pushedBranches" in (receipt.remote ?? {})));
     }
   });

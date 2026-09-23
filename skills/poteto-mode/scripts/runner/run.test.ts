@@ -24,13 +24,18 @@ let scratch = "";
 let bin = "";
 let previousPath: string | undefined;
 
-// The http lane snapshots the remote heads around the cloud run. One empty
-// bare repo stands in for github.com across every http case here.
+// The http lane snapshots this PR's head around the cloud run.
 let bareRepo = "";
 
 before(() => {
   bareRepo = mkdtempSync(join(tmpdir(), "pstack-runner-test-remote-"));
   execFileSync("git", ["init", "--quiet", "--bare", bareRepo], { stdio: ["ignore", "pipe", "pipe"] });
+  const clone = mkdtempSync(join(tmpdir(), "pstack-runner-test-clone-"));
+  try {
+    execFileSync("git", ["clone", "--quiet", bareRepo, clone]);
+    execFileSync("git", ["commit", "--allow-empty", "--quiet", "-m", "PR head"], { cwd: clone, env: { ...process.env, GIT_AUTHOR_NAME: 'test', GIT_AUTHOR_EMAIL: 'test@example.invalid', GIT_COMMITTER_NAME: 'test', GIT_COMMITTER_EMAIL: 'test@example.invalid' } });
+    execFileSync("git", ["push", "--quiet", "origin", "HEAD:refs/pull/7/head"], { cwd: clone });
+  } finally { rmSync(clone, { recursive: true, force: true }); }
 });
 
 after(() => {

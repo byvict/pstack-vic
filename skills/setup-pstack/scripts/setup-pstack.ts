@@ -83,6 +83,7 @@ export interface SheetRow {
 }
 
 const ROW_RE = /^([a-z][a-z0-9 ,-]*): (.+)$/;
+const RETIRED_CONVERGE_ROLES = new Set(['pr reviewer', 'pr fixer, simple', 'pr fixer, complex', 'pr diagnosis pool']);
 
 /**
  * The role rows of a sheet: `label: lane[, lane]`. Title, blank lines, and
@@ -98,7 +99,10 @@ export function parseSheet(text: string, matrix: ModelMatrix): SheetRow[] {
     const match = ROW_RE.exec(line);
     if (!match) continue;
     const [, role, value] = match;
-    if (!known.has(role)) fail(`unknown role ${JSON.stringify(role)} in sheet line ${JSON.stringify(line)}`);
+    if (!known.has(role)) {
+      if (RETIRED_CONVERGE_ROLES.has(role)) continue;
+      fail(`unknown role ${JSON.stringify(role)} in sheet line ${JSON.stringify(line)}`);
+    }
     if (seen.has(role)) fail(`duplicate role ${JSON.stringify(role)} in sheet`);
     seen.add(role);
     const lanes = value.split(",").map((v) => v.trim()).filter((v) => v.length > 0);

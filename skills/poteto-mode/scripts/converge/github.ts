@@ -83,7 +83,7 @@ export async function trusted(repo: string, configPath: string): Promise<Trusted
 export async function features(contract: Trusted, changedPaths: Set<string>): Promise<Feature[]> {
   const map = contract.files.get(contract.config.featureMap);
   if (map === undefined) throw new Error('Feature map missing');
-  const result: Feature[] = [];
+  const entries: { id: string; page: string; recipe: string }[] = [];
   for (const line of map.split('\n')) {
     const link = line.match(/\[([^\]]+)\]\(([^)]+\.md)\)/);
     const page = line.match(/`([^`]+\.(?:jsx?|tsx?))`\s*\|?\s*$/);
@@ -92,13 +92,33 @@ export async function features(contract: Trusted, changedPaths: Set<string>): Pr
     const recipe = relativePath(posix.join(directory, relativePath(link[2]?.replace(/^\.\//, ''))));
     if (!recipe.startsWith(directory + '/')) throw new Error('Feature recipe escapes map directory');
     const pagePath = relativePath(page[1]);
-    if (!changedPaths.has(pagePath)) continue;
-    if (result.some(f => f.page === pagePath)) throw new Error('Duplicate feature page');
-    const source = await blob(contract.repo, contract.sha, recipe);
-    contract.files.set(recipe, source);
-    result.push({ id: posix.basename(recipe, '.md'), page: pagePath, recipe, recipeDigest: hash(source) });
+    if (entries.some(f => f.page === pagePath)) throw new Error('Duplicate feature page');
+    entries.push({ id: posix.basename(recipe, '.md'), page: pagePath, recipe });
   }
-  return result;
+  const shared = [...changedPaths].filter(path => /^client\/(?:src\/)?(?:components|hooks|contexts|lib|utils)\//.test(path));
+  const routes = [...changedPaths].some(path => /^server\/routes\//.test(path) || /^client\/(?:src\/)?(?:App|components\/(?:SidebarNew|TopBar))\.[jt]sx?$/.test(path));
+  const direct = entries.filter(entry => changedPaths.has(entry.page));
+  let affected = direct;
+  if (routes) affected = entries;
+  else if (shared.length) {
+    const imported = await Promise.all(entries.map(async entry => {
+      const page = await blob(contract.repo, contract.sha, entry.page);
+      return shared.some(path => {
+        const stem = path.replace(/\.[jt]sx?$/, '');
+        return [...page.matchAll(/(?:from\s*|import\s*|require\s*\()\s*['"]([^'"]+)['"]/g)].some(match => {
+          const specifier = match[1];
+          return specifier !== undefined && posix.normalize(posix.join(posix.dirname(entry.page), specifier)) === stem;
+        });
+      }) ? entry : null;
+    }));
+    const matches = imported.filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+    affected = matches.length ? [...new Map([...direct, ...matches].map(entry => [entry.id, entry])).values()] : entries;
+  }
+  return Promise.all(affected.map(async entry => {
+    const source = await blob(contract.repo, contract.sha, entry.recipe);
+    contract.files.set(entry.recipe, source);
+    return { ...entry, recipeDigest: hash(source) };
+  }));
 }
 export interface TextSource { source: 'body' | 'comment' | 'log'; id: string; text: string }
 export interface ChangedFile { path: string; previous: string | null; patch: string | null; status: string }
@@ -106,7 +126,10 @@ export interface Snapshot {
   trusted: Trusted; pull: Pull; base: string; patchId: string; diff: string; files: ChangedFile[];
   features: Feature[]; checks: Check[]; sources: TextSource[]; gaps: string[]; inputDigest: string; inputFingerprint: string; verificationDigest: string; dependencyOnly: boolean; testEvidence: TestEvidence;
 }
-export async function principal(): Promise<number> { return integer(object(await api('user')).id); }
+export async function principal(): Promise<number> {
+  const response = object(JSON.parse(await commandAsync('gh', ['api', 'graphql', '-f', 'query=query { viewer { databaseId } }'])));
+  return integer(object(object(response.data).viewer).databaseId);
+}
 export async function comments(repo: string, pr: number): Promise<Record<string, unknown>[]> {
   return (await Promise.all([pages(`repos/${repo}/issues/${pr}/comments`), pages(`repos/${repo}/pulls/${pr}/comments`)])).flat().map(v => object(v));
 }

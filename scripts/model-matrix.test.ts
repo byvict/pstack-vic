@@ -436,7 +436,7 @@ describe("roles", () => {
     }
   });
 
-  it("pins 22 roles, keeps the original 17 and four mixed panels, and adds the five PR-phase defaults", () => {
+  it("pins the original 17 roles and the two Cloud PR responsibilities", () => {
     assert.deepEqual(
       matrix.roles.map((r) => r.role),
       [
@@ -457,59 +457,31 @@ describe("roles", () => {
         "swarm workers",
         "architect runners",
         "interrogate reviewers",
+        "pr owner",
         "pr verifier",
-        "pr reviewer",
-        "pr fixer, simple",
-        "pr fixer, complex",
-        "pr diagnosis pool",
       ]
     );
-    assert.equal(matrix.roles.length, 22);
+    assert.equal(matrix.roles.length, 19);
     const mixedPanel = [
       "claude:fable@max",
       "codex:gpt-6-astra@max",
       "grok:grok-4.6@xhigh",
       "claude:opus@xhigh",
     ];
-    const diagnosis = [
-      "cursor:muse-spark-1.3@high",
-      "cursor:glm-5.2@high",
-      "cursor:gemini-3.1-pro@high",
-      "cursor:kimi-k3@high",
-    ];
     for (const parent of parents) {
       for (const label of ["arena runners", "arena cross-judge pool", "architect runners", "interrogate reviewers"]) {
         assert.deepEqual(roleDefault(matrix, label, parent), mixedPanel, `${label}/${parent}`);
       }
-      assert.deepEqual(roleDefault(matrix, "pr verifier", parent), ["cursor:composer-2.5@high"]);
-      assert.deepEqual(roleDefault(matrix, "pr reviewer", parent), ["cursor:grok-4.7@high"]);
-      assert.deepEqual(roleDefault(matrix, "pr fixer, simple", parent), ["cursor:composer-2.5@high"]);
-      assert.deepEqual(roleDefault(matrix, "pr fixer, complex", parent), ["cursor:grok-4.7@xhigh"]);
-      assert.deepEqual(roleDefault(matrix, "pr diagnosis pool", parent), diagnosis);
-      const lanes = roleDefault(matrix, "pr diagnosis pool", parent);
-      const providers = new Set(lanes.map((l) => parseDescriptor(l)?.provider));
-      assert.equal(lanes.length, 4, `pr diagnosis pool/${parent}: four lanes`);
-      assert.deepEqual([...providers], ["cursor"], `pr diagnosis pool/${parent}: cursor only`);
+      assert.deepEqual(roleDefault(matrix, "pr owner", parent), ["cursor:grok-4.7@high"]);
+      assert.deepEqual(roleDefault(matrix, "pr verifier", parent), ["cursor:grok-4.7@high"]);
     }
     assert.equal(
       roleNamed(matrix, "pr verifier")?.description,
-      "Runs the gates and the live lane of a ready PR and reconciles evidence against claims; never writes code."
+      "Independently checks risk, tests and user behavior of the exact PR head without writing code."
     );
     assert.equal(
-      roleNamed(matrix, "pr reviewer")?.description,
-      "Reads the base-to-head diff of a PR that touches an irreversible or contained class and reports regressions with a failure scenario and file and line."
-    );
-    assert.equal(
-      roleNamed(matrix, "pr fixer, simple")?.description,
-      "Repairs one named cause of a single file, a lint or type failure, or a confirmed finding with a concrete disproof, in the PR branch."
-    );
-    assert.equal(
-      roleNamed(matrix, "pr fixer, complex")?.description,
-      "Repairs a cross-file or behavior-changing cause in the PR branch; the second and last attempt."
-    );
-    assert.equal(
-      roleNamed(matrix, "pr diagnosis pool")?.description,
-      "Read-only diagnosers that each name the root cause of a failed fix with evidence; two that agree decide."
+      roleNamed(matrix, "pr owner")?.description,
+      "Owns a ready PR in Cursor Cloud through verification, repair and merge; selects high or xhigh from task complexity."
     );
   });
 

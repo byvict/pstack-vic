@@ -68,11 +68,8 @@ Skills name roles by the labels below, the same labels `/setup-pstack` writes to
 | `swarm workers` | Default worker for every swarm lane: coverage matrices, races, gauntlets, exploration partitions. | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
 | `architect runners` | Each lane proposes a design (types, module shape) for the same problem before implementation. One lane per entry. | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:opus@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:opus@xhigh` |
 | `interrogate reviewers` | Each lane reviews the diff adversarially from its own angle; a different provider per lane widens the blind spots covered. | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:opus@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:opus@xhigh` |
-| `pr verifier` | Runs the gates and the live lane of a ready PR and reconciles evidence against claims; never writes code. | `cursor:composer-2.5@high` | `cursor:composer-2.5@high` |
-| `pr reviewer` | Reads the base-to-head diff of a PR that touches an irreversible or contained class and reports regressions with a failure scenario and file and line. | `cursor:grok-4.7@high` | `cursor:grok-4.7@high` |
-| `pr fixer, simple` | Repairs one named cause of a single file, a lint or type failure, or a confirmed finding with a concrete disproof, in the PR branch. | `cursor:composer-2.5@high` | `cursor:composer-2.5@high` |
-| `pr fixer, complex` | Repairs a cross-file or behavior-changing cause in the PR branch; the second and last attempt. | `cursor:grok-4.7@xhigh` | `cursor:grok-4.7@xhigh` |
-| `pr diagnosis pool` | Read-only diagnosers that each name the root cause of a failed fix with evidence; two that agree decide. | `cursor:muse-spark-1.3@high`, `cursor:glm-5.2@high`, `cursor:gemini-3.1-pro@high`, `cursor:kimi-k3@high` | `cursor:muse-spark-1.3@high`, `cursor:glm-5.2@high`, `cursor:gemini-3.1-pro@high`, `cursor:kimi-k3@high` |
+| `pr owner` | Owns a ready PR in Cursor Cloud through verification, repair and merge; selects high or xhigh from task complexity. | `cursor:grok-4.7@high` | `cursor:grok-4.7@high` |
+| `pr verifier` | Independently checks risk, tests and user behavior of the exact PR head without writing code. | `cursor:grok-4.7@high` | `cursor:grok-4.7@high` |
 
 A list is a panel: one lane per entry, in this order. A role whose two columns differ takes the parent's native frontier family. Aliases run on the parent model through its native subagent primitive.
 

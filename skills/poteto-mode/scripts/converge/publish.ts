@@ -5,16 +5,16 @@ import { admitPull, api, comments, isPublication, pages, principal, pull, snapsh
 import { analyze } from './reconcile.ts';
 import { admitLane, type AdmittedLane } from './evidence.ts';
 
-function decide(report: Report, lanes: AdmittedLane[]): Decision {
+export function decide(report: Report, lanes: AdmittedLane[]): Decision {
   const findings = [...report.findings, ...lanes.flatMap(l => l.findings.filter(f => f.severity === 'blocking'))];
   const reasons = [...report.gaps, ...lanes.flatMap(l => l.gaps)];
-  if (lanes.some(l => l.findings.some(f => f.severity === 'requires-proof'))) reasons.push('Independent reviewer requires further proof');
+  if (lanes.some(l => l.findings.some(f => f.severity === 'requires-proof'))) reasons.push('Independent verifier requires further proof');
   for (const role of report.lanes) if (lanes.filter(l => l.role === role).length !== 1) reasons.push('Required independent lane unavailable');
   if (lanes.some(l => !report.lanes.includes(l.role))) reasons.push('Unexpected independent lane');
   const verifier = lanes.find(l => l.role === 'pr verifier');
   for (const feature of report.touchedFeatures) if (!verifier?.coverage.includes(feature.id)) reasons.push('Required live feature coverage unavailable');
   if (report.unmappedSurfaces.length) reasons.push('Changed user surface lacks a trusted feature recipe');
-  for (const hit of report.hardList.filter(f => f.severity === 'requires-proof')) if (!lanes.find(l => l.role === 'pr reviewer')?.risks.some(proof => sameObligation(proof, riskObligation(hit)))) reasons.push('Reviewer did not prove required risk safe');
+  for (const hit of report.hardList.filter(f => f.severity === 'requires-proof')) if (!verifier?.risks.some(proof => sameObligation(proof, riskObligation(hit)))) reasons.push('Verifier did not prove required risk safe');
   for (const claim of report.claims) {
     if (claim.resolution === 'supported') continue;
     if (claim.kind === 'feature' && verifier?.coverage.includes(claim.name)) continue;
@@ -60,7 +60,7 @@ export function dossierFromComment(value: unknown): Dossier {
 export async function statuses(repo: string, head: string): Promise<Record<string, unknown>[]> {
   return (await pages(`repos/${repo}/commits/${head}/statuses`)).map(v => object(v)).sort((a, b) => integer(b.id) - integer(a.id));
 }
-export async function publishVerdict(options: { reportFile: string; laneFiles: string[]; evidenceDirectory: string; retainCommentUrl?: string }): Promise<{ dossier: Dossier; commentUrl: string; statusId: number; mustEndTurn: true }> {
+export async function publishVerdict(options: { reportFile: string; laneFiles: string[]; evidenceDirectory: string; retainCommentUrl?: string }): Promise<{ dossier: Dossier; commentUrl: string; statusId: number }> {
   const report = parseReport(JSON.parse(readFileSync(options.reportFile, 'utf8')));
   const r = report.round;
   const current = await snapshot(r.repo, r.pr, r.configPath, r.execution === 'verdict-only');
@@ -80,12 +80,12 @@ export async function publishVerdict(options: { reportFile: string; laneFiles: s
     const oldStatus = (await statuses(r.repo, old.round.head)).find(s => s.context === 'verdict');
     if (!oldStatus || oldStatus.target_url !== options.retainCommentUrl || integer(object(oldStatus.creator).id) !== author || oldStatus.description !== 'VERIFIED by converge' || oldStatus.state !== (r.execution === 'converge' ? 'success' : 'error')) throw new Error('Retained verdict status is not authoritative');
     retainedFrom = { round: old.round.id, head: old.round.head, commentUrl: options.retainCommentUrl };
-    for (const role of report.lanes) admitted.push({ role, coverage: role === 'pr verifier' ? old.coverage : [], risks: role === 'pr reviewer' ? old.riskAdjudication : [], findings: [], gaps: [], artifacts: old.artifactIds.map(id => ({ id, path: options.retainCommentUrl ?? '', digest: old.evidenceDigest, mediaType: 'retained' })), receiptDigest: old.evidenceDigest });
+    for (const role of report.lanes) admitted.push({ role, coverage: old.coverage, risks: old.riskAdjudication, findings: [], gaps: [], artifacts: old.artifactIds.map(id => ({ id, path: options.retainCommentUrl ?? '', digest: old.evidenceDigest, mediaType: 'retained' })), receiptDigest: old.evidenceDigest });
   }
   for (const file of options.laneFiles) admitted.push(await admitLane(file, report, options.evidenceDirectory));
   const refreshed = await snapshot(r.repo, r.pr, r.configPath, r.execution === 'verdict-only');
   if (refreshed.inputDigest !== r.inputDigest) throw new Error('Inputs changed during evidence admission');
-  const dossier: Dossier = { schemaVersion: 1, round: r, decision: decide(report, admitted), reconcileDigest: jsonHash(report), evidenceDigest: jsonHash(admitted), coverage: admitted.flatMap(l => l.coverage), riskAdjudication: admitted.filter(l => l.role === 'pr reviewer').flatMap(l => l.risks), artifactIds: admitted.flatMap(l => l.artifacts.map(a => a.id)), inputFingerprint: report.inputFingerprint, retainedFrom };
+  const dossier: Dossier = { schemaVersion: 1, round: r, decision: decide(report, admitted), reconcileDigest: jsonHash(report), evidenceDigest: jsonHash(admitted), coverage: admitted.flatMap(l => l.coverage), riskAdjudication: admitted.flatMap(l => l.risks), artifactIds: admitted.flatMap(l => l.artifacts.map(a => a.id)), inputFingerprint: report.inputFingerprint, retainedFrom };
   const author = await principal();
   const body = `<!-- converge:v1 ${r.id} -->\n\`\`\`json\n${JSON.stringify(dossier, null, 2)}\n\`\`\`\n`;
   const existing = (await comments(r.repo, r.pr)).filter(c => isPublication(c, author) && string(c.body).startsWith(`<!-- converge:v1 ${r.id} -->`));
@@ -101,7 +101,7 @@ export async function publishVerdict(options: { reportFile: string; laneFiles: s
   const status = prior[0] ?? object(await api(`repos/${r.repo}/statuses/${r.head}`, { context: 'verdict', state, description, target_url: commentUrl }));
   const commentRead = object(await api(`repos/${r.repo}/issues/comments/${integer(comment.id)}`));
   if (commentRead.body !== body || integer(object(commentRead.user).id) !== author || !(await statuses(r.repo, r.head)).some(s => s.id === status.id && s.state === state && s.target_url === commentUrl && integer(object(s.creator).id) === author)) throw new Error('Publication read-back failed; recover before any other action');
-  return { dossier, commentUrl, statusId: integer(status.id), mustEndTurn: true };
+  return { dossier, commentUrl, statusId: integer(status.id) };
 }
 async function main(args: string[]): Promise<number> {
   try {

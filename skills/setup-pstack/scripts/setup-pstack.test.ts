@@ -17,11 +17,8 @@ import {
 const matrix = loadMatrix();
 
 const CLI_ONLY_ROLES: Record<string, string[]> = {
+  "pr owner": ["inherit-parent"],
   "pr verifier": ["inherit-parent"],
-  "pr reviewer": ["inherit-parent"],
-  "pr fixer, simple": ["inherit-parent"],
-  "pr fixer, complex": ["inherit-parent"],
-  "pr diagnosis pool": ["inherit-parent"],
 };
 
 function cliOnlyRoleFlags(): string[] {
@@ -99,6 +96,11 @@ describe("parseSheet", () => {
       () => parseSheet("bug-fix: grok:grok-4.6@xhigh\nbug-fix: auto\n", matrix),
       (error: unknown) => error instanceof SetupError && /duplicate role "bug-fix"/.test((error as Error).message)
     );
+  });
+
+  it("drops retired Converge roles from an existing sheet", () => {
+    const rows = parseSheet("pr reviewer: cursor:grok-4.7@high\npr fixer, simple: cursor:composer-2.5@high\npr owner: cursor:grok-4.7@high\n", matrix);
+    assert.deepEqual(rows, [{ role: "pr owner", lanes: ["cursor:grok-4.7@high"] }]);
   });
 });
 
@@ -195,12 +197,7 @@ describe("buildPlan", () => {
       opus: ["xhigh"],
       astra: ["max"],
       grok: ["xhigh"],
-      "cursor-grok": ["high", "xhigh"],
-      composer: ["high"],
-      kimi: ["high"],
-      glm: ["high"],
-      "gemini-pro": ["high"],
-      muse: ["high"],
+      "cursor-grok": ["high"],
     });
     assert.deepEqual(
       plan.pairs.map((p) => [p.family, p.pair, p.descriptor, p.route]),
@@ -210,12 +207,6 @@ describe("buildPlan", () => {
         ["astra", "astra@max", "codex:gpt-6-astra@max", "runner"],
         ["grok", "grok@xhigh", "grok:grok-4.6@xhigh", "runner"],
         ["cursor-grok", "cursor-grok@high", "cursor:grok-4.7@high", "runner"],
-        ["cursor-grok", "cursor-grok@xhigh", "cursor:grok-4.7@xhigh", "runner"],
-        ["composer", "composer@high", "cursor:composer-2.5@high", "runner"],
-        ["kimi", "kimi@high", "cursor:kimi-k3@high", "runner"],
-        ["glm", "glm@high", "cursor:glm-5.2@high", "runner"],
-        ["gemini-pro", "gemini-pro@high", "cursor:gemini-3.1-pro@high", "runner"],
-        ["muse", "muse@high", "cursor:muse-spark-1.3@high", "runner"],
       ]
     );
     const fable = plan.pairs.find((p) => p.pair === "fable@max");
@@ -365,7 +356,7 @@ describe("buildPlan", () => {
     assert.deepEqual(plan.rows.map((r) => r.role), matrix.roles.map((r) => r.role));
   });
 
-  it("keeps an old 17-role sheet's saved rows in state and materializes the five PR-phase defaults only in the plan", () => {
+  it("keeps an old 17-role sheet and materializes the two Cloud PR defaults", () => {
     putSheet("claude", oldSeventeenSheet("claude"));
     const state = loadState({ parent: "claude", home, matrix });
     assert.equal(state.exists, true);
@@ -375,7 +366,7 @@ describe("buildPlan", () => {
       matrix.roles.slice(0, 17).map((r) => r.role)
     );
     const plan = buildPlan({ parent: "claude", home, matrix });
-    assert.equal(plan.rows.length, 22);
+    assert.equal(plan.rows.length, 19);
     assert.deepEqual(lanesOf(plan, "bug-fix"), ["grok:grok-4.6@xhigh"]);
     assert.deepEqual(lanesOf(plan, "interrogate reviewers"), [
       "claude:fable@max",
@@ -383,16 +374,8 @@ describe("buildPlan", () => {
       "grok:grok-4.6@xhigh",
       "claude:opus@xhigh",
     ]);
-    assert.deepEqual(lanesOf(plan, "pr verifier"), ["cursor:composer-2.5@high"]);
-    assert.deepEqual(lanesOf(plan, "pr reviewer"), ["cursor:grok-4.7@high"]);
-    assert.deepEqual(lanesOf(plan, "pr fixer, simple"), ["cursor:composer-2.5@high"]);
-    assert.deepEqual(lanesOf(plan, "pr fixer, complex"), ["cursor:grok-4.7@xhigh"]);
-    assert.deepEqual(lanesOf(plan, "pr diagnosis pool"), [
-      "cursor:muse-spark-1.3@high",
-      "cursor:glm-5.2@high",
-      "cursor:gemini-3.1-pro@high",
-      "cursor:kimi-k3@high",
-    ]);
+    assert.deepEqual(lanesOf(plan, "pr owner"), ["cursor:grok-4.7@high"]);
+    assert.deepEqual(lanesOf(plan, "pr verifier"), ["cursor:grok-4.7@high"]);
   });
 
   it("carries the rolling-alias migrations into the plan and rewrites them in the sheet", () => {
@@ -1055,6 +1038,7 @@ function gitBare(root: string): string {
   git(root, ["clone", "--quiet", bare, work]);
   git(work, ["commit", "--allow-empty", "--quiet", "-m", "main"]);
   git(work, ["push", "--quiet", "origin", "HEAD:refs/heads/main"]);
+  git(work, ["push", "--quiet", "origin", "HEAD:refs/pull/7/head"]);
   return bare;
 }
 
