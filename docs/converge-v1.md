@@ -1,6 +1,6 @@
 # Converge v1: verificar, corrigir e fazer merge no Cloud
 
-Escopo revisado com Victor em 2026-09-23. Este é o plano vigente. Substitui a arquitetura, os papéis, o protocolo de execução e os critérios de entrega do [plano anterior](converge-plan.md). A revisão atual altera somente documentação. Implementação, testes Cloud e ativação aguardam uma instrução de execução.
+Escopo revisado com Victor em 2026-09-23. Este é o plano vigente. Substitui a arquitetura, os papéis, o protocolo de execução e os critérios de entrega do [plano anterior](converge-plan.md). A execução foi autorizada em 2026-09-23.
 
 ## Objetivo e fluxo
 
