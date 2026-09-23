@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { object, repoName, sha, string } from './contract.ts';
-import { admitPull, pull, trusted } from './github.ts';
+import { admitPull, api, pull, trusted } from './github.ts';
 import { selectCursorModel } from '../runner/http-lane.ts';
 
 type Effort = 'high' | 'xhigh';
@@ -81,6 +81,8 @@ export async function start(options: { repo: string; pr: number; toolingRef: str
     if (!key) throw new Error('CURSOR_API_KEY is unavailable for launch recovery');
     return recover(directory, key, { repo, pr: options.pr, toolingRef, effort: options.effort });
   }
+  const toolingCommit = object(await api(`repos/byvict/pstack-vic/commits/${toolingRef}`));
+  if (sha(toolingCommit.sha) !== toolingRef) throw new Error('Tooling commit does not match requested ref');
   const t = await trusted(repo, options.configPath ?? '.cursor/converge.json');
   const initial = await pull(repo, options.pr);
   admitPull(initial, t.config, initial.head);

@@ -62,6 +62,17 @@ test('uncertain launch cannot create a second owner', async t => {
   assert.equal(launches, 1);
 });
 
+test('missing tooling commit refuses launch before writing intent', async t => {
+  const f = fixture(); t.after(f.cleanup); environment(t, f);
+  f.state.invalidTooling = true; f.save();
+  const directory = join(f.directory, 'missing-tooling');
+  let requests = 0;
+  t.mock.method(globalThis, 'fetch', async () => { requests++; return Response.json({}); });
+  await assert.rejects(start({ repo: 'Example/app', pr: 1, toolingRef: 'd'.repeat(40), stateDirectory: directory, effort: 'high' }), /gh request failed/);
+  assert.equal(existsSync(join(directory, 'intent.json')), false);
+  assert.equal(requests, 0);
+});
+
 test('lost launch response recovers the one matching Cursor agent', async t => {
   const f = fixture(); t.after(f.cleanup); environment(t, f);
   const directory = join(f.directory, 'recover');
