@@ -34,9 +34,9 @@ const matrix = loadMatrix();
 // Files whose prose or frontmatter may cite a model. Anything here that names a
 // descriptor outside model-matrix.json fails the consumer test. Test files are
 // skipped: their fixtures hold deliberately invalid descriptors and legacy pins.
-const CONSUMER_DIRS = ["skills", "agents", "docs", "hooks"] as const;
+const CONSUMER_DIRS = ["skills", "agents", "docs"] as const;
 const CONSUMER_ROOT_FILES = ["README.md"] as const;
-const CONSUMER_EXTENSIONS = new Set([".md", ".json", ".mjs", ".ts", ".sh", ".cmd"]);
+const CONSUMER_EXTENSIONS = new Set([".md", ".json", ".mjs", ".ts", ".sh"]);
 const SKIP_DIRS = new Set(["node_modules", ".git"]);
 
 function walk(dir: string, out: string[]): void {

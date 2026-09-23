@@ -40,10 +40,11 @@ else
 fi
 
 # CHANGES.md, decisão 1 da fase 4: poteto-mode invoca as skills de fluxo pelo
-# modelo, então nenhuma pode carregar disable-model-invocation.
+# modelo, então nenhuma pode carregar disable-model-invocation. A exceção é o
+# próprio poteto-mode, que só o usuário liga (scripts/manifests.test.ts).
 routed_model_bad=""
 for routed_skill in "$repo"/skills/*/SKILL.md; do
-  case "$routed_skill" in */skills/principle-*) continue ;; esac
+  case "$routed_skill" in */skills/principle-*|*/skills/poteto-mode/SKILL.md) continue ;; esac
   front="$(sed -n '2,/^---$/p' "$routed_skill")"
   if printf '%s\n' "$front" | grep -q '^disable-model-invocation: true$'; then
     routed_model_bad="${routed_model_bad}${routed_skill}"$'\n'

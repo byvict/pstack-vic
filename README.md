@@ -10,7 +10,7 @@ Este port mantém a prosa da Cursor onde ela não depende da Cursor e substitui 
 
 ## Começar
 
-1. Instale o plugin por marketplace, a partir de uma tag (detalhes e opt-out do hook na [referência](docs/reference.md#instalação)):
+1. Instale o plugin por marketplace, a partir de uma tag (detalhes na [referência](docs/reference.md#instalação)):
 
    ```text
    /plugin marketplace add byvict/pstack-vic
@@ -18,12 +18,12 @@ Este port mantém a prosa da Cursor onde ela não depende da Cursor e substitui 
    ```
 
    ```shell
-   codex plugin marketplace add byvict/pstack-vic --ref v0.1.4
+   codex plugin marketplace add byvict/pstack-vic --ref v0.1.5
    codex plugin add pstack@pstack-vic
    ```
 
 2. Rode `/setup-pstack` uma vez em cada pai para escolher os modelos por papel.
-3. Use `/poteto-mode` sempre que a tarefa pedir rigor.
+3. Use `/poteto-mode` sempre que a tarefa pedir rigor. O modo só entra por esse comando; o agente não o liga sozinho.
 
 ```text
 /poteto-mode this pr has a subtle bug where the scroll drifts every 750ms even when idle. repro first, then fix and verify.
@@ -38,4 +38,4 @@ Este port mantém a prosa da Cursor onde ela não depende da Cursor e substitui 
 
 ## Licença
 
-MIT. Ver [`LICENSE`](LICENSE), [`LICENSE-open-pstack`](LICENSE-open-pstack), [`LICENSE-cursor-team-kit`](LICENSE-cursor-team-kit) e [`LICENSE-superpowers`](LICENSE-superpowers).
+MIT. Ver [`LICENSE`](LICENSE), [`LICENSE-open-pstack`](LICENSE-open-pstack) e [`LICENSE-cursor-team-kit`](LICENSE-cursor-team-kit).
