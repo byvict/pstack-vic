@@ -18,6 +18,8 @@ test('real reconcile CLI persists a fresh docs-only execution with exact check e
   assert.equal(report.claims[0].artifactFound, true);
   assert.equal(report.checks[0].head, f.state.head);
   assert.equal(f.calls().filter(call => /\/contents\/(?:tools\/run-all-tests\.js|package\.json)\?/.test(call[1] ?? '')).length, 0);
+  assert.ok(f.calls().some(call => call[1] === 'graphql' && call.includes('query=query { viewer { databaseId } }')));
+  assert.equal(f.calls().some(call => call[1] === 'user'), false);
   assert.deepEqual(JSON.parse(readFileSync(join(f.directory, 'report.json'), 'utf8')), report);
   const second = runReconcile(f, 'second.json'); assert.equal(second.status, 0, second.stderr);
   const next = JSON.parse(second.stdout);

@@ -31,7 +31,7 @@ else if (args[0] === 'api') {
       const status = { ...body, id: 200 + state.statuses.length, creator: { id: 7 } };
       state.statuses.unshift(status); save(); send(status);
     } else fail();
-  } else if (endpoint === 'user') send({ id: 7 });
+  } else if (endpoint === 'graphql') send({ data: { viewer: { databaseId: 7 } } });
   else if (endpoint === root) send({ default_branch: 'main' });
   else if (endpoint === `${root}/pulls/1`) send({ number: 1, head: { sha: state.head, ref: 'change' }, base: { ref: 'main' }, state: 'open', draft: false, body: state.body, labels: state.hold ? [{ name: 'needs-victor' }] : [], user: { id: 10, login: 'author', type: 'User' }, auto_merge: state.autoMerge ? {} : null });
   else if (endpoint === `${root}/commits/main`) send({ sha: state.trunk });

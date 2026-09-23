@@ -126,7 +126,10 @@ export interface Snapshot {
   trusted: Trusted; pull: Pull; base: string; patchId: string; diff: string; files: ChangedFile[];
   features: Feature[]; checks: Check[]; sources: TextSource[]; gaps: string[]; inputDigest: string; inputFingerprint: string; verificationDigest: string; dependencyOnly: boolean; testEvidence: TestEvidence;
 }
-export async function principal(): Promise<number> { return integer(object(await api('user')).id); }
+export async function principal(): Promise<number> {
+  const response = object(JSON.parse(await commandAsync('gh', ['api', 'graphql', '-f', 'query=query { viewer { databaseId } }'])));
+  return integer(object(object(response.data).viewer).databaseId);
+}
 export async function comments(repo: string, pr: number): Promise<Record<string, unknown>[]> {
   return (await Promise.all([pages(`repos/${repo}/issues/${pr}/comments`), pages(`repos/${repo}/pulls/${pr}/comments`)])).flat().map(v => object(v));
 }
