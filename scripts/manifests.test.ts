@@ -1,17 +1,15 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, cpSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { tmpdir } from "node:os";
 import { join, isAbsolute, resolve } from "node:path";
 import { PLUGIN_ROOT } from "./model-matrix.ts";
 
 // Fase 7: the plugin is the repository root. Four manifests describe it (Claude
-// plugin and marketplace, Codex plugin and marketplace) and one hook file
-// registers the SessionStart mandate. They must agree on name and version, point
-// at files that exist, and pass Claude Code's own strict validator when the CLI
-// is on PATH. Installation is by tag: the Claude marketplace entry pins
-// `v<version>` and the tag must match the version everywhere.
+// plugin and marketplace, Codex plugin and marketplace). They must agree on name
+// and version, point at files that exist, and pass Claude Code's own strict
+// validator when the CLI is on PATH. Installation is by tag: the Claude
+// marketplace entry pins `v<version>` and the tag must match the version everywhere.
 
 const PLUGIN_NAME = "pstack";
 const MARKETPLACE_NAME = "pstack-vic";
@@ -22,7 +20,6 @@ const claudePlugin = readJson(".claude-plugin/plugin.json");
 const claudeMarketplace = readJson(".claude-plugin/marketplace.json");
 const codexPlugin = readJson(".codex-plugin/plugin.json");
 const codexMarketplace = readJson(".agents/plugins/marketplace.json");
-const hooks = readJson("hooks/hooks.json");
 const pkg = readJson("package.json");
 
 const version: string = claudePlugin.version;
@@ -33,10 +30,6 @@ function pluginRelative(path: string, field: string): string {
   const rel = path.replace(/^\.\//, "");
   assert.ok(!rel.split("/").includes(".."), `${field} escapes the plugin root: ${path}`);
   return rel;
-}
-
-function isExecutable(rel: string): boolean {
-  return (statSync(join(PLUGIN_ROOT, rel)).mode & 0o111) !== 0;
 }
 
 function claudeCli(): string | null {
@@ -86,7 +79,7 @@ describe("plugin manifests", () => {
     assert.equal(claudeMarketplace.plugins[0].homepage, claudePlugin.homepage);
   });
 
-  it("keep the Claude manifest to the fields Claude Code knows (skills, agents and hooks load from their default paths)", () => {
+  it("keep the Claude manifest to the fields Claude Code knows (skills and agents load from their default paths)", () => {
     const allowed = new Set(["name", "displayName", "version", "description", "author", "homepage", "repository", "license", "keywords"]);
     assert.deepEqual(Object.keys(claudePlugin).filter((k) => !allowed.has(k)), []);
     for (const dir of ["skills", "agents"]) assert.ok(statSync(join(PLUGIN_ROOT, dir)).isDirectory(), `${dir}/ exists`);
@@ -120,52 +113,28 @@ describe("plugin manifests", () => {
   });
 });
 
-describe("SessionStart hook", () => {
-  const entry = hooks.hooks.SessionStart[0];
-  const command: string = entry.hooks[0].command;
+// poteto-mode is a mode the user turns on, as in the Cursor original
+// (`disable-model-invocation: true`, `mode: true`). The open-pstack SessionStart
+// hook turned it into a standing mandate for every non-trivial task, and a bug
+// fix in Fin Dash (2026-09-23) entered poteto-mode and dispatched a subagent
+// without being asked. Neither parent may enter it on its own.
+describe("poteto-mode entry", () => {
+  const frontmatter = (rel: string) => {
+    const match = readFileSync(join(PLUGIN_ROOT, rel), "utf8").match(/^---\n([\s\S]*?)\n---\n/);
+    assert.ok(match, `${rel} has frontmatter`);
+    return match[1].split("\n");
+  };
 
-  it("registers one command hook for startup, clear and compact through the polyglot runner", () => {
-    assert.equal(hooks.hooks.SessionStart.length, 1);
-    assert.equal(entry.matcher, "startup|clear|compact");
-    assert.equal(entry.hooks.length, 1);
-    assert.equal(entry.hooks[0].type, "command");
-    assert.equal(entry.hooks[0].async, false);
-    assert.equal(command, '"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd" session-start');
+  it("ships no hooks, so nothing injects a poteto-mode mandate at session start", () => {
+    assert.equal(existsSync(join(PLUGIN_ROOT, "hooks")), false);
   });
 
-  it("ships executable hook scripts", () => {
-    for (const rel of ["hooks/run-hook.cmd", "hooks/session-start"]) {
-      assert.ok(existsSync(join(PLUGIN_ROOT, rel)), `${rel} exists`);
-      assert.ok(isExecutable(rel), `${rel} is executable`);
-    }
-    assert.ok(readFileSync(join(PLUGIN_ROOT, "hooks/run-hook.cmd"), "utf8").startsWith(": << 'CMDBLOCK'"), "run-hook.cmd is the bash/cmd polyglot");
+  it("is user-invoked only in Claude Code", () => {
+    assert.ok(frontmatter("skills/poteto-mode/SKILL.md").includes("disable-model-invocation: true"));
   });
 
-  it("prints the context file byte for byte and fails cleanly without it", () => {
-    const context = readFileSync(join(PLUGIN_ROOT, "hooks/session-start-context.md"), "utf8");
-    const ok = spawnSync("bash", [join(PLUGIN_ROOT, "hooks/run-hook.cmd"), "session-start"], { encoding: "utf8", cwd: tmpdir() });
-    assert.equal(ok.status, 0, ok.stderr);
-    assert.equal(ok.stdout, context);
-
-    const scratch = mkdtempSync(join(tmpdir(), "pstack-hook-"));
-    try {
-      cpSync(join(PLUGIN_ROOT, "hooks"), join(scratch, "hooks"), { recursive: true });
-      rmSync(join(scratch, "hooks/session-start-context.md"));
-      const missing = spawnSync("bash", [join(scratch, "hooks/run-hook.cmd"), "session-start"], { encoding: "utf8", cwd: scratch });
-      assert.notEqual(missing.status, 0, "missing context file fails the hook");
-      assert.equal(missing.stdout, "", "nothing is injected when the context file is missing");
-    } finally {
-      rmSync(scratch, { recursive: true, force: true });
-    }
-  });
-
-  it("names only skills that ship, under the plugin prefix, and defers to user instructions", () => {
-    const context = readFileSync(join(PLUGIN_ROOT, "hooks/session-start-context.md"), "utf8");
-    const named = [...new Set([...context.matchAll(/`pstack:([a-z0-9-]+)`/g)].map((m) => m[1]))];
-    assert.ok(named.includes("poteto-mode"), "the mandate routes to poteto-mode");
-    const missing = named.filter((name) => !existsSync(join(PLUGIN_ROOT, "skills", name, "SKILL.md")));
-    assert.deepEqual(missing, []);
-    assert.match(context, /CLAUDE\.md, AGENTS\.md, direct requests\) take precedence/);
-    assert.match(context, /dispatched as a subagent[^.]*ignore this block/);
+  it("is explicit-only in Codex", () => {
+    const policy = readFileSync(join(PLUGIN_ROOT, "skills/poteto-mode/agents/openai.yaml"), "utf8");
+    assert.match(policy, /^policy:\n  allow_implicit_invocation: false$/m);
   });
 });

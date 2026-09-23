@@ -19,16 +19,16 @@ O plugin é a raiz deste repositório. Ele se instala por marketplace a partir d
 
 No shell, `claude plugin marketplace add byvict/pstack-vic` e `claude plugin install pstack@pstack-vic`. As skills aparecem com o prefixo do plugin (`/pstack:poteto-mode`).
 
-O hook SessionStart (`hooks/hooks.json`, em startup, `/clear` e pós-compact) injeta o mandato de `hooks/session-start-context.md`: tarefa de engenharia não trivial entra por `pstack:poteto-mode`; a skill completa só carrega quando invocada; subagents despachados ignoram o bloco; `CLAUDE.md`, `AGENTS.md` e pedidos diretos têm precedência. Para desligar o auto-fire, apague `hooks/hooks.json` da cópia instalada em `~/.claude/plugins/cache/pstack-vic/pstack/<versão>/`; a próxima atualização o restaura.
+`poteto-mode` é um modo que você liga com `/pstack:poteto-mode`. A skill tem `disable-model-invocation: true`, como no original da Cursor, então o modelo não entra nela sozinho, nem num bug fix. O plugin não registra hook. Até a 0.1.4, um hook SessionStart copiado do open-pstack mandava toda tarefa de engenharia não trivial entrar por `poteto-mode`; saiu na 0.1.5 ([`CHANGES.md`](../CHANGES.md)).
 
 ### Codex
 
 ```shell
-codex plugin marketplace add byvict/pstack-vic --ref v0.1.4
+codex plugin marketplace add byvict/pstack-vic --ref v0.1.5
 codex plugin add pstack@pstack-vic
 ```
 
-O Codex descobre as skills sob o namespace `pstack` (`pstack:poteto-mode`, `pstack:tdd`…), que vem de `.codex-plugin/plugin.json`; os `principle-*` também aparecem, porque `user-invocable: false` é do Claude Code. Não há hook no Codex: entre com `pstack:poteto-mode` pelo nome ou coloque uma instrução fixa em `~/.codex/AGENTS.md`. Para as skills que fazem fan-out (`interrogate`, `arena`, `how`, `why`, `reflect`, `architect`, `swarm`), ligue subagents em `~/.codex/config.toml`; sem isso a lane nativa do Codex vira dropout nomeado e as lanes externas seguem:
+O Codex descobre as skills sob o namespace `pstack` (`pstack:poteto-mode`, `pstack:tdd`…), que vem de `.codex-plugin/plugin.json`; os `principle-*` também aparecem, porque `user-invocable: false` é do Claude Code. `poteto-mode` só entra quando você o pede pelo nome: `skills/poteto-mode/agents/openai.yaml` desliga a invocação implícita (`allow_implicit_invocation: false`). Para as skills que fazem fan-out (`interrogate`, `arena`, `how`, `why`, `reflect`, `architect`, `swarm`), ligue subagents em `~/.codex/config.toml`; sem isso a lane nativa do Codex vira dropout nomeado e as lanes externas seguem:
 
 ```toml
 [features]
@@ -69,10 +69,10 @@ A versão do pstack-vic é independente das versões dos upstreams ([`UPSTREAM.m
 ├── .claude-plugin/                   # plugin.json (manifest do Claude Code) e marketplace.json (um plugin, fonte fixada na tag)
 ├── .codex-plugin/plugin.json         # manifest do Codex (skills: ./skills/, interface com logo)
 ├── .agents/plugins/marketplace.json  # marketplace do Codex (fonte local ./)
-├── hooks/                            # SessionStart do Claude Code: hooks.json, run-hook.cmd (polyglot), session-start, session-start-context.md
 ├── model-matrix.json                 # famílias, efforts, pais, rota por pai, papéis (dado canônico)
 ├── scripts/                          # loader/validação da matriz, render dos blocos gerados, gerador de agents, digest semanal dos upstreams, testes (inclui manifests.test.ts)
 ├── skills/                           # 54 skills compartilhadas por Claude Code e Codex
+│   ├── poteto-mode/agents/           # openai.yaml: no Codex, poteto-mode só por invocação explícita
 │   ├── poteto-mode/references/       # provider-dispatch.md (rota e papéis), codex-tools.md (mapa de tools), bugbot-triage.md
 │   ├── poteto-mode/scripts/          # runner externo (Node 24), watch-pr, orch, check-plan.mjs, worktree-audit.sh
 │   └── setup-pstack/scripts/         # setup-pstack.ts: estado, plano, probe, atestado e escrita do sheet (Node 24)
@@ -83,7 +83,6 @@ A versão do pstack-vic é independente das versões dos upstreams ([`UPSTREAM.m
 ├── LICENSE                           # pstack (Lauren Tan), MIT
 ├── LICENSE-open-pstack               # open-pstack (Eric Litman), MIT
 ├── LICENSE-cursor-team-kit           # cursor-team-kit (Cursor), MIT
-├── LICENSE-superpowers               # superpowers (Jesse Vincent), MIT: hooks/run-hook.cmd
 ├── NOTICE.md · UPSTREAM.md · CHANGES.md
 └── package.json                      # versão do plugin; npm test, matrix:check, agents:check, collision:check, upstream:digest, setup-pstack
 ```
@@ -95,7 +94,7 @@ Nada é gerado nem bifurcado por pai. Duas referências fazem a tradução em te
 - **Invocação.** O Codex carrega `SKILL.md` nativamente; não há tool `Skill`. Peça a skill pelo nome.
 - **Rota de modelos.** Quem é pai escolhe a rota. No Claude Code, Fable e Opus rodam em agents nativos e Sol, Astra e Grok no runner externo. No Codex, Sol e Astra rodam em `spawn_agent` e Fable, Opus e Grok no runner. Um filho nunca escolhe provider nem troca de rota por conta própria; lane indisponível vira dropout nomeado, nunca substituição silenciosa.
 - **Papéis.** As skills citam papéis (`arena runners`, `bug-fix`, `how explainer`…), não descritores. O default de cada papel, por pai, está na seção *Role defaults* de `provider-dispatch.md` e é o que `/setup-pstack` escreve no sheet.
-- **Auto-fire.** O hook SessionStart (`hooks/`) é só do Claude Code. No Codex, entre com `pstack:poteto-mode` pelo nome ou coloque uma instrução fixa em `~/.codex/AGENTS.md`.
+- **Entrada.** `poteto-mode` não dispara sozinho em nenhum pai: `disable-model-invocation: true` no Claude Code, `allow_implicit_invocation: false` no Codex. Entre com `/pstack:poteto-mode` ou `pstack:poteto-mode` pelo nome.
 
 ## Dependências
 
@@ -225,10 +224,10 @@ claude plugin validate --strict .   # manifest do plugin e do marketplace pelo v
 - **`skills/make-bot-ui`** — construída sobre rotinas, webhooks e UI da Cursor; não há mapeamento comum Claude Code / Codex.
 - **`automations/benny/`** — pacote dormente de automações Slack sobre o runtime de eventos da Cursor. Não registrava skills nem no original.
 - **`docs/guide/`** — tutorial de dez capítulos que ensina pstack pela UI da Cursor, sticky mode e cloud agents (2,3 MB de imagens). Leia no original em [cursor/plugins/pstack/docs/guide](https://github.com/cursor/plugins/tree/main/pstack/docs/guide); os conceitos mapeiam pela tabela de substituições de `CHANGES.md`.
-- **Sticky mode** — frontmatter `mode`/`icon`/`color`/`reminder` só da Cursor. O análogo é o hook SessionStart em `hooks/`.
+- **Sticky mode** — frontmatter `mode`/`icon`/`color`/`reminder` só da Cursor. Fica o opt-in: `poteto-mode` só entra por comando do usuário, como no original.
 - **Resto do `cursor-team-kit`** — `control-cli`/`control-ui` viraram `run`/`verify`; `verify-this` e `check-compiler-errors` duplicam built-ins; `loop-on-ci`, `review-and-ship`, `weekly-review` sobrepõem `babysit`, `fix-ci`, `make-pr-easy-to-review` e `what-did-i-get-done`; `pr-review-canvas` é UI da Cursor.
 - **`README.md` da Cursor** — substituído por um README do port; o original está no histórico (`git show 91e5b82:README.md`) e no upstream.
 
 ## Licença
 
-MIT. Quatro arquivos de licença preservados: [`LICENSE`](../LICENSE) (pstack, Lauren Tan), [`LICENSE-open-pstack`](../LICENSE-open-pstack) (open-pstack, Eric Litman), [`LICENSE-cursor-team-kit`](../LICENSE-cursor-team-kit) (Cursor; cobre `deslop`, `thermo-nuclear-code-quality-review`, `make-pr-easy-to-review`, `fix-ci`, `fix-merge-conflicts`, `get-pr-comments` e `what-did-i-get-done`) e [`LICENSE-superpowers`](../LICENSE-superpowers) (Jesse Vincent; cobre `hooks/run-hook.cmd`).
+MIT. Três arquivos de licença preservados: [`LICENSE`](../LICENSE) (pstack, Lauren Tan), [`LICENSE-open-pstack`](../LICENSE-open-pstack) (open-pstack, Eric Litman) e [`LICENSE-cursor-team-kit`](../LICENSE-cursor-team-kit) (Cursor; cobre `deslop`, `thermo-nuclear-code-quality-review`, `make-pr-easy-to-review`, `fix-ci`, `fix-merge-conflicts`, `get-pr-comments` e `what-did-i-get-done`).
