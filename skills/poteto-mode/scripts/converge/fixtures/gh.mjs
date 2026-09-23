@@ -48,7 +48,10 @@ else if (args[0] === 'api') {
   } else if (endpoint.startsWith(`${root}/compare/`)) send({ merge_base_commit: { sha: state.base } });
   else if (endpoint === `${root}/pulls/1/files`) send(state.files);
   else if (endpoint === `${root}/actions/workflows`) send({ workflows: [{ id: state.workflowId, name: 'Tests', path: '.github/workflows/tests.yml', state: 'active' }] });
-  else if (endpoint.includes('/check-runs')) send({ check_runs: state.checks.map(c => ({ ...c, head_sha: state.head })) });
+  else if (endpoint.includes('/check-runs')) {
+    if (state.requireInstallationChecks && (process.env.GH_TOKEN || process.env.GITHUB_TOKEN)) fail();
+    send({ check_runs: state.checks.map(c => ({ ...c, head_sha: state.head })) });
+  }
   else if (endpoint === `${root}/actions/workflows/${state.workflowId}/runs`) send({ workflow_runs: [{ id: 8, workflow_id: state.workflowId, head_sha: query.get('head_sha'), event: query.get('event') ?? 'pull_request', head_branch: 'main', run_attempt: 1, status: 'completed', conclusion: state.trunkRed && query.get('event') === 'push' ? 'failure' : 'success', ...state.runOverrides }] });
   else if (endpoint === `${root}/actions/runs/${state.runOverrides.id ?? 8}/attempts/${state.runOverrides.run_attempt ?? 1}/jobs`) send({ jobs: state.jobs });
   else if (endpoint === `${root}/issues/1/comments`) send(state.comments);
