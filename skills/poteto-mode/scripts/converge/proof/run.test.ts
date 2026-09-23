@@ -4,7 +4,8 @@ import { spawn } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { executionId, hash, jsonHash, type Dossier, type Report } from '../contract.ts';
+import { executionId, hash, jsonHash, parseReport, type Dossier, type Report } from '../contract.ts';
+import { fixture } from '../fixtures/setup.ts';
 import { loadCatalog, type CatalogCase, type OwnedCase } from './plant.ts';
 import { assertCatalogEntry, defaultServices, mechanismHolds, parseTurnClosure, renderSuite, runProof, type Attempt, type ProofServices, type Publication } from './run.ts';
 import { priceUsage, type CostResult } from './usage.ts';
@@ -342,6 +343,47 @@ test('a matching negative mechanism stays complete when an established defect al
   });
 });
 
+test('an admitted unavailable lane cannot complete a negative catalog proof', t => {
+  const f = fixture();
+  t.after(() => f.cleanup());
+  const entry = catalog.find(candidate => candidate.privateId === 'brief-note');
+  assert.ok(entry);
+  f.state.body = entry.natural.body;
+  f.state.files = [{ filename: 'server/main.js', status: 'modified', patch: '@@ -1 +1 @@\n-old\n+new' }];
+  f.state.diff = 'diff --git a/server/main.js b/server/main.js\nindex 1111111..2222222 100644\n--- a/server/main.js\n+++ b/server/main.js\n@@ -1 +1 @@\n-old\n+new\n';
+  f.save();
+  const reportPath = join(f.directory, 'report.json');
+  const reconciled = f.run('converge-reconcile', ['--repo', 'Example/app', '--pr', '1', '--output', reportPath]);
+  assert.equal(reconciled.status, 0, reconciled.stderr);
+  const report = parseReport(JSON.parse(reconciled.stdout));
+  assert.deepEqual(report.lanes, ['pr verifier']);
+  const directory = join(f.directory, 'verifier');
+  const prepared = f.run('prepare-lane.ts', ['--report', reportPath, '--directory', directory, '--lane', 'verifier', '--role', 'pr verifier', '--descriptor', 'codex:gpt-6-astra@high']);
+  assert.equal(prepared.status, 0, prepared.stderr);
+  const manifest = JSON.parse(readFileSync(join(directory, 'manifest.json'), 'utf8'));
+  writeFileSync(join(directory, 'output.json'), JSON.stringify({
+    schemaVersion: 1, round: report.round.id, laneId: 'verifier', role: 'pr verifier', observedHead: report.round.head,
+    observedContract: report.round.contract, kind: 'unavailable', findings: [], artifacts: [], coverage: [], riskProofs: [],
+  }));
+  writeFileSync(join(directory, 'receipt.json'), JSON.stringify({
+    schemaVersion: 1, parent: 'codex', provider: 'codex', model: 'gpt-6-astra', effort: 'high', mode: 'read-only', status: 'complete',
+    promptPath: join(directory, 'prompt.txt'), outputPath: join(directory, 'output.json'),
+    startedAt: new Date(manifest.createdAt).toISOString(), completedAt: new Date(manifest.createdAt + 1000).toISOString(),
+    modelVerified: false, modelEvidence: 'pinned-argv', reportedModel: null, remote: null,
+  }));
+  const published = f.run('publish.ts', ['--report', reportPath, '--evidence', join(f.directory, 'admitted'), '--lane', join(directory, 'manifest.json')]);
+  assert.equal(published.status, 0, published.stderr);
+  const publication = JSON.parse(published.stdout);
+  assert.deepEqual(publication.dossier.decision.reasons, ['Independent lane unavailable']);
+  const attempts: Attempt[] = [{ id: 'fixture', role: 'pr verifier', manifest: join(directory, 'manifest.json'),
+    receipt: { path: join(directory, 'receipt.json'), sha256: hash(readFileSync(join(directory, 'receipt.json'))) },
+    output: { path: join(directory, 'output.json'), sha256: hash(readFileSync(join(directory, 'output.json'))) }, result: 'complete', evidence: [] }];
+  const result = assertCatalogEntry(entry, { report, dossier: publication.dossier, commentBody: f.read().comments[0].body, attempts });
+  assert.equal(result.ok, true);
+  assert.equal(result.completePass, false);
+  assert.equal(result.reason, 'Selected independent lane evidence unavailable');
+});
+
 test('default lane service executes the persisted descriptor through the shared runner', async t => {
   const directory = mkdtempSync(join(tmpdir(), 'clinic-ops-default-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
@@ -532,6 +574,34 @@ test('runProof plants every catalog case before awaiting the first exact-head CI
     'wait:login-pitch',
   ]);
   assert.deepEqual(h.lifecycleCommandOverrides, []);
+});
+
+test('a targeted run plants one case and cannot claim the full catalog gate', async t => {
+  const h = harness(t);
+  const caseId = catalog[0].privateId;
+  const started = await runProof({
+    kind: 'start', repo: 'Clinextapp/clinext', workRoot: h.workRoot, evidenceRoot: h.evidenceRoot,
+    parent: 'claude', repositoryEpoch: h.epochPath,
+    roles: { 'pr verifier': 'cursor:composer-2.5@high', 'pr reviewer': 'cursor:grok-4.7@xhigh' },
+    pool: h.pool, ownerId: 'owner-1', caseId, services: h.services,
+  });
+  assert.equal(started.kind, 'end-turn');
+  if (started.kind !== 'end-turn' || started.publication === 'uncertain') return;
+  const envelope = JSON.parse(readFileSync(started.continuation, 'utf8'));
+  assert.deepEqual(envelope.catalogOrder, [caseId]);
+  assert.equal(loadCatalog(envelope.catalog.path).length, 10);
+  assert.deepEqual(h.events.filter(event => event.startsWith('plant:')), [`plant:${caseId}`]);
+  const closure = closureFor(started.publication, 'owner-1', envelope.runId, h.directory);
+  const finished = await runProof({ kind: 'resume', runFile: started.continuation, pool: h.pool, turnClosure: closure, services: h.services });
+  assert.equal(finished.kind, 'complete');
+  if (finished.kind !== 'complete') return;
+  assert.equal(finished.summary.targetedCase, caseId);
+  assert.equal(finished.summary.selectedPass, true);
+  assert.equal(finished.summary.completePass, false);
+  assert.equal(finished.summary.entries.length, 1);
+  assert.equal(finished.summary.costs.allCatalogIncludingHumanUpdate.kind, 'unavailable');
+  assert.match(renderSuite(finished.summary), /scope: targeted-case/);
+  assert.match(renderSuite(finished.summary), /complete-pass: no/);
 });
 
 test('resume recovers publication-uncertain without a closure and refuses to reuse a closure for a new publication', async t => {

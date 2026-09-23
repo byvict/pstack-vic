@@ -37,7 +37,7 @@ export type CaseSummary = Readonly<{
 export type SuiteSummary = Readonly<{
   entries: readonly Readonly<{ id: string; expected: string; observed: string; ok: boolean; completePass: boolean }>[];
   costs: CostSummary; wallMilliseconds: number; resources: 'all-owned-resources-closed' | 'blocked-cleanup';
-  completePass: boolean;
+  targetedCase: string | null; selectedPass: boolean; completePass: boolean;
 }>;
 type Phase =
   | Readonly<{ kind: 'preparing'; caseId: string; intent: Original | null }>
@@ -69,7 +69,7 @@ export type Envelope = Readonly<{
   phase: Phase;
 }>;
 export type RunRequest =
-  | Readonly<{ kind: 'start'; repo: string; workRoot: string; evidenceRoot: string; parent: string; repositoryEpoch: string; roles: Readonly<Record<Role, string>>; pool: string; ownerId?: string; catalog?: string; services?: ProofServices }>
+  | Readonly<{ kind: 'start'; repo: string; workRoot: string; evidenceRoot: string; parent: string; repositoryEpoch: string; roles: Readonly<Record<Role, string>>; pool: string; ownerId?: string; catalog?: string; caseId?: string; services?: ProofServices }>
   | Readonly<{ kind: 'resume'; runFile: string; pool: string; turnClosure?: TurnClosure; services?: ProofServices }>;
 export type RunBoundary =
   | Readonly<{ kind: 'end-turn'; continuation: string; publication: Publication | 'uncertain'; exitCode: 20 }>
@@ -331,9 +331,16 @@ export function mechanismHolds(entry: CatalogCase, observed: {
   const decision = observed.dossier.decision;
   const lanesComplete = observed.report.lanes.every(role => observed.attempts.some(attempt => attempt.role === role && attempt.result === 'complete'));
   const expectedNegative = expectedDisplay(expected) === 'NOT VERIFIED';
-  const proofComplete = lanesComplete && (expectedNegative || decision.reasons.length === 0);
+  const laneEvidenceUnusable = decision.reasons.some(reason =>
+    reason === 'Independent lane evidence failed admission'
+    || reason === 'Required independent lane unavailable'
+    || reason === 'Unexpected independent lane'
+    || reason === 'Independent lane unavailable');
+  const proofComplete = lanesComplete && !laneEvidenceUnusable && (expectedNegative || decision.reasons.length === 0);
   const incompleteReason = !lanesComplete
     ? 'Selected lanes incomplete'
+    : laneEvidenceUnusable
+      ? 'Selected independent lane evidence unavailable'
     : !expectedNegative && decision.reasons.length > 0
       ? 'Published dossier retains unresolved proof reasons'
       : undefined;
@@ -617,7 +624,8 @@ function costOfAttempts(attempts: readonly Attempt[], usages: readonly CostResul
 }
 
 export function renderSuite(summary: SuiteSummary): string {
-  const lines = summary.entries.map(entry => `entry ${entry.id}: expected ${entry.expected}, got ${entry.observed}, ${entry.ok ? 'ok' : 'fail'}, complete-pass ${entry.completePass ? 'yes' : 'no'}`);
+  const lines = [`scope: ${summary.targetedCase === null ? 'full-catalog' : `targeted-case ${summary.targetedCase}`}`,
+    ...summary.entries.map(entry => `entry ${entry.id}: expected ${entry.expected}, got ${entry.observed}, ${entry.ok ? 'ok' : 'fail'}, complete-pass ${entry.completePass ? 'yes' : 'no'}`)];
   const costLine = (label: string, cost: CostResult) => cost.kind === 'known'
     ? `${label}: ${formatUsd(cost.equivalentNanoUSD)} USD`
     : `${label}: unavailable (${cost.reason})`;
@@ -625,33 +633,38 @@ export function renderSuite(summary: SuiteSummary): string {
   lines.push(costLine('catalog-including-human-update', summary.costs.allCatalogIncludingHumanUpdate));
   lines.push(costLine('historical-roles', summary.costs.historicalRoles));
   lines.push(costLine('organic-evaluation', summary.costs.organicEvaluation));
-  for (const pass of summary.costs.perFullPass) lines.push(costLine('full-pass ' + pass.passId, pass.cost));
+  for (const pass of summary.costs.perFullPass) lines.push(costLine(`${summary.targetedCase === null ? 'full-pass' : 'case-pass'} ${pass.passId}`, pass.cost));
   lines.push(`wall-ms: ${summary.wallMilliseconds}`);
   lines.push(`resources: ${summary.resources}`);
+  lines.push(`selected-pass: ${summary.selectedPass ? 'yes' : 'no'}`);
   lines.push(`complete-pass: ${summary.completePass ? 'yes' : 'no'}`);
   return lines.join('\n') + '\n';
 }
 
 function finishSummary(envelope: Envelope, now: Date): SuiteSummary {
+  const fullCatalogCount = loadCatalog(envelope.catalog.path).length;
+  const targetedCase = envelope.catalogOrder.length < fullCatalogCount ? envelope.catalogOrder[0] ?? null : null;
   const perFullPass = envelope.completed.map(item => ({ passId: item.id, cost: item.cost }));
   const required = envelope.completed.filter(item => item.id !== 'anthropic-sdk').flatMap(item => [item.cost]);
   const all = envelope.completed.map(item => item.cost);
   const costs: CostSummary = {
     perFullPass,
-    requiredLanesOneToNine: combineCosts(required),
-    allCatalogIncludingHumanUpdate: combineCosts(all),
+    requiredLanesOneToNine: targetedCase === null ? combineCosts(required) : { kind: 'unavailable', reason: 'Targeted case does not cover required catalog lanes', originalEvidence: [] },
+    allCatalogIncludingHumanUpdate: targetedCase === null ? combineCosts(all) : { kind: 'unavailable', reason: 'Targeted case does not cover the full catalog', originalEvidence: [] },
     historicalRoles: { kind: 'unavailable', reason: 'Historical scoring is a separate judge run', originalEvidence: [] },
     organicEvaluation: { kind: 'unavailable', reason: 'Organic evaluation is a separate parent run', originalEvidence: [] },
   };
   const resources = envelope.completed.every(item => item.cleanup.kind === 'closed-and-deleted' || item.cleanup.kind === 'already-absent')
     ? 'all-owned-resources-closed' : 'blocked-cleanup';
   const entries = envelope.completed.map(item => ({ id: item.id, expected: item.expected, observed: item.observed, ok: item.ok, completePass: item.completePass }));
+  const selectedPass = envelope.catalogOrder.length > 0 && entries.length === envelope.catalogOrder.length
+    && entries.every(entry => entry.completePass) && resources === 'all-owned-resources-closed';
   return {
     entries,
     costs,
     wallMilliseconds: wallMs(envelope, now),
     resources,
-    completePass: entries.length === envelope.catalogOrder.length && entries.every(entry => entry.completePass) && resources === 'all-owned-resources-closed',
+    targetedCase, selectedPass, completePass: envelope.catalogOrder.length === fullCatalogCount && selectedPass,
   };
 }
 
@@ -927,7 +940,9 @@ export async function runProof(request: RunRequest): Promise<RunBoundary> {
       if (existsSync(retainedCatalogPath)) {
         if (!readFileSync(retainedCatalogPath).equals(catalogBytes)) throw new Error('Retained catalog conflicts with the selected catalog');
       } else writeFileSync(retainedCatalogPath, catalogBytes, { flag: 'wx', mode: 0o600 });
-      const catalog = loadCatalog(retainedCatalogPath);
+      const fullCatalog = loadCatalog(retainedCatalogPath);
+      const catalog = request.caseId === undefined ? fullCatalog : fullCatalog.filter(entry => entry.privateId === request.caseId);
+      if (request.caseId !== undefined && catalog.length !== 1) throw new Error('Unknown selected catalog case');
       const matrix = loadMatrix();
       if (!(request.parent in matrix.parents)) throw new Error('Unknown parent harness');
       const runId = executionId();
@@ -961,7 +976,11 @@ export async function runProof(request: RunRequest): Promise<RunBoundary> {
       envelope = parseEnvelope(JSON.parse(readFileSync(runFile, 'utf8')));
     }
     if (hash(readFileSync(envelope.catalog.path)) !== envelope.catalog.sha256) throw new Error('Retained catalog bytes changed under an active run');
-    const catalog = loadCatalog(envelope.catalog.path);
+    const fullCatalog = loadCatalog(envelope.catalog.path);
+    const catalog = fullCatalog.filter(entry => envelope.catalogOrder.includes(entry.privateId));
+    if (catalog.length !== envelope.catalogOrder.length || catalog.some((entry, index) => entry.privateId !== envelope.catalogOrder[index])) {
+      throw new Error('Selected catalog order conflicts with retained catalog');
+    }
     for (;;) {
       const phase = envelope.phase;
       if (phase.kind === 'complete') {

@@ -150,15 +150,26 @@ export function rejectWorkLabel(path: string): void {
 export function historicalPromptFor(identity: HistoricalIdentity, opaqueId: string): string {
   const worktree = `/tmp/patient-work/${opaqueId}`;
   const artifact = `artifacts/patient-work/${opaqueId}/checkout.json`;
+  const absoluteArtifact = `/opt/cursor/${artifact}`;
   return [
     `Inspect the change between ${identity.base} and ${identity.head} in ${identity.repo} for concrete defects.`,
-    `The HTTP launch context is the current carrier at ${identity.carrierHead}; record its HEAD before and after without treating it as the subject.`,
-    `Create a disposable detached worktree at ${worktree}. With successful Git commands, prove ${identity.base} is an ancestor of ${identity.head}, read back the worktree HEAD and tree, and list the ${identity.base}..HEAD diff.`,
-    'Run each carrier read, worktree add, worktree metadata read, removal, absence check, final carrier read, and artifact hash as a separate status-bearing tool call. Do not mask a failed operation with a later command. Record the ancestry exit code immediately after that operation.',
-    'For every file you may report as a finding, inspect nonempty source content inside that pinned worktree with a structured read_file/read-file/read tool call. Shell listings, counts, or Git diff do not prove source inspection. Historical pull request body is unavailable. Do not retrieve old verdict comments or other agents outputs.',
-    `Remove only ${worktree}, confirm its absence and the unchanged carrier HEAD, then write the command and result evidence to /opt/cursor/${artifact}. Compute the final artifact byte count and SHA256 after writing it.`,
-    'Do not change source, remote refs, pull requests, labels, comments, statuses, or branches. Do not delegate or change models.',
-    `Return JSON only with kind, observedHead, observedBase, observedCarrierHead, worktreeRemoved, findings, and artifacts. The artifact path must be ${artifact}.`,
+    `The HTTP launch context is the carrier at ${identity.carrierHead}. Record its HEAD before and after; the carrier is not the subject.`,
+    'Perform each operation below as its own completed, status-bearing tool call. Do not combine operations or mask a failure with a later command:',
+    '1. cd /workspace && git rev-parse HEAD',
+    `2. cd /workspace && git merge-base --is-ancestor ${identity.base} ${identity.head}; echo ancestor_exit_code=$?`,
+    `3. cd /workspace && git worktree add --detach ${worktree} ${identity.head}`,
+    `4. git -C ${worktree} rev-parse HEAD`,
+    `5. git -C ${worktree} rev-parse HEAD^{tree}`,
+    `6. git -C ${worktree} diff --name-only ${identity.base} HEAD`,
+    `7. cd /workspace && git worktree remove ${worktree}`,
+    `8. test ! -e ${worktree}`,
+    '9. cd /workspace && git rev-parse HEAD',
+    `10. sha256sum ${absoluteArtifact} after writing the artifact; this must be the final executable in its successful shell call.`,
+    `The initial and final carrier reads must both equal ${identity.carrierHead}; the ancestry marker must be ancestor_exit_code=0; the worktree HEAD must equal ${identity.head}. Create the worktree parent in an earlier separate call if needed. If the historical object is absent, fetch only that exact head into the local object store without writing a remote ref or FETCH_HEAD, then retry the worktree add in its own call.`,
+    'Between worktree add and removal, inspect nonempty source content for every file you may report as a finding with a structured read_file/read-file/read tool call using an absolute path under the worktree. If a structured read returns only a blob reference or empty content, repeat a bounded source read. A shell listing or Git diff alone is not source inspection.',
+    `After removal, write the command and result evidence to ${absoluteArtifact}, then measure its real positive byte count and lowercase SHA256. Historical pull request body is unavailable. Do not retrieve old verdict comments, other agents outputs, or unrelated local source.`,
+    'Do not change source, remote refs, pull requests, labels, comments, statuses, or branches. The named role must perform its own direct tool calls; do not delegate or change models.',
+    `Return exactly one JSON object. For a completed inspection use kind: "complete"; otherwise use kind: "unavailable" with empty findings. Include observedHead, observedBase, observedCarrierHead as full 40-character SHAs, worktreeRemoved as a boolean, findings as an array of objects {path, line, description}, and artifacts as an array of objects {path, bytes, sha256, mediaType}. Each finding path is a repo-relative file actually read; line is a nonnegative integer. The checkout artifact has path: "${artifact}", real bytes and SHA256, and mediaType: "application/json". Do not claim completion after any required operation fails.`,
   ].join('\n');
 }
 

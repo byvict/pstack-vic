@@ -856,4 +856,13 @@ test('historical prompt stays organic', () => {
   assert.equal(/\b(?:eval|benchmark|judge)\b/i.test(prompt), false);
   assert.match(prompt, /structured read_file\/read-file\/read tool call/i);
   assert.match(prompt, /every file you may report as a finding/i);
+  assert.ok(prompt.includes(`git merge-base --is-ancestor ${base} ${head}; echo ancestor_exit_code=$?`));
+  assert.ok(prompt.includes(`git -C /tmp/patient-work/0941fe3b-e5cd diff --name-only ${base} HEAD`));
+  assert.ok(prompt.includes('git -C /tmp/patient-work/0941fe3b-e5cd rev-parse HEAD^{tree}'));
+  assert.ok(prompt.includes('test ! -e /tmp/patient-work/0941fe3b-e5cd'));
+  assert.ok(prompt.includes('sha256sum /opt/cursor/artifacts/patient-work/0941fe3b-e5cd/checkout.json'));
+  assert.ok(prompt.includes('kind: "complete"'));
+  assert.ok(prompt.includes('findings as an array of objects {path, line, description}'));
+  assert.ok(prompt.includes('artifacts as an array of objects {path, bytes, sha256, mediaType}'));
+  assert.ok(prompt.includes('mediaType: "application/json"'));
 });

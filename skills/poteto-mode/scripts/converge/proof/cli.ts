@@ -26,7 +26,8 @@ export function printBoundary(boundary: RunBoundary): number {
   }
   const summary: SuiteSummary = boundary.summary;
   process.stdout.write(renderSuite(summary));
-  const failed = !summary.completePass || summary.entries.some(entry => !entry.ok || !entry.completePass) || summary.resources !== 'all-owned-resources-closed'
+  const failed = !(summary.targetedCase === null ? summary.completePass : summary.selectedPass)
+    || summary.entries.some(entry => !entry.ok || !entry.completePass) || summary.resources !== 'all-owned-resources-closed'
     || summary.costs.perFullPass.some(pass => pass.cost.kind === 'unavailable');
   return failed ? 1 : 0;
 }
@@ -52,6 +53,7 @@ async function runMain(args: string[], services?: ProofServices): Promise<number
       resume: { type: 'string' },
       'after-turn': { type: 'string' },
       catalog: { type: 'string' },
+      case: { type: 'string' },
       'owner-id': { type: 'string' },
       parent: { type: 'string' },
       'repository-epoch': { type: 'string' },
@@ -59,6 +61,7 @@ async function runMain(args: string[], services?: ProofServices): Promise<number
   });
   if (!values['pool-observation']) fail('Usage: converge-proof run --pool-observation <file> ...');
   if (values.resume) {
+    if (values.case !== undefined) fail('--case is only accepted when starting a run');
     const boundary = await runProof({
       kind: 'resume',
       runFile: values.resume,
@@ -81,6 +84,7 @@ async function runMain(args: string[], services?: ProofServices): Promise<number
     pool: values['pool-observation'],
     ownerId: values['owner-id'],
     catalog: values.catalog,
+    caseId: values.case,
     services,
   });
   return printBoundary(boundary);

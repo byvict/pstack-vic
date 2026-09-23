@@ -75,11 +75,13 @@ test('run CLI exit gate consumes the typed completePass summary field', t => {
   const base = {
     entries: [{ id: 'one', expected: 'VERIFIED', observed: 'VERIFIED', ok: true, completePass: true }],
     costs, wallMilliseconds: 1, resources: 'all-owned-resources-closed' as const,
+    targetedCase: null, selectedPass: true,
   };
   assert.equal(printBoundary({ kind: 'complete', summary: { ...base, completePass: true } }), 0);
   const costly = { ...costs, perFullPass: [{ passId: 'one', cost: { ...zero, equivalentNanoUSD: 814_303_000n } }] };
   assert.equal(printBoundary({ kind: 'complete', summary: { ...base, costs: costly, completePass: true } }), 0);
   assert.equal(printBoundary({ kind: 'complete', summary: { ...base, completePass: false } }), 1);
+  assert.equal(printBoundary({ kind: 'complete', summary: { ...base, targetedCase: 'one', completePass: false } }), 0);
 });
 
 test('launcher prints usage on an unknown command', () => {

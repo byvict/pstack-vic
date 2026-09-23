@@ -133,15 +133,17 @@ Os comandos usam Node 24, `gh` e `git`, sem checkout local do repositório alvo.
 O harness de prova D é `converge-proof`. Ele planta PRs descartáveis a partir de um catálogo pai, chama C em `verdict-only` e pontua papéis cegos no corpus histórico. Não há um segundo redutor: o publicador de C continua sendo o único autor do comentário e do status.
 
 ```shell
-node skills/poteto-mode/scripts/converge/converge-proof run --repo Clinextapp/clinext --work-root <checkout-isolado> --evidence <privado> --pool-observation <auditoria-root> --repository-epoch <epoch-root> --parent codex --verifier cursor:composer-2.5@high --reviewer cursor:grok-4.7@high
+node skills/poteto-mode/scripts/converge/converge-proof run --repo Clinextapp/clinext --work-root <checkout-isolado> --evidence <privado> --pool-observation <auditoria-root> --repository-epoch <epoch-root> --parent codex --verifier cursor:composer-2.5@high --reviewer cursor:grok-4.7@xhigh
 # exit 20; JSON kind=end-turn com continuation e publicação ou uncertain
 node skills/poteto-mode/scripts/converge/converge-proof run --resume <run.json> --after-turn <observacao-do-host> --pool-observation <auditoria-root>
-node skills/poteto-mode/scripts/converge/converge-proof judge --repo Clinextapp/clinext --work-root <patient-work> --evidence <privado> --pool-observation <auditoria-root> --carrier-pr <numero> --carrier-head <sha> --parent codex --verifier cursor:composer-2.5@high --reviewer cursor:grok-4.7@high
+node skills/poteto-mode/scripts/converge/converge-proof judge --repo Clinextapp/clinext --work-root <patient-work> --evidence <privado> --pool-observation <auditoria-root> --carrier-pr <numero> --carrier-head <sha> --parent codex --verifier cursor:composer-2.5@high --reviewer cursor:grok-4.7@xhigh
 ```
 
 `run` avança um caso até a publicação e devolve `end-turn`. O dono da publicação envia a mensagem final naquele turno. O host raiz retém o handle nativo, observa o evento terminal real, grava owner + turno + fronteira + identidade da publicação, e só então dispara o turno seguinte com `--after-turn`. Reinício de processo, UUID, atraso ou o próprio dono atestando o turno anterior não fecham o turno. Estados `preparing`, `collecting` e `publication-uncertain` retomam sem essa observação. Se a recuperação chama o publicador de C e ele devolve `mustEndTurn`, aquele turno também termina. Uma closure não autoriza uma publicação nova nem a limpeza que viria depois.
 
 A retomada final, depois da última limpeza, imprime dez linhas `entry <id>: expected <veredito>, got <veredito>, ok, complete-pass yes|no` e os totais de custo. Exit 0 exige `complete-pass yes` em cada entrada, as lanes selecionadas, a limpeza das refs próprias e custos mensuráveis. `CI-only` é o `displayResult` de docs; o veredito de máquina segue `VERIFIED`. O bump de dependência autorado por humano permanece humano e em modo full.
+
+Para uma prova direcionada, acrescente `--case <id-do-catálogo>` somente ao comando inicial de `run`. O catálogo original inteiro é retido com seu hash, mas apenas esse caso é plantado e executado. O resumo distingue `selected-pass` de `complete-pass`: um caso pode passar sem comprovar o catálogo de dez nem o limite de 90 minutos da rodada integral.
 
 A limpeza confirma repo/PR/ref/head, checkout/origin, o hold, auto-merge desligado, leitores remotos terminais e o epoch exclusivo emitido pelo root. Ela fecha o PR, lê de volta o estado `CLOSED` e executa `git -C <work-root> push origin --delete <ref>` depois de uma leitura imediata do head remoto. Head que se moveu, PR `MERGED`, dono ambíguo ou recusa do guard mantêm a branch e relatam limpeza bloqueada. O hook de force não é alterado.
 
