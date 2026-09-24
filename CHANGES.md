@@ -510,3 +510,56 @@ O passo 3 da implantação da 0.1.9 chamou o npm do Node 24.19.0 pelo caminho co
 ## Verificação
 
 - O teste novo falhou antes da correção, apontando as duas linhas (`SKILL.md:79` e o passo 3 do spec). Depois dela, `npm test` dá 411 testes, 0 falhas.
+
+# 0.1.11 — Três pontos de contato medidos; a sonda do claude autentica como a lane real (2026-09-24)
+
+A primeira execução da rotina `pstack-vic-cli-updates` (2026-09-24, pasta `2026-09-24T19-56-56Z`) sugeriu três pontos de contato que a lista não tinha. Cada um foi medido nas versões instaladas antes de entrar.
+
+## O que foi medido
+
+- **`codex.daemon` (codex 0.156.1).** A 0.156.0 trouxe um servidor local compartilhado (#46117 início automático opt-in, #46088 `--no-daemon`, #45546, #44870). O `--no-daemon` existe só no TUI; o `codex exec --help` não o tem. Um `codex exec --ephemeral` real abriu HTTPS direto do próprio processo, não criou `~/.codex/app-server-control/app-server-control.sock` e não gravou rollout em `~/.codex/sessions`. As sondas da rotina também não gravaram rollout.
+- **`grok.headless-timeout` (grok 1.0.41).** O "headless prompts now time out cleanly" da 1.0.25 é um `prompt_ack_timeout`: vale quando o agente não reconhece o prompt. `GROK_PROMPT_ACK_TIMEOUT_SECS=0.01` não o dispara no headless. O que pode encerrar um turno longo é o idle do stream de inferência, `models.inference_idle_timeout_secs`, 600 s por padrão (o texto do binário e a 1.0.39). Comandos de 150 s e de 300 s não contaram como idle.
+- **`grok.terminal-background` (grok 1.0.41).** Lanes com o argv do runner (read-only) rodaram `sleep N; echo <marcador>`:
+  - 45 s: primeiro plano, `timed_out: false`, saída no mesmo turno. O corte de ~15 s da 1.0.22 não vale no headless.
+  - 150 s: o modelo pediu `timeout: 180000` na chamada, e a saída voltou no mesmo turno.
+  - 330 s: o modelo pediu 360000 e depois 420000, e o grok matou o comando aos 300 s nas duas vezes (`exit: killed (timeout)`, `timed_out: true`). O comando não foi para segundo plano. O modelo repetiu o comando até a lane ser encerrada à mão aos 638 s.
+
+## Desenho
+
+- Os três entram com `coveredBy: []`. A sugestão da rotina era `read`/`write` para o codex e `write` para o grok, mas nenhuma sonda exercita o contrato. As sondas passam do mesmo jeito se o `exec` for por um daemon, e a lane `write` roda só um `ls`. Com a lista vazia, uma nota que mude um desses contratos segura a atualização em vez de passar pela sonda.
+- Os ponteiros apontam para o que depende do contrato: `"--ephemeral"` no argv do codex, "The runner and its preflight have no implicit timeout." em `provider-dispatch.md` e `grokTools`, a lista de ferramentas que não tem como esperar uma tarefa em segundo plano.
+- Versão nova porque a rotina lê a lista do plugin instalado.
+
+## Achado para depois
+
+Numa lane grok, um único comando que passe de 300 s é morto, e o modelo repete o mesmo comando. Uma suíte de testes longa numa lane de implementação cai nesse caso. O teto vem de `toolset.bash.max_timeout_secs`, que é config do usuário no grok. Este release não muda o runner.
+
+## A sonda do claude e o token das lanes
+
+Desde 2026-09-24, o `~/.zshenv` de Victor exporta `CLAUDE_CODE_OAUTH_TOKEN` (um setup-token) nos shells não interativos. O Codex roda comandos com `/bin/zsh -lc`, e o `childEnvironment` do runner passa a variável adiante. Então toda lane claude sob um pai Codex real autentica pelo token. Já a sonda, ao simular o pai Codex, removia todo `CLAUDE_CODE_*`, o token incluído. Assim a lane claude da sonda autenticava pelo Keychain.
+
+Medido no codex 0.156.1 e no claude 2.1.281, com um `sh` que imprime `CODEX_SANDBOX`, o exit do `security find-generic-password -s "Claude Code-credentials"` e só o comprimento do token:
+
+| Onde a lane roda | seatbelt | Keychain | token |
+| --- | --- | --- | --- |
+| pai `codex exec` padrão desta máquina (`default_permissions = ":danger-full-access"`) | não | 0 | 108 |
+| pai `codex exec --sandbox workspace-write` com rede e `~/.grok`, como `docs/reference.md` manda | sim | 0 | 108 |
+| pai `codex exec -c default_permissions=":workspace"` | sim | 44 | 108 |
+| embrulho da sonda (`codex sandbox -c sandbox_mode="workspace-write" ...`) | sim | 0 | removido |
+
+Nos três pais reais o token chegou mesmo tirado do ambiente do `codex`, porque o `zsh` lê o `.zshenv`. `claude auth status --json` sob o embrulho da sonda dá `claude.ai` sem o token e `oauth_token` com ele. Sob `codex sandbox -P :workspace` dá `loggedIn: false` sem o token e `oauth_token` com ele. O perfil `:workspace` puro também corta a rede, e uma lane claude real ali cai com `ENOTFOUND` mesmo autenticada. Não é uma configuração de pai que o runner suporte.
+
+### Desenho
+
+- `probe-lane.ts` mantém `CLAUDE_CODE_OAUTH_TOKEN` quando simula o pai Codex e continua removendo `CLAUDECODE` e o resto de `CLAUDE_CODE_*`. O token é credencial, não identidade, e tem precedência sobre o login do Keychain. Com ele, a sonda autentica pelo mesmo caminho da lane real. Sem ele no ambiente, nada muda.
+- `SEATBELT_FLAGS` fica como está. O embrulho reproduz o pai documentado: os dois alcançam o Keychain, e com o token o Keychain deixa de decidir a autenticação.
+- O contrato `claude.identity-env` passa a nomear a exceção e ganha um ponteiro para `LANE_CREDENTIAL`.
+
+### Verificação da sonda
+
+- Teste primeiro: os testes de ambiente de `probe-lane.test.ts` e de `update-clis.test.ts` passam um `CLAUDE_CODE_OAUTH_TOKEN` falso e exigem que ele chegue à CLI. Os dois falharam antes da correção e passaram depois. O valor falso sobrescreve o token real do ambiente do teste, que assim não vai para o dump.
+- `runProbeLane` real (claude, `claude-opus-5-5@low`, read-only, pai Codex simulado) sob o embrulho da sonda: passa com e sem o token. Sob `-P :workspace`: sem o token cai em `unauthenticated`; com ele o preflight passa e a chamada cai por falta de rede.
+
+## Verificação
+
+- `npm test`: todos os testes passam. Os ponteiros novos acham as âncoras.

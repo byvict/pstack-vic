@@ -72,6 +72,15 @@
       "measuredOn": "0.155.1"
     },
     {
+      "id": "codex.daemon",
+      "cli": "codex",
+      "kind": "lane",
+      "contract": "`codex exec` runs the turn in its own process: it neither connects to the shared app-server daemon nor starts one, and `--ephemeral` writes no rollout under `~/.codex/sessions`. Only the TUI takes `--no-daemon`",
+      "pointers": [{ "file": "skills/poteto-mode/scripts/runner/commands.ts", "anchor": "\"--ephemeral\"," }],
+      "coveredBy": [],
+      "measuredOn": "0.156.1"
+    },
+    {
       "id": "codex.plugin-manifest",
       "cli": "codex",
       "kind": "harness",
@@ -207,6 +216,24 @@
       "measuredOn": "1.0.5"
     },
     {
+      "id": "grok.headless-timeout",
+      "cli": "grok",
+      "kind": "lane",
+      "contract": "a headless turn has no wall-clock limit of its own: grok ends it early only when the model's stream stalls (`models.inference_idle_timeout_secs`, 600 s by default), and a tool call that runs for minutes does not count as idle. The runner sets no limit unless `--timeout` is passed",
+      "pointers": [{ "file": "skills/poteto-mode/references/provider-dispatch.md", "anchor": "The runner and its preflight have no implicit timeout." }],
+      "coveredBy": [],
+      "measuredOn": "1.0.41"
+    },
+    {
+      "id": "grok.terminal-background",
+      "cli": "grok",
+      "kind": "lane",
+      "contract": "in headless, `run_terminal_cmd` keeps a command in the foreground and returns its output in the same turn; nothing moves it to the background after ~15 s. The model sets each call's timeout (it asked 180 s for a 150 s command) and grok caps it at 300 s (`toolset.bash.max_timeout_secs`): past the cap the command is killed (`timed_out: true`), not backgrounded, and the model retries it. The lane's tool list has no tool that waits on a background task",
+      "pointers": [{ "file": "skills/poteto-mode/scripts/runner/commands.ts", "anchor": "function grokTools" }],
+      "coveredBy": [],
+      "measuredOn": "1.0.41"
+    },
+    {
       "id": "claude.print-argv",
       "cli": "claude",
       "kind": "lane",
@@ -249,10 +276,11 @@
       "id": "claude.identity-env",
       "cli": "claude",
       "kind": "lane",
-      "contract": "a nested `claude -p` starts as a fresh session once the parent's identity variables (`CLAUDECODE`, `CLAUDE_CODE_*`) are gone",
+      "contract": "a nested `claude -p` starts as a fresh session once the parent's identity variables (`CLAUDECODE`, `CLAUDE_CODE_*`) are gone; `CLAUDE_CODE_OAUTH_TOKEN` is a credential, not identity, and outranks the keychain login (`auth status` reports `authMethod: oauth_token`)",
       "pointers": [
         { "file": "skills/poteto-mode/scripts/runner/run.ts", "anchor": "const CLAUDE_IDENTITY" },
-        { "file": "skills/poteto-mode/scripts/runner/probe-lane.ts", "anchor": "const CLAUDE_CODE_IDENTITY" }
+        { "file": "skills/poteto-mode/scripts/runner/probe-lane.ts", "anchor": "const CLAUDE_CODE_IDENTITY" },
+        { "file": "skills/poteto-mode/scripts/runner/probe-lane.ts", "anchor": "const LANE_CREDENTIAL" }
       ],
       "coveredBy": ["read"],
       "measuredOn": "2.1.281"

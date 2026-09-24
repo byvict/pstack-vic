@@ -1005,7 +1005,7 @@ describe("probe", () => {
     const machine = fakeMachine();
     withSheets(machine, { claude: CLAUDE_SHEET, codex: CODEX_SHEET });
     const dump = join(root, `claude-env-${machineCount}.json`);
-    const { code, value } = await probeRun(machine, "claude", { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "s", FAKE_ENV_DUMP: dump });
+    const { code, value } = await probeRun(machine, "claude", { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "s", CLAUDE_CODE_OAUTH_TOKEN: "fake-token", FAKE_ENV_DUMP: dump });
     assert.equal(code, 0, JSON.stringify(value, null, 2));
     assert.deepEqual(laneRows(value), [
       ["read", "opus@xhigh", "passed"],
@@ -1016,6 +1016,7 @@ describe("probe", () => {
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     assert.equal(seen.CLAUDECODE, undefined);
     assert.equal(seen.CLAUDE_CODE_SESSION_ID, undefined);
+    assert.equal(seen.CLAUDE_CODE_OAUTH_TOKEN, "fake-token");
   });
 
   it("fails the manifest lane when the validate test was skipped or failed", async () => {
