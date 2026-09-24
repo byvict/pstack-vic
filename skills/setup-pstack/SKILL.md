@@ -35,9 +35,9 @@ Use the harness and tool surface running this skill: Claude Code (`--parent clau
 node scripts/setup-pstack.ts state --parent <parent>
 ```
 
-The JSON says whether the parent's sheet exists (`exists`), its path, the normalized rows, the rolling-alias `migrations` it applied in memory (a provider-qualified Claude model whose component starts with `claude-fable-` or `claude-opus-` followed by digits and hyphens becomes `fable` or `opus`, preserving provider, effort, role, and lane order), and one `efforts` entry per matrix family with its `status`, the distinct `efforts` in use, and the `rows` that use them. A family's status is `current` (every lane of the family shares one effort), `mixed` (its lanes use two or more efforts; a valid sheet, not a conflict), `unassigned` (first run: the matrix Default effort is proposed), or `outside-map` (no role uses the family, so no effort can persist for it; Sol is outside the first-run map by the 2026-09-17 decision).
+The JSON says whether the parent's sheet exists (`exists`), its path, the normalized rows, the `migrations` it applied in memory (old Fable revisions become `fable`; `opus` and old Opus revisions become `claude-opus-5-5`; `gpt-5.6-sol` becomes `gpt-6-sol`, preserving provider, effort, role, and lane order), and one `efforts` entry per matrix family with its `status`, the distinct `efforts` in use, and the `rows` that use them. A family's status is `current` (every lane of the family shares one effort), `mixed` (its lanes use two or more efforts; a valid sheet, not a conflict), `unassigned` (first run: the matrix Default effort is proposed), or `outside-map` (no role uses the family, so no effort can persist for it; Sol is outside the first-run map by the 2026-09-17 decision).
 
-The script stops on inconsistent state: an unknown or duplicate role row, a bare host-native slug, a versioned Claude model outside the two migration families, a provider/model pair outside the matrix, or an effort outside the family's Selectable efforts. Show the error verbatim and resolve it with the operator before going on. Do not probe or write while any inconsistency is unresolved.
+The script stops on inconsistent state: an unknown or duplicate role row, a bare host-native slug, an unregistered Claude model, a provider/model pair outside the matrix, or an effort outside the family's Selectable efforts. Show the error verbatim and resolve it with the operator before going on. Do not probe or write while any inconsistency is unresolved.
 
 ### 3. Show the map as a table, then ask only for the roles that change
 
@@ -52,7 +52,7 @@ When the operator chose "Change roles" without typing lanes, ask which roles in 
 
 A panel role (a list) gets one question instead of two: the current lanes as the "(keep)" option, the parent's matrix default panel when it differs, and "Other" for a typed list of descriptors, one per lane, in the order they should run. Explain that one lane runs per entry and that the list length is the fan-out count.
 
-Each lane keeps the effort written in its descriptor, so `bug-fix: codex:gpt-5.6-sol@xhigh` next to `hillclimb: codex:gpt-5.6-sol@high` is a valid map; there is no per-family effort question. A role that brings a family into the map carries that family's effort in its answer. Why and Reflect roles need the parent's live MCP surface, so recommend `inherit-parent` or `auto` for them in the question.
+Each lane keeps the effort written in its descriptor, so `bug-fix: codex:gpt-6-sol@xhigh` next to `hillclimb: codex:gpt-6-sol@high` is a valid map; there is no per-family effort question. A role that brings a family into the map carries that family's effort in its answer. Why and Reflect roles need the parent's live MCP surface, so recommend `inherit-parent` or `auto` for them in the question.
 
 ### 4. Collect the changes
 
@@ -90,7 +90,7 @@ node scripts/setup-pstack.ts attest --dir <dir> --pair <family>@<effort> --obser
 
 ### 7. Confirm and commit
 
-Show any rolling-alias migrations as original and normalized descriptors. Show the route table for this parent and every rendered row from `plan.json`. Say when `inherit-parent` or `auto` reduces a panel's provider diversity. Why and Reflect require the parent's live MCP surface; keep their roles on `inherit-parent` or `auto`, because the bounded external runner deliberately omits ambient MCPs. For panel roles, one lane runs per entry and the list length is the fan-out count. `arena cross-judge pool` is a list from which Arena chooses a provider different from the parent and base candidate when possible. `swarm workers` is the default for every worker unless a race explicitly assigns another descriptor.
+Show any model migrations as original and normalized descriptors. Show the route table for this parent and every rendered row from `plan.json`. Say when `inherit-parent` or `auto` reduces a panel's provider diversity. Why and Reflect require the parent's live MCP surface; keep their roles on `inherit-parent` or `auto`, because the bounded external runner deliberately omits ambient MCPs. For panel roles, one lane runs per entry and the list length is the fan-out count. `arena cross-judge pool` is a list from which Arena chooses a provider different from the parent and base candidate when possible. `swarm workers` is the default for every worker unless a race explicitly assigns another descriptor.
 
 Ask for confirmation. After the operator confirms:
 
@@ -137,11 +137,11 @@ why investigators: inherit-parent
 why synthesizer: inherit-parent
 reflect tooling: inherit-parent
 reflect judgment, divergent, synthesizer: inherit-parent
-arena runners: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:opus@xhigh
-arena cross-judge pool: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:opus@xhigh
+arena runners: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:claude-opus-5-5@xhigh
+arena cross-judge pool: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:claude-opus-5-5@xhigh
 swarm workers: grok:grok-4.6@xhigh
-architect runners: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:opus@xhigh
-interrogate reviewers: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:opus@xhigh
+architect runners: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:claude-opus-5-5@xhigh
+interrogate reviewers: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:claude-opus-5-5@xhigh
 pr owner: cursor:grok-4.7@high
 pr verifier: cursor:grok-4.7@high
 ```
@@ -165,11 +165,11 @@ why investigators: inherit-parent
 why synthesizer: inherit-parent
 reflect tooling: inherit-parent
 reflect judgment, divergent, synthesizer: inherit-parent
-arena runners: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:opus@xhigh
-arena cross-judge pool: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:opus@xhigh
+arena runners: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:claude-opus-5-5@xhigh
+arena cross-judge pool: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:claude-opus-5-5@xhigh
 swarm workers: grok:grok-4.6@xhigh
-architect runners: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:opus@xhigh
-interrogate reviewers: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:opus@xhigh
+architect runners: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:claude-opus-5-5@xhigh
+interrogate reviewers: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:claude-opus-5-5@xhigh
 pr owner: cursor:grok-4.7@high
 pr verifier: cursor:grok-4.7@high
 ```

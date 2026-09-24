@@ -123,8 +123,8 @@ const ROLLING_ALIAS_RE = /^claude-(fable|opus)-[0-9]+(-[0-9]+)*$/;
 
 /**
  * Validate one lane against the matrix. Aliases pass through. A descriptor
- * whose Claude model is a versioned predecessor of a rolling alias
- * (`claude-fable-5-1`, `claude-opus-5`) is migrated to the alias and the
+ * whose Claude model is an old revision (`claude-fable-5-1`,
+ * `claude-opus-5`) is migrated to the configured family model and the
  * original recorded. Anything else that is not `<provider>:<model>@<effort>`
  * for a matrix family with a selectable effort is inconsistent state.
  */
@@ -136,9 +136,21 @@ export function normalizeLane(text: string, matrix: ModelMatrix): NormalizedLane
   }
   let model = descriptor.model;
   let migratedFrom: string | null = null;
-  const rolling = ROLLING_ALIAS_RE.exec(model);
-  if (descriptor.provider === "claude" && rolling) {
-    model = rolling[1];
+  const exact = familyFor(matrix, descriptor);
+  if (exact === null && descriptor.provider === "claude") {
+    const rolling = ROLLING_ALIAS_RE.exec(model);
+    if (rolling) {
+      model = rolling[1] === "opus"
+        ? familyNamed(matrix, "opus")?.model ?? model
+        : rolling[1];
+      migratedFrom = text;
+    } else if (model === "opus") {
+      model = familyNamed(matrix, "opus")?.model ?? model;
+      migratedFrom = text;
+    }
+  }
+  if (exact === null && descriptor.provider === "codex" && model === "gpt-5.6-sol") {
+    model = familyNamed(matrix, "sol")?.model ?? model;
     migratedFrom = text;
   }
   const family = familyFor(matrix, { provider: descriptor.provider, model });
@@ -383,7 +395,7 @@ export function buildPlan(input: PlanInput): Plan {
     if (lanes.length === 0) fail(`role ${JSON.stringify(role)} needs at least one lane`);
     const normalized = lanes.map((lane) => {
       const result = normalizeLane(lane, matrix);
-      if (result.migratedFrom !== null) fail(`${JSON.stringify(lane)}: write the rolling alias, not a versioned model`);
+      if (result.migratedFrom !== null) fail(`${JSON.stringify(lane)}: write the configured model, not a legacy descriptor`);
       return result.lane;
     });
     rows = rows.map((r) => (r.role === role ? { role, lanes: normalized } : r));

@@ -408,3 +408,16 @@ Duas mudanças do port somavam para isso. Na Cursor 0.15.2, `poteto-mode` tem `d
 2. **As outras skills de fluxo continuam invocáveis pelo modelo.** A decisão 1 da fase 4 vale para elas: `poteto-mode` as roteia pelo modelo. Só o ponto de entrada muda.
 3. **Commits futuros do open em `hooks/` aparecem no digest como "ausente aqui"**. O teste `ships no hooks` de `scripts/manifests.test.ts` falha se um deles for aplicado sem rever esta decisão.
 4. **Versão 0.1.5**: muda o comportamento de todas as sessões com o plugin instalado.
+
+# 0.1.6 — Sol no GPT-6, Opus fixado, Grok 4.7 na CLI (2026-09-23)
+
+## Desenho
+
+- A família `sol` passa a rodar `codex:gpt-6-sol`. O `setup-pstack` migra lanes `codex:gpt-5.6-sol` de sheets antigos para o modelo novo e recusa o descriptor legado num `--role`.
+- A família `opus` fixa `claude-opus-5-5` em vez do alias rolante `opus`: o modelo da matriz, os cinco agents `pstack-opus-*` e o `reportedModel` (`^claude-opus-5-5$`). Descriptors `claude:opus` e versões antigas `claude-opus-*` migram para `claude:claude-opus-5-5`.
+- Nova família CLI `grok-4-7` (`grok:grok-4.7`, low a xhigh, default xhigh). `cursor-grok` passa a ter default xhigh; as roles `pr owner` e `pr verifier` do Converge v1 continuam em `cursor-grok@high`.
+- `docs/converge-plan.md` vira histórico e aponta para `docs/converge-v1.md`.
+
+## Verificação
+
+- `npm test`: 310 testes, 0 falhas. `matrix:check`, `agents:check`, `collision:check` e `claude plugin validate --strict .` verdes.

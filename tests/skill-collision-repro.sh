@@ -132,14 +132,13 @@ else
   note "ok: the Claude manifest has no logo field"
 fi
 
-# A configuração ativa usa os aliases móveis de Fable e Opus (a matriz é a fonte;
-# npm test cobre os descritores). Aqui só o grep barato por pin de revisão. Testes
-# ficam de fora: setup-pstack.test.ts exercita a migração desses pins de propósito.
+# Fable usa o alias móvel; Opus fixa 5.5 na matriz. Testes ficam de fora:
+# setup-pstack.test.ts exercita a migração de pins antigos de propósito.
 legacy_model_pins="$(
   grep -REn \
     --include='*.md' --include='*.ts' --include='*.sh' \
-    --exclude='*.test.ts' \
-    'claude:claude-(fable|opus)-[0-9]|^model: claude-(fable|opus)-[0-9]|--model claude-(fable|opus)-[0-9]' \
+    --exclude='*.test.ts' --exclude='skill-collision-repro.sh' \
+    'claude:claude-fable-[0-9]|^model: claude-fable-[0-9]|--model claude-fable-[0-9]|claude:claude-opus-5@|^model: claude-opus-5$|--model claude-opus-5([[:space:]]|$)' \
     "$repo/skills" "$repo/agents" "$repo/docs" "$repo/tests" "$repo/README.md" \
     2>/dev/null || true
 )"
@@ -147,17 +146,17 @@ standalone_code_pins="$(
   grep -REn \
     --include='*.ts' --include='*.js' --include='*.mjs' \
     --exclude='*.test.ts' --exclude='*.test.js' \
-    "['\"]claude-(fable|opus)-[0-9]" \
+    "['\"]claude-fable-[0-9]" \
     "$repo/skills" "$repo/scripts" \
     2>/dev/null || true
 )"
 if [ -n "$legacy_model_pins" ] || [ -n "$standalone_code_pins" ]; then
-  note "FAIL: active Fable or Opus configuration still pins a model revision:"
+  note "FAIL: active configuration pins Fable or still selects Opus 5:"
   [ -z "$legacy_model_pins" ] || note "$legacy_model_pins"
   [ -z "$standalone_code_pins" ] || note "$standalone_code_pins"
   fail=1
 else
-  note "ok: active Fable and Opus configuration uses rolling aliases"
+  note "ok: Fable uses its alias and Opus 5.5 is the registered pin"
 fi
 
 canon="$repo/skills/poteto-mode/references/bugbot-triage.md"

@@ -83,7 +83,7 @@ describe("parseSheet", () => {
     assert.deepEqual(rows[0], { role: "feature, refactoring", lanes: ["grok:grok-4.6@xhigh"] });
     assert.deepEqual(
       rows.find((r) => r.role === "arena runners")?.lanes,
-      ["claude:fable@max", "codex:gpt-6-astra@max", "grok:grok-4.6@xhigh", "claude:opus@xhigh"]
+      ["claude:fable@max", "codex:gpt-6-astra@max", "grok:grok-4.6@xhigh", "claude:claude-opus-5-5@xhigh"]
     );
   });
 
@@ -111,8 +111,20 @@ describe("normalizeLane", () => {
       migratedFrom: "claude:claude-fable-5-1@max",
     });
     assert.deepEqual(normalizeLane("claude:claude-opus-5@xhigh", matrix), {
-      lane: "claude:opus@xhigh",
+      lane: "claude:claude-opus-5-5@xhigh",
       migratedFrom: "claude:claude-opus-5@xhigh",
+    });
+    assert.deepEqual(normalizeLane("claude:opus@xhigh", matrix), {
+      lane: "claude:claude-opus-5-5@xhigh",
+      migratedFrom: "claude:opus@xhigh",
+    });
+    assert.deepEqual(normalizeLane("claude:claude-opus-5-5@xhigh", matrix), {
+      lane: "claude:claude-opus-5-5@xhigh",
+      migratedFrom: null,
+    });
+    assert.deepEqual(normalizeLane("codex:gpt-5.6-sol@xhigh", matrix), {
+      lane: "codex:gpt-6-sol@xhigh",
+      migratedFrom: "codex:gpt-5.6-sol@xhigh",
     });
     assert.deepEqual(normalizeLane("grok:grok-4.6@xhigh", matrix), {
       lane: "grok:grok-4.6@xhigh",
@@ -125,6 +137,21 @@ describe("normalizeLane", () => {
     for (const bad of ["fable@max", "grok-4.6-fast-xhigh", "claude:claude-sonnet-4@max", "claude:gpt-6-astra@max", "grok:grok-4.6@turbo"]) {
       assert.throws(() => normalizeLane(bad, matrix), SetupError, bad);
     }
+  });
+});
+
+describe("Grok 4.7 selection", () => {
+  it("offers 4.7 without assigning it and preserves 4.6 when a role selects 4.7", () => {
+    putSheet("codex", firstRunSheet("codex"));
+    const state = loadState({ parent: "codex", home, matrix });
+    assert.deepEqual(state.efforts["grok-4-7"], { status: "outside-map", efforts: ["xhigh"], rows: [] });
+    const plan = buildPlan({ parent: "codex", home, matrix, roles: { "bug-fix": ["grok:grok-4.7@xhigh"] } });
+    assert.deepEqual(lanesOf(plan, "bug-fix"), ["grok:grok-4.7@xhigh"]);
+    assert.deepEqual(lanesOf(plan, "swarm workers"), ["grok:grok-4.6@xhigh"]);
+    const pair = plan.pairs.find((p) => p.pair === "grok-4-7@xhigh");
+    assert.equal(pair?.descriptor, "grok:grok-4.7@xhigh");
+    assert.equal(pair?.route, "runner");
+    assert.throws(() => normalizeLane("grok:grok-4.7@max", matrix), SetupError);
   });
 });
 
@@ -149,7 +176,7 @@ describe("loadState", () => {
     assert.equal(state.sheetPath, join(home, ".codex", "pstack-models.md"));
     assert.deepEqual(state.migrations, [
       { role: "arena runners", from: "claude:claude-fable-5-1@max", to: "claude:fable@max" },
-      { role: "arena runners", from: "claude:claude-opus-5@xhigh", to: "claude:opus@xhigh" },
+      { role: "arena runners", from: "claude:claude-opus-5@xhigh", to: "claude:claude-opus-5-5@xhigh" },
     ]);
     assert.deepEqual(state.efforts.grok, {
       status: "current",
@@ -167,15 +194,15 @@ describe("loadState", () => {
   it("reports mixed efforts as mixed, in matrix order, and a single-effort family as current", () => {
     putSheet(
       "claude",
-      "bug-fix: codex:gpt-5.6-sol@xhigh\nhillclimb: codex:gpt-5.6-sol@high\nswarm workers: grok:grok-4.6@xhigh\n"
+      "bug-fix: codex:gpt-6-sol@xhigh\nhillclimb: codex:gpt-6-sol@high\nswarm workers: grok:grok-4.6@xhigh\n"
     );
     const state = loadState({ parent: "claude", home, matrix });
     assert.deepEqual(state.efforts.sol, {
       status: "mixed",
       efforts: ["high", "xhigh"],
       rows: [
-        { role: "bug-fix", lane: "codex:gpt-5.6-sol@xhigh" },
-        { role: "hillclimb", lane: "codex:gpt-5.6-sol@high" },
+        { role: "bug-fix", lane: "codex:gpt-6-sol@xhigh" },
+        { role: "hillclimb", lane: "codex:gpt-6-sol@high" },
       ],
     });
     assert.deepEqual(state.efforts.grok, {
@@ -203,7 +230,7 @@ describe("buildPlan", () => {
       plan.pairs.map((p) => [p.family, p.pair, p.descriptor, p.route]),
       [
         ["fable", "fable@max", "claude:fable@max", "native"],
-        ["opus", "opus@xhigh", "claude:opus@xhigh", "native"],
+        ["opus", "opus@xhigh", "claude:claude-opus-5-5@xhigh", "native"],
         ["astra", "astra@max", "codex:gpt-6-astra@max", "runner"],
         ["grok", "grok@xhigh", "grok:grok-4.6@xhigh", "runner"],
         ["cursor-grok", "cursor-grok@high", "cursor:grok-4.7@high", "runner"],
@@ -234,7 +261,7 @@ describe("buildPlan", () => {
       "claude:fable@max",
       "codex:gpt-6-astra@max",
       "grok:grok-4.6@high",
-      "claude:opus@xhigh",
+      "claude:claude-opus-5-5@xhigh",
     ]);
     assert.deepEqual(lanesOf(plan, "why investigators"), ["inherit-parent"]);
     assert.deepEqual(plan.efforts.grok, ["high"]);
@@ -266,11 +293,11 @@ describe("buildPlan", () => {
       matrix,
       roles: {
         ...CLI_ONLY_ROLES,
-        "swarm workers": ["codex:gpt-5.6-sol@high"],
+        "swarm workers": ["codex:gpt-6-sol@high"],
         "why synthesizer": ["auto"],
       },
     });
-    assert.deepEqual(lanesOf(plan, "swarm workers"), ["codex:gpt-5.6-sol@high"]);
+    assert.deepEqual(lanesOf(plan, "swarm workers"), ["codex:gpt-6-sol@high"]);
     assert.deepEqual(lanesOf(plan, "why synthesizer"), ["auto"]);
     assert.deepEqual(lanesOf(plan, "bug-fix"), ["grok:grok-4.6@xhigh"]);
     assert.deepEqual(plan.efforts.sol, ["high"]);
@@ -295,18 +322,18 @@ describe("buildPlan", () => {
       home,
       matrix,
       roles: {
-        "bug-fix": ["codex:gpt-5.6-sol@xhigh"],
-        hillclimb: ["codex:gpt-5.6-sol@high"],
+        "bug-fix": ["codex:gpt-6-sol@xhigh"],
+        hillclimb: ["codex:gpt-6-sol@high"],
       },
     });
-    assert.deepEqual(lanesOf(plan, "bug-fix"), ["codex:gpt-5.6-sol@xhigh"]);
-    assert.deepEqual(lanesOf(plan, "hillclimb"), ["codex:gpt-5.6-sol@high"]);
+    assert.deepEqual(lanesOf(plan, "bug-fix"), ["codex:gpt-6-sol@xhigh"]);
+    assert.deepEqual(lanesOf(plan, "hillclimb"), ["codex:gpt-6-sol@high"]);
     assert.deepEqual(plan.efforts.sol, ["high", "xhigh"]);
     assert.deepEqual(
       plan.pairs.filter((p) => p.family === "sol").map((p) => [p.pair, p.descriptor, p.route]),
       [
-        ["sol@high", "codex:gpt-5.6-sol@high", "runner"],
-        ["sol@xhigh", "codex:gpt-5.6-sol@xhigh", "runner"],
+        ["sol@high", "codex:gpt-6-sol@high", "runner"],
+        ["sol@xhigh", "codex:gpt-6-sol@xhigh", "runner"],
       ]
     );
   });
@@ -326,7 +353,7 @@ describe("buildPlan", () => {
       "claude:fable@max",
       "codex:gpt-6-astra@max",
       "grok:grok-4.6@high",
-      "claude:opus@xhigh",
+      "claude:claude-opus-5-5@xhigh",
     ]);
     assert.deepEqual(plan.efforts.grok, ["high", "xhigh"]);
     assert.deepEqual(
@@ -348,9 +375,9 @@ describe("buildPlan", () => {
   });
 
   it("on a rerun preserves customized lanes and materializes missing documented roles from the defaults", () => {
-    putSheet("claude", "# pstack model configuration\n\nswarm workers: claude:opus@xhigh, grok:grok-4.6@xhigh\n");
+    putSheet("claude", "# pstack model configuration\n\nswarm workers: claude:claude-opus-5-5@xhigh, grok:grok-4.6@xhigh\n");
     const plan = buildPlan({ parent: "claude", home, matrix });
-    assert.deepEqual(lanesOf(plan, "swarm workers"), ["claude:opus@xhigh", "grok:grok-4.6@xhigh"]);
+    assert.deepEqual(lanesOf(plan, "swarm workers"), ["claude:claude-opus-5-5@xhigh", "grok:grok-4.6@xhigh"]);
     assert.deepEqual(lanesOf(plan, "bug-fix"), ["grok:grok-4.6@xhigh"]);
     assert.equal(plan.rows.length, matrix.roles.length);
     assert.deepEqual(plan.rows.map((r) => r.role), matrix.roles.map((r) => r.role));
@@ -372,7 +399,7 @@ describe("buildPlan", () => {
       "claude:fable@max",
       "codex:gpt-6-astra@max",
       "grok:grok-4.6@xhigh",
-      "claude:opus@xhigh",
+      "claude:claude-opus-5-5@xhigh",
     ]);
     assert.deepEqual(lanesOf(plan, "pr owner"), ["cursor:grok-4.7@high"]);
     assert.deepEqual(lanesOf(plan, "pr verifier"), ["cursor:grok-4.7@high"]);
@@ -444,7 +471,7 @@ const model = modelIndex >= 0 ? args[modelIndex + 1] : "unknown";
 const promptIndex = args.indexOf("--prompt-file");
 const prompt = promptIndex >= 0 ? readFileSync(args[promptIndex + 1], "utf8") : readFileSync(0, "utf8");
 const marker = process.env.FAKE_DROP_MARKER === "1" ? "nope" : (prompt.match(/PSTACK-SETUP-[A-Za-z0-9-]+/) ?? ["missing"])[0];
-const reported = model === "fable" ? "claude-fable-9-9" : model === "opus" ? "claude-opus-9" : model === "grok-4.6" ? "grok-4.6-build" : model;
+const reported = model === "fable" ? "claude-fable-9-9" : model === "claude-opus-5-5" ? "claude-opus-5-5" : model === "grok-4.6" ? "grok-4.6-build" : model;
 if (name === "claude") {
   out(JSON.stringify({ result: marker, session_id: "c1", usage: { input_tokens: 10, output_tokens: 2 }, total_cost_usd: 0.01, modelUsage: { [reported]: {} } }));
 } else if (name === "codex") {
@@ -534,8 +561,8 @@ describe("runProbes", () => {
       matrix,
       roles: {
         ...CLI_ONLY_ROLES,
-        "bug-fix": ["codex:gpt-5.6-sol@xhigh"],
-        hillclimb: ["codex:gpt-5.6-sol@high"],
+        "bug-fix": ["codex:gpt-6-sol@xhigh"],
+        hillclimb: ["codex:gpt-6-sol@high"],
       },
     });
     savePlan(runDir, plan);
@@ -819,7 +846,7 @@ describe("command line", () => {
   it("plan writes plan.json into the run directory and prints it", () => {
     const result = cli([
       "plan", "--parent", "codex", "--home", home, "--dir", runDir,
-      "--effort", "grok=high", "--role", "swarm workers=auto", "--role", "why synthesizer=claude:opus@xhigh",
+      "--effort", "grok=high", "--role", "swarm workers=auto", "--role", "why synthesizer=claude:claude-opus-5-5@xhigh",
     ]);
     assert.equal(result.code, 0, result.stderr);
     const { dir, ...printed } = JSON.parse(result.stdout);
@@ -830,7 +857,7 @@ describe("command line", () => {
     assert.equal(saved.schemaVersion, 2);
     assert.deepEqual(saved.efforts.grok, ["high"]);
     assert.deepEqual(saved.rows.find((r: { role: string }) => r.role === "swarm workers").lanes, ["auto"]);
-    assert.deepEqual(saved.rows.find((r: { role: string }) => r.role === "why synthesizer").lanes, ["claude:opus@xhigh"]);
+    assert.deepEqual(saved.rows.find((r: { role: string }) => r.role === "why synthesizer").lanes, ["claude:claude-opus-5-5@xhigh"]);
     assert.match(saved.sheet, /^# pstack model configuration\n/);
   });
 

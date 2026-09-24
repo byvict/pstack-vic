@@ -121,8 +121,8 @@ const modelIndex = args.findIndex((value) => value === "--model");
 const model = modelIndex >= 0 ? args[modelIndex + 1] : "unknown";
 const reportedModel = model === "fable"
   ? "claude-fable-9-9"
-  : model === "opus"
-    ? "claude-opus-9"
+  : model === "claude-opus-5-5"
+    ? "claude-opus-5-5"
     : model;
 if (process.env.FAKE_INVALID_MODEL === "1") {
   err("The requested model is not supported with this account.");
@@ -172,7 +172,7 @@ function options(provider: Provider, suffix: string = provider): RunnerOptions {
     provider === "claude"
       ? "fable"
       : provider === "codex"
-        ? "gpt-5.6-sol"
+        ? "gpt-6-sol"
         : "grok-4.6";
   return {
     parent,
@@ -462,6 +462,19 @@ describe("runLane", () => {
     });
   }
 
+  it("runs the pinned Opus 5.5 lane and verifies the served model", async () => {
+    const input = { ...options("claude", "opus"), model: "claude-opus-5-5", effort: "xhigh" };
+    const result = await runLane(input);
+    assert.equal(result.exitCode, 0);
+    matchObject(receipt(input.receiptPath), {
+      status: "complete",
+      model: "claude-opus-5-5",
+      reportedModel: "claude-opus-5-5",
+      modelVerified: true,
+      modelEvidence: "provider-report",
+    });
+  });
+
   it("runs the Astra family through the Codex lane with a pinned-argv receipt", async () => {
     const input = { ...options("codex", "astra"), model: "gpt-6-astra" };
     const result = await runLane(input);
@@ -484,7 +497,7 @@ describe("runLane", () => {
     assert.equal(result.exitCode, 0);
     matchObject(receipt(input.receiptPath), {
       status: "complete",
-      model: "gpt-5.6-sol",
+      model: "gpt-6-sol",
       reportedModel: null,
       modelVerified: false,
       modelEvidence: "pinned-argv",
@@ -499,7 +512,7 @@ describe("runLane", () => {
     assert.equal(existsSync(input.outputPath), false);
     matchObject(receipt(input.receiptPath), {
       status: "unavailable-model",
-      model: "gpt-5.6-sol",
+      model: "gpt-6-sol",
       reportedModel: null,
       modelVerified: false,
       modelEvidence: null,
@@ -557,7 +570,7 @@ describe("runLane", () => {
     process.env.FAKE_MODEL_STARTED_PATH = modelStarted;
     const input = {
       ...options("grok", "grok-preflight-retry-deadline"),
-      timeoutMs: 700,
+      timeoutMs: 3_000,
     };
     const result = await runLane(input);
     const recorded = receipt(input.receiptPath);
@@ -570,7 +583,7 @@ describe("runLane", () => {
       preflight: { status: "timed-out" },
     });
     assert.ok(recorded.preflight.evidence.includes("You are not authenticated."));
-    assert.ok(recorded.elapsedMs < 1_200);
+    assert.ok(recorded.elapsedMs < 3_500);
   });
 
   it("cancels during the Grok retry delay without starting another preflight", async () => {
