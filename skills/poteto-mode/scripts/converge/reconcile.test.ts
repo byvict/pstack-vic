@@ -42,17 +42,91 @@ test('UI page joins the real Markdown page column without unrelated document wor
   assert.equal(report.mode, 'full'); assert.equal(report.touchedFeatures[0].recipe, 'features/login.md');
   assert.deepEqual(report.findings, []); assert.deepEqual(report.lanes, ['pr verifier']);
 });
-test('shared component selects the importing user feature without a mapping gap', t => {
-  const f = fixture(); t.after(f.cleanup);
-  f.state.files[0].filename = 'client/components/Button.jsx';
-  f.state.trunk = 'f'.repeat(40);
-  Object.assign(f.state.blobs, { 'client/Login.jsx': "import Button from './components/Button';" });
+const pages = { categorias: 'CategoriasPage', openfinance: 'OpenFinancePage', pagamentos: 'PagamentosPage', recebimentos: 'RecebimentosPage', agenda: 'AgendaPage', integracoes: 'IntegracoesPage' };
+const importGraph = {
+  'client/src/pages/CategoriasPage.jsx': "import Tabs from '../components/Tabs';\nimport RulesTab from './categorias/RulesTab';",
+  'client/src/pages/categorias/RulesTab.jsx': "import RuleForm from './RuleForm';",
+  'client/src/pages/categorias/RuleForm.jsx': "import { conditions } from './ruleConditions.js';\nimport RuleHint from '../../components/RuleHint';",
+  'client/src/pages/categorias/ruleConditions.js': 'export const conditions = [];',
+  'client/src/pages/categorias/Orphan.jsx': 'export default function Orphan() {}',
+  'client/src/pages/OpenFinancePage.jsx': "import FluxoTab from './openfinance/FluxoTab';",
+  'client/src/pages/openfinance/FluxoTab.jsx': "import { flow } from './api';",
+  'client/src/pages/openfinance/api.js': 'export const flow = [];',
+  'client/src/pages/PagamentosPage.jsx': "import List from './bank-transactions/BankTransactionsListPage';",
+  'client/src/pages/RecebimentosPage.jsx': "import List from './bank-transactions/BankTransactionsListPage';",
+  'client/src/pages/bank-transactions/BankTransactionsListPage.jsx': "import TransactionDetailPanel from './TransactionDetailPanel';",
+  'client/src/pages/bank-transactions/TransactionDetailPanel.jsx': "import List from './BankTransactionsListPage';\nimport Modal from './CreateCategorizationRuleModal';",
+  'client/src/pages/bank-transactions/CreateCategorizationRuleModal.jsx': 'export default function Modal() {}',
+  'client/src/pages/AgendaPage.jsx': "const DayList = lazy(() => import('./agenda/DayList'));\nimport './agenda/agenda.css';\nimport { views } from './agenda';",
+  'client/src/pages/agenda/DayList.jsx': 'export default function DayList() {}',
+  'client/src/pages/agenda/agenda.css': '.day {}',
+  'client/src/pages/agenda/index.js': 'export const views = [];',
+  'client/src/pages/IntegracoesPage.jsx': "import { INTEGRACOES } from './integracoes/registry';",
+  'client/src/pages/integracoes/registry.js': "export const INTEGRACOES = import.meta.glob('./defs/*.jsx', { eager: true });",
+  'client/src/pages/integracoes/defs/pluggy.jsx': "import ApiKeyCard from '../ApiKeyCard';",
+  'client/src/pages/integracoes/ApiKeyCard.jsx': 'export default function ApiKeyCard() {}',
+  'client/src/components/Tabs.jsx': 'export default function Tabs() {}',
+  'client/src/components/RuleHint.jsx': 'export default function RuleHint() {}',
+  'client/src/components/Unused.jsx': 'export default function Unused() {}',
+};
+function importFixture(changed: string[], blobs: Record<string, string> = importGraph) {
+  const f = fixture();
+  Object.assign(f.state.blobs, blobs, {
+    'features/README.md': Object.entries(pages).map(([id, page]) => `- [${id}](./${id}.md) — \`#${id}\`. \`client/src/pages/${page}.jsx\``).join('\n') + '\n',
+    ...Object.fromEntries(Object.keys(pages).map(id => [`features/${id}.md`, `Drive ${id}.`])),
+  });
+  f.state.files = changed.map(filename => ({ filename, status: 'modified', patch: '@@ -1 +1 @@\n-old\n+new' }));
   f.save();
+  return f;
+}
+function blobReads(f: ReturnType<typeof fixture>): string[] {
+  return f.calls().filter(call => call[1] === 'graphql').flatMap(call => call.filter(arg => /^p\d+=/.test(arg)).map(arg => arg.replace(/^p\d+=/, '')));
+}
+const mappings: [string, string[], string[], string[]][] = [
+  ['direct page', ['client/src/pages/CategoriasPage.jsx'], ['categorias'], []],
+  ['one-level subcomponent', ['client/src/pages/openfinance/FluxoTab.jsx'], ['openfinance'], []],
+  ['two-level subcomponent', ['client/src/pages/categorias/RuleForm.jsx'], ['categorias'], []],
+  ['subcomponent shared by two pages', ['client/src/pages/bank-transactions/TransactionDetailPanel.jsx'], ['pagamentos', 'recebimentos'], []],
+  ['file inside an import cycle', ['client/src/pages/bank-transactions/CreateCategorizationRuleModal.jsx'], ['pagamentos', 'recebimentos'], []],
+  ['unreachable file', ['client/src/pages/categorias/Orphan.jsx'], [], ['client/src/pages/categorias/Orphan.jsx']],
+  ['file the trusted contract lacks', ['client/src/pages/categorias/NewField.jsx'], [], ['client/src/pages/categorias/NewField.jsx']],
+  ['lazy import, explicit extension, stylesheet, directory index and Vite glob', ['client/src/pages/agenda/DayList.jsx', 'client/src/pages/agenda/agenda.css', 'client/src/pages/agenda/index.js', 'client/src/pages/categorias/ruleConditions.js', 'client/src/pages/integracoes/ApiKeyCard.jsx'], ['categorias', 'agenda', 'integracoes'], []],
+  ['shared component imported by a page', ['client/src/components/Tabs.jsx'], ['categorias'], []],
+  ['shared component reached through a subcomponent', ['client/src/components/RuleHint.jsx'], ['categorias'], []],
+  ['shared component no page reaches', ['client/src/components/Unused.jsx'], Object.keys(pages), []],
+  ['test beside its subject', ['client/src/pages/categorias/RuleForm.jsx', 'client/src/pages/categorias/__tests__/RuleForm.test.jsx'], ['categorias'], []],
+];
+for (const [name, changed, touched, unmapped] of mappings) {
+  test(`trusted import walk maps a ${name}`, t => {
+    const f = importFixture(changed); t.after(f.cleanup);
+    const r = runReconcile(f); assert.equal(r.status, 0, r.stderr);
+    const report = JSON.parse(r.stdout);
+    assert.deepEqual(report.touchedFeatures.map((feature: { id: string }) => feature.id), touched);
+    assert.deepEqual(report.unmappedSurfaces, unmapped);
+    const reads = blobReads(f);
+    assert.ok(reads.length > 0 && reads.every(read => read.startsWith(f.state.trunk + ':')));
+    assert.equal(new Set(reads).size, reads.length);
+    assert.ok(f.calls().filter(call => call[1] === 'graphql' && call.some(arg => /^p\d+=/.test(arg))).length < reads.length);
+  });
+}
+test('changes outside client sources skip the import walk', t => {
+  const f = importFixture(['server/routes/health.js', 'docs/guide.md']); t.after(f.cleanup);
   const r = runReconcile(f); assert.equal(r.status, 0, r.stderr);
-  const report = JSON.parse(r.stdout);
-  assert.deepEqual(report.touchedFeatures.map((feature: { id: string }) => feature.id), ['login']);
-  assert.deepEqual(report.unmappedSurfaces, []);
+  assert.deepEqual(blobReads(f), []);
+  assert.deepEqual(JSON.parse(r.stdout).touchedFeatures.map((feature: { id: string }) => feature.id), Object.keys(pages));
 });
+const oversized: [string, Record<string, string>][] = [
+  ['deeper than the level bound', { 'client/src/pages/CategoriasPage.jsx': "import C from './chain/c0';", ...Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`client/src/pages/chain/c${i}.jsx`, `import C from './c${i + 1}';`])) }],
+  ['wider than the file bound', { 'client/src/pages/CategoriasPage.jsx': Array.from({ length: 2001 }, (_, i) => `import M${i} from './wide/m${i}';`).join('\n'), ...Object.fromEntries(Array.from({ length: 2001 }, (_, i) => [`client/src/pages/wide/m${i}.jsx`, ''])) }],
+];
+for (const [name, blobs] of oversized) {
+  test(`an import graph ${name} refuses reconciliation`, t => {
+    const f = importFixture(['client/src/pages/categorias/RuleForm.jsx'], blobs); t.after(f.cleanup);
+    const r = runReconcile(f);
+    assert.notEqual(r.status, 0); assert.match(r.stderr, /Feature import graph exceeds walk bound/);
+    assert.ok(blobReads(f).length <= 2000);
+  });
+}
 test('ordinary reviewer attribution is data while a direct override is blocked', t => {
   const f = fixture(); t.after(f.cleanup);
   f.state.body = '## Verification\nReviewer: Maria. Testes passaram.\ncheck: Run test suite'; f.save();
