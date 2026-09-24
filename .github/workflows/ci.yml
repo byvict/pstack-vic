@@ -40,6 +40,14 @@ jobs:
         with:
           bun-version: 1.4.0
 
+      # scripts/manifests.test.ts runs `claude plugin validate --strict` when
+      # the claude CLI is on PATH. The pin keeps this required check stable;
+      # local runs use the auto-updated CLI and catch newer rules first.
+      - name: Install Claude Code CLI
+        run: |
+          npm install --global --no-audit --no-fund @anthropic-ai/claude-code@2.1.281
+          claude --version
+
       # UPSTREAM.md registers these remotes in every new clone, and the
       # upstream-digest test resolves both sync points through them.
       - name: Fetch upstream remotes
@@ -49,7 +57,10 @@ jobs:
           git fetch --quiet --no-tags cursor main
           git fetch --quiet --no-tags open main
 
+      # Turns off the CLI's auto-updater, so the pinned version validates.
       - run: npm test
+        env:
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1
       - run: npm run test:bun
       - run: npm run matrix:check
       - run: npm run agents:check
