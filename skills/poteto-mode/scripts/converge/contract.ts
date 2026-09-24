@@ -59,23 +59,48 @@ export function parseExecutionId(value: unknown): string {
   if (!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(result)) throw new Error('Invalid execution id');
   return result;
 }
-export type Execution = 'converge' | 'verdict-only';
-export type Role = 'pr verifier';
+export type Execution = 'converge' | 'verdict-only' | 'pre-pr';
+export const executions = ['converge', 'verdict-only', 'pre-pr'] as const;
+export type Role = 'pr verifier' | 'pre-pr reviewer' | 'pre-pr certifier';
+export const roles = ['pr verifier', 'pre-pr reviewer', 'pre-pr certifier'] as const;
+/** Which provider and model may sign each lane role; admission refuses any other receipt. */
+export const roleProviders: Record<Role, { provider: string; model: string; efforts: string[] }> = {
+  'pr verifier': { provider: 'cursor', model: 'grok-4.7', efforts: ['high', 'xhigh'] },
+  'pre-pr reviewer': { provider: 'grok', model: 'grok-4.7', efforts: ['high', 'xhigh'] },
+  'pre-pr certifier': { provider: 'grok', model: 'grok-4.7', efforts: ['high', 'xhigh'] },
+};
+export interface PrePr { runs: { name: string; command: string }[]; certifier: boolean }
 export interface Contract {
   repo: string; trunk: string; requiredChecks: string[]; holdLabels: string[];
   surfaces: string[]; riskClasses: { irreversible: string[]; contained: string[] };
-  verifySkill: string; featureMap: string; evidenceRoot: string; deployWindow: string; bugbot: 'never';
+  verifySkill: string | null; featureMap: string | null; evidenceRoot: string | null; deployWindow: string; bugbot: 'never';
+  prePr: PrePr | null; tests: { workflow: string; job: string };
 }
+function nullableRelativePath(value: unknown): string | null { return value === null || value === undefined ? null : relativePath(value); }
 export function parseContract(value: unknown): Contract {
   const v = object(value, 'contract');
   const risk = object(v.riskClasses);
+  const tests = v.tests === undefined ? {} : object(v.tests);
+  let prePr: PrePr | null = null;
+  if (v.prePr !== undefined && v.prePr !== null) {
+    const p = object(v.prePr, 'prePr');
+    prePr = { certifier: boolean(p.certifier), runs: array(p.runs).map(raw => {
+      const r = object(raw, 'run');
+      const name = string(r.name);
+      if (!/^[a-z][a-z0-9-]{0,39}$/.test(name)) throw new Error('Unsafe run name');
+      return { name, command: string(r.command) };
+    }) };
+    if (new Set(prePr.runs.map(r => r.name)).size !== prePr.runs.length) throw new Error('Duplicate run name');
+  }
   const result: Contract = {
     repo: repoName(v.repo), trunk: relativePath(v.trunk), requiredChecks: strings(v.requiredChecks), holdLabels: strings(v.holdLabels),
     surfaces: strings(v.surfaces), riskClasses: { irreversible: strings(risk.irreversible), contained: strings(risk.contained) },
-    verifySkill: relativePath(v.verifySkill), featureMap: relativePath(v.featureMap), evidenceRoot: relativePath(v.evidenceRoot),
-    deployWindow: string(v.deployWindow), bugbot: oneOf(v.bugbot, ['never']),
+    verifySkill: nullableRelativePath(v.verifySkill), featureMap: nullableRelativePath(v.featureMap), evidenceRoot: nullableRelativePath(v.evidenceRoot),
+    deployWindow: string(v.deployWindow), bugbot: oneOf(v.bugbot, ['never']), prePr,
+    tests: { workflow: tests.workflow === undefined ? 'Tests' : string(tests.workflow), job: tests.job === undefined ? 'Run test suite' : string(tests.job) },
   };
   if (!result.requiredChecks.includes('verdict') || !result.holdLabels.length || !/^\d\d:\d\d [A-Za-z_]+\/[A-Za-z_]+$/.test(result.deployWindow)) throw new Error('Incomplete converge contract');
+  if (prePr?.certifier && (!result.featureMap || !result.verifySkill)) throw new Error('A certifier needs a feature map and a verify skill');
   for (const pattern of [...result.surfaces, ...riskPatterns(result)]) relativePath(pattern);
   return result;
 }
@@ -101,11 +126,12 @@ export interface Round {
 }
 export function parseRound(value: unknown): Round {
   const v = object(value, 'round');
+  const execution = oneOf(v.execution, executions);
   const pr = integer(v.pr);
-  if (!pr) throw new Error('Invalid PR');
+  if (!pr && execution !== 'pre-pr') throw new Error('Invalid PR');
   return { id: parseExecutionId(v.id), repo: repoName(v.repo), pr, head: sha(v.head), contract: sha(v.contract), base: sha(v.base),
     patch_id: sha(v.patch_id), verificationDigest: digest(v.verificationDigest), inputDigest: digest(v.inputDigest),
-    configPath: relativePath(v.configPath), execution: oneOf(v.execution, ['converge', 'verdict-only']) };
+    configPath: relativePath(v.configPath), execution };
 }
 export const findingKinds = ['regression', 'test-behavior', 'documentary', 'injection', 'data-loss', 'secret', 'money', 'false-claim'] as const;
 export interface Finding {
@@ -149,7 +175,7 @@ export function parseReport(value: unknown): Report {
     claims: array(v.claims).map(value => { const c = object(value); return { line: integer(c.line), kind: oneOf(c.kind, ['check', 'test', 'feature', 'artifact', 'unsupported']), name: string(c.name), artifactFound: boolean(c.artifactFound), resolution: oneOf(c.resolution, ['supported', 'missing', 'unavailable', 'current-feature']) }; }),
     hardList: array(v.hardList).map(parseFinding), injection: array(v.injection).map(parseFinding), findings: array(v.findings).map(parseFinding),
     checks: array(v.checks).map(value => { const c = object(value); return { context: string(c.context), id: integer(c.id), head: sha(c.head), appId: integer(c.appId), state: string(c.state), runId: c.runId === null ? null : integer(c.runId), attempt: c.attempt === null ? null : integer(c.attempt) }; }),
-    lanes: array(v.lanes).map(v => oneOf(v, ['pr verifier'])), gaps: strings(v.gaps), inputFingerprint: digest(v.inputFingerprint) };
+    lanes: array(v.lanes).map(v => oneOf(v, roles)), gaps: strings(v.gaps), inputFingerprint: digest(v.inputFingerprint) };
 }
 export type Decision =
   | { verdict: 'VERIFIED'; displayResult: 'VERIFIED' | 'CI-only'; findings: []; reasons: [] }
