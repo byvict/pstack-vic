@@ -34,6 +34,15 @@ jobs:
           node-version: 24
           package-manager-cache: false
 
+      # UPSTREAM.md registers these remotes in every new clone, and the
+      # upstream-digest test resolves both sync points through them.
+      - name: Fetch upstream remotes
+        run: |
+          git remote add cursor https://github.com/cursor/plugins.git
+          git remote add open https://github.com/ericlitman/open-pstack.git
+          git fetch --quiet --no-tags cursor main
+          git fetch --quiet --no-tags open main
+
       - run: npm test
       - run: npm run matrix:check
       - run: npm run agents:check
