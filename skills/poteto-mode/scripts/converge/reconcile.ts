@@ -1,6 +1,6 @@
 import { writeFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
-import { executionId, matches, type Claim, type Finding, type Report } from './contract.ts';
+import { executionId, matches, testOnly, type Claim, type Finding, type Report } from './contract.ts';
 import { snapshot, type Snapshot, type TextSource } from './github.ts';
 
 const secretRules = [
@@ -51,9 +51,6 @@ function claims(s: Snapshot): Claim[] {
 function ordinaryDoc(path: string): boolean {
   return /(?:\.md|\.txt|\.rst)$/.test(path) && !/(?:^|\/)(?:AGENTS|CLAUDE|SKILL)\.md$/.test(path) && !/^(?:\.cursor|\.github|skills|scripts|tools)\//.test(path)
     || /^(?:LICENSE|README|CHANGELOG)(?:\.md|\.txt)?$/.test(path);
-}
-function testOnly(path: string): boolean {
-  return /(?:^|\/)(?:__tests__|__fixtures__|__mocks__)\//.test(path) || /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(path);
 }
 export function analyze(s: Snapshot, options: { id: string; configPath: string; execution: 'converge' | 'verdict-only' }): Report {
   const paths = [...new Set(s.files.flatMap(f => f.previous ? [f.path, f.previous] : [f.path]))];

@@ -92,6 +92,9 @@ export function matches(path: string, pattern: string): boolean {
   }
   return new RegExp(expression + '$').test(path);
 }
+export function testOnly(path: string): boolean {
+  return /(?:^|\/)(?:__tests__|__fixtures__|__mocks__)\//.test(path) || /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(path);
+}
 export interface Round {
   id: string; repo: string; pr: number; head: string; contract: string; base: string; patch_id: string;
   verificationDigest: string; inputDigest: string; configPath: string; execution: Execution;

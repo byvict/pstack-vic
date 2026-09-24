@@ -25,6 +25,7 @@ export function fixture() {
     diff: 'diff --git a/docs/guide.md b/docs/guide.md\nindex 1111111..2222222 100644\n--- a/docs/guide.md\n+++ b/docs/guide.md\n@@ -1 +1 @@\n-old\n+new\n',
     files, jobs, runOverrides, workflowId: 5,
     blobs: { '.cursor/converge.json': JSON.stringify(config), 'verify/SKILL.md': 'Drive the app.', 'features/README.md': '| [Login](./login.md) | `client/Login.jsx` |\n', 'features/login.md': 'Use Entrar.', '.github/workflows/tests.yml': 'name: Tests\n', 'package.json': JSON.stringify({scripts:{test:'node tools/run-all-tests.js'}}), 'tools/run-all-tests.js': 'function printOneResult() {} function printRunnerFooter() {}' },
+    headBlobs: {} as Record<string, string>,
     checks: [{ id: 11, name: 'Run test suite', status: 'completed', conclusion: 'success', app: { id: 15368 } }, { id: 12, name: 'Secrets scan', status: 'completed', conclusion: 'success', app: { id: 15368 } }],
     protected: ['Run test suite', 'Secrets scan', 'verdict'], comments: [], statuses: [], mutations: [] };
   writeFileSync(statePath, JSON.stringify(state));
@@ -34,7 +35,7 @@ export function fixture() {
     save() { writeFileSync(statePath, JSON.stringify(state)); },
     read() { return JSON.parse(readFileSync(statePath, 'utf8')); },
     calls(): string[][] { return readFileSync(statePath + '.calls', 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)); },
-    run(script: string, args: string[] = [], env: NodeJS.ProcessEnv = {}) { return spawnSync(process.execPath, [resolve(scriptDirectory, script), ...args], { encoding: 'utf8', env: { ...process.env, ...env, PATH: directory + ':' + process.env.PATH, CONVERGE_FIXTURE: statePath } }); },
+    run(script: string, args: string[] = [], env: NodeJS.ProcessEnv = {}) { return spawnSync(process.execPath, [resolve(scriptDirectory, script), ...args], { encoding: 'utf8', timeout: 60_000, env: { ...process.env, ...env, PATH: directory + ':' + process.env.PATH, CONVERGE_FIXTURE: statePath } }); },
     cleanup() { rmSync(directory, { recursive: true, force: true }); },
   };
 }

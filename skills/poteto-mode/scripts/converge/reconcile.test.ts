@@ -43,7 +43,7 @@ test('UI page joins the real Markdown page column without unrelated document wor
   assert.deepEqual(report.findings, []); assert.deepEqual(report.lanes, ['pr verifier']);
 });
 const pages = { categorias: 'CategoriasPage', openfinance: 'OpenFinancePage', pagamentos: 'PagamentosPage', recebimentos: 'RecebimentosPage', agenda: 'AgendaPage', integracoes: 'IntegracoesPage' };
-const importGraph = {
+const importGraph: Record<string, string> = {
   'client/src/pages/CategoriasPage.jsx': "import Tabs from '../components/Tabs';\nimport RulesTab from './categorias/RulesTab';",
   'client/src/pages/categorias/RulesTab.jsx': "import RuleForm from './RuleForm';",
   'client/src/pages/categorias/RuleForm.jsx': "import { conditions } from './ruleConditions.js';\nimport RuleHint from '../../components/RuleHint';",
@@ -57,8 +57,9 @@ const importGraph = {
   'client/src/pages/bank-transactions/BankTransactionsListPage.jsx': "import TransactionDetailPanel from './TransactionDetailPanel';",
   'client/src/pages/bank-transactions/TransactionDetailPanel.jsx': "import List from './BankTransactionsListPage';\nimport Modal from './CreateCategorizationRuleModal';",
   'client/src/pages/bank-transactions/CreateCategorizationRuleModal.jsx': 'export default function Modal() {}',
-  'client/src/pages/AgendaPage.jsx': "const DayList = lazy(() => import('./agenda/DayList'));\nimport './agenda/agenda.css';\nimport { views } from './agenda';",
+  'client/src/pages/AgendaPage.jsx': "const DayList = lazy(() => import('./agenda/DayList'));\nimport './agenda/agenda.css';\nimport { views } from './agenda';\nconst View = lazy(() => import(`./agenda/views/${name}.jsx`));",
   'client/src/pages/agenda/DayList.jsx': 'export default function DayList() {}',
+  'client/src/pages/agenda/views/Week.jsx': 'export default function Week() {}',
   'client/src/pages/agenda/agenda.css': '.day {}',
   'client/src/pages/agenda/index.js': 'export const views = [];',
   'client/src/pages/IntegracoesPage.jsx': "import { INTEGRACOES } from './integracoes/registry';",
@@ -68,6 +69,7 @@ const importGraph = {
   'client/src/components/Tabs.jsx': 'export default function Tabs() {}',
   'client/src/components/RuleHint.jsx': 'export default function RuleHint() {}',
   'client/src/components/Unused.jsx': 'export default function Unused() {}',
+  'client/src/App.jsx': Object.values(pages).map(page => `const ${page} = lazy(() => import('./pages/${page}'));`).join('\n') + "\nconst routes = import.meta.glob('./pages/**/*.route.jsx');",
 };
 function importFixture(changed: string[], blobs: Record<string, string> = importGraph) {
   const f = fixture();
@@ -89,7 +91,7 @@ const mappings: [string, string[], string[], string[]][] = [
   ['subcomponent shared by two pages', ['client/src/pages/bank-transactions/TransactionDetailPanel.jsx'], ['pagamentos', 'recebimentos'], []],
   ['file inside an import cycle', ['client/src/pages/bank-transactions/CreateCategorizationRuleModal.jsx'], ['pagamentos', 'recebimentos'], []],
   ['unreachable file', ['client/src/pages/categorias/Orphan.jsx'], [], ['client/src/pages/categorias/Orphan.jsx']],
-  ['file the trusted contract lacks', ['client/src/pages/categorias/NewField.jsx'], [], ['client/src/pages/categorias/NewField.jsx']],
+  ['template-literal lazy import', ['client/src/pages/agenda/views/Week.jsx'], ['agenda'], []],
   ['lazy import, explicit extension, stylesheet, directory index and Vite glob', ['client/src/pages/agenda/DayList.jsx', 'client/src/pages/agenda/agenda.css', 'client/src/pages/agenda/index.js', 'client/src/pages/categorias/ruleConditions.js', 'client/src/pages/integracoes/ApiKeyCard.jsx'], ['categorias', 'agenda', 'integracoes'], []],
   ['shared component imported by a page', ['client/src/components/Tabs.jsx'], ['categorias'], []],
   ['shared component reached through a subcomponent', ['client/src/components/RuleHint.jsx'], ['categorias'], []],
@@ -109,6 +111,64 @@ for (const [name, changed, touched, unmapped] of mappings) {
     assert.ok(f.calls().filter(call => call[1] === 'graphql' && call.some(arg => /^p\d+=/.test(arg))).length < reads.length);
   });
 }
+const categorias = 'client/src/pages/categorias/';
+const [ruleForm, rulesTab, newField] = ['RuleForm.jsx', 'RulesTab.jsx', 'NewField.jsx'].map(name => categorias + name);
+const component = 'export default function Component() {}';
+const plus = (path: string, line: string) => ({ [path]: importGraph[path] + '\n' + line });
+const arrivals: [string, Record<string, string | null>, string[], string[], Record<string, string>?][] = [
+  ['new subcomponent a changed, reached file imports', { ...plus(ruleForm, "import NewField from './NewField';"), [newField]: component }, ['categorias'], []],
+  ['chain of new files under a changed, reached file', { ...plus(ruleForm, "import NewField from './NewField';"), [newField]: "import Hint from './NewFieldHint';", [categorias + 'NewFieldHint.jsx']: component }, ['categorias'], []],
+  ['renamed subcomponent its changed importer follows', { [rulesTab]: "import RuleForm from './RuleEditor';", [categorias + 'RuleEditor.jsx']: importGraph[ruleForm] }, ['categorias'], [], { [categorias + 'RuleEditor.jsx']: ruleForm }],
+  ['new module that shadows a subcomponent for its unchanged, reached importer', { [categorias + 'RuleForm.js']: component }, ['categorias'], []],
+  ['new definition an unchanged Vite glob loads', { 'client/src/pages/integracoes/defs/newbank.jsx': "import ApiKeyCard from '../ApiKeyCard';" }, ['integracoes'], []],
+  ['new view an unchanged template-literal import loads', { 'client/src/pages/agenda/views/Month.jsx': component }, ['agenda'], []],
+  ['new file beside its new test', { ...plus(ruleForm, "import NewField from './NewField';"), [newField]: component, [categorias + '__tests__/NewField.test.jsx']: "import NewField from '../NewField';" }, ['categorias'], []],
+  ['new file nothing imports', { [newField]: component }, [], [newField]],
+  ['new file only another unimported new file imports', { [categorias + 'Draft.jsx']: "import NewField from './NewField';", [newField]: component }, [], [categorias + 'Draft.jsx', newField]],
+  ['new page a new App route imports', { ...plus('client/src/App.jsx', "const NovaPage = lazy(() => import('./pages/NovaPage'));"), 'client/src/pages/NovaPage.jsx': component }, Object.keys(pages), ['client/src/pages/NovaPage.jsx']],
+  ['new file App imports beside a reached file', { ...plus(ruleForm, "import NewField from './NewField';"), ...plus('client/src/App.jsx', "import NewField from './pages/categorias/NewField';"), [newField]: component }, Object.keys(pages), [newField]],
+  ['new file a reached file imports and a new App route reaches', { ...plus(ruleForm, "import NewField from './NewField';"), ...plus('client/src/App.jsx', "const NovaPage = lazy(() => import('./pages/NovaPage'));"), 'client/src/pages/NovaPage.jsx': "import NewField from './categorias/NewField';", [newField]: component }, Object.keys(pages), ['client/src/pages/NovaPage.jsx', newField]],
+  ['new file App imports through a path alias', { ...plus(ruleForm, "import NewField from './NewField';"), ...plus('client/src/App.jsx', "import NewField from '@/pages/categorias/NewField';"), [newField]: component }, Object.keys(pages), [newField]],
+  ['new file a reached file imports while an unchanged App glob also loads it', { ...plus(ruleForm, "import rules from './rules.route.jsx';"), [categorias + 'rules.route.jsx']: component }, ['categorias'], [categorias + 'rules.route.jsx']],
+  ['new file App reaches through a glob too wide to match exactly', { ...plus(ruleForm, "import NewField from './NewField';"), ...plus('client/src/App.jsx', `const all = import.meta.glob('./pages/${'**/'.repeat(200)}*.jsx');`), [newField]: component }, Object.keys(pages), [newField]],
+  ['new shared component a reached file imports', { ...plus(ruleForm, "import NewBadge from '../../components/NewBadge';"), 'client/src/components/NewBadge.jsx': component }, Object.keys(pages), []],
+  ['new file whose changed importer is unreadable at the head', { [ruleForm]: null, [newField]: component }, ['categorias'], [newField]],
+];
+for (const [name, head, touched, unmapped, renames = {}] of arrivals) {
+  test(`a path the trusted contract lacks: ${name}`, t => {
+    const f = importFixture([]); t.after(f.cleanup);
+    f.state.files = Object.keys(head).map(filename => ({ filename, status: renames[filename] ? 'renamed' : filename in importGraph ? 'modified' : 'added', ...(renames[filename] ? { previous_filename: renames[filename] } : {}), patch: '@@ -1 +1 @@\n-old\n+new' }));
+    f.state.headBlobs = Object.fromEntries(Object.entries(head).filter((entry): entry is [string, string] => entry[1] !== null));
+    f.save();
+    const r = runReconcile(f); assert.equal(r.status, 0, r.stderr);
+    const report = JSON.parse(r.stdout);
+    assert.deepEqual(report.touchedFeatures.map((feature: { id: string }) => feature.id), touched);
+    assert.deepEqual(report.unmappedSurfaces, unmapped);
+    const reads = blobReads(f);
+    assert.equal(new Set(reads).size, reads.length);
+    const headReads = reads.filter(read => read.startsWith(f.state.head + ':')).map(read => read.slice(41));
+    assert.ok(headReads.every(path => path in head));
+    assert.ok(reads.every(read => read.startsWith(f.state.head + ':') || read.startsWith(f.state.trunk + ':')));
+  });
+}
+test('a new page whose recipe the trusted map already lists maps its new subcomponents', t => {
+  const f = importFixture([]); t.after(f.cleanup);
+  f.state.blobs['features/README.md'] += '- [nova](./nova.md) — `#nova`. `client/src/pages/NovaPage.jsx`\n';
+  f.state.blobs['features/nova.md'] = 'Drive nova.';
+  const head = { ...plus('client/src/App.jsx', "const NovaPage = lazy(() => import('./pages/NovaPage'));"), 'client/src/pages/NovaPage.jsx': "import Panel from './nova/Panel';", 'client/src/pages/nova/Panel.jsx': component };
+  f.state.files = Object.keys(head).map(filename => ({ filename, status: filename in importGraph ? 'modified' : 'added', patch: '@@ -1 +1 @@\n-old\n+new' }));
+  f.state.headBlobs = head; f.save();
+  const r = runReconcile(f); assert.equal(r.status, 0, r.stderr);
+  const report = JSON.parse(r.stdout);
+  assert.deepEqual(report.touchedFeatures.map((feature: { id: string }) => feature.id), [...Object.keys(pages), 'nova']);
+  assert.deepEqual(report.unmappedSurfaces, []);
+});
+test('a trusted client too wide to scan for importers of a new path refuses reconciliation', t => {
+  const f = importFixture([ruleForm, newField], { ...importGraph, ...Object.fromEntries(Array.from({ length: 2001 }, (_, i) => [`client/src/legacy/m${i}.js`, ''])) }); t.after(f.cleanup);
+  const r = runReconcile(f);
+  assert.notEqual(r.status, 0); assert.match(r.stderr, /Feature import graph exceeds walk bound/);
+  assert.ok(blobReads(f).length <= 2000);
+});
 test('changes outside client sources skip the import walk', t => {
   const f = importFixture(['server/routes/health.js', 'docs/guide.md']); t.after(f.cleanup);
   const r = runReconcile(f); assert.equal(r.status, 0, r.stderr);
