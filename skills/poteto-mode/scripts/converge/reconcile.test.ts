@@ -1,9 +1,11 @@
-import { test } from 'node:test';
+import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fixture } from './fixtures/setup.ts';
 import { dependencyOnly } from './dependencies.ts';
+import { branchSnapshot } from './github.ts';
+import { analyze } from './reconcile.ts';
 
 function runReconcile(f: ReturnType<typeof fixture>, name = 'report.json') {
   return f.run('converge-reconcile', ['--repo', 'Example/app', '--pr', '1', '--output', join(f.directory, name)]);
@@ -356,4 +358,37 @@ test('forced parent color cannot corrupt gh GET or publication POST JSON', t => 
   assert.equal(published.status, 0, published.stderr);
   assert.equal(JSON.parse(published.stdout).dossier.decision.verdict, 'VERIFIED');
   assert.equal(f.read().comments.length, 1); assert.equal(f.read().statuses.length, 1);
+});
+
+function inProcess(t: TestContext, f: ReturnType<typeof fixture>): void {
+  const before = { path: process.env.PATH, fixture: process.env.CONVERGE_FIXTURE };
+  process.env.PATH = f.directory + ':' + before.path; process.env.CONVERGE_FIXTURE = f.statePath;
+  t.after(() => { process.env.PATH = before.path; if (before.fixture === undefined) delete process.env.CONVERGE_FIXTURE; else process.env.CONVERGE_FIXTURE = before.fixture; });
+}
+function withPrePr(f: ReturnType<typeof fixture>, certifier = true) {
+  const config = JSON.parse(f.state.blobs['.cursor/converge.json']);
+  config.prePr = { runs: [{ name: 'suite', command: 'npm test' }], certifier };
+  f.state.blobs['.cursor/converge.json'] = JSON.stringify(config); f.save();
+}
+test('branch snapshot reads the pushed head through compare and selects features without a PR', async t => {
+  const f = fixture(); t.after(f.cleanup); withPrePr(f);
+  f.state.files = [{ filename: 'client/Login.jsx', status: 'modified', patch: '@@ -1 +1 @@\n-old\n+new' }]; f.save();
+  inProcess(t, f);
+  const s = await branchSnapshot('Example/app', f.state.head, '.cursor/converge.json');
+  assert.equal(s.pull.number, 0); assert.equal(s.pull.head, f.state.head);
+  assert.deepEqual(s.features.map(x => x.id), ['login']); assert.deepEqual(s.sources, []); assert.deepEqual(s.checks, []);
+  const report = analyze(s, { id: '12345678-1234-1234-1234-123456789abc', configPath: '.cursor/converge.json', execution: 'pre-pr' });
+  assert.equal(report.round.pr, 0); assert.deepEqual(report.lanes, ['pre-pr reviewer', 'pre-pr certifier']); assert.deepEqual(report.gaps, []);
+});
+test('a docs-only branch still needs the reviewer and never the certifier', async t => {
+  const f = fixture(); t.after(f.cleanup); withPrePr(f); inProcess(t, f);
+  const report = analyze(await branchSnapshot('Example/app', f.state.head, '.cursor/converge.json'), { id: '12345678-1234-1234-1234-123456789abc', configPath: '.cursor/converge.json', execution: 'pre-pr' });
+  assert.equal(report.mode, 'ci-only'); assert.deepEqual(report.lanes, ['pre-pr reviewer']);
+});
+test('pre-pr reconciliation of a real PR ignores pending CI', t => {
+  const f = fixture(); t.after(f.cleanup); withPrePr(f);
+  f.state.checks = []; f.state.runOverrides = { status: 'in_progress', conclusion: null }; f.save();
+  const r = f.run('converge-reconcile', ['--repo', 'Example/app', '--pr', '1', '--output', join(f.directory, 'r.json'), '--execution', 'pre-pr']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout).gaps, []);
 });

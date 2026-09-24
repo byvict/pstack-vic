@@ -28,6 +28,9 @@ export async function api(endpoint: string, body?: unknown): Promise<unknown> {
   if (body !== undefined) return JSON.parse(command('gh', ['api', endpoint, '--method', 'POST', '--input', '-'], JSON.stringify(body)));
   return JSON.parse(await commandAsync('gh', ['api', endpoint]));
 }
+export async function apiDiff(endpoint: string): Promise<string> {
+  return commandAsync('gh', ['api', endpoint, '-H', 'Accept: application/vnd.github.diff']);
+}
 export async function pages(endpoint: string, key?: string, credential: 'writer' | 'installation' = 'writer'): Promise<unknown[]> {
   const output = JSON.parse(await commandAsync('gh', ['api', endpoint + (endpoint.includes('?') ? '&' : '?') + 'per_page=100', '--paginate', '--slurp'], credential));
   return array(output).flatMap(page => key ? array(object(page)[key]) : array(page));
@@ -170,16 +173,17 @@ export async function trusted(repo: string, configPath: string): Promise<Trusted
   const source = await blob(repo, commit, configPath);
   const config = parseContract(JSON.parse(source));
   if (config.repo.toLowerCase() !== repo.toLowerCase() || config.trunk !== trunk) throw new Error('Trunk contract does not match repository');
-  const workflows = workflowValues.map(v => object(v)).filter(w => w.name === 'Tests' && w.state === 'active');
+  const workflows = workflowValues.map(v => object(v)).filter(w => w.name === config.tests.workflow && w.state === 'active');
   if (workflows.length !== 1) throw new Error('Trusted Tests workflow unavailable');
   const workflow = workflows[0];
   if (!workflow) throw new Error('Trusted Tests workflow unavailable');
   const workflowPath = relativePath(workflow.path);
   const files = new Map([[configPath, source]]);
-  await Promise.all([...new Set([config.verifySkill, config.featureMap, workflowPath])].map(async path => files.set(path, await blob(repo, commit, path))));
+  await Promise.all([...new Set([config.verifySkill, config.featureMap, workflowPath].filter((p): p is string => p !== null))].map(async path => files.set(path, await blob(repo, commit, path))));
   return { repo, sha: commit, config, files, workflowId: integer(workflow.id), workflowPath };
 }
 export async function features(contract: Trusted, head: string, changes: ChangedFile[]): Promise<{ features: Feature[]; reachedPaths: string[] }> {
+  if (contract.config.featureMap === null) return { features: [], reachedPaths: [] };
   const map = contract.files.get(contract.config.featureMap);
   if (map === undefined) throw new Error('Feature map missing');
   const entries: { id: string; page: string; recipe: string }[] = [];
@@ -363,4 +367,25 @@ export async function snapshot(repo: string, prNumber: number, configPath: strin
   admitPull(final, t.config, p.head, proof);
   if (final.body !== p.body || jsonHash(final.labels) !== jsonHash(p.labels) || sha(object(finalCommit).sha) !== t.sha) throw new Error('Snapshot changed during reconciliation');
   return { trusted: t, pull: p, base, patchId: sha(patch), diff, files, features: selection.features, reachedPaths: selection.reachedPaths, checks: observedChecks, sources, gaps, inputDigest, inputFingerprint, verificationDigest, dependencyOnly: safeDependencyChange, testEvidence };
+}
+/** The pushed branch head as a snapshot with no PR: files and diff come from compare against the contract commit. */
+export async function branchSnapshot(repo: string, head: string, configPath: string): Promise<Snapshot> {
+  const t = await trusted(repo, configPath);
+  const target = sha(head);
+  const endpoint = `repos/${repo}/compare/${t.sha}...${target}`;
+  const [comparison, diff] = await Promise.all([api(endpoint), apiDiff(endpoint)]);
+  const c = object(comparison);
+  const base = sha(object(c.merge_base_commit).sha);
+  const files: ChangedFile[] = array(c.files).map(value => { const f = object(value); return { path: relativePath(f.filename), previous: f.previous_filename === undefined ? null : relativePath(f.previous_filename), patch: f.patch === undefined ? null : string(f.patch), status: string(f.status) }; });
+  if (files.length >= 300) throw new Error('Branch compare truncated');
+  if (!files.length) throw new Error('Branch has no changes against trunk');
+  const patch = command('git', ['patch-id', '--stable'], diff).trim().split(/\s+/)[0];
+  if (!patch) throw new Error('Empty branch diff');
+  const selection = await features(t, target, files);
+  const gaps = files.filter(f => f.patch === null && ![f.path, f.previous ?? f.path].every(path => /(?:^|\/)__screenshots__\/.+\.png$/.test(path))).map(() => 'Changed file has no readable patch');
+  const pull: Pull = { number: 0, head: target, base: t.config.trunk, branch: '', state: 'open', draft: false, body: '', labels: [], authorId: 0, authorLogin: '', authorType: 'User', autoMerge: false };
+  const verificationDigest = jsonHash([...t.files].sort(([a], [b]) => a.localeCompare(b)));
+  const inputFingerprint = jsonHash({ body: '', comments: [] });
+  const inputDigest = jsonHash({ head: target, base, contract: t.sha, files, diff, sources: [], checks: [], gaps, inputFingerprint, verificationDigest, testEvidence: { kind: 'unavailable' } });
+  return { trusted: t, pull, base, patchId: sha(patch), diff, files, features: selection.features, reachedPaths: selection.reachedPaths, checks: [], sources: [], gaps, inputDigest, inputFingerprint, verificationDigest, dependencyOnly: false, testEvidence: { kind: 'unavailable' } };
 }
