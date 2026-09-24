@@ -421,3 +421,18 @@ Duas mudanças do port somavam para isso. Na Cursor 0.15.2, `poteto-mode` tem `d
 ## Verificação
 
 - `npm test`: 310 testes, 0 falhas. `matrix:check`, `agents:check`, `collision:check` e `claude plugin validate --strict .` verdes.
+
+# 0.1.7 — Sheet de modelos manda no esforço do Converge (2026-09-24)
+
+Até a 0.1.6, as linhas `pr owner` e `pr verifier` do sheet eram decorativas. O `/setup-pstack` perguntava, testava a lane e gravava, mas o `start.ts` exigia `--effort` a cada disparo e nunca lia o sheet. O owner no Cloud escolhia o esforço do verifier sem ver a configuração. Um `pr verifier: cursor:grok-4.7@xhigh` no sheet não tinha efeito.
+
+## Desenho
+
+- `start.ts` ganha `--parent claude|codex` e lê as duas linhas do sheet desse pai como **pisos**. `--effort` fica opcional: só sobe o owner acima de um piso `high`, nunca baixa um `xhigh`. Linha ausente, sheet ausente ou alias (`inherit-parent`, `auto`) = sem piso (`high`).
+- O piso do verifier entra no prompt do owner. Com `xhigh`, todo verifier roda `xhigh`. Com `high`, o owner continua escolhendo por complexidade.
+- Intent e receipt de lançamento registram `verifierEffort`. Um retry com sheet diferente recusa em vez de devolver o lançamento antigo. Receipts antigos sem o campo leem `high`.
+- Qualquer outra lane nessas linhas (outra família, outro esforço, painel) é recusada pelo `setup-pstack plan` e pelo `start.ts` antes de gravar o intent.
+
+## Verificação
+
+- `npm test`: 314 testes, 0 falhas (4 novos: pisos do sheet, owner elevado pelo sheet, `--effort` sobre piso `high`, recusa de sheet inválido antes do intent; validação das linhas Converge no `setup-pstack`).

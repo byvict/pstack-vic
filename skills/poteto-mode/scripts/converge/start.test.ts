@@ -1,9 +1,9 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fixture } from './fixtures/setup.ts';
-import { start } from './start.ts';
+import { sheetEfforts, start } from './start.ts';
 
 function environment(t: TestContext, f: ReturnType<typeof fixture>): void {
   const before = { path: process.env.PATH, fixture: process.env.CONVERGE_FIXTURE, key: process.env.CURSOR_API_KEY };
@@ -91,4 +91,56 @@ test('lost launch response recovers the one matching Cursor agent', async t => {
   assert.equal(recovered.agentId, 'bc_recovered');
   assert.equal(recovered.runId, 'run_recovered');
   assert.equal(posts, 1);
+});
+
+test('sheet efforts are floors for the owner and the verifier', () => {
+  const sheet = 'feature, refactoring: grok:grok-4.7@xhigh\npr owner: cursor:grok-4.7@xhigh\npr verifier: cursor:grok-4.7@high\n';
+  assert.deepEqual(sheetEfforts(sheet), { owner: 'xhigh', verifier: 'high' });
+  assert.deepEqual(sheetEfforts('# pstack model configuration\n'), { owner: 'high', verifier: 'high' });
+  assert.deepEqual(sheetEfforts('pr owner: inherit-parent\npr verifier: auto\n'), { owner: 'high', verifier: 'high' });
+  assert.throws(() => sheetEfforts('pr verifier: cursor:composer-2.5@high\n'), /pr verifier.*must be cursor:grok-4\.7@high, cursor:grok-4\.7@xhigh/);
+  assert.throws(() => sheetEfforts('pr owner: cursor:grok-4.7@medium\n'), /pr owner/);
+});
+
+test('sheet floors raise the owner launch and bind the verifier effort', async t => {
+  const f = fixture(); t.after(f.cleanup); environment(t, f);
+  const directory = join(f.directory, 'sheet');
+  const sheetPath = join(f.directory, 'pstack-models.md');
+  writeFileSync(sheetPath, 'pr owner: cursor:grok-4.7@xhigh\npr verifier: cursor:grok-4.7@xhigh\n');
+  let prompt = '';
+  t.mock.method(globalThis, 'fetch', async (url: string | URL, init?: RequestInit) => {
+    if (String(url).endsWith('/v1/models')) return Response.json(inventory);
+    const body = JSON.parse(String(init?.body));
+    assert.deepEqual(body.model.params, [{ id: 'reasoning_effort', value: 'xhigh' }, { id: 'fast', value: 'false' }]);
+    prompt = body.prompt.text;
+    return Response.json({ agent: { id: 'bc_sheet', url: 'https://cursor.com/agents/bc_sheet' }, run: { id: 'run_sheet' } });
+  });
+  const receipt = await start({ repo: 'Example/app', pr: 1, toolingRef: 'd'.repeat(40), stateDirectory: directory, effort: 'high', sheetPath });
+  assert.equal(receipt.effort, 'xhigh');
+  assert.equal(receipt.verifierEffort, 'xhigh');
+  assert.match(prompt, /descriptor cursor:grok-4\.7@xhigh and launch it with pstack-runner .*? --effort xhigh --mode read-only/);
+  assert.doesNotMatch(prompt, /for a simple change/);
+  assert.deepEqual(await start({ repo: 'Example/app', pr: 1, toolingRef: 'd'.repeat(40), stateDirectory: directory, sheetPath }), receipt);
+  writeFileSync(sheetPath, 'pr owner: cursor:grok-4.7@xhigh\npr verifier: cursor:grok-4.7@high\n');
+  await assert.rejects(start({ repo: 'Example/app', pr: 1, toolingRef: 'd'.repeat(40), stateDirectory: directory, sheetPath }), /Existing launch receipt is invalid or differs/);
+});
+
+test('explicit effort raises a high sheet floor and an invalid sheet refuses before intent', async t => {
+  const f = fixture(); t.after(f.cleanup); environment(t, f);
+  const sheetPath = join(f.directory, 'pstack-models.md');
+  writeFileSync(sheetPath, 'pr owner: cursor:grok-4.7@high\npr verifier: cursor:grok-4.7@high\n');
+  let prompt = '';
+  t.mock.method(globalThis, 'fetch', async (url: string | URL, init?: RequestInit) => {
+    if (String(url).endsWith('/v1/models')) return Response.json(inventory);
+    prompt = JSON.parse(String(init?.body)).prompt.text;
+    return Response.json({ agent: { id: 'bc_raise', url: 'https://cursor.com/agents/bc_raise' }, run: { id: 'run_raise' } });
+  });
+  const raised = await start({ repo: 'Example/app', pr: 1, toolingRef: 'd'.repeat(40), stateDirectory: join(f.directory, 'raise'), effort: 'xhigh', sheetPath });
+  assert.equal(raised.effort, 'xhigh');
+  assert.equal(raised.verifierEffort, 'high');
+  assert.match(prompt, /cursor:grok-4\.7@high for a simple change or cursor:grok-4\.7@xhigh for a complex change/);
+  writeFileSync(sheetPath, 'pr owner: cursor:composer-2.5@high\n');
+  const refused = join(f.directory, 'refused');
+  await assert.rejects(start({ repo: 'Example/app', pr: 1, toolingRef: 'd'.repeat(40), stateDirectory: refused, sheetPath }), /pr owner/);
+  assert.equal(existsSync(join(refused, 'intent.json')), false);
 });

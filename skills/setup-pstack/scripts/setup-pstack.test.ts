@@ -405,6 +405,14 @@ describe("buildPlan", () => {
     assert.deepEqual(lanesOf(plan, "pr verifier"), ["cursor:grok-4.7@high"]);
   });
 
+  it("accepts only Grok 4.7 high or xhigh for the Converge roles, which start.ts reads as floors", () => {
+    const raised = buildPlan({ parent: "claude", home, matrix, roles: { "pr owner": ["cursor:grok-4.7@xhigh"] } });
+    assert.deepEqual(lanesOf(raised, "pr owner"), ["cursor:grok-4.7@xhigh"]);
+    assert.throws(() => buildPlan({ parent: "claude", home, matrix, roles: { "pr verifier": ["cursor:composer-2.5@high"] } }), /"pr verifier" takes one lane/);
+    assert.throws(() => buildPlan({ parent: "claude", home, matrix, roles: { "pr owner": ["cursor:grok-4.7@medium"] } }), /"pr owner" takes one lane/);
+    assert.throws(() => buildPlan({ parent: "claude", home, matrix, efforts: { "cursor-grok": "low" } }), /"pr owner" takes one lane/);
+  });
+
   it("carries the rolling-alias migrations into the plan and rewrites them in the sheet", () => {
     putSheet("claude", "hardest tasks: claude:claude-fable-5-1@max\n");
     const plan = buildPlan({ parent: "claude", home, matrix });

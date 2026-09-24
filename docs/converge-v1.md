@@ -6,7 +6,7 @@ Escopo revisado com Victor em 2026-09-23. Este é o plano vigente. Substitui a a
 
 Quando o agente local abre um PR pronto, ele entrega o trabalho ao Cursor Cloud Agents. O processo no Cloud verifica a mudança, executa os testes pertinentes, usa o aplicativo quando o comportamento é observável nele, corrige problemas e verifica novamente. Com aprovação e checks obrigatórios verdes, faz merge automático e acompanha os testes do commit resultante no `main`. O humano entra quando o processo não consegue avançar ou quando intervém explicitamente.
 
-Todos os agentes desse fluxo usam exclusivamente Grok 4.7 no Cursor Cloud Agents. Tarefas simples usam `high`; tarefas complexas, análise de risco e problemas que exigem investigação mais profunda usam `xhigh`. A escolha de esforço não cria outro papel. Não usar Composer, Codex, Opus, Grok CLI ou comparação entre modelos no fluxo pós-PR.
+Todos os agentes desse fluxo usam exclusivamente Grok 4.7 no Cursor Cloud Agents. Tarefas simples usam `high`; tarefas complexas, análise de risco e problemas que exigem investigação mais profunda usam `xhigh`. A escolha de esforço não cria outro papel. As linhas `pr owner` e `pr verifier` do sheet de modelos são pisos: o `start.ts` lança o owner no esforço do sheet (ou `xhigh` quando `--effort xhigh` pede), e o prompt do owner obriga o verifier a não ficar abaixo do piso dele. Não usar Composer, Codex, Opus, Grok CLI ou comparação entre modelos no fluxo pós-PR.
 
 O ciclo é:
 

@@ -52,7 +52,7 @@ When the operator chose "Change roles" without typing lanes, ask which roles in 
 
 A panel role (a list) gets one question instead of two: the current lanes as the "(keep)" option, the parent's matrix default panel when it differs, and "Other" for a typed list of descriptors, one per lane, in the order they should run. Explain that one lane runs per entry and that the list length is the fan-out count.
 
-Each lane keeps the effort written in its descriptor, so `bug-fix: codex:gpt-6-sol@xhigh` next to `hillclimb: codex:gpt-6-sol@high` is a valid map; there is no per-family effort question. A role that brings a family into the map carries that family's effort in its answer. Why and Reflect roles need the parent's live MCP surface, so recommend `inherit-parent` or `auto` for them in the question.
+Each lane keeps the effort written in its descriptor, so `bug-fix: codex:gpt-6-sol@xhigh` next to `hillclimb: codex:gpt-6-sol@high` is a valid map; there is no per-family effort question. A role that brings a family into the map carries that family's effort in its answer. Why and Reflect roles need the parent's live MCP surface, so recommend `inherit-parent` or `auto` for them in the question. `pr owner` and `pr verifier` take one lane, `cursor:grok-4.7@high` or `cursor:grok-4.7@xhigh`: Converge's `start.ts` reads them as effort floors for the Cloud owner and its verifier, and `plan` refuses any other family, effort, or panel there. An alias on those rows sets no floor.
 
 ### 4. Collect the changes
 

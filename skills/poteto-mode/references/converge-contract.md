@@ -14,7 +14,7 @@ node skills/poteto-mode/scripts/converge/publish.ts --report /tmp/converge/round
 node skills/poteto-mode/scripts/converge/converge-arm --repo OWNER/REPO --pr NUMBER --head FULL_SHA --verdict VERIFIED
 ```
 
-Use `xhigh` in both the descriptor and runner when the verification is complex. Omit the lane for CI-only. The owner continues after `publish.ts` returns. It never supplies its own verdict to the publisher.
+Use `xhigh` in both the descriptor and runner when the verification is complex or when the owner prompt sets an `xhigh` verifier floor from the model sheet. Omit the lane for CI-only. The owner continues after `publish.ts` returns. It never supplies its own verdict to the publisher.
 
 ## Evidence and safety
 
