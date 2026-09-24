@@ -1,13 +1,13 @@
 ---
 name: setup-pstack
-description: Configure pstack's provider-qualified models, per-lane requested effort, and parent-owned routes per role. Verifies every distinct family-and-effort pair on native Claude and Codex lanes, external CLI lanes, and Cursor cloud lanes before writing the override sheet. Use for /setup-pstack, "configure pstack models", or changing pstack's model choices.
+description: Configure pstack's provider-qualified models, per-lane requested effort, and parent-owned routes per role. Probes a family on native Claude and Codex lanes, external CLI lanes, or Cursor cloud lanes only the first time the parent uses it (a new provider or model) before writing the override sheet; effort and role changes write without probes. Use for /setup-pstack, "configure pstack models", or changing pstack's model choices.
 ---
 
 # Setup pstack
 
 Configure one portable model sheet for the current parent harness. Read [`provider-dispatch.md`](../poteto-mode/references/provider-dispatch.md) before probing or writing anything. Its model matrix, descriptor grammar, route table, and role defaults are the contract. Each lane carries its own effort, so two roles may run the same family at different efforts. Do not add a second configuration file, a runtime resolver, or a weaker-model fallback.
 
-The deterministic half of this skill is `scripts/setup-pstack.ts`, next to this file (Node 24, no dependencies; run it as `node <this skill's directory>/scripts/setup-pstack.ts <subcommand>`). It reads the matrix, reads and normalizes the current sheet, renders the new one, runs the external probes through the runner, refuses to write while any probe is missing, and writes with snapshot, read-back, and restore. You own the conversation (parent, efforts, role changes, confirmation) and the native one-turn probes. Every subcommand prints JSON; `--help` prints the usage. Never edit the sheet or the integration files by hand, and never paste a rendered sheet as the result.
+The deterministic half of this skill is `scripts/setup-pstack.ts`, next to this file (Node 24, no dependencies; run it as `node <this skill's directory>/scripts/setup-pstack.ts <subcommand>`). It reads the matrix, reads and normalizes the current sheet, renders the new one, runs the external probes through the runner, refuses to write while any required probe is missing, and writes with snapshot, read-back, and restore. You own the conversation (parent, efforts, role changes, confirmation) and the native one-turn probes. Every subcommand prints JSON; `--help` prints the usage. Never edit the sheet or the integration files by hand, and never paste a rendered sheet as the result.
 
 Claude Code writes `~/.claude/pstack-models.md` and loads it from `~/.claude/CLAUDE.md` with:
 
@@ -22,6 +22,8 @@ Codex writes `~/.codex/pstack-models.md`. Codex has no `@` include, so the scrip
 <exact contents of ~/.codex/pstack-models.md>
 <!-- pstack:models:end -->
 ```
+
+Next to each parent's sheet, `pstack-probes.json` is the probe ledger: one entry per family (`<provider>:<model>`) this parent has verified, with the descriptor probed, when, and the evidence (the run directory, or `operator` for a family the operator vouched for). Effort is not part of the key. A family in the ledger is never probed again, whatever effort a lane gives it. A new provider or a new model (a family added to the matrix, or a family whose model changed) is missing from the ledger and gets one probe. `write` adds each family it probed. To force a family to be probed again, delete its entry. A ledger that does not parse, or a directory at its path, stops `plan` as inconsistent state.
 
 ## Steps
 
@@ -67,30 +69,32 @@ node scripts/setup-pstack.ts plan --parent <parent> \
 
 The plan is the in-memory render: it starts from the loaded rows (or the first-run map), materializes any missing documented role from the defaults, rewrites every lane of a family named in `--effort` to that effort, then applies the named role changes lane by lane. It refuses an unqualified slug, an unknown role or family, an effort outside the family's row, and a family-wide `--effort` for a family outside the map. A family-wide `--effort` updates every lane of that family and moves no role.
 
-The output carries `dir` (a fresh run directory holding `plan.json`; pass `--dir` to choose it), the distinct `efforts` per family in the final map, the `rows`, the `sheet` bytes, the `migrations`, and one probe `pair` per distinct family-and-effort in the map (`fable@medium`, `sol@xhigh`) with its route for this parent and, for native pairs, how to probe it. A family used at two efforts gets two pairs.
+The output carries `dir` (a fresh run directory holding `plan.json`; pass `--dir` to choose it), the distinct `efforts` per family in the final map, the `rows`, the `sheet` bytes, the `migrations`, `verified` (the families of the map already in this parent's ledger, which are not probed), and `pairs`: one probe per family of the map missing from the ledger, at the family's lowest effort in use (`sol@high` when `sol` runs at `high` and `xhigh`), with its route for this parent and, for native pairs, how to probe it. A plan that only changes efforts or moves roles between verified families has no `pairs`.
 
-### 6. Probe every pair
+### 6. Probe new families
+
+Skip this step when the plan's `pairs` is empty: every family of the map is already verified on this parent. Otherwise:
 
 ```shell
 node scripts/setup-pstack.ts probe --dir <dir> [--timeout <seconds>] \
   [--repo <owner/name> --pr <number>]
 ```
 
-External pairs (route `runner`) run at once through the external runner in `read-only` mode, each with its own prompt, output, and receipt named after the pair under the run directory, after the provider preflight proves credentials (`claude auth status --json`, `codex login status`, `grok models` listing the requested model, or, for the `cursor` provider, `GET /v1/models` on the Cursor cloud agents API with `CURSOR_API_KEY` from the environment). A pair passes only when its receipt is `complete` for exactly the requested provider, model, and effort, the model is verified (provider report) or pinned by argv (Codex and Cursor), and the output carries the pair's unique marker. Exit code 1 means at least one external pair failed: report the failing pair, provider, and `detail`, stop, and write nothing. There is no implicit timeout; pass `--timeout` only when the operator gives a real deadline.
+External pairs (route `runner`) of the plan run at once through the external runner in `read-only` mode, each with its own prompt, output, and receipt named after the pair under the run directory, after the provider preflight proves credentials (`claude auth status --json`, `codex login status`, `grok models` listing the requested model, or, for the `cursor` provider, `GET /v1/models` on the Cursor cloud agents API with `CURSOR_API_KEY` from the environment). A pair passes only when its receipt is `complete` for exactly the requested provider, model, and effort, the model is verified (provider report) or pinned by argv (Codex and Cursor), and the output carries the pair's unique marker. Exit code 1 means at least one external pair failed: report the failing pair, provider, and `detail`, stop, and write nothing. There is no implicit timeout; pass `--timeout` only when the operator gives a real deadline.
 
 When the plan contains an HTTP pair, pass both `--repo <owner/name>` and `--pr <number>` to `probe` for its authorized pull request. These flags belong only to `probe`; the target is not saved in the plan or sheet. The script validates the target before creating probe artifacts or launching any pair and forwards it only to HTTP lanes. Omit both flags for a plan without HTTP pairs. Cursor probes require `CURSOR_API_KEY` and Git read access to the remote repository. See [HTTP lanes](../poteto-mode/references/provider-dispatch.md#http-lanes) for authentication, remote-head evidence, and its attribution limit.
 
-Native pairs (route `native`) are listed under `native` with the `pair` id and the `prompt` to send. Run each one yourself through the parent's primitive: on Claude Code, one turn of the mapped `pstack-<stem>-<effort>` agent (`Agent` with that `subagent_type`); on Codex, one `spawn_agent` turn with the listed `model` and `reasoning_effort`. Two native pairs of one family are two agents (`pstack-fable-medium` and `pstack-fable-max`), one turn each. When the Codex parent has no `multi_agent` (so `spawn_agent` is unavailable), run the same prompt as one turn of the parent's own CLI instead: `codex exec --model <model> --config 'model_reasoning_effort="<effort>"' --sandbox read-only --skip-git-repo-check --ephemeral`; the Codex CLI is the parent's native process, not the external launcher. Then record the exact reply:
+Native pairs (route `native`) are listed under `native` with the `pair` id and the `prompt` to send. Run each one yourself through the parent's primitive: on Claude Code, one turn of the mapped `pstack-<stem>-<effort>` agent (`Agent` with that `subagent_type`); on Codex, one `spawn_agent` turn with the listed `model` and `reasoning_effort`. When the Codex parent has no `multi_agent` (so `spawn_agent` is unavailable), run the same prompt as one turn of the parent's own CLI instead: `codex exec --model <model> --config 'model_reasoning_effort="<effort>"' --sandbox read-only --skip-git-repo-check --ephemeral`; the Codex CLI is the parent's native process, not the external launcher. Then record the exact reply:
 
 ```shell
 node scripts/setup-pstack.ts attest --dir <dir> --pair <family>@<effort> --observed "<exact reply text>"
 ```
 
-`attest` refuses a reply that lacks the marker. Never call the external launcher for the parent's own provider, and never attest a reply you did not observe. A login-status command alone proves credentials, not that the requested model and effort flags run. Receipts and native transcripts prove the requested effort and the route; they do not prove a provider's hidden applied reasoning depth.
+`attest` refuses a reply that lacks the marker. Never call the external launcher for the parent's own provider, and never attest a reply you did not observe. A login-status command alone proves credentials, not that the requested model runs. The probe proves the family and its route on this parent; the other efforts of a verified family are trusted to the matrix's Selectable efforts and are not probed. Receipts and native transcripts do not prove a provider's hidden applied reasoning depth.
 
 ### 7. Confirm and commit
 
-Show any model migrations as original and normalized descriptors. Show the route table for this parent and every rendered row from `plan.json`. Say when `inherit-parent` or `auto` reduces a panel's provider diversity. Why and Reflect require the parent's live MCP surface; keep their roles on `inherit-parent` or `auto`, because the bounded external runner deliberately omits ambient MCPs. For panel roles, one lane runs per entry and the list length is the fan-out count. `arena cross-judge pool` is a list from which Arena chooses a provider different from the parent and base candidate when possible. `swarm workers` is the default for every worker unless a race explicitly assigns another descriptor.
+Show any model migrations as original and normalized descriptors. Show the route table for this parent and every rendered row from `plan.json`. Say which families were probed in step 6 and which were already verified (`verified`). Say when `inherit-parent` or `auto` reduces a panel's provider diversity. Why and Reflect require the parent's live MCP surface; keep their roles on `inherit-parent` or `auto`, because the bounded external runner deliberately omits ambient MCPs. For panel roles, one lane runs per entry and the list length is the fan-out count. `arena cross-judge pool` is a list from which Arena chooses a provider different from the parent and base candidate when possible. `swarm workers` is the default for every worker unless a race explicitly assigns another descriptor.
 
 Ask for confirmation. After the operator confirms:
 
@@ -98,19 +102,19 @@ Ask for confirmation. After the operator confirms:
 node scripts/setup-pstack.ts write --dir <dir>
 ```
 
-`write` verifies every pair of the plan against the run directory first and refuses (exit 1, nothing touched) while any probe is missing or failed. It then snapshots the sheet and the parent integration, renders the integration, compares, writes only what changed, reads both back, and restores every snapshot if a write or read-back fails. The result names each target as `created`, `updated`, or `unchanged`. An unchanged rerun is byte-identical and reports both as `unchanged`.
+`write` verifies every probe the plan requires against the run directory first and refuses (exit 1, nothing touched) while any is missing or failed; a plan without `pairs` has nothing to verify. It then snapshots the sheet, the parent integration, and the ledger, renders the integration and the ledger (plus one entry per family this plan probed), compares, writes only what changed, reads each back, and restores every snapshot if a write or read-back fails. The result names each target as `created`, `updated`, or `unchanged`. An unchanged rerun is byte-identical and reports all three as `unchanged`.
 
 ### 8. How the integration is wired
 
 On Claude Code, the integration is the single `@~/.claude/pstack-models.md` line in `~/.claude/CLAUDE.md`: appended once on first run, left alone when present, inconsistent when duplicated. On Codex, it is the exact sheet bytes between one `<!-- pstack:models:begin -->` and `<!-- pstack:models:end -->` pair in `~/.codex/AGENTS.md`: one block appended at the end on first run, the whole block replaced on a rerun. Missing, duplicated, or reversed markers, or a directory where a file should be, stop the write as inconsistent state instead of guessing a boundary.
 
-Do not copy the model sheet between harnesses without rerunning the parent-specific probes; route availability can differ even on the same host.
+Do not copy the model sheet or the ledger between harnesses; route availability can differ even on the same host, so each parent keeps its own ledger and probes a family the first time it uses it.
 
 ### 9. Behavioral smoke
 
-Before declaring setup complete, run one small read-only mixed panel from this parent: every chosen descriptor, distinct output/receipt paths, and an independent cross-judge. Launch Claude-native agents and every external process in the background with retained handles, then drain them. Verify the native transcript entries and every external receipt. A structural config check or unit test is not a substitute.
+Run the smoke only when step 6 probed at least one family. Skip it when the plan had no `pairs`: an effort change or a role move between verified families needs no smoke. Otherwise, before declaring setup complete, run one small read-only mixed panel from this parent: one lane per newly probed family, distinct output/receipt paths, and an independent cross-judge. Launch Claude-native agents and every external process in the background with retained handles, then drain them. Verify the native transcript entries and every external receipt. A structural config check or unit test is not a substitute.
 
-Report the sheet path, parent route table, per-pair probe results, smoke results, and external elapsed/token/cost receipts. Re-running this skill re-probes and updates the same sheet. Do not claim the provider exposed hidden applied-effort observability.
+Report the sheet path, the ledger path, the parent route table, the families probed and the families already verified, smoke results when a smoke ran, and external elapsed/token/cost receipts. Re-running this skill updates the same sheet and probes only the families missing from this parent's ledger. Do not claim the provider exposed hidden applied-effort observability.
 
 ## First-run role maps
 
