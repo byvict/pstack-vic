@@ -1,0 +1,312 @@
+{
+  "schemaVersion": 1,
+  "notes": [
+    "Every place the plugin depends on the behavior of the claude, codex or grok CLI. /update-clis reads each release note against this list.",
+    "kind lane: what the external runner uses of the CLI. kind harness: what the plugin uses of Claude Code or Codex as the parent; a harness change never holds an update, it is reported.",
+    "coveredBy: the probe lanes of the same CLI that exercise the touchpoint (see PROBE_LANES in scripts/update-clis.ts). An empty list means no probe covers it: a contract change there holds the update.",
+    "measuredOn: the CLI version the behavior was measured on. pointers: file (from the plugin root) and an anchor text inside it; update-clis.test.ts fails when one goes missing."
+  ],
+  "touchpoints": [
+    {
+      "id": "codex.exec-argv",
+      "cli": "codex",
+      "kind": "lane",
+      "contract": "`codex exec --model <model> --config model_reasoning_effort=\"<effort>\" --sandbox read-only|workspace-write --cd <dir> --skip-git-repo-check --ephemeral --disable plugins --disable multi_agent --disable hooks --disable memories --json -` (prompt on stdin)",
+      "pointers": [{ "file": "skills/poteto-mode/scripts/runner/commands.ts", "anchor": "\"--skip-git-repo-check\"," }],
+      "coveredBy": ["read", "write"],
+      "measuredOn": "0.155.1"
+    },
+    {
+      "id": "codex.events",
+      "cli": "codex",
+      "kind": "lane",
+      "contract": "`--json` stream: `thread.started` with `thread_id`, `item.completed` whose item is an `agent_message` with `text`, `turn.completed` with `usage`, `turn.failed` with `error.message`",
+      "pointers": [{ "file": "skills/poteto-mode/scripts/runner/parse-output.ts", "anchor": "function parseCodex" }],
+      "coveredBy": ["read", "write"],
+      "measuredOn": "0.155.1"
+    },
+    {
+      "id": "codex.preflight",
+      "cli": "codex",
+      "kind": "lane",
+      "contract": "`codex login status` exits 0 and prints \"logged in\"",
+      "pointers": [
+        { "file": "skills/poteto-mode/scripts/runner/commands.ts", "anchor": "args: [\"login\", \"status\"]" },
+        { "file": "skills/poteto-mode/scripts/runner/run.ts", "anchor": "function preflightPassed" }
+      ],
+      "coveredBy": ["read"],
+      "measuredOn": "0.155.1"
+    },
+    {
+      "id": "codex.served-model",
+      "cli": "codex",
+      "kind": "lane",
+      "contract": "the `--json` stream never reports the served model; the receipt pins it by argv (`reportedModel: null`, `modelEvidence: pinned-argv`)",
+      "pointers": [{ "file": "model-matrix.json", "anchor": "{ \"family\": \"sol\", \"provider\": \"codex\"" }],
+      "coveredBy": ["read"],
+      "measuredOn": "0.155.1"
+    },
+    {
+      "id": "codex.efforts",
+      "cli": "codex",
+      "kind": "lane",
+      "contract": "`model_reasoning_effort` accepts every effort the sheets use for the codex families (low medium high xhigh max)",
+      "pointers": [
+        { "file": "skills/poteto-mode/scripts/runner/commands.ts", "anchor": "function effortOverride" },
+        { "file": "model-matrix.json", "anchor": "{ \"family\": \"astra\", \"provider\": \"codex\"" }
+      ],
+      "coveredBy": ["read", "write"],
+      "measuredOn": "0.155.1"
+    },
+    {
+      "id": "codex.sandbox",
+      "cli": "codex",
+      "kind": "lane",
+      "contract": "`codex sandbox -c sandbox_mode=\"workspace-write\" -c sandbox_workspace_write.network_access=true -c sandbox_workspace_write.writable_roots=[...] -- <command>` runs the command under the seatbelt from its working directory: exports `CODEX_SANDBOX=seatbelt`, lets it write the working directory and the writable roots, denies writes elsewhere. `-C` requires `--permission-profile` on 0.155.1, so the probe sets the working directory instead",
+      "pointers": [
+        { "file": "skills/update-clis/scripts/update-clis.ts", "anchor": "const SEATBELT_FLAGS" },
+        { "file": "skills/poteto-mode/scripts/runner/commands.ts", "anchor": "export function insideCodexSandbox" },
+        { "file": "docs/reference.md", "anchor": "[sandbox_workspace_write]" }
+      ],
+      "coveredBy": ["sandbox"],
+      "measuredOn": "0.155.1"
+    },
+    {
+      "id": "codex.plugin-manifest",
+      "cli": "codex",
+      "kind": "harness",
+      "contract": "`.codex-plugin/plugin.json` fields: name, version, skills path, interface (logo, displayName, descriptions, capabilities)",
+      "pointers": [{ "file": ".codex-plugin/plugin.json", "anchor": "\"skills\": \"./skills/\"" }],
+      "coveredBy": [],
+      "measuredOn": "0.155.1"
+    },
+    {
+      "id": "codex.implicit-invocation",
+      "cli": "codex",
+      "kind": "harness",
+      "contract": "`agents/openai.yaml` with `policy.allow_implicit_invocation: false` keeps poteto-mode explicit-only",
+      "pointers": [{ "file": "skills/poteto-mode/agents/openai.yaml", "anchor": "allow_implicit_invocation: false" }],
+      "coveredBy": [],
+      "measuredOn": "0.155.1"
+    },
+    {
+      "id": "codex.marketplace",
+      "cli": "codex",
+      "kind": "harness",
+      "contract": "`codex plugin marketplace add <repo> --ref <tag>`, `codex plugin marketplace upgrade`, `codex plugin add pstack@pstack-vic`",
+      "pointers": [{ "file": "docs/reference.md", "anchor": "codex plugin marketplace add byvict/pstack-vic --ref" }],
+      "coveredBy": [],
+      "measuredOn": "0.155.1"
+    },
+    {
+      "id": "codex.multi-agent",
+      "cli": "codex",
+      "kind": "harness",
+      "contract": "`features.multi_agent` enables `spawn_agent` with `model` and `reasoning_effort` in a Codex parent",
+      "pointers": [
+        { "file": "skills/poteto-mode/references/provider-dispatch.md", "anchor": "call `spawn_agent` with the descriptor's model and `reasoning_effort`" },
+        { "file": "docs/reference.md", "anchor": "multi_agent = true" }
+      ],
+      "coveredBy": [],
+      "measuredOn": "0.155.1"
+    },
+    {
+      "id": "grok.argv",
+      "cli": "grok",
+      "kind": "lane",
+      "contract": "`grok --prompt-file <file> --model <model> --reasoning-effort <effort> --permission-mode <mode> --sandbox read-only|workspace|none --tools <list> --disallowed-tools <list> --output-format streaming-messages-json --cwd <dir> --no-subagents --disable-web-search --verbatim`",
+      "pointers": [{ "file": "skills/poteto-mode/scripts/runner/commands.ts", "anchor": "\"--prompt-file\"," }],
+      "coveredBy": ["read", "write", "seatbelt"],
+      "measuredOn": "1.0.5"
+    },
+    {
+      "id": "grok.tools",
+      "cli": "grok",
+      "kind": "lane",
+      "contract": "tool names `read_file`, `grep`, `list_dir`, `run_terminal_cmd`, and `search_replace` in isolated-write; `Agent`, `search_tool` and `use_tool` stay disallowed",
+      "pointers": [{ "file": "skills/poteto-mode/scripts/runner/commands.ts", "anchor": "function grokTools" }],
+      "coveredBy": ["write", "seatbelt"],
+      "measuredOn": "1.0.5"
+    },
+    {
+      "id": "grok.permissions",
+      "cli": "grok",
+      "kind": "lane",
+      "contract": "a permission prompt cancels a headless turn in every mode; `--permission-mode bypassPermissions` never prompts",
+      "pointers": [{ "file": "skills/poteto-mode/scripts/runner/commands.ts", "anchor": "function grokPermissionMode" }],
+      "coveredBy": ["write", "seatbelt"],
+      "measuredOn": "1.0.5"
+    },
+    {
+      "id": "grok.events",
+      "cli": "grok",
+      "kind": "lane",
+      "contract": "`streaming-messages-json`: an event `type: result` with `subtype`, `is_error`, `result`, `modelUsage`, `session_id`, `usage`, `total_cost_usd`",
+      "pointers": [{ "file": "skills/poteto-mode/scripts/runner/parse-output.ts", "anchor": "function parseGrok" }],
+      "coveredBy": ["read", "write", "seatbelt"],
+      "measuredOn": "1.0.5"
+    },
+    {
+      "id": "grok.reported-model",
+      "cli": "grok",
+      "kind": "lane",
+      "contract": "the `modelUsage` key is the model with a build suffix (`grok-4.7-build`, `grok-4.6-build`); the matrix `reportedModel` patterns accept it",
+      "pointers": [{ "file": "model-matrix.json", "anchor": "{ \"family\": \"grok-4-7\", \"provider\": \"grok\"" }],
+      "coveredBy": ["read"],
+      "measuredOn": "1.0.5"
+    },
+    {
+      "id": "grok.preflight",
+      "cli": "grok",
+      "kind": "lane",
+      "contract": "`grok models` exits 0 and prints \"logged in\" and the model id; one retry after 5 s",
+      "pointers": [
+        { "file": "skills/poteto-mode/scripts/runner/commands.ts", "anchor": "args: [\"models\"]" },
+        { "file": "skills/poteto-mode/scripts/runner/run.ts", "anchor": "const GROK_PREFLIGHT_RETRY_DELAY_MS" }
+      ],
+      "coveredBy": ["read"],
+      "measuredOn": "1.0.5"
+    },
+    {
+      "id": "grok.efforts",
+      "cli": "grok",
+      "kind": "lane",
+      "contract": "`--reasoning-effort` accepts every effort the sheets use for the grok families (grok-4.7: low medium high xhigh)",
+      "pointers": [
+        { "file": "skills/poteto-mode/scripts/runner/commands.ts", "anchor": "\"--reasoning-effort\"," },
+        { "file": "model-matrix.json", "anchor": "{ \"family\": \"grok-4-7\", \"provider\": \"grok\"" }
+      ],
+      "coveredBy": ["read", "write"],
+      "measuredOn": "1.0.5"
+    },
+    {
+      "id": "grok.nested-seatbelt",
+      "cli": "grok",
+      "kind": "lane",
+      "contract": "inside Codex's seatbelt grok's own profile fails to initialise; the runner passes `--sandbox none` and the outer seatbelt governs",
+      "pointers": [{ "file": "skills/poteto-mode/scripts/runner/commands.ts", "anchor": "function grokSandbox" }],
+      "coveredBy": ["seatbelt"],
+      "measuredOn": "1.0.5"
+    },
+    {
+      "id": "grok.state-dir",
+      "cli": "grok",
+      "kind": "lane",
+      "contract": "grok writes its session under `~/.grok`; under Codex's seatbelt that directory must be in `sandbox_workspace_write.writable_roots`",
+      "pointers": [{ "file": "skills/poteto-mode/references/provider-dispatch.md", "anchor": "Grok also writes its session under `~/.grok`" }],
+      "coveredBy": ["seatbelt"],
+      "measuredOn": "1.0.5"
+    },
+    {
+      "id": "grok.readonly-temp",
+      "cli": "grok",
+      "kind": "lane",
+      "contract": "the `read-only` profile keeps grok's state and the system temporary directories writable",
+      "pointers": [{ "file": "skills/poteto-mode/references/provider-dispatch.md", "anchor": "Grok's built-in read-only profile deliberately keeps its own state and system temporary directories writable" }],
+      "coveredBy": [],
+      "measuredOn": "1.0.5"
+    },
+    {
+      "id": "claude.print-argv",
+      "cli": "claude",
+      "kind": "lane",
+      "contract": "`claude -p --model <model> --effort <effort> --permission-mode plan|acceptEdits --setting-sources project --strict-mcp-config --tools <list> --no-session-persistence --disable-slash-commands --disallowed-tools <list> --output-format json` (prompt on stdin)",
+      "pointers": [{ "file": "skills/poteto-mode/scripts/runner/commands.ts", "anchor": "\"--no-session-persistence\"," }],
+      "coveredBy": ["read", "write", "seatbelt"],
+      "measuredOn": "2.1.281"
+    },
+    {
+      "id": "claude.result-json",
+      "cli": "claude",
+      "kind": "lane",
+      "contract": "`--output-format json`: `result`, `is_error`, `modelUsage`, `session_id`, `usage`, `total_cost_usd`",
+      "pointers": [{ "file": "skills/poteto-mode/scripts/runner/parse-output.ts", "anchor": "function parseClaude" }],
+      "coveredBy": ["read", "write", "seatbelt"],
+      "measuredOn": "2.1.281"
+    },
+    {
+      "id": "claude.reported-model",
+      "cli": "claude",
+      "kind": "lane",
+      "contract": "`modelUsage` reports `claude-opus-5-5` for the opus family and `claude-fable-<n>` for the fable alias",
+      "pointers": [{ "file": "model-matrix.json", "anchor": "{ \"family\": \"opus\", \"provider\": \"claude\"" }],
+      "coveredBy": ["read"],
+      "measuredOn": "2.1.281"
+    },
+    {
+      "id": "claude.preflight",
+      "cli": "claude",
+      "kind": "lane",
+      "contract": "`claude auth status --json` prints JSON with `loggedIn: true`",
+      "pointers": [
+        { "file": "skills/poteto-mode/scripts/runner/commands.ts", "anchor": "args: [\"auth\", \"status\", \"--json\"]" },
+        { "file": "skills/poteto-mode/scripts/runner/run.ts", "anchor": "function preflightPassed" }
+      ],
+      "coveredBy": ["read"],
+      "measuredOn": "2.1.281"
+    },
+    {
+      "id": "claude.identity-env",
+      "cli": "claude",
+      "kind": "lane",
+      "contract": "a nested `claude -p` starts as a fresh session once the parent's identity variables (`CLAUDECODE`, `CLAUDE_CODE_*`) are gone",
+      "pointers": [
+        { "file": "skills/poteto-mode/scripts/runner/run.ts", "anchor": "const CLAUDE_IDENTITY" },
+        { "file": "skills/poteto-mode/scripts/runner/probe-lane.ts", "anchor": "const CLAUDE_CODE_IDENTITY" }
+      ],
+      "coveredBy": ["read"],
+      "measuredOn": "2.1.281"
+    },
+    {
+      "id": "claude.plugin-validate",
+      "cli": "claude",
+      "kind": "lane",
+      "contract": "`claude plugin validate --strict --json <path>` accepts the marketplace and the plugin manifest",
+      "pointers": [{ "file": "scripts/manifests.test.ts", "anchor": "[\"plugin\", \"validate\", \"--strict\", \"--json\"" }],
+      "coveredBy": ["manifest"],
+      "measuredOn": "2.1.281"
+    },
+    {
+      "id": "claude.skill-frontmatter",
+      "cli": "claude",
+      "kind": "harness",
+      "contract": "SKILL.md frontmatter: `name`, `description`, `disable-model-invocation`, `user-invocable`",
+      "pointers": [
+        { "file": "tests/skill-collision-repro.sh", "anchor": "disable-model-invocation: true" },
+        { "file": "scripts/reference.test.ts", "anchor": "function frontmatterName" }
+      ],
+      "coveredBy": [],
+      "measuredOn": "2.1.281"
+    },
+    {
+      "id": "claude.agent-frontmatter",
+      "cli": "claude",
+      "kind": "harness",
+      "contract": "agent frontmatter of the generated lanes: `model`, `effort`, `background: true`",
+      "pointers": [{ "file": "scripts/generate-agents.ts", "anchor": "export function renderAgent" }],
+      "coveredBy": [],
+      "measuredOn": "2.1.281"
+    },
+    {
+      "id": "claude.plugin-commands",
+      "cli": "claude",
+      "kind": "harness",
+      "contract": "`claude plugin marketplace add|update`, `claude plugin install|update`, `claude --plugin-dir`",
+      "pointers": [
+        { "file": "docs/reference.md", "anchor": "claude plugin marketplace add byvict/pstack-vic" },
+        { "file": "docs/reference.md", "anchor": "claude --plugin-dir" }
+      ],
+      "coveredBy": [],
+      "measuredOn": "2.1.281"
+    },
+    {
+      "id": "claude.background-drain",
+      "cli": "claude",
+      "kind": "harness",
+      "contract": "a non-interactive `claude -p` parent is never woken by a finished background task; it must drain the handles (`TaskOutput` with block) before its turn ends",
+      "pointers": [{ "file": "skills/poteto-mode/references/provider-dispatch.md", "anchor": "Draining is the parent's job in every harness mode" }],
+      "coveredBy": [],
+      "measuredOn": "2.1.281"
+    }
+  ]
+}

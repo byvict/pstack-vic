@@ -1,6 +1,6 @@
 {
   "name": "pstack-vic",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "private": true,
   "type": "module",
   "description": "Port autoral do pstack para Claude Code e Codex. Tooling do plugin roda em Node 24 (TypeScript direto, sem build).",
@@ -8,7 +8,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "test": "node --test 'scripts/**/*.test.ts' 'skills/poteto-mode/scripts/runner/*.test.ts' 'skills/setup-pstack/scripts/*.test.ts' 'skills/poteto-mode/scripts/converge/**/*.test.ts'",
+    "test": "node --test 'scripts/**/*.test.ts' 'skills/poteto-mode/scripts/runner/*.test.ts' 'skills/setup-pstack/scripts/*.test.ts' 'skills/update-clis/scripts/*.test.ts' 'skills/poteto-mode/scripts/converge/**/*.test.ts'",
     "test:bun": "cd skills/poteto-mode/scripts && bun install --frozen-lockfile && bun run test && bun run typecheck",
     "matrix:render": "node scripts/render-model-matrix.ts",
     "matrix:check": "node scripts/render-model-matrix.ts --check",
@@ -17,6 +17,7 @@
     "collision:check": "bash tests/skill-collision-repro.sh",
     "upstream:digest": "node scripts/upstream-digest.ts",
     "runner": "node skills/poteto-mode/scripts/runner/pstack-runner",
-    "setup-pstack": "node skills/setup-pstack/scripts/setup-pstack.ts"
+    "setup-pstack": "node skills/setup-pstack/scripts/setup-pstack.ts",
+    "update-clis": "node skills/update-clis/scripts/update-clis.ts"
   }
 }

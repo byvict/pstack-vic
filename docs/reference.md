@@ -24,7 +24,7 @@ No shell, `claude plugin marketplace add byvict/pstack-vic` e `claude plugin ins
 ### Codex
 
 ```shell
-codex plugin marketplace add byvict/pstack-vic --ref v0.1.8
+codex plugin marketplace add byvict/pstack-vic --ref v0.1.9
 codex plugin add pstack@pstack-vic
 ```
 
@@ -71,11 +71,12 @@ A versão do pstack-vic é independente das versões dos upstreams ([`UPSTREAM.m
 ├── .agents/plugins/marketplace.json  # marketplace do Codex (fonte local ./)
 ├── model-matrix.json                 # famílias, efforts, pais, rota por pai, papéis (dado canônico)
 ├── scripts/                          # loader/validação da matriz, render dos blocos gerados, gerador de agents, digest semanal dos upstreams, testes (inclui manifests.test.ts)
-├── skills/                           # 54 skills compartilhadas por Claude Code e Codex
+├── skills/                           # 55 skills compartilhadas por Claude Code e Codex
 │   ├── poteto-mode/agents/           # openai.yaml: no Codex, poteto-mode só por invocação explícita
 │   ├── poteto-mode/references/       # provider-dispatch.md (rota e papéis), codex-tools.md (mapa de tools), bugbot-triage.md
-│   ├── poteto-mode/scripts/          # runner externo (Node 24), watch-pr, orch, check-plan.mjs, worktree-audit.sh
-│   └── setup-pstack/scripts/         # setup-pstack.ts: estado, plano, probe, atestado e escrita do sheet (Node 24)
+│   ├── poteto-mode/scripts/          # runner externo (Node 24, com probe-lane.ts, a sonda de uma lane), watch-pr, orch, check-plan.mjs, worktree-audit.sh
+│   ├── setup-pstack/scripts/         # setup-pstack.ts: estado, plano, probe, atestado e escrita do sheet (Node 24)
+│   └── update-clis/                  # scripts/update-clis.ts (check, notes, install, probe) e references/cli-touchpoints.json
 ├── agents/                           # poteto-agent, comment-sicko e as lanes nativas pstack-<família>-<effort> geradas da matriz
 ├── assets/                           # logo
 ├── docs/reference.md                 # esta referência
@@ -84,7 +85,7 @@ A versão do pstack-vic é independente das versões dos upstreams ([`UPSTREAM.m
 ├── LICENSE-open-pstack               # open-pstack (Eric Litman), MIT
 ├── LICENSE-cursor-team-kit           # cursor-team-kit (Cursor), MIT
 ├── NOTICE.md · UPSTREAM.md · CHANGES.md
-└── package.json                      # versão do plugin; npm test, test:bun, matrix:check, agents:check, collision:check, upstream:digest, setup-pstack
+└── package.json                      # versão do plugin; npm test, test:bun, matrix:check, agents:check, collision:check, upstream:digest, setup-pstack, update-clis
 ```
 
 ## Rodar no Codex
@@ -101,9 +102,10 @@ Nada é gerado nem bifurcado por pai. Duas referências fazem a tradução em te
 Nada é declarado em manifest. O que as skills usam:
 
 - **Node 24** — the external runner, the matrix scripts, `check-plan.mjs`, and `npm test` run TypeScript directly, with no build step and no Bun.
-- **CLIs `claude`, `codex` e `grok`** — autenticados, só os que o sheet de modelos usa. O runner recusa provider igual ao do pai (essa lane é nativa).
+- **CLIs `claude`, `codex` e `grok`** — autenticados, só os que o sheet de modelos usa. O runner recusa provider igual ao do pai (essa lane é nativa). A versão delas muda só pela skill `update-clis` (seção [Versões das CLIs](#versões-das-clis)).
 - **`CURSOR_API_KEY`** — só para o provider `cursor` (lanes http na API de cloud agents da Cursor; famílias da tabela gerada em `provider-dispatch.md`). Sem a variável a lane cai como dropout `unavailable-cli` (exit 69). Lanes http exigem `--repo` e `--pr`; veja a seção *HTTP lanes* de `provider-dispatch.md`.
-- **`gh`** — forge padrão dos playbooks de PR e da skill `babysit`; `origin` é usado quando resolve o repositório; `gt` só no playbook Orchestrate.
+- **`gh`** — forge padrão dos playbooks de PR e da skill `babysit`; `origin` é usado quando resolve o repositório; `gt` só no playbook Orchestrate. A skill `update-clis` também o usa para ler as releases do codex.
+- **`lsof`** — só para `update-clis`, que o usa para saber se alguém está rodando a CLI que ela trocaria.
 - **`bun`** — only for `watch-pr` and `orch`, which came from Cursor unchanged, and for their tests and the `watch-pr` typecheck (`npm run test:bun`).
 - **`jq` e `rg`** — só para `worktree-audit.sh` (playbook Worktree cleanup); sem eles o audit avisa e deixa colunas em branco.
 - **`run`, `verify`, `loop`** — built-ins do Claude Code; **`skill-creator`** — skill oficial da Anthropic para autoria de SKILL.md. Os quatro têm substituto em `codex-tools.md`.
@@ -117,6 +119,36 @@ npm run setup-pstack -- probe --dir <dir> --repo <owner/name> --pr <number>
 ```
 
 O provider Cursor requer `CURSOR_API_KEY` e acesso de leitura ao remoto Git. O recibo registra `remote.heads` como `not-taken`, `unverified` com motivo ou `observed` com `changedBranches`. A comparação observa branches adicionadas, movidas ou removidas durante a execução. Ela não identifica quem fez essas alterações. Uma lane read-only falha se houver alteração observada ou se a comparação não puder ser concluída. A seção [HTTP lanes](../skills/poteto-mode/references/provider-dispatch.md#http-lanes) define o contrato completo do recibo.
+
+## Versões das CLIs
+
+O runner chama três CLIs: `claude` (npm, Node 24.21.0), `codex` (npm, Node 24.19.0, pelo link do Homebrew) e `grok` (`~/.grok/downloads`). Nenhuma delas se atualiza sozinha: o `grok` tem `[cli] auto_update = false` em `~/.grok/config.toml` e o `claude` do npm tem `"env": {"DISABLE_AUTOUPDATER": "1"}` em `~/.claude/settings.json`. O `codex` só avisa no TUI. A skill `update-clis` é o único caminho de atualização.
+
+Para cada CLI, na ordem codex → grok → claude, a skill lê as notas de versão contra `skills/update-clis/references/cli-touchpoints.json`, instala a versão nova e roda a sonda. A sonda roda as lanes `read` e `write` de cada par família@esforço que as duas fichas mandam para aquela CLI pelo runner. Roda também `seatbelt` (grok e claude dentro do `codex sandbox`), `sandbox` (o codex, sem modelo) e `manifest` (o claude, com `claude plugin validate`, sem modelo). Uma lane que falha faz a CLI voltar para a versão anterior e rodar a mesma sonda de novo: se a anterior passa, a versão nova fica segurada numa issue `CLI <nome> <versão> segurada`; se a anterior também falha, o problema é do ambiente e ninguém é segurado. Uma mudança de contrato num ponto sem cobertura segura a versão sem instalar. Os binários que os apps desktop trazem ficam de fora e só aparecem no relatório.
+
+```shell
+npm run update-clis -- check                  # versão instalada, última do canal, duplicatas e processos em uso, por CLI
+npm run update-clis -- notes --cli grok --from 1.0.5 --to 1.0.41
+npm run update-clis -- --help                 # start, check, notes, install, probe, finish
+```
+
+Cada execução guarda notas, prompts, saídas, recibos e o resumo em `~/Library/Caches/pstack-vic/update-clis/<data-hora>/`, e a skill mantém as 10 mais recentes. Uma trava na mesma pasta impede duas execuções ao mesmo tempo.
+
+A rotina é a tarefa agendada do app Claude Code `pstack-vic-cli-updates`, toda segunda às 07:00. Ela usa a skill do plugin instalado e posta no projeto pstack-vic do Linear: um comentário quando nada foi segurado, ou uma issue por versão segurada. O prompt da tarefa é este:
+
+```markdown
+---
+name: pstack-vic-cli-updates
+description: Atualiza as CLIs claude, codex e grok que o runner do pstack-vic chama, pela skill pstack:update-clis, e posta o resultado no projeto pstack-vic do Linear
+---
+
+Faça a execução semanal da skill `pstack:update-clis` (plugin pstack instalado). Leia o `SKILL.md` dela inteiro antes de começar e siga-o do começo ao fim, para as três CLIs, na ordem codex → grok → claude.
+
+- Não edite arquivos do plugin nem de nenhum repositório e não faça commit. Uma versão que pede ajuste no plugin fica segurada.
+- Rode o subcomando `probe` sempre em segundo plano e espere a notificação de fim.
+- Poste o resultado no projeto pstack-vic do Linear como a skill manda: comentário no projeto quando nada foi segurado, uma issue por versão segurada, e uma issue urgente se uma volta de versão falhar.
+- Termine com uma linha por CLI: em dia, atualizada A → B, adiada, segurada, sem verificação ou sonda inconclusiva.
+```
 
 ## Converge
 
@@ -153,6 +185,7 @@ Nomes curtos; no Claude Code cada uma aparece com o prefixo do plugin (`/pstack:
 | `show-me-your-work` | trilha de decisões revisável em tsv |
 | `blast-radius` | o que uma mudança pequena pode quebrar fora do diff, provado rodando código |
 | `recall` | reconstruir o contexto recente de um tema a partir do histórico e do registro compartilhado |
+| `update-clis` | atualizar `claude`, `codex` e `grok` só quando o plugin continua funcionando na versão nova: notas contra os pontos de contato, instalação, sonda real, volta e contraprova; o que não passa fica segurado numa issue do Linear |
 | `setup-pstack` | escolher modelo e effort por papel (a mesma família pode rodar em efforts diferentes em papéis diferentes); probe de cada par família+effort e escrita do sheet pelo `scripts/setup-pstack.ts` (rerun byte-idêntico, nada escrito se um probe falha) |
 | `unslop` | limpar marcas de IA de qualquer prosa |
 | `no-comments` | tirar comentários antes da revisão via o subagent `comment-sicko` |
@@ -208,13 +241,14 @@ Vinte e três skills de um princípio cada. `poteto-mode` indexa todas inline e 
 ## Verificação
 
 ```shell
-npm test               # matriz, gerador de agents, runner, setup-pstack, referência de skills, manifests e hook, digest dos upstreams, invariantes do pacote
+npm test               # matriz, gerador de agents, runner, setup-pstack, update-clis, referência de skills, manifests e hook, digest dos upstreams, invariantes do pacote
 npm run test:bun       # orch and watch-pr under Bun: bun install --frozen-lockfile, bun test, then the watch-pr typecheck (needs bun on PATH)
 npm run matrix:check   # blocos gerados de provider-dispatch.md e setup-pstack em dia
 npm run agents:check   # agents/pstack-*.md em dia com a matriz
 npm run collision:check
 npm run upstream:digest -- --no-fetch   # digest dos dois upstreams desde o ponto de sync (UPSTREAM.md, seção Digest semanal)
 npm run setup-pstack -- --help   # subcomandos do setup: state, plan, probe, attest, write
+npm run update-clis -- --help    # subcomandos da atualização das CLIs: start, check, notes, install, probe, finish
 claude plugin validate --strict .   # manifest do plugin e do marketplace pelo validador do Claude Code
 ```
 

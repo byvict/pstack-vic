@@ -126,6 +126,8 @@ Pass arguments as an argv array or quote every path. Never interpolate prompt te
 
 Grok authentication preflight has one bounded retry. If the first `grok models` result would be classified as unauthenticated, the runner waits five seconds and tries the same preflight once more. A second failure is terminal. The delay and second attempt share the runner's absolute deadline and cancellation latch, and the receipt keeps evidence from both attempts. Model execution is never retried.
 
+CLI versions change only through the `update-clis` skill (the weekly `pstack-vic-cli-updates` routine, or `/pstack:update-clis` by hand). It reads each release's notes against [`cli-touchpoints.json`](../../update-clis/references/cli-touchpoints.json), installs the new version, and runs these lanes through the launcher before it keeps the version; otherwise it rolls back and holds the version in Linear. Grok keeps `auto_update = false` and the npm `claude` keeps `DISABLE_AUTOUPDATER=1` for that reason. A change to how the launcher uses a CLI (a flag, a parsed event, a sandbox assumption) updates that list in the same change: `update-clis.test.ts` fails when a flag the launcher generates is named in no contract, or when a pointer loses its anchor.
+
 ## HTTP lanes
 
 A provider whose matrix row says `transport: "http"` has no CLI binary. Today that is `cursor`, the Cursor cloud agents API. The generated family table above lists every `cursor` family. The launcher reaches it from `skills/poteto-mode/scripts/runner/http-lane.ts` and shares everything else with a CLI lane: the exclusive output and receipt reservation, the one absolute deadline, the SIGINT and SIGTERM latch, receipt writing, and `modelProof`.
