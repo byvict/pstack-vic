@@ -63,7 +63,7 @@ export async function statuses(repo: string, head: string): Promise<Record<strin
 export async function publishVerdict(options: { reportFile: string; laneFiles: string[]; evidenceDirectory: string; retainCommentUrl?: string }): Promise<{ dossier: Dossier; commentUrl: string; statusId: number }> {
   const report = parseReport(JSON.parse(readFileSync(options.reportFile, 'utf8')));
   const r = report.round;
-  const current = await snapshot(r.repo, r.pr, r.configPath, r.execution === 'verdict-only');
+  const current = await snapshot(r.repo, r.pr, r.configPath, r.execution);
   const reconstructed = analyze(current, { id: r.id, configPath: r.configPath, execution: r.execution });
   if (jsonHash(report) !== jsonHash(reconstructed)) throw new Error('Reconciliation report changed or is stale');
   const admitted: AdmittedLane[] = [];
@@ -83,7 +83,7 @@ export async function publishVerdict(options: { reportFile: string; laneFiles: s
     for (const role of report.lanes) admitted.push({ role, coverage: old.coverage, risks: old.riskAdjudication, findings: [], gaps: [], artifacts: old.artifactIds.map(id => ({ id, path: options.retainCommentUrl ?? '', digest: old.evidenceDigest, mediaType: 'retained' })), receiptDigest: old.evidenceDigest });
   }
   for (const file of options.laneFiles) admitted.push(await admitLane(file, report, options.evidenceDirectory));
-  const refreshed = await snapshot(r.repo, r.pr, r.configPath, r.execution === 'verdict-only');
+  const refreshed = await snapshot(r.repo, r.pr, r.configPath, r.execution);
   if (refreshed.inputDigest !== r.inputDigest) throw new Error('Inputs changed during evidence admission');
   const dossier: Dossier = { schemaVersion: 1, round: r, decision: decide(report, admitted), reconcileDigest: jsonHash(report), evidenceDigest: jsonHash(admitted), coverage: admitted.flatMap(l => l.coverage), riskAdjudication: admitted.flatMap(l => l.risks), artifactIds: admitted.flatMap(l => l.artifacts.map(a => a.id)), inputFingerprint: report.inputFingerprint, retainedFrom };
   const author = await principal();

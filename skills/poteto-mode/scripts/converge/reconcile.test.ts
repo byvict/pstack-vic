@@ -392,3 +392,17 @@ test('pre-pr reconciliation of a real PR ignores pending CI', t => {
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(JSON.parse(r.stdout).gaps, []);
 });
+test('a pre-pr PR report keeps finished CI test sources out of the policy digest its branch report shares', async t => {
+  const f = fixture(); t.after(f.cleanup); withPrePr(f);
+  f.state.body = '## Verification\ntest: tools/a.test.js\n'; f.save();
+  const reconcileAs = (execution: string) => {
+    const r = f.run('converge-reconcile', ['--repo', 'Example/app', '--pr', '1', '--output', join(f.directory, execution + '.json'), '--execution', execution]);
+    assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout);
+  };
+  const pr = reconcileAs('pre-pr');
+  inProcess(t, f);
+  const branch = analyze(await branchSnapshot('Example/app', f.state.head, '.cursor/converge.json'), { id: '12345678-1234-1234-1234-123456789abc', configPath: '.cursor/converge.json', execution: 'pre-pr' });
+  assert.equal(pr.round.verificationDigest, branch.round.verificationDigest); assert.equal(pr.round.patch_id, branch.round.patch_id);
+  assert.equal(f.calls().some(call => /\/contents\/(?:tools\/run-all-tests\.js|package\.json)\?/.test(call[1] ?? '')), false);
+  assert.notEqual(reconcileAs('converge').round.verificationDigest, branch.round.verificationDigest);
+});

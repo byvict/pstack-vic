@@ -1,6 +1,6 @@
 import { spawnSync, execFile } from 'node:child_process';
 import { posix } from 'node:path';
-import { array, integer, matches, object, parseContract, relativePath, repoName, sha, string, jsonHash, hash, testOnly, type Contract, type Check, type Feature } from './contract.ts';
+import { array, integer, matches, object, parseContract, relativePath, repoName, sha, string, jsonHash, hash, testOnly, type Contract, type Check, type Execution, type Feature } from './contract.ts';
 import { dependencyOnly } from './dependencies.ts';
 import { parseClinextTests, type TestEvidence, type ClinextProvenance, type StepWindow } from './claims.ts';
 
@@ -282,7 +282,9 @@ function testProvenance(run: Record<string, unknown>, jobs: Record<string, unkno
   return { runId, attempt, jobId: integer(server.id), tests: windows[index], next: windows[index + 1] ?? null };
 }
 type TestSources = { kind: 'unused' | 'unavailable' } | { kind: 'ready'; provenance: ClinextProvenance; runnerSource: string; packageSource: string };
-export async function snapshot(repo: string, prNumber: number, configPath: string, proof: boolean): Promise<Snapshot> {
+/** Under pre-pr the CI runner sources stay out of the trusted files, so the PR's policy digest matches the branch snapshot the certificate was built from. */
+export async function snapshot(repo: string, prNumber: number, configPath: string, execution: Execution): Promise<Snapshot> {
+  const proof = execution === 'verdict-only';
   const [t, p] = await Promise.all([trusted(repo, configPath), pull(repo, prNumber)]);
   admitPull(p, t.config, p.head, proof);
   const runPromise = workflowRun(t, p.head);
@@ -300,7 +302,7 @@ export async function snapshot(repo: string, prNumber: number, configPath: strin
     const patch = command('git', ['patch-id', '--stable'], diff).trim().split(/\s+/)[0];
     if (!patch) throw new Error('Empty PR diff');
     const testSourcesPromise = runJobsPromise.then(async (jobs): Promise<TestSources> => {
-      if (!run) return { kind: 'unused' };
+      if (!run || execution === 'pre-pr') return { kind: 'unused' };
       const provenance = testProvenance(run, jobs, p.head);
       const testCheck = observedChecks.find(c => c.context === 'Run test suite');
       const job = jobs.find(j => j.name === 'Run test suite' && string(j.check_run_url).endsWith(`/${testCheck?.id}`));

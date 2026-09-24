@@ -98,7 +98,7 @@ export function analyze(s: Snapshot, options: { id: string; configPath: string; 
 export async function reconcile(options: { repo: string; pr: number; configPath?: string; execution?: Execution; output: string }): Promise<Report> {
   const configPath = options.configPath ?? '.cursor/converge.json';
   const execution = options.execution ?? 'converge';
-  const report = analyze(await snapshot(options.repo, options.pr, configPath, execution === 'verdict-only'), { id: executionId(), configPath, execution });
+  const report = analyze(await snapshot(options.repo, options.pr, configPath, execution), { id: executionId(), configPath, execution });
   writeFileSync(options.output, JSON.stringify(report, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
   return report;
 }

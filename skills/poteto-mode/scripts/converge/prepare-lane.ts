@@ -13,7 +13,7 @@ export async function prepareLane(options: { reportFile: string; directory: stri
   const selected = resolveDescriptor(loadMatrix(), options.descriptor);
   if (selected.family.provider !== 'cursor' || selected.family.model !== 'grok-4.7' || !['high', 'xhigh'].includes(selected.descriptor.effort)) throw new Error('Converge verifier requires Cursor Grok 4.7 high or xhigh');
   const r = report.round;
-  const current = await snapshot(r.repo, r.pr, r.configPath, r.execution === 'verdict-only');
+  const current = await snapshot(r.repo, r.pr, r.configPath, r.execution);
   if (current.inputDigest !== r.inputDigest) throw new Error('Round became stale before lane dispatch');
   const prefix = `artifacts/converge/${r.id}/${laneId}/`;
   const prompt = [
