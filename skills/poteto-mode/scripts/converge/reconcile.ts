@@ -52,6 +52,9 @@ function ordinaryDoc(path: string): boolean {
   return /(?:\.md|\.txt|\.rst)$/.test(path) && !/(?:^|\/)(?:AGENTS|CLAUDE|SKILL)\.md$/.test(path) && !/^(?:\.cursor|\.github|skills|scripts|tools)\//.test(path)
     || /^(?:LICENSE|README|CHANGELOG)(?:\.md|\.txt)?$/.test(path);
 }
+function testOnly(path: string): boolean {
+  return /(?:^|\/)(?:__tests__|__fixtures__|__mocks__)\//.test(path) || /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(path);
+}
 export function analyze(s: Snapshot, options: { id: string; configPath: string; execution: 'converge' | 'verdict-only' }): Report {
   const paths = [...new Set(s.files.flatMap(f => f.previous ? [f.path, f.previous] : [f.path]))];
   const c = s.trusted.config;
@@ -88,7 +91,7 @@ export function analyze(s: Snapshot, options: { id: string; configPath: string; 
   const lanes: Report['lanes'] = mode === 'ci-only' ? [] : ['pr verifier'];
   return { schemaVersion: 1, round: { id: options.id, repo: c.repo, pr: s.pull.number, head: s.pull.head, contract: s.trusted.sha, base: s.base,
     patch_id: s.patchId, verificationDigest: s.verificationDigest, inputDigest: s.inputDigest, configPath: options.configPath, execution: options.execution },
-    mode, touchedFeatures, unmappedSurfaces: surfacePaths.filter(p => !touchedFeatures.some(f => f.page === p) && !(touchedFeatures.length && (/^client\/(?:src\/)?(?:components|hooks|contexts|lib|utils)\//.test(p) || /^server\/routes\//.test(p) || /^client\/(?:src\/)?App\.[jt]sx?$/.test(p)))),
+    mode, touchedFeatures, unmappedSurfaces: surfacePaths.filter(p => !s.reachedPaths.includes(p) && !testOnly(p) && !(touchedFeatures.length && (/^client\/(?:src\/)?(?:components|hooks|contexts|lib|utils)\//.test(p) || /^server\/routes\//.test(p) || /^client\/(?:src\/)?App\.[jt]sx?$/.test(p)))),
     claims: claims(s), hardList, injection, findings, checks: s.checks, lanes, gaps: [...s.gaps], inputFingerprint: s.inputFingerprint };
 }
 export async function reconcile(options: { repo: string; pr: number; configPath?: string; execution?: 'converge' | 'verdict-only'; output: string }): Promise<Report> {

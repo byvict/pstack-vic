@@ -1,6 +1,6 @@
 import { spawnSync, execFile } from 'node:child_process';
 import { posix } from 'node:path';
-import { array, integer, object, parseContract, relativePath, repoName, sha, string, jsonHash, hash, type Contract, type Check, type Feature } from './contract.ts';
+import { array, integer, matches, object, parseContract, relativePath, repoName, sha, string, jsonHash, hash, type Contract, type Check, type Feature } from './contract.ts';
 import { dependencyOnly } from './dependencies.ts';
 import { parseClinextTests, type TestEvidence, type ClinextProvenance, type StepWindow } from './claims.ts';
 
@@ -52,7 +52,7 @@ export function admitPull(pr: Pull, contract: Contract, head: string, proof = fa
 }
 export interface Trusted { repo: string; sha: string; config: Contract; files: Map<string, string>; workflowId: number; workflowPath: string }
 const trees = new Map<string, Map<string, string>>();
-export async function blob(repo: string, commit: string, path: string): Promise<string> {
+async function tree(repo: string, commit: string): Promise<Map<string, string>> {
   const treeKey = repo + '/' + commit;
   let tree = trees.get(treeKey);
   if (!tree) {
@@ -61,10 +61,64 @@ export async function blob(repo: string, commit: string, path: string): Promise<
     tree = new Map(array(response.tree).map(value => { const entry = object(value); return [string(entry.path), string(entry.mode)]; }));
     trees.set(treeKey, tree);
   }
-  if (!['100644', '100755'].includes(tree.get(relativePath(path)) ?? '')) throw new Error('Trusted path is not a regular blob');
+  return tree;
+}
+function regular(mode: string | undefined): boolean { return mode === '100644' || mode === '100755'; }
+export async function blob(repo: string, commit: string, path: string): Promise<string> {
+  if (!regular((await tree(repo, commit)).get(relativePath(path)))) throw new Error('Trusted path is not a regular blob');
   const v = object(await api(`repos/${repo}/contents/${relativePath(path)}?ref=${sha(commit)}`));
   if (v.type !== 'file' || v.encoding !== 'base64' || 'target' in v || integer(v.size) > 2_000_000) throw new Error('Trusted blob unavailable');
   return Buffer.from(string(v.content), 'base64').toString('utf8');
+}
+async function blobs(repo: string, commit: string, paths: string[]): Promise<Map<string, string>> {
+  const [owner, name] = repo.split('/');
+  const batches = Array.from({ length: Math.ceil(paths.length / 100) }, (_, i) => paths.slice(i * 100, i * 100 + 100));
+  return new Map((await Promise.all(batches.map(async batch => {
+    const query = `query($owner: String!, $name: String!${batch.map((_, i) => `, $p${i}: String!`).join('')}) { repository(owner: $owner, name: $name) { ${batch.map((_, i) => `p${i}: object(expression: $p${i}) { ... on Blob { byteSize isBinary isTruncated text } }`).join(' ')} } }`;
+    const response = object(JSON.parse(await commandAsync('gh', ['api', 'graphql', '-f', `query=${query}`, '-f', `owner=${owner}`, '-f', `name=${name}`, ...batch.flatMap((path, i) => ['-f', `p${i}=${sha(commit)}:${relativePath(path)}`])])));
+    const repository = object(object(response.data).repository);
+    return batch.map((path, i): [string, string] => {
+      const v = object(repository[`p${i}`]);
+      if (v.isBinary !== false || v.isTruncated !== false || integer(v.byteSize) > 2_000_000) throw new Error('Trusted blob unavailable');
+      return [path, string(v.text)];
+    });
+  }))).flat());
+}
+const walkFiles = 2000;
+const walkLevels = 32;
+function imports(path: string, source: string, files: Map<string, string>): string[] {
+  const directory = posix.dirname(path);
+  const inside = (candidate: string) => candidate.startsWith('client/src/') && regular(files.get(candidate));
+  const targets = new Set<string>();
+  for (const [, specifier] of source.matchAll(/\b(?:from|import(?:\s*\()?|require\s*\()\s*['"](\.{1,2}\/[^'"\n]*)['"]/g)) {
+    const target = posix.join(directory, specifier.replace(/[?#].*$/, '')).replace(/\/$/, '');
+    const found = [target, ...['', '/index'].flatMap(suffix => ['.js', '.jsx', '.ts', '.tsx'].map(extension => target + suffix + extension))].find(inside);
+    if (found) targets.add(found);
+  }
+  for (const [, patterns] of source.matchAll(/\bimport\.meta\.glob\s*\(\s*(\[[^\]]*\]|['"][^'"\n]*['"])/g)) {
+    for (const [, pattern] of patterns.matchAll(/['"](\.{1,2}\/[^'"\n]*)['"]/g)) {
+      const absolute = posix.join(directory, pattern);
+      for (const candidate of files.keys()) if (inside(candidate) && matches(candidate, absolute)) targets.add(candidate);
+    }
+  }
+  return [...targets];
+}
+async function reachability(contract: Trusted, pages: string[]): Promise<Map<string, Set<string>>> {
+  const files = await tree(contract.repo, contract.sha);
+  const graph = new Map<string, string[]>();
+  let frontier = pages.filter(page => regular(files.get(page)));
+  for (let level = 0; frontier.length; level++) {
+    if (level >= walkLevels || graph.size + frontier.length > walkFiles) throw new Error('Feature import graph exceeds walk bound');
+    for (const [path, source] of await blobs(contract.repo, contract.sha, frontier)) graph.set(path, imports(path, source, files));
+    frontier = [...new Set([...graph.values()].flat())].filter(path => /\.[cm]?[jt]sx?$/.test(path) && !graph.has(path));
+  }
+  const reach = new Map<string, Set<string>>();
+  for (const page of pages) {
+    const seen = new Set([page]);
+    for (const path of seen) for (const next of graph.get(path) ?? []) seen.add(next);
+    for (const path of seen) reach.set(path, (reach.get(path) ?? new Set()).add(page));
+  }
+  return reach;
 }
 export async function trusted(repo: string, configPath: string): Promise<Trusted> {
   repoName(repo);
@@ -84,7 +138,7 @@ export async function trusted(repo: string, configPath: string): Promise<Trusted
   await Promise.all([...new Set([config.verifySkill, config.featureMap, workflowPath])].map(async path => files.set(path, await blob(repo, commit, path))));
   return { repo, sha: commit, config, files, workflowId: integer(workflow.id), workflowPath };
 }
-export async function features(contract: Trusted, changedPaths: Set<string>): Promise<Feature[]> {
+export async function features(contract: Trusted, changedPaths: Set<string>): Promise<{ features: Feature[]; reachedPaths: string[] }> {
   const map = contract.files.get(contract.config.featureMap);
   if (map === undefined) throw new Error('Feature map missing');
   const entries: { id: string; page: string; recipe: string }[] = [];
@@ -99,36 +153,24 @@ export async function features(contract: Trusted, changedPaths: Set<string>): Pr
     if (entries.some(f => f.page === pagePath)) throw new Error('Duplicate feature page');
     entries.push({ id: posix.basename(recipe, '.md'), page: pagePath, recipe });
   }
-  const shared = [...changedPaths].filter(path => /^client\/(?:src\/)?(?:components|hooks|contexts|lib|utils)\//.test(path));
-  const routes = [...changedPaths].some(path => /^server\/routes\//.test(path) || /^client\/(?:src\/)?(?:App|components\/(?:SidebarNew|TopBar))\.[jt]sx?$/.test(path));
-  const direct = entries.filter(entry => changedPaths.has(entry.page));
-  let affected = direct;
-  if (routes) affected = entries;
-  else if (shared.length) {
-    const imported = await Promise.all(entries.map(async entry => {
-      const page = await blob(contract.repo, contract.sha, entry.page);
-      return shared.some(path => {
-        const stem = path.replace(/\.[jt]sx?$/, '');
-        return [...page.matchAll(/(?:from\s*|import\s*|require\s*\()\s*['"]([^'"]+)['"]/g)].some(match => {
-          const specifier = match[1];
-          return specifier !== undefined && posix.normalize(posix.join(posix.dirname(entry.page), specifier)) === stem;
-        });
-      }) ? entry : null;
-    }));
-    const matches = imported.filter((entry): entry is NonNullable<typeof entry> => entry !== null);
-    affected = matches.length ? [...new Map([...direct, ...matches].map(entry => [entry.id, entry])).values()] : entries;
-  }
-  return Promise.all(affected.map(async entry => {
+  const changed = [...changedPaths];
+  const reach = changed.some(path => path.startsWith('client/src/')) ? await reachability(contract, entries.map(entry => entry.page)) : new Map<string, Set<string>>();
+  const reaches = (entry: typeof entries[number], path: string) => entry.page === path || reach.get(path)?.has(entry.page) === true;
+  const reachedPaths = changed.filter(path => entries.some(entry => reaches(entry, path)));
+  const unreachedShared = changed.some(path => /^client\/(?:src\/)?(?:components|hooks|contexts|lib|utils)\//.test(path) && !reachedPaths.includes(path));
+  const routes = changed.some(path => /^server\/routes\//.test(path) || /^client\/(?:src\/)?(?:App|components\/(?:SidebarNew|TopBar))\.[jt]sx?$/.test(path));
+  const affected = routes || unreachedShared ? entries : entries.filter(entry => changed.some(path => reaches(entry, path)));
+  return { reachedPaths, features: await Promise.all(affected.map(async entry => {
     const source = await blob(contract.repo, contract.sha, entry.recipe);
     contract.files.set(entry.recipe, source);
     return { ...entry, recipeDigest: hash(source) };
-  }));
+  })) };
 }
 export interface TextSource { source: 'body' | 'comment' | 'log'; id: string; text: string }
 export interface ChangedFile { path: string; previous: string | null; patch: string | null; status: string }
 export interface Snapshot {
   trusted: Trusted; pull: Pull; base: string; patchId: string; diff: string; files: ChangedFile[];
-  features: Feature[]; checks: Check[]; sources: TextSource[]; gaps: string[]; inputDigest: string; inputFingerprint: string; verificationDigest: string; dependencyOnly: boolean; testEvidence: TestEvidence;
+  features: Feature[]; reachedPaths: string[]; checks: Check[]; sources: TextSource[]; gaps: string[]; inputDigest: string; inputFingerprint: string; verificationDigest: string; dependencyOnly: boolean; testEvidence: TestEvidence;
 }
 export async function principal(): Promise<number> {
   const response = object(JSON.parse(await commandAsync('gh', ['api', 'graphql', '-f', 'query=query { viewer { databaseId } }'])));
@@ -225,16 +267,16 @@ export async function snapshot(repo: string, prNumber: number, configPath: strin
       return { kind: 'ready', provenance, runnerSource, packageSource };
     }).catch((): TestSources => ({ kind: 'unavailable' }));
     const featurePromise = features(t, new Set(files.flatMap(f => f.previous ? [f.path, f.previous] : [f.path])));
-    const [featureList, runEvidence, testSources] = await Promise.all([featurePromise, runEvidencePromise, testSourcesPromise]).catch(async error => {
+    const [selection, runEvidence, testSources] = await Promise.all([featurePromise, runEvidencePromise, testSourcesPromise]).catch(async error => {
       await Promise.allSettled([featurePromise, runEvidencePromise, testSourcesPromise]);
       throw error;
     });
-    return { base, files, diff, author, allComments, observedChecks, run, patch, featureList, runEvidence, testSources };
+    return { base, files, diff, author, allComments, observedChecks, run, patch, selection, runEvidence, testSources };
   }).catch(async error => {
     await runEvidenceSettlement;
     throw error;
   });
-  const { base, files, diff, author, allComments, observedChecks, run, patch, featureList, runEvidence, testSources } = prepared;
+  const { base, files, diff, author, allComments, observedChecks, run, patch, selection, runEvidence, testSources } = prepared;
   const visibleComments = allComments.filter(c => !isPublication(c, author));
   const sources: TextSource[] = [{ source: 'body', id: 'body', text: p.body }, ...visibleComments.map(c => ({ source: 'comment' as const, id: String(integer(c.id)), text: string(c.body) }))];
   const gaps: string[] = files.filter(f => f.patch === null).map(() => 'Changed file has no readable patch');
@@ -277,5 +319,5 @@ export async function snapshot(repo: string, prNumber: number, configPath: strin
   const [final, finalCommit] = await Promise.all([pull(repo, prNumber), api(`repos/${repo}/commits/${encodeURIComponent(t.config.trunk)}`)]);
   admitPull(final, t.config, p.head, proof);
   if (final.body !== p.body || jsonHash(final.labels) !== jsonHash(p.labels) || sha(object(finalCommit).sha) !== t.sha) throw new Error('Snapshot changed during reconciliation');
-  return { trusted: t, pull: p, base, patchId: sha(patch), diff, files, features: featureList, checks: observedChecks, sources, gaps, inputDigest, inputFingerprint, verificationDigest, dependencyOnly: safeDependencyChange, testEvidence };
+  return { trusted: t, pull: p, base, patchId: sha(patch), diff, files, features: selection.features, reachedPaths: selection.reachedPaths, checks: observedChecks, sources, gaps, inputDigest, inputFingerprint, verificationDigest, dependencyOnly: safeDependencyChange, testEvidence };
 }

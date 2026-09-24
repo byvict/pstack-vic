@@ -31,7 +31,14 @@ else if (args[0] === 'api') {
       const status = { ...body, id: 200 + state.statuses.length, creator: { id: 7 } };
       state.statuses.unshift(status); save(); send(status);
     } else fail();
-  } else if (endpoint === 'graphql') send({ data: { viewer: { databaseId: 7 } } });
+  } else if (endpoint === 'graphql') {
+    const fields = Object.fromEntries(args.flatMap((arg, i) => args[i - 1] === '-f' ? [arg.split(/=(.*)/s).slice(0, 2)] : []));
+    if (!fields.query.includes('repository(')) send({ data: { viewer: { databaseId: 7 } } });
+    else send({ data: { repository: Object.fromEntries(Object.entries(fields).filter(([key]) => /^p\d+$/.test(key)).map(([key, expression]) => {
+      const text = expression.startsWith(state.trunk + ':') ? state.blobs[expression.slice(41)] : undefined;
+      return [key, text === undefined ? null : { byteSize: Buffer.byteLength(text), isBinary: false, isTruncated: false, text }];
+    })) } });
+  }
   else if (endpoint.startsWith('repos/byvict/pstack-vic/commits/')) {
     if (state.invalidTooling) fail();
     send({ sha: endpoint.slice('repos/byvict/pstack-vic/commits/'.length) });
