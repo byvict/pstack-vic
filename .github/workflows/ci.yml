@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# PR runs share a group per PR, so a new push cancels the superseded run.
+# Every push to main gets its own group: each main SHA becomes Converge
+# tooling for Clinext, so none of those runs is cancelled or replaced.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      # UPSTREAM.md registers these remotes in every new clone, and the
+      # upstream-digest test resolves both sync points through them.
+      - name: Fetch upstream remotes
+        run: |
+          git remote add cursor https://github.com/cursor/plugins.git
+          git remote add open https://github.com/ericlitman/open-pstack.git
+          git fetch --quiet --no-tags cursor main
+          git fetch --quiet --no-tags open main
+
+      - run: npm test
+      - run: npm run matrix:check
+      - run: npm run agents:check
+      - run: npm run collision:check
+
+      - name: git diff --check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          PUSH_SHA: ${{ github.sha }}
+        run: |
+          if [ "$EVENT_NAME" = pull_request ]; then
+            git diff --check "$PR_BASE_SHA...$PR_HEAD_SHA"
+          elif git cat-file -e "$PUSH_BEFORE_SHA^{commit}" 2>/dev/null; then
+            git diff --check "$PUSH_BEFORE_SHA...$PUSH_SHA"
+          else
+            echo "::notice::No previous commit for this push; skipping git diff --check"
+          fi
