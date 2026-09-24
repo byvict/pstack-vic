@@ -25,7 +25,6 @@
 // Node 24, type stripping, no dependencies: erasable TypeScript only.
 
 import { randomBytes } from "node:crypto";
-import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -42,6 +41,7 @@ import {
   type ModelMatrix,
   type Route,
 } from "../../../scripts/model-matrix.ts";
+import { judgeLane, probePrompt, runProbeLane } from "../../poteto-mode/scripts/runner/probe-lane.ts";
 import type { RepoTarget } from "../../poteto-mode/scripts/runner/types.ts";
 
 export class SetupError extends Error {}
@@ -554,16 +554,6 @@ export function loadPlan(dir: string): Plan {
 
 // --- Probes ----------------------------------------------------------------
 
-const RUNNER_LAUNCHER = join(
-  dirname(new URL(import.meta.url).pathname),
-  "..",
-  "..",
-  "poteto-mode",
-  "scripts",
-  "runner",
-  "pstack-runner"
-);
-
 export interface ExternalProbeResult {
   readonly family: string;
   readonly pair: string;
@@ -632,10 +622,6 @@ function probeTargetProblem(plan: Plan, target: RepoTarget | undefined, matrix: 
   return null;
 }
 
-function probePrompt(marker: string): string {
-  return `This is a connectivity probe. Reply with exactly this token and nothing else: ${marker}\n`;
-}
-
 function probePaths(dir: string, pair: string): { prompt: string; output: string; receipt: string } {
   return {
     prompt: join(dir, `probe-${pair}.prompt.md`),
@@ -652,108 +638,32 @@ function probeLabel(pair: ProbePair): string {
   return `${pair.pair} (${pair.descriptor})`;
 }
 
-interface RunnerReceiptLike {
-  readonly status?: string;
-  readonly provider?: string;
-  readonly model?: string;
-  readonly effort?: string;
-  readonly mode?: string;
-  readonly modelVerified?: boolean;
-  readonly modelEvidence?: string | null;
-  readonly reportedModel?: string | null;
-  readonly error?: { readonly message?: string } | null;
-}
-
-/**
- * Judge one external probe from its receipt and output: the lane completed,
- * ran the requested pair at the requested effort, proved the model (provider
- * report or argv pin), and echoed the marker.
- */
-function judgeExternal(pair: ProbePair, receiptPath: string, outputPath: string): { passed: boolean; detail: string } {
-  if (!existsSync(receiptPath)) return { passed: false, detail: "no receipt written" };
-  let receipt: RunnerReceiptLike;
-  try {
-    receipt = JSON.parse(readFileSync(receiptPath, "utf8")) as RunnerReceiptLike;
-  } catch (error) {
-    return { passed: false, detail: `receipt is not JSON: ${(error as Error).message}` };
-  }
-  if (receipt.status !== "complete") {
-    const why = receipt.error?.message ? `: ${receipt.error.message}` : "";
-    return { passed: false, detail: `receipt status ${receipt.status ?? "missing"}${why}` };
-  }
-  if (receipt.provider !== pair.provider || receipt.model !== pair.model || receipt.effort !== pair.effort) {
-    return {
-      passed: false,
-      detail: `receipt ran ${receipt.provider}:${receipt.model}@${receipt.effort}, plan asked ${pair.descriptor}`,
-    };
-  }
-  if (receipt.modelVerified !== true && receipt.modelEvidence !== "pinned-argv") {
-    return { passed: false, detail: `model not verified (evidence ${receipt.modelEvidence ?? "none"})` };
-  }
-  const output = existsSync(outputPath) ? readFileSync(outputPath, "utf8") : "";
-  if (!output.includes(pair.marker)) {
-    return { passed: false, detail: `output lacks the marker ${pair.marker}` };
-  }
-  const evidence = receipt.modelEvidence === "provider-report" ? `reported ${receipt.reportedModel}` : "pinned by argv";
-  return { passed: true, detail: `complete, ${evidence}, marker echoed` };
-}
-
-function runLane(pair: ProbePair, plan: Plan, options: ProbeOptions, matrix: ModelMatrix): Promise<ExternalProbeResult> {
+async function runLane(pair: ProbePair, plan: Plan, options: ProbeOptions, matrix: ModelMatrix): Promise<ExternalProbeResult> {
   const paths = probePaths(options.dir, pair.pair);
-  writeFileSync(paths.prompt, probePrompt(pair.marker), { mode: 0o600 });
-  const args = [
-    RUNNER_LAUNCHER,
-    "--parent", plan.parent,
-    "--provider", pair.provider,
-    "--model", pair.model,
-    "--effort", pair.effort,
-    "--mode", "read-only",
-    "--prompt", paths.prompt,
-    "--cwd", options.dir,
-    "--output", paths.output,
-    "--receipt", paths.receipt,
-  ];
-  if (options.timeoutSeconds) args.push("--timeout", String(options.timeoutSeconds));
-  if (options.target !== undefined && transportOf(matrix, pair.provider) === "http") {
-    args.push("--repo", `${options.target.owner}/${options.target.name}`, "--pr", String(options.target.pullNumber));
-  }
-  return new Promise((resolve) => {
-    const child = spawn(process.execPath, args, {
-      env: options.env ?? process.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stderr = "";
-    child.stderr?.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
-    child.stdout?.resume();
-    child.on("error", (error) => {
-      resolve({
-        family: pair.family,
-        pair: pair.pair,
-        descriptor: pair.descriptor,
-        status: "failed",
-        promptPath: paths.prompt,
-        outputPath: paths.output,
-        receiptPath: paths.receipt,
-        detail: `could not launch the runner: ${error.message}`,
-      });
-    });
-    child.on("close", () => {
-      const verdict = judgeExternal(pair, paths.receipt, paths.output);
-      const detail = verdict.passed || stderr.trim().length === 0 ? verdict.detail : `${verdict.detail}\n${stderr.trim().slice(0, 2_000)}`;
-      resolve({
-        family: pair.family,
-        pair: pair.pair,
-        descriptor: pair.descriptor,
-        status: verdict.passed ? "passed" : "failed",
-        promptPath: paths.prompt,
-        outputPath: paths.output,
-        receiptPath: paths.receipt,
-        detail,
-      });
-    });
+  const verdict = await runProbeLane({
+    parent: plan.parent,
+    provider: pair.provider,
+    model: pair.model,
+    effort: pair.effort,
+    marker: pair.marker,
+    cwd: options.dir,
+    promptPath: paths.prompt,
+    outputPath: paths.output,
+    receiptPath: paths.receipt,
+    env: options.env ?? process.env,
+    timeoutSeconds: options.timeoutSeconds,
+    target: transportOf(matrix, pair.provider) === "http" ? options.target : undefined,
   });
+  return {
+    family: pair.family,
+    pair: pair.pair,
+    descriptor: pair.descriptor,
+    status: verdict.passed ? "passed" : "failed",
+    promptPath: paths.prompt,
+    outputPath: paths.output,
+    receiptPath: paths.receipt,
+    detail: verdict.detail,
+  };
 }
 
 function nativeStatus(
@@ -862,7 +772,7 @@ export function verifyProbes(plan: Plan, dir: string): { readonly ok: boolean; r
   for (const pair of plan.pairs) {
     if (pair.route === "runner") {
       const paths = probePaths(dir, pair.pair);
-      const verdict = judgeExternal(pair, paths.receipt, paths.output);
+      const verdict = judgeLane(pair, paths.receipt, paths.output);
       if (!verdict.passed) problems.push(`${probeLabel(pair)}: external probe ${verdict.detail}`);
     } else {
       const problem = verifyNative(plan, dir, pair);

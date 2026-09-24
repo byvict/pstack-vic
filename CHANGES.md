@@ -454,3 +454,43 @@ Até a 0.1.7, todo `write` exigia um probe passando para cada par família@esfor
 
 - `npm test`: 334 testes, 0 falhas. Seis novos no `setup-pstack`: família verificada não é testada em mudança de esforço, família nova é; modelo novo numa família verificada é testado e o ledger de um pai não vale para o outro; ledger ilegível para o plano; `probe` sem pares não roda nada; `write` registra só as famílias testadas e grava mudança de esforço sem probe; falha no write do ledger restaura sheet e integração. `matrix:check`, `agents:check`, `collision:check` e `claude plugin validate --strict .` verdes.
 - Ledgers de `~/.claude` e `~/.codex` semeados com as 12 famílias do matrix (`evidence: operator`). `plan` nos sheets reais com `--effort grok-4-7=high` e `kimi` entrando no mapa sai com `pairs` vazio nos dois pais.
+
+# 0.1.9 — `update-clis`: versão das CLIs com trava de impacto (2026-09-24)
+
+O runner chama três CLIs, e cada peculiaridade que ele codifica foi medida numa versão exata (o sufixo `-build` do grok, o seatbelt aninhado sob o Codex, as flags do `claude -p`). Até aqui, nada controlava essas versões. O `claude` do npm se atualizava sozinho (2.1.280 → 2.1.281 em 2026-09-24, pelo próprio atualizador), e o `grok` ficou parado em 1.0.5 desde o G-9 do Clinext, sem caminho de atualização. Não havia rotina antiga de CLIs para cancelar. A pesquisa do G-9 pedia `auto_update = false` mais "update controlado entre Runs", e só a primeira metade tinha sido feita. Esta versão faz a segunda metade, e o `auto_update = false` do grok continua. O desenho aprovado está em [`docs/superpowers/specs/2026-09-24-update-clis-design.md`](docs/superpowers/specs/2026-09-24-update-clis-design.md).
+
+## Desenho
+
+- Skill nova `update-clis`. O `SKILL.md` tem o julgamento: ler as notas contra os pontos de contato, decidir por CLI, instalar, sondar, voltar e postar no Linear. `scripts/update-clis.ts` tem a parte mecânica, com os subcomandos `start`, `check`, `notes`, `install`, `probe` e `finish`. `references/cli-touchpoints.json` lista 30 pontos de contato (`lane` ou `harness`, contrato, ponteiros, lanes que cobrem, versão medida).
+- `skills/poteto-mode/scripts/runner/probe-lane.ts` sai do `setup-pstack.ts` (`runLane`, `judgeExternal`, prompt de sonda) sem mudar o comportamento do setup. O módulo ganha o modo `isolated-write` com checagem de `probe.txt`, um comando de embrulho (o `codex sandbox`), tokens obrigatórios no `argv` do recibo, a transcrição da lane e a limpeza de `CLAUDECODE`/`CLAUDE_CODE_*` quando a lane simula um pai Codex.
+- A sonda roda os pares em uso nas duas fichas (claude pela ficha do Codex, codex pela do Claude, grok pelas duas) nas lanes `read` e `write`, mais `seatbelt` (grok e claude sob `codex sandbox`), `sandbox` (codex, sem modelo) e `manifest` (claude, sem modelo). Uma lane que falha faz a CLI voltar para a versão anterior e rodar a contraprova nela.
+- O estado entre execuções fica só no Linear: `CLI <nome> <versão> segurada` e `CLI <nome> quebrada: volta falhou`. A pasta de cada execução fica em `~/Library/Caches/pstack-vic/update-clis/<data-hora>/`, e uma trava `O_EXCL` na mesma pasta impede duas execuções ao mesmo tempo.
+- A nota em `provider-dispatch.md` diz que a versão das CLIs passa pela skill. O teste falha quando uma flag que o runner gera não aparece em nenhum contrato, ou quando um ponteiro perde a âncora.
+
+## Decisões
+
+1. **"A com cobertura"** (Victor). A leitura das notas marca só mudança de contrato. Uma mudança num ponto que a sonda cobre é decidida pela sonda. Uma mudança num ponto `lane` sem cobertura segura a versão sem instalar. Um ponto `harness` nunca segura e só é relatado.
+2. **Auto-update do `claude` do npm desligado** (`"env": {"DISABLE_AUTOUPDATER": "1"}` em `~/.claude/settings.json`), passo da implantação. A skill vira o único caminho de atualização das três CLIs.
+3. **Sonda completa e ordem codex → grok → claude.** O codex é decidido primeiro porque o `codex sandbox` embrulha as lanes `seatbelt` das outras duas.
+4. **Falha na sonda → volta e contraprova.** Se a versão anterior passa, a nova fica segurada. Se a anterior também falha, o problema é do ambiente: a execução não abre issue e a próxima tenta de novo.
+5. **Rotina = tarefa agendada do app** `pstack-vic-cli-updates`, segunda às 07:00. O texto do prompt está em `docs/reference.md`.
+
+## O que a implementação mediu e ajustou
+
+- **`codex sandbox -C` exige `--permission-profile` no codex 0.155.1.** O embrulho roda a partir da pasta da lane, que vira o workspace gravável, em vez de passar `-C`. Registrado no contrato `codex.sandbox`.
+- **A lane `sandbox` também exige que uma escrita fora do workspace seja negada.** A spec pedia três critérios: `CODEX_SANDBOX` exportado, pasta da lane gravável e `~/.grok` gravável. Um sandbox que deixasse tudo passar cumpriria os três, e o `--sandbox none` do grok ficaria sem confinamento.
+- **"Em uso" pelo `lsof` sobre os executáveis da cópia resolvida.** O `ps` mostra o caminho como foi digitado: um `claude` aberto no terminal aparece só como `claude`. O `lsof` sai com 1 sempre que algum arquivo da lista não está aberto, então os PIDs são lidos do stdout.
+- **As notas chegam deduplicadas.** O CDN do grok repete entradas em versões seguintes: de 1.0.6 a 1.0.41 são 702 entradas, 383 únicas. Cada texto fica uma vez, na versão mais antiga, e continua `breaking` se qualquer repetição tiver a marca.
+- **`start`/`finish` delimitam a execução.** A trava vale para a execução inteira, não para um subcomando. `install` e `probe` recusam uma pasta que não seja a dona da trava. Uma trava com mais de 12 horas é assumida pela execução nova. `finish --keep-copies` preserva a cópia do binário do grok quando a volta falhou, porque ela é o caminho de recuperação manual.
+- **As negações do seatbelt vêm do `codex sandbox --log-denials`.** Elas ficam na transcrição da lane `seatbelt`, e o resumo lista só as escritas fora de `/dev`. `/dev/dtracehelper` e `/dev/tty` aparecem em todo processo.
+- **Pontos de "A medir" da spec:**
+  1. O grok 1.0.5 não deixa processo líder ocioso depois de uma sonda headless: não havia `~/.grok/leader.sock` nem processo do CLI, e `active_sessions.json` estava vazio. A regra de uso fica como está.
+  2. `claude -p` aninhado: remover `CLAUDECODE` e `CLAUDE_CODE_*` basta. A primeira sonda caiu porque a sessão OAuth do `claude` do npm estava vencida. Medido de novo depois do login, com a sonda rodando dentro de uma sessão do app Claude Code, que exporta 28 variáveis do Claude. O filho autentica pela conta claude.ai, não carrega plugins nem MCPs do usuário, abre o próprio socket de mensagens e reporta o modelo pedido. Das variáveis que sobram, só `CLAUDE_EFFORT=xhigh` parecia arriscada. Ela não é entrada: o texto do binário 2.1.281 a descreve como o esforço do turno, exportado para hooks e Bash, e o filho a sobrescreve. A saída do `claude -p` não informa o esforço servido, então o `--effort` só aparece no recibo.
+  3. A lane `seatbelt` do claude tenta escrever fora das raízes, e o seatbelt nega as sete tentativas sem derrubar a lane. Todas são estado do próprio CLI: `~/.claude/sessions`, `~/.claude.json` (trava e arquivo temporário), `~/.claude/projects/<lane>`, `~/.claude/shell-snapshots` e `~/.claude/session-env`. Nenhuma toca o workspace nem o repositório. Sob um pai Codex, o claude roda sem gravar o próprio estado, e o recibo não depende dele. Na lane `seatbelt` do grok, as únicas negações foram de `/dev`.
+
+## Verificação
+
+- `npm test`: todos os testes passam, com 8 novos em `probe-lane.test.ts` e 44 em `update-clis.test.ts`. Os testes do `setup-pstack` passaram sem mudança depois da extração. O `update-clis.test.ts` usa CLIs falsas num PATH sem nenhuma CLI real, aquecidas antes do uso, e fixtures reais das três fontes de notas.
+- `check` real em 2026-09-24: codex 0.155.1 → 0.156.1, grok 1.0.5 → 1.0.41 (stable), claude 2.1.281 em dia (`latest`). A cópia duplicada é o `claude` 2.1.280 no Node 24.19.0. Os apps trazem Claude 2.1.275 e 2.1.280 e o codex 0.155.0-alpha.16.3 do ChatGPT.
+- `notes` real: grok 1.0.5 → 1.0.41 dá 36 versões e 383 entradas; claude 2.1.273 → 2.1.281 dá 7 versões e 583 entradas; codex 0.155.1 → 0.156.1 dá 2 versões e 542 entradas.
+- Sonda real nas versões instaladas: codex 0.155.1 3/3 (30 s), grok 1.0.5 3/3 (31 s). No claude 2.1.281, `manifest` passou e as três lanes com modelo caíram em `unauthenticated` (o login vencido acima). Depois do login, o claude 2.1.281 fez 4/4 em 20 s (`read`, `write`, `seatbelt`, `manifest`; execução `2026-09-24T18-51-45Z`).
