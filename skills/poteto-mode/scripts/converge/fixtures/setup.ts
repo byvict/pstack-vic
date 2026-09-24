@@ -27,7 +27,7 @@ export function fixture() {
     blobs: { '.cursor/converge.json': JSON.stringify(config), 'verify/SKILL.md': 'Drive the app.', 'features/README.md': '| [Login](./login.md) | `client/Login.jsx` |\n', 'features/login.md': 'Use Entrar.', '.github/workflows/tests.yml': 'name: Tests\n', 'package.json': JSON.stringify({scripts:{test:'node tools/run-all-tests.js'}}), 'tools/run-all-tests.js': 'function printOneResult() {} function printRunnerFooter() {}' },
     headBlobs: {} as Record<string, string>,
     checks: [{ id: 11, name: 'Run test suite', status: 'completed', conclusion: 'success', app: { id: 15368 } }, { id: 12, name: 'Secrets scan', status: 'completed', conclusion: 'success', app: { id: 15368 } }],
-    protected: ['Run test suite', 'Secrets scan', 'verdict'], comments: [], statuses: [], mutations: [] };
+    protected: ['Run test suite', 'Secrets scan', 'verdict'], comments: [], statuses: [], pulls: [] as Record<string, unknown>[], pushedHead: head, mutations: [] };
   writeFileSync(statePath, JSON.stringify(state));
   const scriptDirectory = fileURLToPath(new URL('../', import.meta.url));
   return {
