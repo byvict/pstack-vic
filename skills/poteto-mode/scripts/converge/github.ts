@@ -322,7 +322,7 @@ export async function snapshot(repo: string, prNumber: number, configPath: strin
   const { base, files, diff, author, allComments, observedChecks, run, patch, selection, runEvidence, testSources } = prepared;
   const visibleComments = allComments.filter(c => !isPublication(c, author));
   const sources: TextSource[] = [{ source: 'body', id: 'body', text: p.body }, ...visibleComments.map(c => ({ source: 'comment' as const, id: String(integer(c.id)), text: string(c.body) }))];
-  const gaps: string[] = files.filter(f => f.patch === null).map(() => 'Changed file has no readable patch');
+  const gaps: string[] = files.filter(f => f.patch === null && ![f.path, f.previous ?? f.path].every(path => /(?:^|\/)__screenshots__\/.+\.png$/.test(path))).map(() => 'Changed file has no readable patch');
   let testEvidence: TestEvidence = { kind: 'unavailable' };
   if (!run) gaps.push('Exact-head Tests workflow unavailable');
   else {

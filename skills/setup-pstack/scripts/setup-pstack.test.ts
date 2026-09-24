@@ -7,6 +7,7 @@ import { loadMatrix, renderRoleSheet } from "../../../scripts/model-matrix.ts";
 import {
   SetupError,
   buildPlan,
+  ledgerPathFor,
   loadState,
   normalizeLane,
   parseSheet,
@@ -42,6 +43,22 @@ function putSheet(parent: string, text: string): string {
   const path = sheetPathFor(parent, home);
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, text);
+  return path;
+}
+
+/** A ledger that vouches for the named families (matrix family names) on this parent. */
+function putLedger(parent: string, families: readonly string[]): string {
+  const path = ledgerPathFor(parent, home);
+  mkdirSync(dirname(path), { recursive: true });
+  const entries = families.map((name) => {
+    const family = matrix.families.find((f) => f.family === name);
+    assert.ok(family, `no matrix family ${name}`);
+    return [
+      `${family.provider}:${family.model}`,
+      { family: name, descriptor: `${family.provider}:${family.model}@${family.defaultEffort}`, verifiedAt: "2026-09-24T00:00:00.000Z", evidence: "operator" },
+    ];
+  });
+  writeFileSync(path, `${JSON.stringify({ schemaVersion: 1, families: Object.fromEntries(entries) }, null, 2)}\n`);
   return path;
 }
 
@@ -215,10 +232,12 @@ describe("loadState", () => {
 });
 
 describe("buildPlan", () => {
-  it("on a first run takes the parent's role defaults, the matrix default efforts, and one probe pair per (family, effort) in the map", () => {
+  it("on a first run takes the parent's role defaults, the matrix default efforts, and one probe per family in the map", () => {
     const plan = buildPlan({ parent: "claude", home, matrix });
     assert.equal(plan.sheet, firstRunSheet("claude"));
-    assert.equal(plan.schemaVersion, 2);
+    assert.equal(plan.schemaVersion, 3);
+    assert.equal(plan.ledgerPath, join(home, ".claude", "pstack-probes.json"));
+    assert.deepEqual(plan.verified, []);
     assert.deepEqual(plan.efforts, {
       fable: ["max"],
       opus: ["xhigh"],
@@ -316,7 +335,7 @@ describe("buildPlan", () => {
     );
   });
 
-  it("accepts a role change whose effort differs from the family's other lanes and keeps both", () => {
+  it("accepts a role change whose effort differs from the family's other lanes, keeps both, and probes the family once at its lowest effort", () => {
     const plan = buildPlan({
       parent: "claude",
       home,
@@ -331,10 +350,7 @@ describe("buildPlan", () => {
     assert.deepEqual(plan.efforts.sol, ["high", "xhigh"]);
     assert.deepEqual(
       plan.pairs.filter((p) => p.family === "sol").map((p) => [p.pair, p.descriptor, p.route]),
-      [
-        ["sol@high", "codex:gpt-6-sol@high", "runner"],
-        ["sol@xhigh", "codex:gpt-6-sol@xhigh", "runner"],
-      ]
+      [["sol@high", "codex:gpt-6-sol@high", "runner"]]
     );
   });
 
@@ -358,11 +374,67 @@ describe("buildPlan", () => {
     assert.deepEqual(plan.efforts.grok, ["high", "xhigh"]);
     assert.deepEqual(
       plan.pairs.filter((p) => p.family === "grok").map((p) => [p.pair, p.descriptor]),
+      [["grok@high", "grok:grok-4.6@high"]]
+    );
+  });
+
+  it("probes no family the ledger verified, whatever effort its lanes take, and probes a family new to this parent", () => {
+    putSheet("claude", firstRunSheet("claude"));
+    putLedger("claude", ["fable", "opus", "astra", "grok", "cursor-grok"]);
+    const effortsOnly = buildPlan({ parent: "claude", home, matrix, efforts: { grok: "high", fable: "medium" } });
+    assert.deepEqual(effortsOnly.efforts.grok, ["high"]);
+    assert.deepEqual(effortsOnly.pairs, []);
+    assert.deepEqual(
+      effortsOnly.verified.map((v) => [v.family, `${v.provider}:${v.model}`, v.verifiedAt]),
       [
-        ["grok@high", "grok:grok-4.6@high"],
-        ["grok@xhigh", "grok:grok-4.6@xhigh"],
+        ["fable", "claude:fable", "2026-09-24T00:00:00.000Z"],
+        ["opus", "claude:claude-opus-5-5", "2026-09-24T00:00:00.000Z"],
+        ["astra", "codex:gpt-6-astra", "2026-09-24T00:00:00.000Z"],
+        ["grok", "grok:grok-4.6", "2026-09-24T00:00:00.000Z"],
+        ["cursor-grok", "cursor:grok-4.7", "2026-09-24T00:00:00.000Z"],
       ]
     );
+
+    const newFamilies = buildPlan({
+      parent: "claude",
+      home,
+      matrix,
+      roles: { "bug-fix": ["grok:grok-4.7@xhigh"], "swarm workers": ["codex:gpt-6-sol@high"] },
+    });
+    assert.deepEqual(
+      newFamilies.pairs.map((p) => [p.pair, p.descriptor, p.route]),
+      [
+        ["sol@high", "codex:gpt-6-sol@high", "runner"],
+        ["grok-4-7@xhigh", "grok:grok-4.7@xhigh", "runner"],
+      ]
+    );
+    assert.equal(newFamilies.verified.some((v) => v.family === "sol" || v.family === "grok-4-7"), false);
+  });
+
+  it("probes a new model of a verified family and keeps one parent's ledger from verifying the other", () => {
+    putLedger("claude", ["fable", "opus", "astra", "grok", "cursor-grok"]);
+    const bumped = structuredClone(matrix) as { families: Array<{ family: string; model: string }> };
+    const grok = bumped.families.find((f) => f.family === "grok");
+    assert.ok(grok);
+    grok.model = "grok-4.8";
+    const plan = buildPlan({ parent: "claude", home, matrix: bumped as unknown as typeof matrix });
+    assert.deepEqual(plan.pairs.map((p) => p.descriptor), ["grok:grok-4.8@xhigh"]);
+
+    const codex = buildPlan({ parent: "codex", home, matrix });
+    assert.deepEqual(codex.verified, []);
+    assert.equal(codex.pairs.length, 5);
+  });
+
+  it("treats an unreadable ledger as inconsistent state", () => {
+    const path = ledgerPathFor("claude", home);
+    mkdirSync(dirname(path), { recursive: true });
+    for (const broken of ["not json", "[]", `{"schemaVersion":2,"families":{}}`, `{"schemaVersion":1,"families":[]}`]) {
+      writeFileSync(path, broken);
+      assert.throws(() => buildPlan({ parent: "claude", home, matrix }), (error: unknown) => error instanceof SetupError && /pstack-probes\.json/.test((error as Error).message), broken);
+    }
+    rmSync(path);
+    mkdirSync(path);
+    assert.throws(() => buildPlan({ parent: "claude", home, matrix }), /probe ledger .* is not a regular file/);
   });
 
   it("on a rerun without changes renders the existing sheet byte for byte", () => {
@@ -403,6 +475,14 @@ describe("buildPlan", () => {
     ]);
     assert.deepEqual(lanesOf(plan, "pr owner"), ["cursor:grok-4.7@high"]);
     assert.deepEqual(lanesOf(plan, "pr verifier"), ["cursor:grok-4.7@high"]);
+  });
+
+  it("accepts only Grok 4.7 high or xhigh for the Converge roles, which start.ts reads as floors", () => {
+    const raised = buildPlan({ parent: "claude", home, matrix, roles: { "pr owner": ["cursor:grok-4.7@xhigh"] } });
+    assert.deepEqual(lanesOf(raised, "pr owner"), ["cursor:grok-4.7@xhigh"]);
+    assert.throws(() => buildPlan({ parent: "claude", home, matrix, roles: { "pr verifier": ["cursor:composer-2.5@high"] } }), /"pr verifier" takes one lane/);
+    assert.throws(() => buildPlan({ parent: "claude", home, matrix, roles: { "pr owner": ["cursor:grok-4.7@medium"] } }), /"pr owner" takes one lane/);
+    assert.throws(() => buildPlan({ parent: "claude", home, matrix, efforts: { "cursor-grok": "low" } }), /"pr owner" takes one lane/);
   });
 
   it("carries the rolling-alias migrations into the plan and rewrites them in the sheet", () => {
@@ -554,7 +634,7 @@ describe("runProbes", () => {
     assert.equal(summary.ok, false);
   });
 
-  it("runs two external lanes of one family on distinct paths with the pair's effort", async () => {
+  it("runs one external lane for a family used at two efforts, at the lower effort", async () => {
     const plan = buildPlan({
       parent: "claude",
       home,
@@ -570,29 +650,19 @@ describe("runProbes", () => {
     assert.equal(summary.externalOk, true);
     const sol = summary.external.filter((r) => r.family === "sol");
     assert.deepEqual(
-      sol.map((r) => [r.pair, r.status, r.promptPath, r.outputPath, r.receiptPath]),
-      [
-        [
-          "sol@high",
-          "passed",
-          join(runDir, "probe-sol@high.prompt.md"),
-          join(runDir, "probe-sol@high.output.md"),
-          join(runDir, "probe-sol@high.receipt.json"),
-        ],
-        [
-          "sol@xhigh",
-          "passed",
-          join(runDir, "probe-sol@xhigh.prompt.md"),
-          join(runDir, "probe-sol@xhigh.output.md"),
-          join(runDir, "probe-sol@xhigh.receipt.json"),
-        ],
-      ]
+      sol.map((r) => [r.pair, r.status, r.receiptPath]),
+      [["sol@high", "passed", join(runDir, "probe-sol@high.receipt.json")]]
     );
-    assert.notEqual(sol[0].promptPath, sol[1].promptPath);
-    assert.notEqual(sol[0].outputPath, sol[1].outputPath);
-    assert.notEqual(sol[0].receiptPath, sol[1].receiptPath);
     assert.equal(JSON.parse(readFileSync(sol[0].receiptPath, "utf8")).effort, "high");
-    assert.equal(JSON.parse(readFileSync(sol[1].receiptPath, "utf8")).effort, "xhigh");
+  });
+
+  it("runs nothing when every family of the plan is verified", async () => {
+    putLedger("claude", ["fable", "opus", "astra", "grok"]);
+    const plan = buildPlan({ parent: "claude", home, matrix, roles: CLI_ONLY_ROLES, efforts: { grok: "high" } });
+    savePlan(runDir, plan);
+    const summary = await runProbes(plan, { dir: runDir, env: fakeEnv({ FAKE_GROK_UNAUTH: "1" }) });
+    assert.deepEqual(summary, { external: [], native: [], externalOk: true, ok: true });
+    assert.deepEqual(readdirSync(runDir), ["plan.json"]);
   });
 
   it("marks a lane failed when its CLI is unauthenticated and keeps the other results", async () => {
@@ -647,7 +717,7 @@ describe("attestNative", () => {
     assert.deepEqual(verifyProbes(plan, runDir).problems.filter((p) => p.startsWith("fable@max ")), []);
   });
 
-  it("lists two native pairs of one family and attesting one leaves the other pending", async () => {
+  it("lists one native probe for a family used at two efforts, at the lower effort", async () => {
     const plan = buildPlan({
       parent: "claude",
       home,
@@ -655,29 +725,17 @@ describe("attestNative", () => {
       roles: { ...CLI_ONLY_ROLES, "hardest tasks": ["claude:fable@medium"] },
     });
     savePlan(runDir, plan);
+    assert.deepEqual(plan.efforts.fable, ["medium", "max"]);
     const fable = plan.pairs.filter((p) => p.family === "fable");
     assert.deepEqual(
       fable.map((p) => [p.pair, p.native]),
-      [
-        ["fable@medium", { primitive: "Agent", agent: "pstack-fable-medium" }],
-        ["fable@max", { primitive: "Agent", agent: "pstack-fable-max" }],
-      ]
+      [["fable@medium", { primitive: "Agent", agent: "pstack-fable-medium" }]]
     );
     await runProbes(plan, { dir: runDir, env: fakeEnv() });
-    assert.throws(
-      () => attestNative(plan, runDir, "fable@medium", `reply ${fable[1].marker}`),
-      /marker/
-    );
+    assert.throws(() => attestNative(plan, runDir, "fable@max", "reply"), /fable@max is not a pair of this plan/);
+    assert.equal(verifyProbes(plan, runDir).problems.some((p) => p.startsWith("fable@medium (claude:fable@medium):")), true);
     attestNative(plan, runDir, "fable@medium", `reply ${fable[0].marker}`);
-    const problems = verifyProbes(plan, runDir).problems;
-    assert.equal(
-      problems.some((p) => p.startsWith("fable@medium (claude:fable@medium):")),
-      false
-    );
-    assert.equal(
-      problems.some((p) => p.startsWith("fable@max (claude:fable@max):")),
-      true
-    );
+    assert.equal(verifyProbes(plan, runDir).problems.some((p) => p.startsWith("fable@")), false);
   });
 });
 
@@ -692,22 +750,60 @@ describe("writeSheet", () => {
     assert.equal(existsSync(join(home, ".claude")), false);
   });
 
-  it("on a Claude first run creates the sheet and the include, and an unchanged rerun is byte-identical", async () => {
+  it("on a Claude first run creates the sheet, the include, and the ledger, and an unchanged rerun is byte-identical", async () => {
     const plan = await planAndProbe("claude");
     const result = writeSheet(plan, runDir, { home });
-    assert.deepEqual([result.sheet, result.integration], ["created", "created"]);
+    assert.deepEqual([result.sheet, result.integration, result.ledger], ["created", "created", "created"]);
     assert.equal(readFileSync(plan.sheetPath, "utf8"), plan.sheet);
     assert.equal(readFileSync(plan.integrationPath, "utf8"), `${CLAUDE_INCLUDE_LINE}\n`);
     assert.equal(plan.integrationPath, integrationPathFor("claude", home));
-    const before = [statSync(plan.sheetPath).mtimeMs, statSync(plan.integrationPath).mtimeMs];
+    const before = [plan.sheetPath, plan.integrationPath, plan.ledgerPath].map((path) => statSync(path).mtimeMs);
 
     const again = await planAndProbe("claude");
     assert.equal(again.firstRun, false);
     assert.equal(again.sheet, plan.sheet);
+    assert.deepEqual(again.pairs, []);
     const rerun = writeSheet(again, runDir, { home });
-    assert.deepEqual([rerun.sheet, rerun.integration], ["unchanged", "unchanged"]);
-    assert.deepEqual([statSync(plan.sheetPath).mtimeMs, statSync(plan.integrationPath).mtimeMs], before);
+    assert.deepEqual([rerun.sheet, rerun.integration, rerun.ledger], ["unchanged", "unchanged", "unchanged"]);
+    assert.deepEqual([plan.sheetPath, plan.integrationPath, plan.ledgerPath].map((path) => statSync(path).mtimeMs), before);
     assert.equal(readFileSync(plan.sheetPath, "utf8"), plan.sheet);
+  });
+
+  it("records each probed family in the ledger, writes an effort change without probes, and probes only a new family", async () => {
+    const plan = await planAndProbe("claude");
+    writeSheet(plan, runDir, { home });
+    const ledger = JSON.parse(readFileSync(plan.ledgerPath, "utf8"));
+    assert.equal(ledger.schemaVersion, 1);
+    assert.deepEqual(Object.keys(ledger.families), ["claude:claude-opus-5-5", "claude:fable", "codex:gpt-6-astra", "grok:grok-4.6"]);
+    assert.deepEqual(
+      { ...ledger.families["grok:grok-4.6"], verifiedAt: "" },
+      { family: "grok", descriptor: "grok:grok-4.6@xhigh", verifiedAt: "", evidence: runDir }
+    );
+    const ledgerText = readFileSync(plan.ledgerPath, "utf8");
+
+    const effortDir = join(home, "effort-run");
+    const effort = buildPlan({ parent: "claude", home, matrix, roles: CLI_ONLY_ROLES, efforts: { grok: "high", opus: "max" } });
+    assert.deepEqual(effort.pairs, []);
+    savePlan(effortDir, effort);
+    const written = writeSheet(effort, effortDir, { home });
+    assert.deepEqual([written.sheet, written.ledger], ["updated", "unchanged"]);
+    assert.equal(readFileSync(plan.ledgerPath, "utf8"), ledgerText);
+    assert.match(readFileSync(plan.sheetPath, "utf8"), /^bug-fix: grok:grok-4\.6@high$/m);
+
+    const solDir = join(home, "sol-run");
+    const sol = buildPlan({ parent: "claude", home, matrix, roles: { ...CLI_ONLY_ROLES, "swarm workers": ["codex:gpt-6-sol@high"] } });
+    assert.deepEqual(sol.pairs.map((p) => p.pair), ["sol@high"]);
+    savePlan(solDir, sol);
+    assert.throws(() => writeSheet(sol, solDir, { home }), /sol@high/);
+    assert.equal(readFileSync(plan.ledgerPath, "utf8"), ledgerText);
+    await runProbes(sol, { dir: solDir, env: fakeEnv() });
+    const added = writeSheet(sol, solDir, { home });
+    assert.deepEqual([added.sheet, added.ledger], ["updated", "updated"]);
+    const after = JSON.parse(readFileSync(plan.ledgerPath, "utf8"));
+    assert.deepEqual(Object.keys(after.families), [...Object.keys(ledger.families), "codex:gpt-6-sol"].sort());
+    assert.deepEqual(after.families["grok:grok-4.6"], ledger.families["grok:grok-4.6"]);
+    assert.equal(after.families["codex:gpt-6-sol"].descriptor, "codex:gpt-6-sol@high");
+    assert.equal(writeSheet(sol, solDir, { home }).ledger, "unchanged");
   });
 
   it("on a mixed sheet creates then reports unchanged without touching mtimes", async () => {
@@ -792,6 +888,18 @@ describe("writeSheet", () => {
     chmodSync(plan.integrationPath, 0o444);
     assert.throws(() => writeSheet(plan, runDir, { home }), /every snapshot restored/);
     assert.equal(existsSync(plan.sheetPath), false);
+    assert.equal(existsSync(plan.ledgerPath), false);
+  });
+
+  it("restores the sheet and the integration when the ledger write fails", async () => {
+    const plan = await planAndProbe("claude");
+    mkdirSync(dirname(plan.ledgerPath), { recursive: true });
+    writeFileSync(plan.ledgerPath, `{"schemaVersion":1,"families":{}}\n`);
+    chmodSync(plan.ledgerPath, 0o444);
+    assert.throws(() => writeSheet(plan, runDir, { home }), /every snapshot restored/);
+    assert.equal(existsSync(plan.sheetPath), false);
+    assert.equal(existsSync(plan.integrationPath), false);
+    assert.equal(readFileSync(plan.ledgerPath, "utf8"), `{"schemaVersion":1,"families":{}}\n`);
   });
 
   it("treats a directory where the sheet or the integration file should be as inconsistent state and writes nothing", async () => {
@@ -854,7 +962,7 @@ describe("command line", () => {
     const saved = JSON.parse(readFileSync(join(runDir, "plan.json"), "utf8"));
     assert.deepEqual(printed, saved);
     assert.equal(saved.parent, "codex");
-    assert.equal(saved.schemaVersion, 2);
+    assert.equal(saved.schemaVersion, 3);
     assert.deepEqual(saved.efforts.grok, ["high"]);
     assert.deepEqual(saved.rows.find((r: { role: string }) => r.role === "swarm workers").lanes, ["auto"]);
     assert.deepEqual(saved.rows.find((r: { role: string }) => r.role === "why synthesizer").lanes, ["claude:claude-opus-5-5@xhigh"]);
@@ -903,11 +1011,11 @@ describe("command line", () => {
     const written = cli(["write", "--dir", runDir, "--home", home]);
     assert.equal(written.code, 0, written.stderr);
     const result = JSON.parse(written.stdout);
-    assert.deepEqual([result.sheet, result.integration], ["created", "created"]);
+    assert.deepEqual([result.sheet, result.integration, result.ledger], ["created", "created", "created"]);
     assert.equal(readFileSync(plan.sheetPath, "utf8"), plan.sheet);
 
-    const again = cli(["write", "--dir", runDir, "--home", home]);
-    assert.deepEqual(JSON.parse(again.stdout).sheet, "unchanged");
+    const again = JSON.parse(cli(["write", "--dir", runDir, "--home", home]).stdout);
+    assert.deepEqual([again.sheet, again.integration, again.ledger], ["unchanged", "unchanged", "unchanged"]);
   });
 
   it("rejects a bad subcommand, a malformed --effort, and a missing --parent with exit 64 and usage", () => {
@@ -943,7 +1051,7 @@ describe("command line", () => {
     assert.equal(cli(["plan", "--parent", "claude", "--home", home, "--dir", runDir]).code, 0);
     const path = join(runDir, "plan.json");
     const plan = JSON.parse(readFileSync(path, "utf8")) as Plan;
-    writeFileSync(path, `${JSON.stringify({ ...plan, schemaVersion: 1 }, null, 2)}\n`);
+    writeFileSync(path, `${JSON.stringify({ ...plan, schemaVersion: 2 }, null, 2)}\n`);
     const result = cli(["probe", "--dir", runDir]);
     assert.equal(result.code, 1);
     assert.match(result.stderr, /plan/);
@@ -1182,7 +1290,7 @@ describe("probe target", () => {
     const plan = mixedPlan();
     savePlan(runDir, plan);
     const saved = loadPlan(runDir);
-    assert.equal(saved.schemaVersion, 2);
+    assert.equal(saved.schemaVersion, 3);
     assert.equal("target" in saved, false);
     assert.ok(saved.pairs.every((pair) => !("transport" in pair)));
 
@@ -1231,7 +1339,7 @@ describe("probe target", () => {
       }
     );
     const after = loadPlan(runDir);
-    assert.equal(after.schemaVersion, 2);
+    assert.equal(after.schemaVersion, 3);
     assert.equal("target" in after, false);
   });
 

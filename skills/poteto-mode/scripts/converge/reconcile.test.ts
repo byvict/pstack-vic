@@ -187,6 +187,20 @@ for (const [name, blobs] of oversized) {
     assert.ok(blobReads(f).length <= 2000);
   });
 }
+const binaries: [string, { filename: string; status: string; previous_filename?: string }, string[]][] = [
+  ['a PNG visual baseline', { filename: 'client/e2e/__screenshots__/linux/screens.spec.js/openfinance.png', status: 'modified' }, []],
+  ['a removed PNG visual baseline', { filename: 'client/e2e/__screenshots__/linux/screens.spec.js/fluxo.png', status: 'removed' }, []],
+  ['a binary outside the baseline folder', { filename: 'client/public/logo.png', status: 'modified' }, ['Changed file has no readable patch']],
+  ['a rename into the baseline folder', { filename: 'client/e2e/__screenshots__/linux/screens.spec.js/logo.png', previous_filename: 'client/public/logo.png', status: 'renamed' }, ['Changed file has no readable patch']],
+];
+for (const [name, file, gaps] of binaries) {
+  test(`patchless ${name} ${gaps.length ? 'stays' : 'is not'} a gap`, t => {
+    const f = fixture(); t.after(f.cleanup);
+    f.state.files = [f.state.files[0], file]; f.save();
+    const r = runReconcile(f); assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(JSON.parse(r.stdout).gaps, gaps);
+  });
+}
 test('ordinary reviewer attribution is data while a direct override is blocked', t => {
   const f = fixture(); t.after(f.cleanup);
   f.state.body = '## Verification\nReviewer: Maria. Testes passaram.\ncheck: Run test suite'; f.save();
