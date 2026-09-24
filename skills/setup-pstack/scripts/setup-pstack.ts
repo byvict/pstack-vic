@@ -5,12 +5,15 @@
 // that must be exact: reading and normalizing the current sheet, rendering the
 // new one from model-matrix.json, running the external probes through the
 // runner, refusing to write while any probe is missing, and the snapshot /
-// write / read-back / restore of the sheet and the parent integration. Effort
-// belongs to the lane, not the family: two lanes of one family may differ. The
-// probe unit is the pair (family, effort), one per distinct descriptor in the
-// final role map. A rerun without changes is byte-identical by construction:
-// the render is a pure function of (matrix, loaded sheet, requested efforts,
-// role changes), and `write` compares before touching anything.
+// write / read-back / restore of the sheet, the parent integration, and the
+// probe ledger. Effort belongs to the lane, not the family: two lanes of one
+// family may differ. The probe unit is the family (provider and model): the
+// parent's ledger records every family it has verified, and only a family
+// missing from it (a new provider or a new model) is probed, once, at its
+// lowest effort in the map. Effort and role changes need no probe. A rerun
+// without changes is byte-identical by construction: the render is a pure
+// function of (matrix, loaded sheet, requested efforts, role changes), and
+// `write` compares before touching anything.
 //
 //   setup-pstack.ts state  --parent <claude|codex> [--home <dir>]
 //   setup-pstack.ts plan   --parent <p> [--home <dir>] [--dir <run dir>]
@@ -25,7 +28,7 @@ import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
   agentName,
   familyFor,
@@ -56,6 +59,7 @@ const TARGETS: Readonly<Record<string, { readonly dir: string; readonly integrat
 };
 
 export const SHEET_FILE = "pstack-models.md";
+export const LEDGER_FILE = "pstack-probes.json";
 export const CLAUDE_INCLUDE_LINE = "@~/.claude/pstack-models.md";
 export const CODEX_BLOCK_BEGIN = "<!-- pstack:models:begin -->";
 export const CODEX_BLOCK_END = "<!-- pstack:models:end -->";
@@ -73,6 +77,10 @@ export function sheetPathFor(parent: string, home: string = homedir()): string {
 export function integrationPathFor(parent: string, home: string = homedir()): string {
   const target = targetFor(parent);
   return join(home, target.dir, target.integration);
+}
+
+export function ledgerPathFor(parent: string, home: string = homedir()): string {
+  return join(home, targetFor(parent).dir, LEDGER_FILE);
 }
 
 // --- Sheet parsing -----------------------------------------------------------
@@ -282,6 +290,60 @@ export function loadState(input: StateInput): State {
   return { parent, sheetPath, integrationPath, exists: true, rows, migrations, efforts };
 }
 
+// --- Probe ledger ------------------------------------------------------------
+
+/** How this parent verified one family: the probe that passed, or `operator` when the operator vouched for it. */
+export interface LedgerEntry {
+  readonly family: string;
+  readonly descriptor: string;
+  readonly verifiedAt: string;
+  readonly evidence: string;
+}
+
+export interface Ledger {
+  readonly schemaVersion: 1;
+  /** Keyed by `<provider>:<model>`: a new provider or model is a new key; effort is not part of it. */
+  readonly families: Readonly<Record<string, LedgerEntry>>;
+}
+
+function familyKey(family: { readonly provider: string; readonly model: string }): string {
+  return `${family.provider}:${family.model}`;
+}
+
+/** An absent ledger verifies nothing; one that does not parse is inconsistent state. */
+function parseLedger(text: string | null, path: string): Ledger {
+  if (text === null) return { schemaVersion: 1, families: {} };
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch (error) {
+    fail(`${path} is not JSON (${(error as Error).message}); fix or remove it before planning`);
+  }
+  const ledger = raw as Partial<Ledger> | null;
+  if (ledger?.schemaVersion !== 1 || typeof ledger.families !== "object" || ledger.families === null || Array.isArray(ledger.families)) {
+    fail(`${path} is not a schemaVersion 1 probe ledger; fix or remove it before planning`);
+  }
+  return ledger as Ledger;
+}
+
+/**
+ * The ledger text after this plan's probes passed: one new entry per probed
+ * family it lacked, keys sorted. The same text back when nothing is new, so
+ * writing one plan twice leaves the ledger byte-identical.
+ */
+function recordProbes(text: string | null, path: string, plan: Plan, dir: string): string | null {
+  const ledger = parseLedger(text, path);
+  const fresh = plan.pairs.filter((pair) => !Object.hasOwn(ledger.families, familyKey(pair)));
+  if (fresh.length === 0) return text;
+  const verifiedAt = new Date().toISOString();
+  const families: Record<string, LedgerEntry> = { ...ledger.families };
+  for (const pair of fresh) {
+    families[familyKey(pair)] = { family: pair.family, descriptor: pair.descriptor, verifiedAt, evidence: resolve(dir) };
+  }
+  const sorted = Object.fromEntries(Object.entries(families).sort(([a], [b]) => a.localeCompare(b)));
+  return `${JSON.stringify({ schemaVersion: 1, families: sorted }, null, 2)}\n`;
+}
+
 // --- Plan ------------------------------------------------------------------
 
 export interface NativeAgentProbe {
@@ -310,19 +372,29 @@ export interface ProbePair {
   readonly marker: string;
 }
 
+export interface VerifiedFamily {
+  readonly family: string;
+  readonly provider: string;
+  readonly model: string;
+  readonly verifiedAt: string;
+}
+
 export interface Plan {
-  readonly schemaVersion: 2;
+  readonly schemaVersion: 3;
   readonly parent: string;
   readonly createdAt: string;
   readonly sheetPath: string;
   readonly integrationPath: string;
+  readonly ledgerPath: string;
   readonly firstRun: boolean;
   /** Distinct efforts per family present in the final map, families in matrix order, efforts in matrix order. Families outside the map are absent. */
   readonly efforts: Readonly<Record<string, readonly string[]>>;
   readonly rows: readonly SheetRow[];
   readonly sheet: string;
-  /** One pair per distinct (family, effort) in the final map, families in matrix order, efforts in matrix order. */
+  /** One probe per family in the final map that this parent's ledger lacks, at the family's lowest effort in use, families in matrix order. */
   readonly pairs: readonly ProbePair[];
+  /** Families in the final map that this parent verified before; not probed again, whatever effort their lanes take. */
+  readonly verified: readonly VerifiedFamily[];
   readonly migrations: readonly Migration[];
 }
 
@@ -352,7 +424,8 @@ function nativeProbeFor(matrix: ModelMatrix, parent: string, family: Family, eff
  * run, the normalized loaded sheet on a rerun, missing documented roles filled
  * from the defaults), then --effort as a bulk rewrite of every lane of that
  * family, then the named role changes (each lane keeps the effort as written).
- * Nothing is written.
+ * A family of the final map needs a probe only when the parent's ledger lacks
+ * it. Nothing is written.
  */
 export function buildPlan(input: PlanInput): Plan {
   const matrix = input.matrix ?? loadMatrix();
@@ -412,40 +485,48 @@ export function buildPlan(input: PlanInput): Plan {
   }
 
   const sheet = renderSheetDocument(rows.map((r) => `${r.role}: ${r.lanes.join(", ")}`).join("\n"));
+  const ledgerPath = ledgerPathFor(parent, home);
+  const ledger = parseLedger(snapshotOf(ledgerPath, "probe ledger"), ledgerPath);
   const finalEfforts = familyEfforts(rows, matrix);
   const efforts: Record<string, readonly string[]> = {};
   const pairs: ProbePair[] = [];
+  const verified: VerifiedFamily[] = [];
   for (const family of matrix.families) {
     const used = finalEfforts[family.family];
     if (used.status === "outside-map") continue;
     efforts[family.family] = used.efforts;
-    for (const effort of used.efforts) {
-      const pair = `${family.family}@${effort}`;
-      pairs.push({
-        family: family.family,
-        effort,
-        pair,
-        provider: family.provider,
-        model: family.model,
-        descriptor: `${family.provider}:${family.model}@${effort}`,
-        route: routeFor(matrix, parent, family.provider),
-        native: nativeProbeFor(matrix, parent, family, effort),
-        marker: `PSTACK-SETUP-${parent}-${family.family}-${effort}-${randomBytes(4).toString("hex")}`,
-      });
+    const key = familyKey(family);
+    if (Object.hasOwn(ledger.families, key)) {
+      verified.push({ family: family.family, provider: family.provider, model: family.model, verifiedAt: ledger.families[key].verifiedAt });
+      continue;
     }
+    const effort = used.efforts[0];
+    pairs.push({
+      family: family.family,
+      effort,
+      pair: `${family.family}@${effort}`,
+      provider: family.provider,
+      model: family.model,
+      descriptor: `${family.provider}:${family.model}@${effort}`,
+      route: routeFor(matrix, parent, family.provider),
+      native: nativeProbeFor(matrix, parent, family, effort),
+      marker: `PSTACK-SETUP-${parent}-${family.family}-${effort}-${randomBytes(4).toString("hex")}`,
+    });
   }
 
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     parent,
     createdAt: new Date().toISOString(),
     sheetPath: state.sheetPath,
     integrationPath: state.integrationPath,
+    ledgerPath,
     firstRun: !state.exists,
     efforts,
     rows,
     sheet,
     pairs,
+    verified,
     migrations: state.migrations,
   };
 }
@@ -465,7 +546,7 @@ export function loadPlan(dir: string): Plan {
   const path = join(dir, PLAN_FILE);
   if (!existsSync(path)) fail(`no ${PLAN_FILE} in ${dir}; run plan first`);
   const raw = JSON.parse(readFileSync(path, "utf8")) as Plan;
-  if (raw.schemaVersion !== 2) {
+  if (raw.schemaVersion !== 3) {
     fail(`${path}: unsupported schemaVersion ${JSON.stringify(raw.schemaVersion)}; run plan again with this version of the script`);
   }
   return raw;
@@ -775,7 +856,7 @@ function verifyNative(plan: Plan, dir: string, pair: ProbePair): string | null {
   return null;
 }
 
-/** Every pair of the plan must have a passing probe under `dir` before anything is written. */
+/** Every probe the plan requires (the families new to this parent) must have passed under `dir` before anything is written. */
 export function verifyProbes(plan: Plan, dir: string): { readonly ok: boolean; readonly problems: readonly string[] } {
   const problems: string[] = [];
   for (const pair of plan.pairs) {
@@ -828,8 +909,10 @@ export type WriteOutcome = "created" | "updated" | "unchanged";
 export interface WriteResult {
   readonly sheetPath: string;
   readonly integrationPath: string;
+  readonly ledgerPath: string;
   readonly sheet: WriteOutcome;
   readonly integration: WriteOutcome;
+  readonly ledger: WriteOutcome;
 }
 
 /** Put a target back to its snapshot; a target whose bytes did not change is left alone. */
@@ -851,14 +934,16 @@ function snapshotOf(path: string, label: string): string | null {
 }
 
 /**
- * Commit the plan: verify every probe, render the integration, compare with the
- * current bytes, and only then write sheet and integration, read both back, and
- * restore both snapshots on any failure. An unchanged rerun touches nothing.
+ * Commit the plan: verify its probes, render the integration and the ledger,
+ * compare with the current bytes, and only then write sheet, integration, and
+ * ledger, read each back, and restore every snapshot on any failure. The ledger
+ * gains one entry per family this plan probed. An unchanged rerun touches nothing.
  */
 export function writeSheet(plan: Plan, dir: string, options: { readonly home?: string } = {}): WriteResult {
   const home = options.home ?? homedir();
   const sheetPath = sheetPathFor(plan.parent, home);
   const integrationPath = integrationPathFor(plan.parent, home);
+  const ledgerPath = ledgerPathFor(plan.parent, home);
 
   const probes = verifyProbes(plan, dir);
   if (!probes.ok) {
@@ -867,31 +952,40 @@ export function writeSheet(plan: Plan, dir: string, options: { readonly home?: s
 
   const sheetBefore = snapshotOf(sheetPath, "sheet");
   const integrationBefore = snapshotOf(integrationPath, "integration file");
+  const ledgerBefore = snapshotOf(ledgerPath, "probe ledger");
   const integrationAfter = renderIntegration(plan.parent, integrationBefore, plan.sheet);
+  const ledgerAfter = recordProbes(ledgerBefore, ledgerPath, plan, dir);
 
-  const sheetOutcome: WriteOutcome = sheetBefore === null ? "created" : sheetBefore === plan.sheet ? "unchanged" : "updated";
-  const integrationOutcome: WriteOutcome =
-    integrationBefore === null ? "created" : integrationBefore === integrationAfter ? "unchanged" : "updated";
-  if (sheetOutcome === "unchanged" && integrationOutcome === "unchanged") {
-    return { sheetPath, integrationPath, sheet: "unchanged", integration: "unchanged" };
-  }
+  const targets = [
+    { path: sheetPath, before: sheetBefore, after: plan.sheet },
+    { path: integrationPath, before: integrationBefore, after: integrationAfter },
+    { path: ledgerPath, before: ledgerBefore, after: ledgerAfter },
+  ];
+  const outcome = (before: string | null, after: string | null): WriteOutcome =>
+    before === after ? "unchanged" : before === null ? "created" : "updated";
+  const result: WriteResult = {
+    sheetPath,
+    integrationPath,
+    ledgerPath,
+    sheet: outcome(sheetBefore, plan.sheet),
+    integration: outcome(integrationBefore, integrationAfter),
+    ledger: outcome(ledgerBefore, ledgerAfter),
+  };
 
   try {
-    if (sheetOutcome !== "unchanged") {
-      mkdirSync(dirname(sheetPath), { recursive: true });
-      writeFileSync(sheetPath, plan.sheet, { mode: 0o600 });
+    for (const { path, before, after } of targets) {
+      if (after === null || after === before) continue;
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, after, { mode: 0o600 });
     }
-    if (integrationOutcome !== "unchanged") {
-      mkdirSync(dirname(integrationPath), { recursive: true });
-      writeFileSync(integrationPath, integrationAfter, { mode: 0o600 });
+    for (const { path, after } of targets) {
+      if (after !== null && readFileSync(path, "utf8") !== after) throw new Error(`${path} read back differs from the render`);
     }
-    if (readFileSync(sheetPath, "utf8") !== plan.sheet) throw new Error(`${sheetPath} read back differs from the render`);
-    if (readFileSync(integrationPath, "utf8") !== integrationAfter) throw new Error(`${integrationPath} read back differs from the render`);
   } catch (error) {
     const failures: string[] = [];
-    for (const [path, snapshot] of [[sheetPath, sheetBefore], [integrationPath, integrationBefore]] as const) {
+    for (const { path, before } of targets) {
       try {
-        restore(path, snapshot);
+        restore(path, before);
       } catch (restoreError) {
         failures.push(`${path}: ${(restoreError as Error).message}`);
       }
@@ -899,7 +993,7 @@ export function writeSheet(plan: Plan, dir: string, options: { readonly home?: s
     const tail = failures.length === 0 ? "every snapshot restored" : `snapshot restore failed for ${failures.join("; ")}`;
     fail(`write failed (${(error as Error).message}); ${tail}`);
   }
-  return { sheetPath, integrationPath, sheet: sheetOutcome, integration: integrationOutcome };
+  return result;
 }
 
 // --- Command line ---------------------------------------------------------------
@@ -913,12 +1007,14 @@ const USAGE = `Usage: setup-pstack <state|plan|probe|attest|write> [options]
          Render the new sheet in memory and save plan.json (creates a run dir when --dir is omitted).
          --effort rewrites every lane of that family; --role overlays after, each lane keeping its effort.
   probe  --dir <run dir> [--timeout <seconds>] [--repo <owner/name> --pr <number>]
-         Run every external pair of the plan through the runner; list native pairs to attest.
+         Run the plan's external probes (families new to this parent) through the runner;
+         list native probes to attest. A plan whose families are all verified has none.
          --repo and --pr are required when a runner pair uses http transport and refused otherwise.
   attest --dir <run dir> --pair <family>@<effort> --observed <reply text>
          Record a native one-turn probe whose reply carries the pair's marker.
   write  --dir <run dir> [--home <dir>]
-         Verify every probe, then write the sheet and the parent integration (byte-identical rerun writes nothing).
+         Verify the plan's probes, then write the sheet, the parent integration, and the probe
+         ledger (byte-identical rerun writes nothing).
 
 Exit codes: 0 ok, 1 a probe failed or the write was refused, 64 usage.
 `;

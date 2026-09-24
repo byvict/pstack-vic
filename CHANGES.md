@@ -436,3 +436,21 @@ Até a 0.1.6, as linhas `pr owner` e `pr verifier` do sheet eram decorativas. O 
 ## Verificação
 
 - `npm test`: 314 testes, 0 falhas (4 novos: pisos do sheet, owner elevado pelo sheet, `--effort` sobre piso `high`, recusa de sheet inválido antes do intent; validação das linhas Converge no `setup-pstack`).
+
+# 0.1.8 — `/setup-pstack` testa só família nova (2026-09-24)
+
+Até a 0.1.7, todo `write` exigia um probe passando para cada par família@esforço distinto do mapa. Trocar o esforço de uma linha, ou mover um papel entre famílias já em uso, re-testava o sheet inteiro. As famílias do matrix já estão verificadas; o probe só informa algo quando o pai usa uma família pela primeira vez.
+
+## Desenho
+
+- Cada pai ganha um ledger ao lado do sheet: `~/.claude/pstack-probes.json` e `~/.codex/pstack-probes.json`. A chave é `<provider>:<model>`, sem esforço. Cada entrada guarda o descriptor testado, quando, e a evidência (diretório do run, ou `operator` quando o operador atestou).
+- `plan` só gera probe para família do mapa ausente do ledger: provider novo, modelo novo, ou modelo trocado dentro de uma família. É um probe por família, no menor esforço em uso, não um por esforço. O resto sai em `verified`.
+- Mudança só de esforço, ou de papel entre famílias verificadas, dá `pairs` vazio. O passo 6 e o smoke do passo 9 são pulados, e `write` grava direto.
+- `write` inclui o ledger no snapshot, write, read-back e restore, e acrescenta só as famílias que o plano testou. Gravar o mesmo plano duas vezes deixa o ledger byte-idêntico.
+- Ledger ilegível, ou diretório no caminho dele, para o `plan` como estado inconsistente. Apagar uma entrada força novo probe da família.
+- `plan.json` passa a `schemaVersion: 3`. Planos antigos são recusados.
+
+## Verificação
+
+- `npm test`: 334 testes, 0 falhas. Seis novos no `setup-pstack`: família verificada não é testada em mudança de esforço, família nova é; modelo novo numa família verificada é testado e o ledger de um pai não vale para o outro; ledger ilegível para o plano; `probe` sem pares não roda nada; `write` registra só as famílias testadas e grava mudança de esforço sem probe; falha no write do ledger restaura sheet e integração. `matrix:check`, `agents:check`, `collision:check` e `claude plugin validate --strict .` verdes.
+- Ledgers de `~/.claude` e `~/.codex` semeados com as 12 famílias do matrix (`evidence: operator`). `plan` nos sheets reais com `--effort grok-4-7=high` e `kimi` entrando no mapa sai com `pairs` vazio nos dois pais.
