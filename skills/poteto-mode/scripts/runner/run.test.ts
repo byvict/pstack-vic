@@ -166,6 +166,14 @@ function makeExecutable(name: string): void {
   chmodSync(path, 0o755);
 }
 
+// macOS vets a freshly written executable on its first exec: ~300 ms idle and
+// up to 4.7 s with every core busy, against ~0.1 s for a repeat exec (measured
+// 2026-09-24). Every test writes new fakes, so a test whose deadline must
+// outlast a fake's startup execs the fake once before starting the run.
+function warm(name: string): void {
+  execFileSync(join(bin, name), [], { env: { PATH: process.env.PATH }, stdio: "ignore" });
+}
+
 function options(provider: Provider, suffix: string = provider): RunnerOptions {
   const parent = provider === "codex" ? "claude" : "codex";
   const model =
@@ -390,11 +398,17 @@ async function waitForExit(pid: number): Promise<void> {
   throw new Error(`timed out waiting for process ${pid} to exit`);
 }
 
-// Under a loaded full suite the launcher, its preflight and the model child
-// took up to 1.6 s to reach the child's own exit (measured 2026-09-24). The
-// deadline leaves that path room to finish first, and the descendant holds the
-// pipes far past the deadline, so a run that ends well inside the hold was cut
-// by the deadline rather than by the descendant letting go.
+// A whole run pays each fake's first exec (see warm), which alone reached
+// 4.7 s with every core busy. A budget that only catches a hang allows about
+// twice that, and the Grok retry tests add their 5 s retry delay.
+const RUN_BUDGET_MS = 10_000;
+const GROK_RETRY_RUN_BUDGET_MS = 5_000 + RUN_BUDGET_MS;
+
+// With a warm fake the launcher reached the model child's exit within 0.5 s
+// even with every core busy. The deadline leaves that path room to finish
+// first, and the descendant holds the pipes far past the deadline, so a run
+// that ends well inside the hold was cut by the deadline rather than by the
+// descendant letting go.
 const DRAIN_DEADLINE_MS = 4_000;
 const DESCENDANT_HOLD_MS = 30_000;
 
@@ -531,7 +545,7 @@ describe("runLane", () => {
     });
   });
 
-  it("retries a contradictory Grok authentication preflight before running the model", { timeout: 10_000 }, async () => {
+  it("retries a contradictory Grok authentication preflight before running the model", { timeout: GROK_RETRY_RUN_BUDGET_MS }, async () => {
     const transientMarker = join(scratch, "grok-transient-unauth.seen");
     const preflightLog = join(scratch, "grok-transient-unauth.log");
     process.env.FAKE_GROK_TRANSIENT_UNAUTH_PATH = transientMarker;
@@ -554,7 +568,7 @@ describe("runLane", () => {
     assert.ok(receipt(input.receiptPath).preflight.evidence.includes("attempt 2 passed"));
   });
 
-  it("classifies Grok authentication failure after two consecutive preflights", { timeout: 10_000 }, async () => {
+  it("classifies Grok authentication failure after two consecutive preflights", { timeout: GROK_RETRY_RUN_BUDGET_MS }, async () => {
     process.env.FAKE_GROK_UNAUTH = "1";
     const preflightLog = join(scratch, "grok-unauthenticated.log");
     process.env.FAKE_GROK_PREFLIGHT_LOG_PATH = preflightLog;
@@ -574,6 +588,7 @@ describe("runLane", () => {
   });
 
   it("counts the Grok retry delay against the wrapper deadline", async () => {
+    warm("grok");
     const transientMarker = join(scratch, "grok-deadline-unauth.seen");
     const preflightLog = join(scratch, "grok-deadline-unauth.log");
     process.env.FAKE_GROK_TRANSIENT_UNAUTH_PATH = transientMarker;
@@ -670,7 +685,7 @@ describe("runLane", () => {
     const input = options("claude", "unbounded-default");
     const runner = startRunner(input, { FAKE_MODEL_DELAY_MS: "400" });
 
-    assert.equal(await exitWithin(runner, 3_000), 0);
+    assert.equal(await exitWithin(runner, RUN_BUDGET_MS), 0);
     matchObject(receipt(input.receiptPath), {
       status: "complete",
       signal: null,
@@ -685,7 +700,7 @@ describe("runLane", () => {
     };
     const runner = startRunner(input, { FAKE_MODEL_DELAY_MS: "100" });
 
-    assert.equal(await exitWithin(runner, 2_000), 0);
+    assert.equal(await exitWithin(runner, RUN_BUDGET_MS), 0);
     matchObject(receipt(input.receiptPath), {
       status: "complete",
       signal: null,
@@ -723,11 +738,13 @@ describe("runLane", () => {
   });
 
   it("spends one explicit deadline across preflight and model execution", async () => {
-    // Each stage alone fits the deadline with ~800 ms to spare for spawning the
-    // fake CLI under load; together they exceed it, so only a shared deadline
-    // lets preflight pass and still cuts the model short.
+    // Each stage alone fits the deadline, preflight with ~800 ms to spare for
+    // spawning the warm fake CLI under load; together they exceed it, so only a
+    // shared deadline lets preflight pass and still cuts the model short. Left
+    // to finish, the two stages would end past the elapsed bound.
+    warm("claude");
     process.env.FAKE_PREFLIGHT_DELAY_MS = "1200";
-    process.env.FAKE_MODEL_DELAY_MS = "1200";
+    process.env.FAKE_MODEL_DELAY_MS = "1600";
     const input = { ...options("claude"), timeoutMs: 2_000 };
     const result = await runLane(input);
     const recorded = receipt(input.receiptPath);
@@ -741,6 +758,7 @@ describe("runLane", () => {
   it("bounds a descendant-held pipe by the explicit deadline without fabricating a signal", async () => {
     const descendantPidPath = join(scratch, "deadline-descendant.pid");
     const input = { ...options("claude", "deadline-drain"), timeoutMs: DRAIN_DEADLINE_MS };
+    warm("claude");
     const runner = startRunner(input, {
       FAKE_DESCENDANT_HOLDS_PIPES_MS: String(DESCENDANT_HOLD_MS),
       FAKE_DESCENDANT_PID_PATH: descendantPidPath,
@@ -763,6 +781,7 @@ describe("runLane", () => {
   it("does not claim a signal was sent to an already signal-reaped child", async () => {
     const descendantPidPath = join(scratch, "signalled-descendant.pid");
     const input = { ...options("claude", "signalled-drain"), timeoutMs: DRAIN_DEADLINE_MS };
+    warm("claude");
     const runner = startRunner(input, {
       FAKE_DESCENDANT_HOLDS_PIPES_MS: String(DESCENDANT_HOLD_MS),
       FAKE_DESCENDANT_PID_PATH: descendantPidPath,
@@ -811,7 +830,7 @@ describe("runLane", () => {
     const input = { ...options("claude", "long-deadline"), timeoutMs: 60_000 };
     const runner = startRunner(input);
 
-    assert.equal(await exitWithin(runner, 3_000), 0);
+    assert.equal(await exitWithin(runner, RUN_BUDGET_MS), 0);
     assert.equal(receipt(input.receiptPath).status, "complete");
   });
 
