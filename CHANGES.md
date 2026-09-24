@@ -494,3 +494,19 @@ O runner chama três CLIs, e cada peculiaridade que ele codifica foi medida numa
 - `check` real em 2026-09-24: codex 0.155.1 → 0.156.1, grok 1.0.5 → 1.0.41 (stable), claude 2.1.281 em dia (`latest`). A cópia duplicada é o `claude` 2.1.280 no Node 24.19.0. Os apps trazem Claude 2.1.275 e 2.1.280 e o codex 0.155.0-alpha.16.3 do ChatGPT.
 - `notes` real: grok 1.0.5 → 1.0.41 dá 36 versões e 383 entradas; claude 2.1.273 → 2.1.281 dá 7 versões e 583 entradas; codex 0.155.1 → 0.156.1 dá 2 versões e 542 entradas.
 - Sonda real nas versões instaladas: codex 0.155.1 3/3 (30 s), grok 1.0.5 3/3 (31 s). No claude 2.1.281, `manifest` passou e as três lanes com modelo caíram em `unauthenticated` (o login vencido acima). Depois do login, o claude 2.1.281 fez 4/4 em 20 s (`read`, `write`, `seatbelt`, `manifest`; execução `2026-09-24T18-51-45Z`).
+
+# 0.1.10 — Comando manual do npm no prefixo certo (2026-09-24)
+
+O passo 3 da implantação da 0.1.9 chamou o npm do Node 24.19.0 pelo caminho completo para remover o claude duplicado. O comando removeu o claude 2.1.281 do Node 24.21.0, que foi reinstalado à mão. O `npm-cli.js` começa com `#!/usr/bin/env node`: roda no primeiro `node` do PATH, e o npm tira o prefixo global desse `node`, não da pasta onde o binário está. No PATH de Victor, `~/.nvm/versions/node/v24.21.0/bin` vem antes de `v24.19.0/bin`, e `~/.nvm/versions/node/v24.19.0/bin/npm prefix -g` imprime `/Users/victorbaccega/.nvm/versions/node/v24.21.0`. Com `PATH="<prefixo>/bin:$PATH" npm prefix -g`, cada Node responde com o próprio prefixo.
+
+## Desenho
+
+- O script não tinha o problema: `npmEnv()` já põe `<prefixo>/bin` à frente do PATH, e o teste de `install` confere isso.
+- O comando manual da issue `CLI <cli> quebrada: volta falhou`, no `SKILL.md`, usava a forma insegura. O codex está instalado no Node 24.19.0 e é resolvido por `/opt/homebrew/bin/codex`, então o comando o instalaria no prefixo errado justo depois de uma volta que já falhou. Agora é `PATH="<resolved.installer.prefix>/bin:$PATH" npm install -g <package>@<from>`.
+- No spec da 0.1.9, o passo 3 da implantação passa a usar a forma segura, com uma nota sobre o que aconteceu. As frases "com o npm do Node X" viram "com o `bin` do Node X à frente do PATH".
+- Teste novo em `update-clis.test.ts`: nenhum `.md` em `skills/` e `docs/`, nem o `README.md`, chama um npm ou npx pelo caminho. O `CHANGES.md` fica fora, porque registra a reprodução.
+- Versão nova porque a rotina semanal usa a skill do plugin instalado: sem ela, os dois pais continuariam com o comando antigo.
+
+## Verificação
+
+- O teste novo falhou antes da correção, apontando as duas linhas (`SKILL.md:79` e o passo 3 do spec). Depois dela, `npm test` dá 411 testes, 0 falhas.

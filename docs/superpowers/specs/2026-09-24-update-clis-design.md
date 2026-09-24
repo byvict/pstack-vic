@@ -31,7 +31,7 @@ Dois disparos, com o mesmo fluxo: uma rotina semanal que atualiza sozinha e o di
 | Instalada / última | 2.1.281 / 2.1.281 (`latest`; `stable` = 2.1.273) | 0.155.1 / 0.156.1 | 1.0.5 / 1.0.41 (stable) |
 | Binário que os dois pais resolvem pelo PATH | `~/.nvm/versions/node/v24.21.0/bin/claude` | `/opt/homebrew/bin/codex` → `~/.nvm/versions/node/v24.19.0/bin/codex` | `~/.grok/bin/grok` → `~/.grok/downloads/grok-macos-aarch64` |
 | Onde estão as notas | `https://raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md`, uma seção `## X.Y.Z` por versão | releases `rust-vX.Y.Z` de `openai/codex` (`gh release view`), só as que não são pre-release | `https://x.ai/cli/changelogs/<versão>.external.{md,json}` (URL tirada do binário); não há índice; as 36 versões de 1.0.6 a 1.0.41 respondem; o JSON traz `category`, `description` e `breaking_change` por entrada |
-| Instalar uma versão exata / voltar | `npm i -g @anthropic-ai/claude-code@X` com o npm do Node 24.21.0 | `npm i -g @openai/codex@X` com o npm do Node 24.19.0 | `grok update --version X` |
+| Instalar uma versão exata / voltar | `npm i -g @anthropic-ai/claude-code@X` com o `bin` do Node 24.21.0 à frente do PATH | `npm i -g @openai/codex@X` com o `bin` do Node 24.19.0 à frente do PATH | `grok update --version X` |
 | Auto-update hoje | ligado: `~/.claude/.last-update-result.json` registra `npm-global` 2.1.280 → 2.1.281 em 2026-09-24T00:23Z | não se atualiza sozinho (só avisa no TUI) | desligado (`[cli] auto_update = false`, G-9) |
 
 Outros fatos:
@@ -196,7 +196,7 @@ Duplicatas `família@esforço` são removidas. Se uma ficha não existir, entram
 
 ## Falhas e volta
 
-- **claude e codex:** `npm i -g <pacote>@<anterior>` com o npm do mesmo Node da cópia resolvida. Não depende da versão nova. Confere com `--version`.
+- **claude e codex:** `npm i -g <pacote>@<anterior>` com o `bin` do Node da cópia resolvida à frente do PATH, porque o npm instala no prefixo do primeiro `node` do PATH. Não depende da versão nova. Confere com `--version`.
 - **grok:** antes de instalar, a skill copia `~/.grok/downloads/grok-macos-aarch64` (134 MB) para a pasta da execução. Para voltar, tenta `grok update --version <anterior>`; se o comando falhar ou a versão não bater, restaura a cópia. A cópia é apagada no fim da execução, depois de conferida a versão final.
 - **A volta falha:** issue urgente `CLI <nome> quebrada: volta falhou`, com os comandos manuais exatos. A execução para, e as CLIs seguintes não são tocadas.
 
@@ -234,7 +234,9 @@ Duplicatas `família@esforço` são removidas. Se uma ficha não existir, entram
 
    Victor faz o merge. Depois, atualizar o plugin nos dois pais.
 2. **Desligar o auto-update do claude:** `"env": {"DISABLE_AUTOUPDATER": "1"}` em `~/.claude/settings.json`; conferir com `claude doctor`.
-3. **Remover o claude duplicado:** `~/.nvm/versions/node/v24.19.0/bin/npm uninstall -g @anthropic-ai/claude-code`. Daí em diante, o `check` só relata duplicatas.
+3. **Remover o claude duplicado:** `PATH="$HOME/.nvm/versions/node/v24.19.0/bin:$PATH" npm uninstall -g @anthropic-ai/claude-code`. Daí em diante, o `check` só relata duplicatas.
+
+   Em 2026-09-24, este passo rodou com o npm do Node 24.19.0 chamado pelo caminho completo e removeu o claude errado: o 2.1.281 do Node 24.21.0, que foi reinstalado à mão. O `npm-cli.js` começa com `#!/usr/bin/env node`, então roda no primeiro `node` do PATH (o do 24.21.0) e tira dele o prefixo global. Com o `bin` do 24.19.0 à frente do PATH, o npm roda no Node 24.19.0 e mexe no prefixo dele. Hoje o Node 24.19.0 não tem mais o `@anthropic-ai/claude-code`.
 4. **Criar a tarefa agendada** e disparar a primeira execução com "Run now". Ela deve levar o grok de 1.0.5 a 1.0.41 e o codex de 0.155.1 a 0.156.1; o claude está em dia. Confirmar que o modo automático da tarefa deixa passar `node <script> install ...`. Se for barrado, acrescentar uma regra de permissão só para esse comando.
 5. **Registros:**
    - `CHANGES.md`: não havia rotina antiga para cancelar, e a skill completa o G-9;

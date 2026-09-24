@@ -17,7 +17,7 @@ import {
 } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import { loadMatrix, PLUGIN_ROOT } from "../../../scripts/model-matrix.ts";
 import { invocationCommand, preflightCommand } from "../../poteto-mode/scripts/runner/commands.ts";
 import { ACCESS_MODES } from "../../poteto-mode/scripts/runner/types.ts";
@@ -732,6 +732,42 @@ describe("install", () => {
     const finished = await json(["finish", "--dir", dir, "--home", machine.home], machine.env);
     assert.deepEqual(finished.value.removedCopies.map((path: string) => basename(path)), ["grok-backup-1.0.5", "grok-backup-1.0.5.json"]);
     assert.deepEqual(readdirSync(dir).sort(), ["install-grok-1.0.41.log", "notes-grok-1.0.5-1.0.41.json"]);
+  });
+});
+
+// --- npm commands in skills and docs ---------------------------------------------
+//
+// npm's bin/npm starts with `#!/usr/bin/env node`: it runs on the first node in
+// PATH and takes the global prefix from that node, not from the directory it
+// lives in. `<prefix>/bin/npm install -g` installs into whichever Node leads
+// PATH (2026-09-24: the npm of v24.19.0 uninstalled claude from v24.21.0). The
+// script puts `<prefix>/bin` first on PATH, as the install test above checks;
+// a command that a skill or doc hands to a person has to do the same.
+
+function markdownUnder(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return entry.name === "node_modules" ? [] : markdownUnder(path);
+    return entry.name.endsWith(".md") ? [path] : [];
+  });
+}
+
+describe("npm commands in skills and docs", () => {
+  const files = [...markdownUnder(join(PLUGIN_ROOT, "skills")), ...markdownUnder(join(PLUGIN_ROOT, "docs")), join(PLUGIN_ROOT, "README.md")];
+  const rel = (path: string) => relative(PLUGIN_ROOT, path);
+
+  it("scan this skill's SKILL.md", () => {
+    assert.ok(files.map(rel).includes("skills/update-clis/SKILL.md"));
+  });
+
+  it("never run an npm by its path, which picks the prefix of the first node in PATH", () => {
+    const byPath = /\/bin\/np[mx][ \t]+\S/;
+    const offenders = files.flatMap((path) =>
+      readFileSync(path, "utf8")
+        .split("\n")
+        .flatMap((line, index) => (byPath.test(line) ? [`${rel(path)}:${index + 1}: ${line.trim()}`] : [])),
+    );
+    assert.deepEqual(offenders, []);
   });
 });
 
