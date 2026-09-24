@@ -348,7 +348,7 @@ async function finish(runner: Runner): Promise<number> {
 }
 
 async function waitFor(path: string): Promise<void> {
-  for (let attempt = 0; attempt < 200; attempt += 1) {
+  for (let attempt = 0; attempt < 1_000; attempt += 1) {
     if (existsSync(path)) return;
     await sleep(10);
   }
@@ -356,10 +356,14 @@ async function waitFor(path: string): Promise<void> {
 }
 
 async function exitWithin(runner: Runner, milliseconds: number): Promise<number> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
   const result = await Promise.race([
     runner.exited,
-    sleep(milliseconds).then(() => null),
+    new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), milliseconds);
+    }),
   ]);
+  if (timer !== null) clearTimeout(timer);
   if (result !== null) {
     await Promise.all([runner.stdout, runner.stderr]);
     return result;
@@ -385,6 +389,14 @@ async function waitForExit(pid: number): Promise<void> {
   }
   throw new Error(`timed out waiting for process ${pid} to exit`);
 }
+
+// Under a loaded full suite the launcher, its preflight and the model child
+// took up to 1.6 s to reach the child's own exit (measured 2026-09-24). The
+// deadline leaves that path room to finish first, and the descendant holds the
+// pipes far past the deadline, so a run that ends well inside the hold was cut
+// by the deadline rather than by the descendant letting go.
+const DRAIN_DEADLINE_MS = 4_000;
+const DESCENDANT_HOLD_MS = 30_000;
 
 const FAKE_ENV = [
   "FAKE_TIMEOUT",
@@ -728,13 +740,13 @@ describe("runLane", () => {
 
   it("bounds a descendant-held pipe by the explicit deadline without fabricating a signal", async () => {
     const descendantPidPath = join(scratch, "deadline-descendant.pid");
-    const input = { ...options("claude", "deadline-drain"), timeoutMs: 700 };
+    const input = { ...options("claude", "deadline-drain"), timeoutMs: DRAIN_DEADLINE_MS };
     const runner = startRunner(input, {
-      FAKE_DESCENDANT_HOLDS_PIPES_MS: "5000",
+      FAKE_DESCENDANT_HOLDS_PIPES_MS: String(DESCENDANT_HOLD_MS),
       FAKE_DESCENDANT_PID_PATH: descendantPidPath,
     });
 
-    assert.equal(await exitWithin(runner, 2_000), 124);
+    assert.equal(await exitWithin(runner, DESCENDANT_HOLD_MS / 2), 124);
     const recorded = receipt(input.receiptPath);
     matchObject(recorded, {
       status: "timed-out",
@@ -742,7 +754,7 @@ describe("runLane", () => {
       signal: null,
       preflight: { status: "passed" },
     });
-    assert.ok(recorded.elapsedMs < 1_500);
+    assert.ok(recorded.elapsedMs < DESCENDANT_HOLD_MS / 2);
 
     const descendantPid = Number(readFileSync(descendantPidPath, "utf8"));
     if (processIsAlive(descendantPid)) process.kill(descendantPid, "SIGKILL");
@@ -750,14 +762,14 @@ describe("runLane", () => {
 
   it("does not claim a signal was sent to an already signal-reaped child", async () => {
     const descendantPidPath = join(scratch, "signalled-descendant.pid");
-    const input = { ...options("claude", "signalled-drain"), timeoutMs: 700 };
+    const input = { ...options("claude", "signalled-drain"), timeoutMs: DRAIN_DEADLINE_MS };
     const runner = startRunner(input, {
-      FAKE_DESCENDANT_HOLDS_PIPES_MS: "5000",
+      FAKE_DESCENDANT_HOLDS_PIPES_MS: String(DESCENDANT_HOLD_MS),
       FAKE_DESCENDANT_PID_PATH: descendantPidPath,
       FAKE_SELF_SIGNAL: "SIGTERM",
     });
 
-    assert.equal(await exitWithin(runner, 2_000), 124);
+    assert.equal(await exitWithin(runner, DESCENDANT_HOLD_MS / 2), 124);
     matchObject(receipt(input.receiptPath), {
       status: "timed-out",
       exitCode: 143,
@@ -774,7 +786,7 @@ describe("runLane", () => {
     const modelExiting = join(scratch, "cancel-model.exiting");
     const input = options("claude", "cancel-drain");
     const runner = startRunner(input, {
-      FAKE_DESCENDANT_HOLDS_PIPES_MS: "5000",
+      FAKE_DESCENDANT_HOLDS_PIPES_MS: String(DESCENDANT_HOLD_MS),
       FAKE_DESCENDANT_PID_PATH: descendantPidPath,
       FAKE_MODEL_EXITING_PATH: modelExiting,
     });
@@ -782,7 +794,7 @@ describe("runLane", () => {
     await waitForExit(Number(readFileSync(modelExiting, "utf8")));
     runner.child.kill("SIGTERM");
 
-    assert.equal(await exitWithin(runner, 2_000), 130);
+    assert.equal(await exitWithin(runner, DESCENDANT_HOLD_MS / 2), 130);
     matchObject(receipt(input.receiptPath), {
       status: "cancelled",
       exitCode: 0,
