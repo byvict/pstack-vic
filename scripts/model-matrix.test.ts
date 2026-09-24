@@ -477,11 +477,11 @@ describe("roles", () => {
     }
     assert.equal(
       roleNamed(matrix, "pr verifier")?.description,
-      "Independently checks risk, tests and user behavior of the exact PR head without writing code."
+      "Independently checks risk, tests and user behavior of the exact PR head without writing code; the owner runs it at no less than the sheet effort."
     );
     assert.equal(
       roleNamed(matrix, "pr owner")?.description,
-      "Owns a ready PR in Cursor Cloud through verification, repair and merge; selects high or xhigh from task complexity."
+      "Owns a ready PR in Cursor Cloud through verification, repair and merge; start.ts launches it at the sheet effort as a floor, raised to xhigh for complex work."
     );
   });
 

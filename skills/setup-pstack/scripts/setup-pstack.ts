@@ -84,6 +84,9 @@ export interface SheetRow {
 
 const ROW_RE = /^([a-z][a-z0-9 ,-]*): (.+)$/;
 const RETIRED_CONVERGE_ROLES = new Set(['pr reviewer', 'pr fixer, simple', 'pr fixer, complex', 'pr diagnosis pool']);
+// Converge's start.ts reads these rows as effort floors and launches only Grok 4.7; an alias sets no floor.
+const CONVERGE_ROLES = new Set(['pr owner', 'pr verifier']);
+const CONVERGE_LANES = ['cursor:grok-4.7@high', 'cursor:grok-4.7@xhigh'];
 
 /**
  * The role rows of a sheet: `label: lane[, lane]`. Title, blank lines, and
@@ -399,6 +402,13 @@ export function buildPlan(input: PlanInput): Plan {
       return result.lane;
     });
     rows = rows.map((r) => (r.role === role ? { role, lanes: normalized } : r));
+  }
+
+  for (const row of rows) {
+    const allowed = [...CONVERGE_LANES, ...matrix.aliases];
+    if (CONVERGE_ROLES.has(row.role) && (row.lanes.length !== 1 || !allowed.includes(row.lanes[0]))) {
+      fail(`role ${JSON.stringify(row.role)} takes one lane, ${allowed.join(" or ")}; got ${row.lanes.join(", ")}`);
+    }
   }
 
   const sheet = renderSheetDocument(rows.map((r) => `${r.role}: ${r.lanes.join(", ")}`).join("\n"));
