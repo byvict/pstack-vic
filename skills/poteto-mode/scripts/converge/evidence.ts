@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, mkdirSync, lstatSync, realpathSync } from 'node:fs';
 import { resolve, dirname, sep } from 'node:path';
-import { array, digest, hash, integer, jsonHash, object, oneOf, parseFinding, parseRound, parseObligation, riskObligation, sameObligation, relativePath, sha, string, strings, type Finding, type Report, type Role, type RiskObligation } from './contract.ts';
+import { array, digest, hash, integer, jsonHash, object, oneOf, parseFinding, parseRound, parseObligation, riskObligation, roleProviders, roles, sameObligation, relativePath, sha, string, strings, type Finding, type Report, type Role, type RiskObligation, type Round } from './contract.ts';
 import { containsSecret } from './reconcile.ts';
 import { loadMatrix, resolveDescriptor, reportedModelMatches } from '../../../../scripts/model-matrix.ts';
 
@@ -41,19 +41,20 @@ function media(bytes: Buffer, type: string): void {
     if (type === 'application/json') JSON.parse(text);
   } else throw new Error('Unsupported artifact media');
 }
-export async function admitLane(manifestFile: string, report: Report, evidenceDirectory: string): Promise<AdmittedLane> {
+export async function admitLane(manifestFile: string, report: Report, evidenceDirectory: string, round: Round = report.round): Promise<AdmittedLane> {
   const manifest = object(JSON.parse(readFileSync(manifestFile, 'utf8')));
   const root = dirname(resolve(manifestFile));
-  if (jsonHash(parseRound(manifest.round)) !== jsonHash(report.round)) throw new Error('Lane manifest belongs to another round');
+  if (jsonHash(parseRound(manifest.round)) !== jsonHash(round)) throw new Error('Lane manifest belongs to another round');
   const laneId = relativePath(manifest.laneId);
   if (laneId.includes('/')) throw new Error('Invalid lane id');
-  const role = oneOf(manifest.role, ['pr verifier']);
+  const role = oneOf(manifest.role, roles);
   const promptPath = relativePath(manifest.prompt);
   if (hash(readOwned(promptPath, root)) !== digest(manifest.promptDigest)) throw new Error('Lane prompt changed');
   const receiptBytes = readOwned(relativePath(manifest.receipt), root);
   const receipt = object(JSON.parse(receiptBytes.toString('utf8')));
   const expected = resolveDescriptor(loadMatrix(), string(manifest.descriptor));
-  if (expected.family.provider !== 'cursor' || expected.family.model !== 'grok-4.7' || !['high', 'xhigh'].includes(expected.descriptor.effort)) throw new Error('Converge evidence requires Cursor Grok 4.7 high or xhigh');
+  const allowed = roleProviders[role];
+  if (expected.family.provider !== allowed.provider || expected.family.model !== allowed.model || !allowed.efforts.includes(expected.descriptor.effort)) throw new Error(`Role ${role} requires ${allowed.provider} ${allowed.model} at ${allowed.efforts.join(' or ')}`);
   if (receipt.schemaVersion !== 1 || receipt.status !== 'complete' || receipt.mode !== 'read-only' || !((receipt.modelEvidence === 'provider-report' && receipt.modelVerified === true && reportedModelMatches(expected.family, string(receipt.reportedModel))) || (receipt.modelEvidence === 'pinned-argv' && receipt.modelVerified === false && receipt.reportedModel === null && expected.family.reportedModel === null))) throw new Error('Lane receipt does not prove independent completion');
   if (receipt.provider !== expected.family.provider || receipt.model !== expected.family.model || receipt.effort !== expected.descriptor.effort) throw new Error('Lane receipt model differs from dispatch');
   const outputPath = relativePath(manifest.output);
@@ -64,7 +65,7 @@ export async function admitLane(manifestFile: string, report: Report, evidenceDi
   const outputBytes = readOwned(outputPath, root);
   if (containsSecret(outputBytes.toString('utf8'))) throw new Error('Lane output contains secret-shaped content');
   const output = object(JSON.parse(outputBytes.toString('utf8')));
-  if (output.schemaVersion !== 1 || output.round !== report.round.id || output.laneId !== laneId || output.role !== role || sha(output.observedHead) !== report.round.head || sha(output.observedContract) !== report.round.contract) throw new Error('Lane output identity mismatch');
+  if (output.schemaVersion !== 1 || output.round !== round.id || output.laneId !== laneId || output.role !== role || sha(output.observedHead) !== round.head || sha(output.observedContract) !== round.contract) throw new Error('Lane output identity mismatch');
   if (output.kind === 'unavailable') return { role, coverage: [], risks: [], findings: [], gaps: ['Independent lane unavailable'], artifacts: [], receiptDigest: hash(receiptBytes) };
   if (output.kind !== 'complete') throw new Error('Invalid lane completion');
   const remote = receipt.remote === null ? null : object(receipt.remote);
@@ -82,7 +83,7 @@ export async function admitLane(manifestFile: string, report: Report, evidenceDi
     listed = array(object(await cursor(`agents/${agentId}/artifacts`)).items).map(v => object(v));
   }
   const artifacts: AdmittedLane['artifacts'] = [];
-  const prefix = `artifacts/converge/${report.round.id}/${laneId}/`;
+  const prefix = `artifacts/converge/${round.id}/${laneId}/`;
   mkdirSync(evidenceDirectory, { recursive: true, mode: 0o700 });
   for (const raw of array(output.artifacts)) {
     const a = object(raw);

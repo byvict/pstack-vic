@@ -1,6 +1,6 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { admitLane } from './evidence.ts';
@@ -70,3 +70,30 @@ for (const fault of ['stale-length', 'invented-obligation']) {
     await assert.rejects(admitLane(join(i.directory, 'manifest.json'), i.report, join(i.directory, 'admitted')), fault === 'stale-length' ? /Artifact exceeds size limit|Artifact bytes differ/ : /does not identify a requested obligation/);
   });
 }
+function localInput(role: 'pre-pr reviewer' | 'pre-pr certifier') {
+  const i = input();
+  const round = { ...i.report.round, pr: 0, execution: 'pre-pr' as const };
+  const manifest = { round, laneId: role.replace(' ', '-'), role, descriptor: 'grok:grok-4.7@xhigh', prompt: 'prompt.txt', promptDigest: hash('read only'), output: 'output.json', receipt: 'receipt.json', createdAt: Date.parse(i.receipt.startedAt) };
+  const receipt = { ...i.receipt, parent: 'claude', provider: 'grok', model: 'grok-4.7', effort: 'xhigh', modelVerified: true, modelEvidence: 'provider-report', reportedModel: 'grok-4.7-build', remote: null, executable: '/usr/local/bin/grok', exitCode: 0, signal: null };
+  const prefix = `artifacts/converge/${round.id}/${manifest.laneId}/`;
+  const output = { ...i.output, laneId: manifest.laneId, role, artifacts: i.output.artifacts.map(a => ({ ...a, path: prefix + a.path.split('/').at(-1) })) };
+  mkdirSync(join(i.directory, prefix), { recursive: true });
+  writeFileSync(join(i.directory, prefix, 'screen.png'), i.png); writeFileSync(join(i.directory, prefix, 'action.json'), i.action);
+  writeFileSync(join(i.directory, 'output.json'), JSON.stringify(output)); writeFileSync(join(i.directory, 'receipt.json'), JSON.stringify(receipt)); writeFileSync(join(i.directory, 'manifest.json'), JSON.stringify(manifest));
+  return { ...i, round, receipt, save: () => { writeFileSync(join(i.directory, 'receipt.json'), JSON.stringify(receipt)); } };
+}
+test('a local grok certifier lane admits artifacts from disk against the local round', async t => {
+  const i = localInput('pre-pr certifier'); t.after(i.cleanup);
+  const report = { ...i.report, round: i.round, lanes: ['pre-pr reviewer', 'pre-pr certifier'] as const };
+  const result = await admitLane(join(i.directory, 'manifest.json'), report as never, join(i.directory, 'admitted'), i.round);
+  assert.deepEqual(result.coverage, ['login']); assert.equal(result.role, 'pre-pr certifier');
+});
+test('a pre-pr role refuses a Cursor receipt and a pr verifier refuses a grok one', async t => {
+  const i = localInput('pre-pr reviewer'); t.after(i.cleanup);
+  i.receipt.provider = 'cursor'; i.save();
+  await assert.rejects(admitLane(join(i.directory, 'manifest.json'), { ...i.report, round: i.round } as never, join(i.directory, 'admitted'), i.round), /Lane receipt model differs from dispatch|requires grok/);
+  const v = input(); t.after(v.cleanup);
+  const manifest = JSON.parse(readFileSync(join(v.directory, 'manifest.json'), 'utf8'));
+  writeFileSync(join(v.directory, 'manifest.json'), JSON.stringify({ ...manifest, descriptor: 'grok:grok-4.7@xhigh' }));
+  await assert.rejects(admitLane(join(v.directory, 'manifest.json'), v.report, join(v.directory, 'admitted')), /Role pr verifier requires cursor/);
+});
