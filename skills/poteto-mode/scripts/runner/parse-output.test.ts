@@ -45,8 +45,8 @@ describe("parseProviderOutput", () => {
           },
         }),
       ].join("\n"),
-      "model: gpt-5.6-sol\nreasoning effort: max\n",
-      "gpt-5.6-sol"
+      "model: gpt-6-sol\nreasoning effort: max\n",
+      "gpt-6-sol"
     );
     matchObject(parsed, {
       text: "CODEX_OK",
@@ -110,6 +110,13 @@ describe("parseProviderOutput", () => {
     assert.equal(reportedModelMatches("grok", "grok-4.6", other.reportedModel), false);
   });
 
+  it("verifies Grok 4.7 without accepting 4.6 or the separately selected fast model", () => {
+    assert.equal(reportedModelMatches("grok", "grok-4.7", "grok-4.7"), true);
+    assert.equal(reportedModelMatches("grok", "grok-4.7", "grok-4.7-build"), true);
+    assert.equal(reportedModelMatches("grok", "grok-4.7", "grok-4.6-build"), false);
+    assert.equal(reportedModelMatches("grok", "grok-4.7", "grok-4.7-build-fast"), false);
+  });
+
   it("selects the requested Claude model when usage includes a side model", () => {
     const parsed = parseProviderOutput(
       "claude",
@@ -126,9 +133,10 @@ describe("parseProviderOutput", () => {
     assert.equal(parsed.reportedModel, "claude-fable-9-9");
   });
 
-  it("matches only concrete Claude revisions from the requested rolling family", () => {
+  it("matches Fable revisions and the exact pinned Opus model", () => {
     assert.equal(reportedModelMatches("claude", "fable", "claude-fable-9-9"), true);
-    assert.equal(reportedModelMatches("claude", "opus", "claude-opus-9"), true);
+    assert.equal(reportedModelMatches("claude", "claude-opus-5-5", "claude-opus-5-5"), true);
+    assert.equal(reportedModelMatches("claude", "claude-opus-5-5", "claude-opus-5"), false);
     assert.equal(reportedModelMatches("claude", "fable", "claude-opus-9"), false);
     assert.equal(reportedModelMatches("claude", "fable", "claude-fable-beta"), false);
     assert.equal(reportedModelMatches("claude", "fable", "fable"), false);
@@ -137,7 +145,7 @@ describe("parseProviderOutput", () => {
   });
 
   it("never verifies a Codex family or a pair outside the matrix by report", () => {
-    assert.equal(reportedModelMatches("codex", "gpt-5.6-sol", "gpt-5.6-sol"), false);
+    assert.equal(reportedModelMatches("codex", "gpt-6-sol", "gpt-6-sol"), false);
     assert.equal(reportedModelMatches("codex", "gpt-6-astra", "gpt-6-astra"), false);
     assert.equal(reportedModelMatches("claude", "sonnet", "claude-sonnet-9"), false);
     assert.equal(reportedModelMatches("claude", "fable", null), false);
@@ -161,7 +169,7 @@ describe("parseProviderOutput", () => {
           "codex",
           JSON.stringify({ type: "turn.completed" }),
           "",
-          "gpt-5.6-sol"
+          "gpt-6-sol"
         ),
       /final agent message/
     );

@@ -139,8 +139,8 @@ describe("model-matrix.json", () => {
     const byName = new Map(matrix.families.map((f) => [f.family, f]));
     const decided: Array<[string, string, string]> = [
       ["fable", "claude", "fable"],
-      ["opus", "claude", "opus"],
-      ["sol", "codex", "gpt-5.6-sol"],
+      ["opus", "claude", "claude-opus-5-5"],
+      ["sol", "codex", "gpt-6-sol"],
       ["astra", "codex", "gpt-6-astra"],
       ["grok", "grok", "grok-4.6"],
     ];
@@ -358,7 +358,7 @@ describe("descriptors", () => {
     assert.equal(reportedModelMatches(fable, "claude-fable-5-1"), true);
     assert.equal(reportedModelMatches(fable, "claude-opus-5"), false);
     assert.equal(reportedModelMatches(fable, "fable"), false);
-    assert.equal(reportedModelMatches(sol, "gpt-5.6-sol"), false, "codex pins by argv");
+    assert.equal(reportedModelMatches(sol, "gpt-6-sol"), false, "codex pins by argv");
     assert.equal(reportedModelMatches(grok, "grok-4.6"), true);
     assert.equal(reportedModelMatches(grok, "grok-4.5"), false);
     assert.equal(reportedModelMatches(grok, "grok-4.6-build"), true, "grok 1.0.5 reports a build suffix");
@@ -466,7 +466,7 @@ describe("roles", () => {
       "claude:fable@max",
       "codex:gpt-6-astra@max",
       "grok:grok-4.6@xhigh",
-      "claude:opus@xhigh",
+      "claude:claude-opus-5-5@xhigh",
     ];
     for (const parent of parents) {
       for (const label of ["arena runners", "arena cross-judge pool", "architect runners", "interrogate reviewers"]) {
