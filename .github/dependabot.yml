@@ -1,0 +1,16 @@
+version: 2
+updates:
+  # Workflows pin each action to a full commit SHA, so only Dependabot moves
+  # them. Every merge to main becomes Converge tooling for Clinext, so a new
+  # action release waits a week before Dependabot proposes it.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
