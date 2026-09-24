@@ -9,7 +9,7 @@
   },
   "scripts": {
     "test": "node --test 'scripts/**/*.test.ts' 'skills/poteto-mode/scripts/runner/*.test.ts' 'skills/setup-pstack/scripts/*.test.ts' 'skills/poteto-mode/scripts/converge/**/*.test.ts'",
-    "test:bun": "cd skills/poteto-mode/scripts && bun install --frozen-lockfile && bun run test",
+    "test:bun": "cd skills/poteto-mode/scripts && bun install --frozen-lockfile && bun run test && bun run typecheck",
     "matrix:render": "node scripts/render-model-matrix.ts",
     "matrix:check": "node scripts/render-model-matrix.ts --check",
     "agents:generate": "node scripts/generate-agents.ts",
