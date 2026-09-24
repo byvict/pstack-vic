@@ -72,10 +72,13 @@ export function writeProbePrompt(marker: string): string {
 }
 
 const CLAUDE_CODE_IDENTITY = /^(CLAUDECODE|CLAUDE_CODE_.*)$/;
+// Not identity: a credential a real Codex parent also hands its claude lanes,
+// and one that outranks the keychain login, so the probe must authenticate with it.
+const LANE_CREDENTIAL = "CLAUDE_CODE_OAUTH_TOKEN";
 
 function laneEnvironment(lane: ProbeLane): NodeJS.ProcessEnv {
   if (!lane.simulatedParent || lane.parent !== "codex") return lane.env;
-  return Object.fromEntries(Object.entries(lane.env).filter(([key]) => !CLAUDE_CODE_IDENTITY.test(key)));
+  return Object.fromEntries(Object.entries(lane.env).filter(([key]) => key === LANE_CREDENTIAL || !CLAUDE_CODE_IDENTITY.test(key)));
 }
 
 function containsRun(haystack: readonly string[], needle: readonly string[]): boolean {

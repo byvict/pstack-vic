@@ -166,17 +166,19 @@ describe("runProbeLane, simulated parent", () => {
     CLAUDECODE: "1",
     CLAUDE_CODE_SESSION_ID: "s-1",
     CLAUDE_CODE_ENTRYPOINT: "claude-desktop",
+    CLAUDE_CODE_OAUTH_TOKEN: "fake-token",
     PSTACK_KEEP_ME: "kept",
   };
 
-  it("removes the Claude Code identity when the lane simulates a Codex parent", async () => {
+  it("removes the Claude Code identity but keeps the lane credential when the lane simulates a Codex parent", async () => {
     const dump = join(root, "env-simulated.json");
     const probe = lane({ provider: "claude", model: "claude-opus-5-5", simulatedParent: true }, { ...identity, FAKE_ENV_DUMP: dump });
     const verdict = await runProbeLane(probe);
     assert.equal(verdict.passed, true, verdict.detail);
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     assert.equal(seen.PSTACK_KEEP_ME, "kept");
-    assert.deepEqual(Object.keys(seen).filter((key) => key === "CLAUDECODE" || key.startsWith("CLAUDE_CODE_")), []);
+    assert.equal(seen.CLAUDE_CODE_OAUTH_TOKEN, "fake-token");
+    assert.deepEqual(Object.keys(seen).filter((key) => key === "CLAUDECODE" || key.startsWith("CLAUDE_CODE_")), ["CLAUDE_CODE_OAUTH_TOKEN"]);
   });
 
   it("leaves the environment alone for a parent that really runs the lane", async () => {
