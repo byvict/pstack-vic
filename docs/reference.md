@@ -84,7 +84,7 @@ A versão do pstack-vic é independente das versões dos upstreams ([`UPSTREAM.m
 ├── LICENSE-open-pstack               # open-pstack (Eric Litman), MIT
 ├── LICENSE-cursor-team-kit           # cursor-team-kit (Cursor), MIT
 ├── NOTICE.md · UPSTREAM.md · CHANGES.md
-└── package.json                      # versão do plugin; npm test, matrix:check, agents:check, collision:check, upstream:digest, setup-pstack
+└── package.json                      # versão do plugin; npm test, test:bun, matrix:check, agents:check, collision:check, upstream:digest, setup-pstack
 ```
 
 ## Rodar no Codex
@@ -209,6 +209,7 @@ Vinte e três skills de um princípio cada. `poteto-mode` indexa todas inline e 
 
 ```shell
 npm test               # matriz, gerador de agents, runner, setup-pstack, referência de skills, manifests e hook, digest dos upstreams, invariantes do pacote
+npm run test:bun       # orch and watch-pr under Bun: bun install --frozen-lockfile, then bun test (needs bun on PATH)
 npm run matrix:check   # blocos gerados de provider-dispatch.md e setup-pstack em dia
 npm run agents:check   # agents/pstack-*.md em dia com a matriz
 npm run collision:check

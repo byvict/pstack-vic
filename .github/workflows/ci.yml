@@ -34,6 +34,12 @@ jobs:
           node-version: 24
           package-manager-cache: false
 
+      # orch and watch-pr are upstream Bun programs; their tests import
+      # bun:test, so npm run test:bun runs them under Bun, not node --test.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.0
+
       # UPSTREAM.md registers these remotes in every new clone, and the
       # upstream-digest test resolves both sync points through them.
       - name: Fetch upstream remotes
@@ -44,6 +50,7 @@ jobs:
           git fetch --quiet --no-tags open main
 
       - run: npm test
+      - run: npm run test:bun
       - run: npm run matrix:check
       - run: npm run agents:check
       - run: npm run collision:check
