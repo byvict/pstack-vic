@@ -76,7 +76,7 @@ Before you create an issue, search the open issues for the same title. When one 
 
 A broken issue: the same fields plus `priority` 1 (Urgent), and the title `CLI <cli> quebrada: volta falhou`. The body has `from` and `to`, the JSON of both install results, and the exact manual commands:
 
-- claude or codex: `<resolved.installer.prefix>/bin/npm install -g <package>@<from>`, then `<resolved.path> --version`.
+- claude or codex: `PATH="<resolved.installer.prefix>/bin:$PATH" npm install -g <package>@<from>`, then `<resolved.path> --version`. Keep the `PATH` prefix: npm installs into the prefix of the first `node` in PATH, not of the directory its own binary is in.
 - grok: `grok update --version <from>`. If that fails, `cp <dir>/grok-backup-<from> <resolved.installer.binary>`, then `grok --version`.
 
 ## Report
