@@ -70,9 +70,13 @@ for (const fault of ['stale-length', 'invented-obligation']) {
     await assert.rejects(admitLane(join(i.directory, 'manifest.json'), i.report, join(i.directory, 'admitted')), fault === 'stale-length' ? /Artifact exceeds size limit|Artifact bytes differ/ : /does not identify a requested obligation/);
   });
 }
-function localInput(role: 'pre-pr reviewer' | 'pre-pr certifier') {
+function patchManifest(directory: string, patch: Record<string, unknown>): void {
+  const file = join(directory, 'manifest.json');
+  writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, 'utf8')), ...patch }));
+}
+function localInput(role: 'pre-pr reviewer' | 'pre-pr certifier', pr = 0) {
   const i = input();
-  const round = { ...i.report.round, pr: 0, execution: 'pre-pr' as const };
+  const round = { ...i.report.round, pr, execution: 'pre-pr' as const };
   const manifest = { round, laneId: role.replace(' ', '-'), role, descriptor: 'grok:grok-4.7@xhigh', prompt: 'prompt.txt', promptDigest: hash('read only'), output: 'output.json', receipt: 'receipt.json', createdAt: Date.parse(i.receipt.startedAt) };
   const receipt = { ...i.receipt, parent: 'claude', provider: 'grok', model: 'grok-4.7', effort: 'xhigh', modelVerified: true, modelEvidence: 'provider-report', reportedModel: 'grok-4.7-build', remote: null, executable: '/usr/local/bin/grok', exitCode: 0, signal: null };
   const prefix = `artifacts/converge/${round.id}/${manifest.laneId}/`;
@@ -93,7 +97,27 @@ test('a pre-pr role refuses a Cursor receipt and a pr verifier refuses a grok on
   i.receipt.provider = 'cursor'; i.save();
   await assert.rejects(admitLane(join(i.directory, 'manifest.json'), { ...i.report, round: i.round } as never, join(i.directory, 'admitted'), i.round), /Lane receipt model differs from dispatch|requires grok/);
   const v = input(); t.after(v.cleanup);
-  const manifest = JSON.parse(readFileSync(join(v.directory, 'manifest.json'), 'utf8'));
-  writeFileSync(join(v.directory, 'manifest.json'), JSON.stringify({ ...manifest, descriptor: 'grok:grok-4.7@xhigh' }));
+  patchManifest(v.directory, { descriptor: 'grok:grok-4.7@xhigh' });
   await assert.rejects(admitLane(join(v.directory, 'manifest.json'), v.report, join(v.directory, 'admitted')), /Role pr verifier requires cursor/);
+});
+test('a pre-pr role refuses a PR-numbered pre-pr round reached through the default round', async t => {
+  const i = localInput('pre-pr reviewer', 1); t.after(i.cleanup);
+  const report: Report = { ...i.report, round: i.round, lanes: ['pre-pr reviewer'] };
+  await assert.rejects(admitLane(join(i.directory, 'manifest.json'), report, join(i.directory, 'admitted')), /Role pre-pr reviewer does not match a pre-pr round/);
+});
+test('a pr verifier refuses a pre-pr round', async t => {
+  const i = input(); t.after(i.cleanup); mockRemote(t, i);
+  for (const pr of [0, 1]) {
+    const round = { ...i.report.round, pr, execution: 'pre-pr' as const };
+    patchManifest(i.directory, { round });
+    await assert.rejects(admitLane(join(i.directory, 'manifest.json'), { ...i.report, round }, join(i.directory, 'admitted')), /Role pr verifier does not match a pre-pr round/);
+  }
+});
+test('a PR report admits a certifier lane only against the explicit certificate round', async t => {
+  const i = localInput('pre-pr certifier'); t.after(i.cleanup);
+  const report: Report = { ...i.report, round: { ...i.round, id: '87654321-4321-4321-4321-cba987654321', pr: 1 }, lanes: ['pre-pr reviewer', 'pre-pr certifier'] };
+  const result = await admitLane(join(i.directory, 'manifest.json'), report, join(i.directory, 'admitted'), i.round);
+  assert.deepEqual(result.coverage, ['login']); assert.equal(result.role, 'pre-pr certifier');
+  patchManifest(i.directory, { round: report.round });
+  await assert.rejects(admitLane(join(i.directory, 'manifest.json'), report, join(i.directory, 'admitted'), i.round), /belongs to another round/);
 });

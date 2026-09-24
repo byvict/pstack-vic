@@ -48,6 +48,7 @@ export async function admitLane(manifestFile: string, report: Report, evidenceDi
   const laneId = relativePath(manifest.laneId);
   if (laneId.includes('/')) throw new Error('Invalid lane id');
   const role = oneOf(manifest.role, roles);
+  if (role === 'pr verifier' ? round.execution === 'pre-pr' : round.execution !== 'pre-pr' || round.pr !== 0) throw new Error(`Role ${role} does not match a ${round.execution} round with pr ${round.pr}`);
   const promptPath = relativePath(manifest.prompt);
   if (hash(readOwned(promptPath, root)) !== digest(manifest.promptDigest)) throw new Error('Lane prompt changed');
   const receiptBytes = readOwned(relativePath(manifest.receipt), root);
