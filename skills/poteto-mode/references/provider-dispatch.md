@@ -52,10 +52,10 @@ Skills name roles by the labels below, the same labels `/setup-pstack` writes to
 
 | Role | What the lane does | Claude Code parent | Codex parent |
 |---|---|---|---|
-| `feature, refactoring` | Writes the code of a feature or a behavior-preserving refactor in its own worktree; the parent reviews the diff. | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
-| `bug-fix` | Reproduces a reported defect, finds the root cause, and writes the fix with runtime evidence. | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
-| `perf-issue` | Traces a measured slowness against a baseline and implements the improvement. | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
-| `hillclimb` | Iterates hypotheses on one metric with before/after measurements, one commit per accepted win. | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
+| `feature, refactoring` | Writes the code of a feature or a behavior-preserving refactor in its own worktree; the parent reviews the diff. | `claude:claude-opus-5-5@xhigh` | `codex:gpt-6-sol@xhigh` |
+| `bug-fix` | Reproduces a reported defect, finds the root cause, and writes the fix with runtime evidence. | `claude:claude-opus-5-5@xhigh` | `codex:gpt-6-sol@xhigh` |
+| `perf-issue` | Traces a measured slowness against a baseline and implements the improvement. | `claude:claude-opus-5-5@xhigh` | `codex:gpt-6-sol@xhigh` |
+| `hillclimb` | Iterates hypotheses on one metric with before/after measurements, one commit per accepted win. | `claude:claude-opus-5-5@xhigh` | `codex:gpt-6-sol@xhigh` |
 | `judgment and prose` | Writes and judges prose: docs, PR descriptions, summaries, explanations, syntheses. | `claude:fable@max` | `codex:gpt-6-astra@max` |
 | `hardest tasks` | Implements the hardest changes: cross-cutting design, subtle concurrency or algorithms, vague intent, or a precise multi-step sequence. | `claude:fable@max` | `codex:gpt-6-astra@max` |
 | `how explorer` | Reads a subsystem in read-only mode and reports how it works, with file and line evidence. | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
@@ -75,7 +75,7 @@ Skills name roles by the labels below, the same labels `/setup-pstack` writes to
 | `pr owner` | Owns an uncertified or red PR in Cursor Cloud through verification, repair and merge; start.ts exits when the head is certified. | `cursor:grok-4.7@high` | `cursor:grok-4.7@high` |
 | `pr verifier` | Independently checks risk, tests and user behavior of the exact PR head in Cursor Cloud without writing code. | `cursor:grok-4.7@high` | `cursor:grok-4.7@high` |
 
-A list is a panel: one lane per entry, in this order. A role whose two columns differ takes the parent's native frontier family. Aliases run on the parent model through its native subagent primitive.
+A list is a panel: one lane per entry, in this order. A role whose two columns differ takes a family native to each parent: the frontier family for the frontier solo roles, the code family for the four authoring rows. Aliases run on the parent model through its native subagent primitive.
 
 <!-- role-defaults:end -->
 
