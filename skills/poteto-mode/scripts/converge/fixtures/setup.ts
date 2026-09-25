@@ -33,7 +33,7 @@ export function fixture() {
       { name: 'Upload V8 coverage (server)', number: 15, status: 'completed', conclusion: 'success', started_at: '2026-09-22T00:41:31Z', completed_at: '2026-09-22T00:41:45Z' },
     ] },
   ];
-  const state = { head, trunk, base, body: '## Verification\ncheck: Run test suite\n', hold: false, autoMerge: false, trunkRed: false, invalidTooling: false, requireInstallationChecks: false, failEndpoint: '', log: 'Tests completed\n',
+  const state = { head, trunk, base, prBase: 'main', body: '## Verification\ncheck: Run test suite\n', hold: false, autoMerge: false, trunkRed: false, invalidTooling: false, requireInstallationChecks: false, failEndpoint: '', log: 'Tests completed\n',
     diff: 'diff --git a/docs/guide.md b/docs/guide.md\nindex 1111111..2222222 100644\n--- a/docs/guide.md\n+++ b/docs/guide.md\n@@ -1 +1 @@\n-old\n+new\n',
     files, jobs, runOverrides, workflowId: 5,
     blobs: { '.cursor/converge.json': JSON.stringify(config), 'verify/SKILL.md': 'Drive the app.', 'features/README.md': '| [Login](./login.md) | `client/Login.jsx` |\n', 'features/login.md': 'Use Entrar.', '.github/workflows/tests.yml': 'name: Tests\n', 'package.json': JSON.stringify({scripts:{test:'node tools/run-all-tests.js'}}), 'tools/run-all-tests.js': 'function printOneResult() {} function printRunnerFooter() {}' },

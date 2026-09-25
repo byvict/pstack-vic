@@ -44,7 +44,7 @@ else if (args[0] === 'api') {
     send({ sha: endpoint.slice('repos/byvict/pstack-vic/commits/'.length) });
   }
   else if (endpoint === root) send({ default_branch: 'main' });
-  else if (endpoint === `${root}/pulls/1`) send({ number: 1, head: { sha: state.head, ref: 'change' }, base: { ref: 'main' }, state: 'open', draft: false, body: state.body, labels: state.hold ? [{ name: 'needs-victor' }] : [], user: { id: 10, login: 'author', type: 'User' }, auto_merge: state.autoMerge ? {} : null });
+  else if (endpoint === `${root}/pulls/1`) send({ number: 1, head: { sha: state.head, ref: 'change' }, base: { ref: state.prBase }, state: 'open', draft: false, body: state.body, labels: state.hold ? [{ name: 'needs-victor' }] : [], user: { id: 10, login: 'author', type: 'User' }, auto_merge: state.autoMerge ? {} : null });
   else if (endpoint === `${root}/commits/main`) send({ sha: state.trunk });
   else if (endpoint.startsWith(`${root}/git/trees/`)) send({ truncated: false, tree: Object.keys(state.blobs).map(path => ({ path, mode: '100644' })) });
   else if (endpoint.startsWith(`${root}/contents/`)) {
@@ -70,7 +70,7 @@ else if (args[0] === 'api') {
     if (state.requireInstallationChecks && (process.env.GH_TOKEN || process.env.GITHUB_TOKEN)) fail();
     send({ check_runs: state.checks.map(c => ({ ...c, head_sha: state.head })) });
   }
-  else if (endpoint === `${root}/actions/workflows/${state.workflowId}/runs`) send({ workflow_runs: [{ id: 8, workflow_id: state.workflowId, head_sha: query.get('head_sha'), event: query.get('event') ?? 'pull_request', head_branch: 'main', run_attempt: 1, status: 'completed', conclusion: state.trunkRed && query.get('event') === 'push' ? 'failure' : 'success', ...state.runOverrides }] });
+  else if (endpoint === `${root}/actions/workflows/${state.workflowId}/runs`) send({ workflow_runs: [{ id: 8, workflow_id: state.workflowId, head_sha: query.get('head_sha'), event: query.get('event') ?? 'pull_request', head_branch: 'main', run_attempt: 1, status: 'completed', conclusion: state.trunkRed && query.get('event') === 'push' ? 'failure' : 'success', ...(query.get('event') === 'push' ? {} : state.runOverrides) }] });
   else if (endpoint === `${root}/actions/runs/${state.runOverrides.id ?? 8}/attempts/${state.runOverrides.run_attempt ?? 1}/jobs`) send({ jobs: state.jobs });
   else if (endpoint === `${root}/issues/1/comments`) send(state.comments);
   else if (endpoint === `${root}/pulls/1/comments`) send([]);

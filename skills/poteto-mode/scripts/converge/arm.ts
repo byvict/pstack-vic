@@ -8,9 +8,10 @@ async function trunkHealth(t: Trusted): Promise<void> {
   const run = await workflowRun(t, tip, 'push');
   if (!run || run.status !== 'completed' || run.conclusion !== 'success') throw new Error('Trunk Tests is not successful at the current tip');
   const jobs = (await pages(`repos/${t.repo}/actions/runs/${integer(run.id)}/attempts/${integer(run.run_attempt)}/jobs`, 'jobs')).map(v => object(v));
-  if (!jobs.some(j => j.name === 'Run test suite' && j.conclusion === 'success' && j.head_sha === tip)) throw new Error('Trunk test job is not successful at the current tip');
+  if (!jobs.some(j => j.name === t.config.tests.job && j.conclusion === 'success' && j.head_sha === tip)) throw new Error('Trunk test job is not successful at the current tip');
 }
-async function protection(t: Trusted, head: string): Promise<void> {
+const unfinished = ['queued', 'in_progress', 'waiting', 'requested', 'pending'];
+async function protection(t: Trusted, head: string, pending: boolean): Promise<void> {
   const protection = object(await api(`repos/${t.repo}/branches/${encodeURIComponent(t.config.trunk)}/protection`));
   const statusChecks = object(protection.required_status_checks, 'required status checks');
   const required = array(statusChecks.checks).map(v => { const c = object(v); return { context: string(c.context), appId: c.app_id === null || c.app_id === -1 ? null : integer(c.app_id) }; });
@@ -24,11 +25,15 @@ async function protection(t: Trusted, head: string): Promise<void> {
   }
   for (const context of t.config.requiredChecks) if (!required.some(c => c.context === context)) throw new Error('Branch protection missing required context: ' + context);
   const observed = await checks(t.repo, head);
-  const latestTests = await workflowRun(t, head);
-  if (!latestTests || latestTests.status !== 'completed' || latestTests.conclusion !== 'success') throw new Error('Latest exact-head Tests attempt is not successful');
+  if (!pending) {
+    const latestTests = await workflowRun(t, head);
+    if (!latestTests || latestTests.status !== 'completed' || latestTests.conclusion !== 'success') throw new Error('Latest exact-head Tests attempt is not successful');
+  }
   for (const c of required) {
     if (c.context === 'verdict') { if (c.appId !== null) throw new Error('Verdict context has unsupported app binding'); continue; }
-    if (!observed.some(check => check.context === c.context && check.head === head && check.state === 'success' && (c.appId === null || c.appId === check.appId))) throw new Error('Required protected check is not successful: ' + c.context);
+    const match = observed.filter(check => check.context === c.context && check.head === head && (c.appId === null || c.appId === check.appId));
+    if (pending) { if (match.some(check => check.state !== 'success' && !unfinished.includes(check.state))) throw new Error('Required protected check failed: ' + c.context); continue; }
+    if (!match.some(check => check.state === 'success')) throw new Error('Required protected check is not successful: ' + c.context);
   }
 }
 async function verdict(t: Trusted, pr: number, head: string, author: number): Promise<Dossier> {
@@ -54,7 +59,7 @@ async function verdict(t: Trusted, pr: number, head: string, author: number): Pr
 export async function disarm(repo: string, pr: number): Promise<void> {
   if ((await pull(repo, pr)).autoMerge) command('gh', ['pr', 'merge', String(pr), '--repo', repo, '--disable-auto']);
 }
-export async function arm(options: { repo: string; pr: number; head: string; verdict: string; dryRun: boolean; configPath?: string }): Promise<{ kind: 'dry-run' | 'armed'; head: string; steps: string[] }> {
+export async function arm(options: { repo: string; pr: number; head: string; verdict: string; dryRun: boolean; configPath?: string; pending?: boolean }): Promise<{ kind: 'dry-run' | 'armed'; head: string; steps: string[] }> {
   const repo = repoName(options.repo);
   const head = sha(options.head);
   if (options.verdict !== 'VERIFIED' || !Number.isSafeInteger(options.pr) || options.pr < 1) throw new Error('Arm requires a PR number and VERIFIED');
@@ -62,16 +67,16 @@ export async function arm(options: { repo: string; pr: number; head: string; ver
     const t = await trusted(repo, options.configPath ?? '.cursor/converge.json');
     admitPull(await pull(repo, options.pr), t.config, head);
     await trunkHealth(t);
-    await protection(t, head);
+    await protection(t, head, options.pending === true);
     const author = await principal();
     const dossier = await verdict(t, options.pr, head, author);
     admitPull(await pull(repo, options.pr), t.config, head);
     if (sha(object(await api(`repos/${repo}/commits/${encodeURIComponent(t.config.trunk)}`)).sha) !== t.sha) throw new Error('Trunk moved before arm');
     await trunkHealth(t);
-    await protection(t, head);
+    await protection(t, head, options.pending === true);
     if (jsonHash(await verdict(t, options.pr, head, author)) !== jsonHash(dossier)) throw new Error('Verdict changed before arm');
     admitPull(await pull(repo, options.pr), t.config, head);
-    const steps = ['Read latest push-to-trunk Tests', 'Read live protection and required checks', 'Read trusted exact-head verdict', 'gh pr merge --squash --auto --match-head-commit ' + head];
+    const steps = ['Read latest push-to-trunk Tests', 'Read live protection and required checks', 'Read trusted exact-head verdict', 'gh pr merge --squash --auto --match-head-commit ' + head + (options.pending ? ' (checks pending)' : '')];
     if (options.dryRun) return { kind: 'dry-run', head, steps };
     command('gh', ['pr', 'merge', String(options.pr), '--repo', repo, '--squash', '--auto', '--match-head-commit', head]);
     const after = await pull(repo, options.pr);
@@ -87,9 +92,9 @@ export async function arm(options: { repo: string; pr: number; head: string; ver
 }
 export async function main(args: string[]): Promise<number> {
   try {
-    const { values } = parseArgs({ args, options: { repo: { type: 'string' }, pr: { type: 'string' }, head: { type: 'string' }, verdict: { type: 'string' }, config: { type: 'string' }, 'dry-run': { type: 'boolean', default: false } } });
-    if (!values.repo || !values.pr || !values.head || !values.verdict || !/^\d+$/.test(values.pr)) throw new Error('Usage: converge-arm --repo owner/repo --pr N --head SHA --verdict VERIFIED [--dry-run]');
-    const result = await arm({ repo: values.repo, pr: Number(values.pr), head: values.head, verdict: values.verdict, dryRun: values['dry-run'], configPath: values.config });
+    const { values } = parseArgs({ args, options: { repo: { type: 'string' }, pr: { type: 'string' }, head: { type: 'string' }, verdict: { type: 'string' }, config: { type: 'string' }, pending: { type: 'boolean', default: false }, 'dry-run': { type: 'boolean', default: false } } });
+    if (!values.repo || !values.pr || !values.head || !values.verdict || !/^\d+$/.test(values.pr)) throw new Error('Usage: converge-arm --repo owner/repo --pr N --head SHA --verdict VERIFIED [--pending] [--dry-run]');
+    const result = await arm({ repo: values.repo, pr: Number(values.pr), head: values.head, verdict: values.verdict, dryRun: values['dry-run'], configPath: values.config, pending: values.pending });
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
     return 0;
   } catch (error) { process.stderr.write((error instanceof SyntaxError ? 'Malformed JSON input' : error instanceof Error ? error.message : 'Arm failed') + '\n'); return 1; }
