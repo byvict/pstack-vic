@@ -1,0 +1,39 @@
+import { parseArgs } from 'node:util';
+import { array, integer, object, repoName, sha, string } from './contract.ts';
+import { pages, principal, trusted } from './github.ts';
+import { statuses } from './publish.ts';
+import { arm } from './arm.ts';
+
+export interface Swept { pr: number; head: string; outcome: 'armed' | 'dry-run' | 'skipped' | 'refused'; reason: string }
+export async function sweep(options: { repo: string; configPath?: string; dryRun: boolean }): Promise<{ swept: Swept[] }> {
+  const repo = repoName(options.repo);
+  const t = await trusted(repo, options.configPath ?? '.cursor/converge.json');
+  const author = await principal();
+  const open = (await pages(`repos/${repo}/pulls?state=open&base=${encodeURIComponent(t.config.trunk)}`)).map(v => object(v));
+  const swept: Swept[] = [];
+  for (const p of open.sort((a, b) => integer(a.number) - integer(b.number))) {
+    const pr = integer(p.number);
+    const head = sha(object(p.head).sha);
+    const skip = (reason: string) => swept.push({ pr, head, outcome: 'skipped', reason });
+    if (string(object(p.base).ref) !== t.config.trunk) { skip('base is not trunk'); continue; }
+    if (p.draft === true) { skip('draft'); continue; }
+    if (array(p.labels).some(l => t.config.holdLabels.includes(string(object(l).name)))) { skip('hold label'); continue; }
+    if (p.auto_merge !== null) { skip('auto-merge already pending'); continue; }
+    try {
+      const verdict = (await statuses(repo, head)).find(s => s.context === 'verdict');
+      if (!verdict || verdict.state !== 'success' || verdict.description !== 'VERIFIED by converge' || integer(object(verdict.creator).id) !== author) { skip('no trusted verdict on head'); continue; }
+      const result = await arm({ repo, pr, head, verdict: 'VERIFIED', dryRun: options.dryRun, configPath: options.configPath, pending: true });
+      swept.push({ pr, head, outcome: result.kind, reason: '' });
+    } catch (error) { swept.push({ pr, head, outcome: 'refused', reason: error instanceof Error ? error.message : 'Arm failed' }); }
+  }
+  return { swept };
+}
+export async function main(args: string[]): Promise<number> {
+  try {
+    const { values } = parseArgs({ args, options: { repo: { type: 'string' }, config: { type: 'string' }, 'dry-run': { type: 'boolean', default: false } } });
+    if (!values.repo) throw new Error('Usage: converge-sweep --repo owner/repo [--config path] [--dry-run]');
+    const result = await sweep({ repo: values.repo, configPath: values.config, dryRun: values['dry-run'] });
+    process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+    return result.swept.some(s => s.outcome === 'refused') ? 1 : 0;
+  } catch (error) { process.stderr.write((error instanceof Error ? error.message : 'Sweep failed') + '\n'); return 1; }
+}
