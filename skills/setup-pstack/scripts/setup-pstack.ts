@@ -95,7 +95,7 @@ const ROW_RE = /^([a-z][a-z0-9 ,-]*): (.+)$/;
 const RETIRED_CONVERGE_ROLES = new Set(['pr reviewer', 'pr fixer, simple', 'pr fixer, complex', 'pr diagnosis pool']);
 const AUTHORING_ROLES = ["feature, refactoring", "bug-fix", "perf-issue", "hillclimb", "hardest tasks"];
 
-function singleLaneRows(matrix: ModelMatrix): ReadonlyMap<string, readonly string[]> {
+export function singleLaneRows(matrix: ModelMatrix): ReadonlyMap<string, readonly string[]> {
   const admitted = (role: Role): string[] => {
     const { provider, model, efforts } = roleProviders[role];
     return efforts.map((effort) => `${provider}:${model}@${effort}`);

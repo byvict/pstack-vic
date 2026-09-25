@@ -2,10 +2,11 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { object, repoName, sha, string } from './contract.ts';
+import { object, repoName, roleProviders, sha, string } from './contract.ts';
 import { admitPull, api, principal, pull, trusted } from './github.ts';
 import { verdictGate } from './gate.ts';
 import { selectCursorModel } from '../runner/http-lane.ts';
+import { formatDescriptor, loadMatrix, parseDescriptor, type ModelMatrix } from '../../../../scripts/model-matrix.ts';
 
 type Effort = 'high' | 'xhigh';
 interface LaunchReceipt {
@@ -15,17 +16,24 @@ interface LaunchReceipt {
 }
 export interface CertifiedHead { schemaVersion: 1; kind: 'certified'; repo: string; pr: number; head: string; verdictUrl: string }
 
-const SHEET_LANE = /^cursor:grok-4\.7@(high|xhigh)$/;
+/** The lanes the pr owner and pr verifier rows accept, the same ones setup-pstack writes: the Cloud verifier's pinned lanes, or an alias that sets no floor. */
+export function sheetLanes(matrix: ModelMatrix): string[] {
+  const { provider, model, efforts } = roleProviders['pr verifier'];
+  return [...efforts.map(effort => formatDescriptor({ provider, model, effort })), ...matrix.aliases];
+}
 
 export function sheetEfforts(text: string): { owner: Effort; verifier: Effort } {
+  const matrix = loadMatrix();
+  const lanes = sheetLanes(matrix);
   const floor = (role: string): Effort => {
     const line = text.split('\n').map(l => l.trim()).find(l => l.startsWith(role + ':'));
     if (line === undefined) return 'high';
     const lane = line.slice(role.length + 1).trim();
-    if (lane === 'inherit-parent' || lane === 'auto') return 'high';
-    const match = SHEET_LANE.exec(lane);
-    if (!match) throw new Error(`Sheet row ${role}: ${lane} must be cursor:grok-4.7@high, cursor:grok-4.7@xhigh, inherit-parent or auto`);
-    return match[1] === 'xhigh' ? 'xhigh' : 'high';
+    if (!lanes.includes(lane)) throw new Error(`Sheet row ${role}: ${lane} must be ${lanes.slice(0, -1).join(', ')} or ${lanes[lanes.length - 1]}`);
+    if (matrix.aliases.includes(lane)) return 'high';
+    const effort = parseDescriptor(lane)?.effort;
+    if (effort !== 'high' && effort !== 'xhigh') throw new Error(`Sheet row ${role}: start.ts launches only high or xhigh, not ${lane}`);
+    return effort;
   };
   return { owner: floor('pr owner'), verifier: floor('pr verifier') };
 }

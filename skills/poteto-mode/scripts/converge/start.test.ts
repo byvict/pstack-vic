@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fixture, publishCertificate } from './fixtures/setup.ts';
-import { sheetEfforts, start } from './start.ts';
+import { sheetEfforts, sheetLanes, start } from './start.ts';
 import { verdictGate } from './gate.ts';
 import { trusted } from './github.ts';
+import { loadMatrix } from '../../../../scripts/model-matrix.ts';
+import { singleLaneRows } from '../../../setup-pstack/scripts/setup-pstack.ts';
 
 function environment(t: TestContext, f: ReturnType<typeof fixture>): void {
   const before = { path: process.env.PATH, fixture: process.env.CONVERGE_FIXTURE, key: process.env.CURSOR_API_KEY };
@@ -105,6 +107,13 @@ test('sheet efforts are floors for the owner and the verifier', () => {
   assert.deepEqual(sheetEfforts('pr owner: inherit-parent\npr verifier: auto\n'), { owner: 'high', verifier: 'high' });
   assert.throws(() => sheetEfforts('pr verifier: cursor:composer-2.5@high\n'), /pr verifier.*must be cursor:grok-4\.7@high, cursor:grok-4\.7@xhigh/);
   assert.throws(() => sheetEfforts('pr owner: cursor:grok-4.7@medium\n'), /pr owner/);
+});
+
+test('start.ts accepts exactly the pr owner lanes setup-pstack accepts', () => {
+  const matrix = loadMatrix();
+  const accepted = singleLaneRows(matrix).get('pr owner') ?? [];
+  assert.deepEqual(new Set(sheetLanes(matrix)), new Set(accepted));
+  for (const lane of accepted) assert.doesNotThrow(() => sheetEfforts(`pr owner: ${lane}\n`), lane);
 });
 
 test('sheet floors raise the owner launch and bind the verifier effort', async t => {
