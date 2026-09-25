@@ -1045,11 +1045,11 @@ async function runCliLane(
 }
 
 /**
- * The model child. An unsandboxed lane gets its config overlay for the
- * child's lifetime, and its worktree recorded before the child starts and
- * after it exits on its own. The exit lands in the evidence first, so a
- * worktree read that fails or runs out of time still leaves a receipt with
- * the exit it followed.
+ * The model child. A Grok lane gets its config overlay for the child's
+ * lifetime. An unsandboxed lane also gets its worktree recorded before the
+ * child starts and after it exits on its own. The exit lands in the evidence
+ * first, so a worktree read that fails or runs out of time still leaves a
+ * receipt with the exit it followed.
  */
 async function runModel(
   options: CliRunnerOptions,

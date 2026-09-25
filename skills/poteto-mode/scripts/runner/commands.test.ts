@@ -193,20 +193,23 @@ describe("invocationCommand", () => {
     assert.ok(!unsandboxed.args.some((arg) => arg.includes("search_replace")));
   });
 
-  it("gives only an unsandboxed Grok lane the core environment policy overlay", () => {
-    assert.deepEqual(
-      configOverlay(options({ provider: "grok", model: "grok-4.7", mode: "unsandboxed" })),
-      {
-        variable: "GROK_CONFIG_PATH",
-        unset: ["GROK_CONFIG"],
-        fileName: "grok-lane.toml",
-        content: '[shell_environment_policy]\ninherit = "core"\n',
-      }
-    );
-    for (const mode of ["read-only", "isolated-write"] as const) {
-      assert.equal(configOverlay(options({ provider: "grok", model: "grok-4.7", mode })), null);
+  it("gives every Grok lane, and no other provider, the core environment policy overlay", () => {
+    for (const mode of ["read-only", "isolated-write", "unsandboxed"] as const) {
+      assert.deepEqual(
+        configOverlay(options({ provider: "grok", model: "grok-4.7", mode })),
+        {
+          variable: "GROK_CONFIG_PATH",
+          unset: ["GROK_CONFIG"],
+          fileName: "grok-lane.toml",
+          content: '[shell_environment_policy]\ninherit = "core"\n',
+        },
+        mode
+      );
     }
-    assert.equal(configOverlay(options({ mode: "isolated-write" })), null);
+    for (const mode of ["read-only", "isolated-write"] as const) {
+      assert.equal(configOverlay(options({ mode })), null);
+      assert.equal(configOverlay(options({ provider: "claude", model: "fable", mode })), null);
+    }
   });
 
   it("refuses unsandboxed for every provider but Grok, and under an outer seatbelt", () => {

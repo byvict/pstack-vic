@@ -237,8 +237,17 @@
       "id": "grok.unsandboxed",
       "cli": "grok",
       "kind": "lane",
-      "contract": "`--sandbox off` runs tool commands under no Seatbelt profile, so a pty and Chromium start, which no grok profile allows on macOS. `GROK_CONFIG_PATH` names a TOML overlay merged above `config.toml` without replacing it, `shell_environment_policy.inherit = \"core\"` is on its allowlist and keeps a small platform set such as `PATH` and `HOME`, and an inline `GROK_CONFIG` wins over the file",
-      "pointers": [{ "file": "skills/poteto-mode/scripts/runner/commands.ts", "anchor": "export function configOverlay" }],
+      "contract": "`--sandbox off` runs tool commands under no Seatbelt profile, so a pty and Chromium start, which no grok profile allows on macOS",
+      "pointers": [{ "file": "skills/poteto-mode/scripts/runner/commands.ts", "anchor": "export function requireSupportedMode" }],
+      "coveredBy": [],
+      "measuredOn": "1.0.41"
+    },
+    {
+      "id": "grok.env-policy",
+      "cli": "grok",
+      "kind": "lane",
+      "contract": "`GROK_CONFIG_PATH` names a TOML overlay merged above `config.toml` without replacing it; `shell_environment_policy.inherit = \"core\"` is on its allowlist and keeps a small platform set such as `PATH` and `HOME` in every sandbox mode; an inline `GROK_CONFIG` wins over the file. The shell grok opens for a tool command exports `GROK_AGENT`, which a machine's `~/.zshenv` uses to skip its credential exports",
+      "pointers": [{ "file": "skills/poteto-mode/scripts/runner/commands.ts", "anchor": "export function configOverlay" }, { "file": "skills/poteto-mode/references/provider-dispatch.md", "anchor": "skip those exports when `GROK_AGENT` is set" }],
       "coveredBy": [],
       "measuredOn": "1.0.41"
     },

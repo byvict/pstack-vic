@@ -112,17 +112,18 @@ export function requireSupportedMode(
 }
 
 /**
- * With its sandbox off, a Grok lane's shell would inherit the parent's whole
- * environment, credentials included; `inherit = "core"` keeps only a small
- * platform set such as PATH and HOME. Grok merges a GROK_CONFIG_PATH file
- * above the user's config.toml without replacing it, `inherit` is on the
- * overlay allowlist, and an inline GROK_CONFIG would win over the file, so the
- * child loses that variable.
+ * Grok's sandbox limits what a lane writes, not what its shell inherits, so
+ * without a policy every Grok lane's shell sees the parent's whole
+ * environment, credentials included (measured 2026-09-25, N27);
+ * `inherit = "core"` keeps only a small platform set such as PATH and HOME.
+ * Grok merges a GROK_CONFIG_PATH file above the user's config.toml without
+ * replacing it, `inherit` is on the overlay allowlist, and an inline
+ * GROK_CONFIG would win over the file, so the child loses that variable.
  */
 export function configOverlay(
-  options: Pick<RunnerOptions, "provider" | "mode">
+  options: Pick<RunnerOptions, "provider">
 ): ConfigOverlay | null {
-  if (options.mode !== "unsandboxed" || cliFor(options.provider) !== "grok") return null;
+  if (cliFor(options.provider) !== "grok") return null;
   return {
     variable: "GROK_CONFIG_PATH",
     unset: ["GROK_CONFIG"],
