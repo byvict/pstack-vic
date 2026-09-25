@@ -37,7 +37,7 @@ Use the harness and tool surface running this skill: Claude Code (`--parent clau
 node scripts/setup-pstack.ts state --parent <parent>
 ```
 
-The JSON says whether the parent's sheet exists (`exists`), its path, the normalized rows, the `migrations` it applied in memory (old Fable revisions become `fable`; `opus` and old Opus revisions become `claude-opus-5-5`; `gpt-5.6-sol` becomes `gpt-6-sol`, preserving provider, effort, role, and lane order), and one `efforts` entry per matrix family with its `status`, the distinct `efforts` in use, and the `rows` that use them. A family's status is `current` (every lane of the family shares one effort), `mixed` (its lanes use two or more efforts; a valid sheet, not a conflict), `unassigned` (first run: the matrix Default effort is proposed), or `outside-map` (no role uses the family, so no effort can persist for it; Sol is outside the first-run map by the 2026-09-17 decision).
+The JSON says whether the parent's sheet exists (`exists`), its path, the normalized rows, the `migrations` it applied in memory (old Fable revisions become `fable`; `opus` and old Opus revisions become `claude-opus-5-5`; `gpt-5.6-sol` becomes `gpt-6-sol`, preserving provider, effort, role, and lane order), and one `efforts` entry per matrix family with its `status`, the distinct `efforts` in use, and the `rows` that use them. A family's status is `current` (every lane of the family shares one effort), `mixed` (its lanes use two or more efforts; a valid sheet, not a conflict), `unassigned` (first run: the matrix Default effort is proposed), or `outside-map` (no role uses the family, so no effort can persist for it; on a Claude Code parent, Sol is outside the first-run map by the 2026-09-17 decision, and on a Codex parent it is the default of the four authoring rows).
 
 The script stops on inconsistent state: an unknown or duplicate role row, a bare host-native slug, an unregistered Claude model, a provider/model pair outside the matrix, or an effort outside the family's Selectable efforts. Show the error verbatim and resolve it with the operator before going on. Do not probe or write while any inconsistency is unresolved.
 
@@ -118,7 +118,7 @@ Report the sheet path, the ledger path, the parent route table, the families pro
 
 ## First-run role maps
 
-The maps below are rendered from `model-matrix.json` by `scripts/render-model-matrix.ts`, one per parent because the frontier solo roles take the parent's native frontier family. They only seed the plan on a first run; selected efforts and explicit role changes always replace their values before writing. Never paste one as the result.
+The maps below are rendered from `model-matrix.json` by `scripts/render-model-matrix.ts`, one per parent because the frontier solo roles take the parent's native frontier family and the four authoring rows take its native code family. They only seed the plan on a first run; selected efforts and explicit role changes always replace their values before writing. Never paste one as the result.
 
 <!-- role-sheet:begin -->
 
@@ -129,10 +129,10 @@ Claude Code parent:
 
 Provider-qualified per-role choices. Read the installed pstack provider-dispatch reference before dispatching a configured role. Every documented role remains present. `inherit-parent` and `auto` use the parent model natively and still count as one panel lane.
 
-feature, refactoring: grok:grok-4.6@xhigh
-bug-fix: grok:grok-4.6@xhigh
-perf-issue: grok:grok-4.6@xhigh
-hillclimb: grok:grok-4.6@xhigh
+feature, refactoring: claude:claude-opus-5-5@xhigh
+bug-fix: claude:claude-opus-5-5@xhigh
+perf-issue: claude:claude-opus-5-5@xhigh
+hillclimb: claude:claude-opus-5-5@xhigh
 judgment and prose: claude:fable@max
 hardest tasks: claude:fable@max
 how explorer: grok:grok-4.6@xhigh
@@ -160,10 +160,10 @@ Codex parent:
 
 Provider-qualified per-role choices. Read the installed pstack provider-dispatch reference before dispatching a configured role. Every documented role remains present. `inherit-parent` and `auto` use the parent model natively and still count as one panel lane.
 
-feature, refactoring: grok:grok-4.6@xhigh
-bug-fix: grok:grok-4.6@xhigh
-perf-issue: grok:grok-4.6@xhigh
-hillclimb: grok:grok-4.6@xhigh
+feature, refactoring: codex:gpt-6-sol@xhigh
+bug-fix: codex:gpt-6-sol@xhigh
+perf-issue: codex:gpt-6-sol@xhigh
+hillclimb: codex:gpt-6-sol@xhigh
 judgment and prose: codex:gpt-6-astra@max
 hardest tasks: codex:gpt-6-astra@max
 how explorer: grok:grok-4.6@xhigh

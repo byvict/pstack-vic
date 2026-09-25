@@ -600,7 +600,7 @@ export function renderRoleDefaultsMarkdown(matrix: ModelMatrix): string {
   }
   lines.push("");
   lines.push(
-    "A list is a panel: one lane per entry, in this order. A role whose two columns differ takes the parent's native frontier family. Aliases run on the parent model through its native subagent primitive."
+    "A list is a panel: one lane per entry, in this order. A role whose two columns differ takes a family native to each parent: the frontier family for the frontier solo roles, the code family for the four authoring rows. Aliases run on the parent model through its native subagent primitive."
   );
   lines.push("");
   lines.push(ROLES_END);
