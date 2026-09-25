@@ -282,19 +282,20 @@ function testProvenance(run: Record<string, unknown>, jobs: Record<string, unkno
   return { runId, attempt, jobId: integer(server.id), tests: windows[index], next: windows[index + 1] ?? null };
 }
 type TestSources = { kind: 'unused' | 'unavailable' } | { kind: 'ready'; provenance: ClinextProvenance; runnerSource: string; packageSource: string };
-/** Under pre-pr the CI runner sources stay out of the trusted files, so the PR's policy digest matches the branch snapshot the certificate was built from. */
+/** Under pre-pr the snapshot reads no CI state (no Tests run, jobs, log or check runs): publication follows `gh pr create` while checks still move, so binding them would refuse it intermittently, and the CI runner sources stay out of the trusted files, so the PR's policy digest matches the branch snapshot the certificate was built from. */
 export async function snapshot(repo: string, prNumber: number, configPath: string, execution: Execution): Promise<Snapshot> {
   const proof = execution === 'verdict-only';
+  const ci = execution !== 'pre-pr';
   const [t, p] = await Promise.all([trusted(repo, configPath), pull(repo, prNumber)]);
   admitPull(p, t.config, p.head, proof);
-  const runPromise = workflowRun(t, p.head);
+  const runPromise: Promise<Record<string, unknown> | null> = ci ? workflowRun(t, p.head) : Promise.resolve(null);
   const runJobsPromise = runPromise.then(async run => run ? (await pages(`repos/${repo}/actions/runs/${integer(run.id)}/attempts/${integer(run.run_attempt)}/jobs`, 'jobs')).map(v => object(v)) : []);
   const runLogPromise = runPromise.then(run => run?.status === 'completed' ? commandAsync('gh', ['run', 'view', String(integer(run.id)), '--repo', repo, '--attempt', String(integer(run.run_attempt)), '--log']).catch(() => null) : null);
   const runEvidencePromise = Promise.all([runJobsPromise, runLogPromise]).then(([jobs, log]) => ({ jobs, log }));
   const runEvidenceSettlement = Promise.allSettled([runJobsPromise, runLogPromise, runEvidencePromise]);
   const prepared = await Promise.all([
     api(`repos/${repo}/compare/${t.sha}...${p.head}`), pages(`repos/${repo}/pulls/${prNumber}/files`),
-    commandAsync('gh', ['pr', 'diff', String(prNumber), '--repo', repo]), principal(), comments(repo, prNumber), checks(repo, p.head), runPromise,
+    commandAsync('gh', ['pr', 'diff', String(prNumber), '--repo', repo]), principal(), comments(repo, prNumber), ci ? checks(repo, p.head) : Promise.resolve<Check[]>([]), runPromise,
   ]).then(async ([comparisonValue, fileValues, diff, author, allComments, observedChecks, run]) => {
     const base = sha(object(object(comparisonValue).merge_base_commit).sha);
     const files = fileValues.map(value => { const f = object(value); return { path: relativePath(f.filename), previous: f.previous_filename === undefined ? null : relativePath(f.previous_filename), patch: f.patch === undefined ? null : string(f.patch), status: string(f.status) }; });
@@ -302,7 +303,7 @@ export async function snapshot(repo: string, prNumber: number, configPath: strin
     const patch = command('git', ['patch-id', '--stable'], diff).trim().split(/\s+/)[0];
     if (!patch) throw new Error('Empty PR diff');
     const testSourcesPromise = runJobsPromise.then(async (jobs): Promise<TestSources> => {
-      if (!run || execution === 'pre-pr') return { kind: 'unused' };
+      if (!run) return { kind: 'unused' };
       const provenance = testProvenance(run, jobs, p.head);
       const testCheck = observedChecks.find(c => c.context === 'Run test suite');
       const job = jobs.find(j => j.name === 'Run test suite' && string(j.check_run_url).endsWith(`/${testCheck?.id}`));

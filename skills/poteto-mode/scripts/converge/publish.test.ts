@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { decide } from './publish.ts';
+import { decide, dossierFromComment } from './publish.ts';
 import { hash, parseReport, riskObligation } from './contract.ts';
 import { fixture } from './fixtures/setup.ts';
 
@@ -57,7 +57,7 @@ function certifiedPr(f: ReturnType<typeof fixture>, options: { body?: string; fu
   assert.deepEqual([mode, lanes], options.full ? ['full', ['pre-pr reviewer', 'pre-pr certifier']] : ['ci-only', ['pre-pr reviewer']]);
   lane(run, round, 'pre-pr reviewer');
   if (options.full) lane(run, round, 'pre-pr certifier');
-  const assembled = f.run('converge-certify', ['assemble', '--directory', run, '--author-provider', 'claude', '--output', join(run, 'certificate.json')]);
+  const assembled = f.run('converge-certify', ['assemble', '--directory', run, '--author-provider', 'claude', '--output', join(run, 'certificate.json'), '--adjust-rounds', '1']);
   assert.equal(assembled.status, 0, assembled.stderr);
   return run;
 }
@@ -130,3 +130,68 @@ for (const fault of ['lane-without-certificate', 'retain-without-certificate', '
     assert.deepEqual(f.read().statuses, []); assert.deepEqual(f.read().comments, []);
   });
 }
+function commentDossier(comment: { body: string }): Record<string, unknown> {
+  const match = comment.body.match(/^<!-- converge:v1 [a-f0-9-]{36} -->\n```json\n([\s\S]+)\n```\n$/);
+  assert.ok(match);
+  return JSON.parse(match[1] ?? '');
+}
+function asComment(dossier: Record<string, unknown>) {
+  return { body: `<!-- converge:v1 ${(dossier.round as { id: string }).id} -->\n\`\`\`json\n${JSON.stringify(dossier, null, 2)}\n\`\`\`\n` };
+}
+test('the published comment carries the certificate and stays byte-identical on retry', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const run = certifiedPr(f, { full: true, body: '## Verification\nfeature: login\n' });
+  const report = prReport(f);
+  const args = ['--report', report, '--certificate', join(run, 'certificate.json'), '--evidence', join(f.directory, 'evidence')];
+  const published = f.run('publish.ts', args);
+  assert.equal(published.status, 0, published.stderr);
+  const certificate = JSON.parse(readFileSync(join(run, 'certificate.json'), 'utf8'));
+  const dossier = commentDossier(f.read().comments[0]);
+  assert.deepEqual(dossier.certificate, certificate); assert.deepEqual(JSON.parse(published.stdout).dossier.certificate, certificate);
+  assert.deepEqual([certificate.runs.length, certificate.lanes.length, certificate.artifacts.length, certificate.adjustRounds, certificate.authorProvider], [1, 2, 2, 1, 'claude']);
+  assert.match(certificate.toolingRef, /^pstack-vic@\d+\.\d+\.\d+$/);
+  const body = f.read().comments[0].body;
+  const retry = f.run('publish.ts', args);
+  assert.equal(retry.status, 0, retry.stderr); assert.equal(f.read().comments.length, 1); assert.equal(f.read().comments[0].body, body);
+  assert.throws(() => dossierFromComment(asComment({ ...dossier, certificate: undefined })), /A certificate belongs exactly to a pre-pr verdict/);
+  assert.throws(() => dossierFromComment(asComment({ ...dossier, round: { ...(dossier.round as object), execution: 'converge' } })), /A certificate belongs exactly to a pre-pr verdict/);
+});
+test('a converge publication carries a null certificate and a dossier without the key still parses', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const report = join(f.directory, 'report.json');
+  const reconciled = f.run('converge-reconcile', ['--repo', 'Example/app', '--pr', '1', '--output', report]);
+  assert.equal(reconciled.status, 0, reconciled.stderr);
+  const published = f.run('publish.ts', ['--report', report, '--evidence', join(f.directory, 'evidence')]);
+  assert.equal(published.status, 0, published.stderr);
+  const dossier = commentDossier(f.read().comments[0]);
+  assert.equal(dossier.certificate, null); assert.equal(Object.keys(dossier).at(-1), 'certificate');
+  const old = { ...dossier };
+  delete old.certificate;
+  const parsed = dossierFromComment(asComment(old));
+  assert.equal(parsed.certificate, null); assert.deepEqual(parsed, dossierFromComment(f.read().comments[0]));
+});
+for (const fault of ['no-runs', 'skipped-run', 'lane-effort', 'artifact-bytes'] as const) {
+  test(`a full-mode certificate edited with ${fault} is refused at publication before any write`, t => {
+    const f = fixture(); t.after(f.cleanup);
+    const run = certifiedPr(f, { full: true });
+    const file = join(run, 'certificate.json');
+    const certificate = JSON.parse(readFileSync(file, 'utf8'));
+    const edit = { 'no-runs': { runs: [] }, 'skipped-run': { runs: [{ name: 'suite', command: 'true', skip: 'ci-only report' }] }, 'lane-effort': { lanes: [{ ...certificate.lanes[0], effort: 'high' }, certificate.lanes[1]] }, 'artifact-bytes': { artifacts: [{ ...certificate.artifacts[0], bytes: certificate.artifacts[0].bytes + 1 }, certificate.artifacts[1]] } }[fault];
+    writeFileSync(file, JSON.stringify({ ...certificate, ...edit }));
+    const published = f.run('publish.ts', ['--report', prReport(f), '--certificate', file, '--evidence', join(f.directory, 'evidence')]);
+    assert.notEqual(published.status, 0);
+    assert.match(published.stderr, { 'no-runs': /Required run missing: suite/, 'skipped-run': /A skipped run needs a CI-only certificate/, 'lane-effort': /Certificate lane differs from its manifest/, 'artifact-bytes': /Certificate artifacts differ from the admitted lanes/ }[fault]);
+    assert.deepEqual(f.read().statuses, []); assert.deepEqual(f.read().comments, []);
+  });
+}
+test('a pre-pr PR report reads no CI, so publication succeeds after the PR checks move on', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const run = certifiedPr(f);
+  f.state.checks = f.state.checks.map(c => ({ ...c, status: 'queued' })); f.state.runOverrides = { status: 'in_progress', conclusion: null }; f.save();
+  const report = prReport(f);
+  f.state.checks = f.state.checks.map(c => ({ ...c, status: 'completed' })); f.state.runOverrides = { status: 'completed', conclusion: 'success' }; f.save();
+  const published = f.run('publish.ts', ['--report', report, '--certificate', join(run, 'certificate.json'), '--evidence', join(f.directory, 'evidence')]);
+  assert.equal(published.status, 0, published.stderr);
+  assert.equal(f.read().statuses[0].state, 'success');
+  assert.deepEqual(f.calls().filter(call => call[0] === 'run' || /\/check-runs|\/actions\/(?:workflows\/\d+\/runs|runs\/)/.test(call[1] ?? '')), []);
+});

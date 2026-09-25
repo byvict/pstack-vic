@@ -4,7 +4,7 @@ import { array, digest, integer, jsonHash, object, oneOf, parseFinding, parseRep
 import { admitPull, api, comments, isPublication, pages, principal, pull, snapshot } from './github.ts';
 import { analyze } from './reconcile.ts';
 import { admitLane, type AdmittedLane } from './evidence.ts';
-import { admitCertificate } from './certify.ts';
+import { admitCertificate, parseCertificate, type Certificate } from './certify.ts';
 
 export function decide(report: Report, lanes: AdmittedLane[]): Decision {
   const findings = [...report.findings, ...lanes.flatMap(l => l.findings.filter(f => f.severity === 'blocking'))];
@@ -49,7 +49,12 @@ export function parseDossier(value: unknown): Dossier {
     if (!first || d.displayResult !== verdict) throw new Error('Inconclusive without reasons');
     decision = { verdict, displayResult: verdict, findings, reasons: [first, ...reasons.slice(1)] };
   }
-  return { schemaVersion: 1, round: parseRound(v.round), decision, evidenceDigest: digest(v.evidenceDigest), reconcileDigest: digest(v.reconcileDigest), coverage: strings(v.coverage), riskAdjudication: array(v.riskAdjudication).map(parseObligation), artifactIds: strings(v.artifactIds), inputFingerprint: digest(v.inputFingerprint), retainedFrom: v.retainedFrom === null ? null : { round: parseExecutionId(object(v.retainedFrom).round), head: sha(object(v.retainedFrom).head), commentUrl: string(object(v.retainedFrom).commentUrl) } };
+  const round = parseRound(v.round);
+  const evidenceDigest = digest(v.evidenceDigest);
+  const certificate = v.certificate === undefined || v.certificate === null ? null : parseCertificate(v.certificate);
+  if ((certificate !== null) !== (round.execution === 'pre-pr')) throw new Error('A certificate belongs exactly to a pre-pr verdict');
+  if (certificate && (certificate.round.repo !== round.repo || certificate.round.head !== round.head || certificate.evidenceDigest !== evidenceDigest)) throw new Error('Certificate differs from the verdict round');
+  return { schemaVersion: 1, round, decision, evidenceDigest, reconcileDigest: digest(v.reconcileDigest), coverage: strings(v.coverage), riskAdjudication: array(v.riskAdjudication).map(parseObligation), artifactIds: strings(v.artifactIds), inputFingerprint: digest(v.inputFingerprint), retainedFrom: v.retainedFrom === null ? null : { round: parseExecutionId(object(v.retainedFrom).round), head: sha(object(v.retainedFrom).head), commentUrl: string(object(v.retainedFrom).commentUrl) }, certificate };
 }
 export function dossierFromComment(value: unknown): Dossier {
   const c = object(value);
@@ -89,11 +94,16 @@ export async function publishVerdict(options: { reportFile: string; laneFiles: s
     retainedFrom = { round: old.round.id, head: old.round.head, commentUrl: options.retainCommentUrl };
     for (const role of report.lanes) admitted.push({ role, coverage: old.coverage, risks: old.riskAdjudication, findings: [], gaps: [], artifacts: old.artifactIds.map(id => ({ id, path: options.retainCommentUrl ?? '', digest: old.evidenceDigest, mediaType: 'retained' })), receiptDigest: old.evidenceDigest });
   }
-  if (options.certificateFile) admitted.push(...await admitCertificate(options.certificateFile, report, options.evidenceDirectory));
+  let certificate: Certificate | null = null;
+  if (options.certificateFile) {
+    const admission = await admitCertificate(options.certificateFile, report, options.evidenceDirectory, current.trusted.config);
+    certificate = admission.certificate;
+    admitted.push(...admission.lanes);
+  }
   for (const file of options.laneFiles) admitted.push(await admitLane(file, report, options.evidenceDirectory));
   const refreshed = await snapshot(r.repo, r.pr, r.configPath, r.execution);
   if (refreshed.inputDigest !== r.inputDigest) throw new Error('Inputs changed during evidence admission');
-  const dossier: Dossier = { schemaVersion: 1, round: r, decision: decide(report, admitted), reconcileDigest: jsonHash(report), evidenceDigest: jsonHash(admitted), coverage: admitted.flatMap(l => l.coverage), riskAdjudication: admitted.flatMap(l => l.risks), artifactIds: admitted.flatMap(l => l.artifacts.map(a => a.id)), inputFingerprint: report.inputFingerprint, retainedFrom };
+  const dossier: Dossier = { schemaVersion: 1, round: r, decision: decide(report, admitted), reconcileDigest: jsonHash(report), evidenceDigest: jsonHash(admitted), coverage: admitted.flatMap(l => l.coverage), riskAdjudication: admitted.flatMap(l => l.risks), artifactIds: admitted.flatMap(l => l.artifacts.map(a => a.id)), inputFingerprint: report.inputFingerprint, retainedFrom, certificate };
   const author = await principal();
   const body = `<!-- converge:v1 ${r.id} -->\n\`\`\`json\n${JSON.stringify(dossier, null, 2)}\n\`\`\`\n`;
   const existing = (await comments(r.repo, r.pr)).filter(c => isPublication(c, author) && string(c.body).startsWith(`<!-- converge:v1 ${r.id} -->`));

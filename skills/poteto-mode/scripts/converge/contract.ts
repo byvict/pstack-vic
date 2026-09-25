@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import type { Certificate } from './certify.ts';
 
 export function object(value: unknown, label = 'object'): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`Invalid ${label}`);
@@ -184,4 +185,5 @@ export type Decision =
 export interface Dossier {
   schemaVersion: 1; round: Round; decision: Decision; evidenceDigest: string; reconcileDigest: string;
   coverage: string[]; riskAdjudication: RiskObligation[]; artifactIds: string[]; inputFingerprint: string; retainedFrom: { round: string; head: string; commentUrl: string } | null;
+  certificate: Certificate | null;
 }
