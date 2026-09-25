@@ -2,7 +2,7 @@ import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fixture, publishCertificate } from './fixtures/setup.ts';
+import { fixture, prReport, publishCertificate, stackChild } from './fixtures/setup.ts';
 import { sheetEfforts, sheetLanes, start } from './start.ts';
 import { verdictGate } from './gate.ts';
 import { trusted } from './github.ts';
@@ -167,6 +167,35 @@ test('a certified head returns without launching an owner', async t => {
   t.mock.method(globalThis, 'fetch', async () => { launches++; return Response.json({}); });
   const result = await start({ repo: 'Example/app', pr: 1, toolingRef: 'a'.repeat(40), stateDirectory: join(f.directory, 'owner'), sheetPath: join(f.directory, 'missing-sheet.md') });
   assert.deepEqual(result, { schemaVersion: 1, kind: 'certified', repo: 'Example/app', pr: 1, head: f.state.head, verdictUrl: 'https://github.com/Example/app/pull/1#issuecomment-100' });
+  assert.equal(launches, 0); assert.equal(existsSync(join(f.directory, 'owner', 'intent.json')), false);
+});
+
+test('a certified stack child returns without launching an owner while its base is the parent', async t => {
+  const f = fixture(); t.after(f.cleanup); environment(t, f); stackChild(f); publishCertificate(f);
+  let launches = 0;
+  t.mock.method(globalThis, 'fetch', async () => { launches++; return Response.json({}); });
+  const result = await start({ repo: 'Example/app', pr: 1, toolingRef: 'a'.repeat(40), stateDirectory: join(f.directory, 'owner'), sheetPath: join(f.directory, 'missing-sheet.md') });
+  assert.deepEqual(result, { schemaVersion: 1, kind: 'certified', repo: 'Example/app', pr: 1, head: f.state.head, verdictUrl: 'https://github.com/Example/app/pull/1#issuecomment-100' });
+  assert.equal(launches, 0); assert.equal(existsSync(join(f.directory, 'owner', 'intent.json')), false);
+});
+
+test('a stack child without a trusted verdict refuses its non-trunk base without launching an owner', async t => {
+  const f = fixture(); t.after(f.cleanup); environment(t, f); stackChild(f);
+  let launches = 0;
+  t.mock.method(globalThis, 'fetch', async () => { launches++; return Response.json({}); });
+  await assert.rejects(start({ repo: 'Example/app', pr: 1, toolingRef: 'a'.repeat(40), stateDirectory: join(f.directory, 'owner'), sheetPath: join(f.directory, 'missing-sheet.md') }), /^Error: PR base differs from trunk$/);
+  assert.equal(launches, 0); assert.equal(existsSync(join(f.directory, 'owner', 'intent.json')), false);
+});
+
+test('a converge verdict on a PR whose base left trunk refuses without launching an owner', async t => {
+  const f = fixture(); t.after(f.cleanup); environment(t, f);
+  const published = f.run('publish.ts', ['--report', prReport(f, 'converge'), '--evidence', join(f.directory, 'evidence')]);
+  assert.equal(published.status, 0, published.stderr);
+  const live = f.read(); live.prBase = 'parent'; Object.assign(f.state, live); f.save();
+  let launches = 0;
+  t.mock.method(globalThis, 'fetch', async () => { launches++; return Response.json({}); });
+  assert.equal((await verdictGate(await trusted('Example/app', '.cursor/converge.json'), 1, f.state.head, 7)).kind, 'certified');
+  await assert.rejects(start({ repo: 'Example/app', pr: 1, toolingRef: 'a'.repeat(40), stateDirectory: join(f.directory, 'owner'), sheetPath: join(f.directory, 'missing-sheet.md') }), /^Error: PR base differs from trunk$/);
   assert.equal(launches, 0); assert.equal(existsSync(join(f.directory, 'owner', 'intent.json')), false);
 });
 

@@ -14,7 +14,7 @@ function later(endpoint) { const after = state.after; if (!after || after.endpoi
 function fail() { process.exit(1); }
 const repo = 'Example/app';
 const root = `repos/${repo}`;
-if (args[0] === 'pr' && args[1] === 'diff') process.stdout.write(state.diff);
+if (args[0] === 'pr' && args[1] === 'diff') process.stdout.write(state.prDiff ?? state.diff);
 else if (args[0] === 'run') process.stdout.write(state.log ?? 'Tests completed\n');
 else if (args[0] === 'pr' && args[1] === 'merge') {
   if (args.includes('--disable-auto') && state.failDisarm === true) fail();
@@ -77,7 +77,7 @@ else if (args[0] === 'api') {
     send({ merge_base_commit: { sha: state.base }, files: state.files });
   }
   else if (endpoint === `${root}/pulls` && query.get('base') === 'main') send(state.pulls ?? []);
-  else if (endpoint === `${root}/pulls/1/files`) send(state.files);
+  else if (endpoint === `${root}/pulls/1/files`) send(state.prFiles ?? state.files);
   else if (endpoint === `${root}/actions/workflows`) send({ workflows: [{ id: state.workflowId, name: 'Tests', path: '.github/workflows/tests.yml', state: 'active' }] });
   else if (endpoint.includes('/check-runs')) {
     if (state.requireInstallationChecks && (process.env.GH_TOKEN || process.env.GITHUB_TOKEN)) fail();

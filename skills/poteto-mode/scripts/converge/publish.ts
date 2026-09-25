@@ -116,7 +116,7 @@ export async function publishVerdict(options: { reportFile: string; laneFiles: s
   const prior = found ? (await statuses(r.repo, r.head)).filter(s => s.context === 'verdict' && s.target_url === found.html_url && integer(object(s.creator).id) === author) : [];
   if (prior.some(s => s.state !== state || s.description !== description)) throw new Error('Divergent status already published for this round');
   const live = await pull(r.repo, r.pr);
-  admitPull(live, current.trusted.config, r.head, r.execution === 'verdict-only');
+  admitPull(live, current.trusted.config, r.head, r.execution);
   if (live.autoMerge && !prior.length) throw new Error('Auto-merge is pending on this PR; disarm it before publishing a verdict');
   const comment = found ?? object(await api(`repos/${r.repo}/issues/${r.pr}/comments`, { body }));
   const commentUrl = string(comment.html_url);

@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { decide, dossierFromComment } from './publish.ts';
 import { parseReport, riskObligation } from './contract.ts';
-import { certifiedPr, fixture, prReport } from './fixtures/setup.ts';
+import { certifiedPr, fixture, prReport, stackChild } from './fixtures/setup.ts';
 
 for (const proveBoth of [false, true]) {
   test(`one independent verifier ${proveBoth ? 'proves both money paths' : 'cannot clear a second money path with one proof'}`, t => {
@@ -61,6 +62,29 @@ for (const full of [false, true]) {
     assert.equal(f.read().statuses[0].state, 'success'); assert.equal(f.read().statuses[0].description, 'VERIFIED by converge');
   });
 }
+function patchId(diff: string): string {
+  return spawnSync('git', ['patch-id', '--stable'], { input: diff, encoding: 'utf8' }).stdout.trim().split(/\s+/)[0] ?? '';
+}
+test('a stack child publishes its certificate while its base is the parent, bound to the trunk compare patch id', t => {
+  const f = fixture(); t.after(f.cleanup); stackChild(f);
+  const run = certifiedPr(f);
+  const published = f.run('publish.ts', ['--report', prReport(f), '--certificate', join(run, 'certificate.json'), '--evidence', join(f.directory, 'evidence')]);
+  assert.equal(published.status, 0, published.stderr);
+  const { dossier } = JSON.parse(published.stdout);
+  assert.equal(dossier.round.patch_id, patchId(f.state.diff)); assert.notEqual(dossier.round.patch_id, patchId(f.state.prDiff ?? ''));
+  assert.equal(dossier.certificate.round.patch_id, dossier.round.patch_id);
+  assert.equal(f.read().statuses[0].state, 'success'); assert.equal(f.read().statuses[0].description, 'VERIFIED by converge');
+  const armed = f.run('converge-arm', ['--repo', 'Example/app', '--pr', '1', '--head', f.state.head, '--verdict', 'VERIFIED', '--dry-run']);
+  assert.notEqual(armed.status, 0); assert.match(armed.stderr, /^PR base differs from trunk$/m);
+});
+test('a converge publication refuses a PR whose base left trunk after its report, before any write', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const report = prReport(f, 'converge');
+  f.state.prBase = 'parent'; f.save();
+  const published = f.run('publish.ts', ['--report', report, '--evidence', join(f.directory, 'evidence')]);
+  assert.notEqual(published.status, 0); assert.match(published.stderr, /^PR base differs from trunk$/m);
+  assert.deepEqual(f.read().statuses, []); assert.deepEqual(f.read().comments, []);
+});
 test('a certificate for another head is refused before any publication', t => {
   const f = fixture(); t.after(f.cleanup);
   const run = certifiedPr(f);

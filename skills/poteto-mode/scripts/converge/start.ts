@@ -122,12 +122,14 @@ export async function start(options: { repo: string; pr: number; toolingRef: str
   if (sha(toolingCommit.sha) !== toolingRef) throw new Error('Tooling commit does not match requested ref');
   const t = await trusted(repo, options.configPath ?? '.cursor/converge.json');
   const initial = await pull(repo, options.pr);
-  admitPull(initial, t.config, initial.head);
+  // A stack child's base is its parent branch, where only a pre-pr verdict can sit, so the base check waits for the gate; an owner always needs trunk.
+  admitPull(initial, t.config, initial.head, 'pre-pr');
   const verdict = await verdictGate(t, options.pr, initial.head, await principal());
   if (verdict.kind === 'certified') {
-    admitPull(await pull(repo, options.pr), t.config, initial.head);
+    admitPull(await pull(repo, options.pr), t.config, initial.head, verdict.dossier.round.execution);
     return { schemaVersion: 1, kind: 'certified', repo, pr: options.pr, head: initial.head, verdictUrl: verdict.url };
   }
+  admitPull(initial, t.config, initial.head);
   const key = process.env.CURSOR_API_KEY;
   if (!key) throw new Error('CURSOR_API_KEY is unavailable locally');
   const selected = selectCursorModel(await cursor('/v1/models', key), 'grok-4.7', effort);

@@ -57,11 +57,12 @@ export async function pull(repo: string, pr: number): Promise<Pull> {
     state: string(p.state), draft: p.draft, body: p.body === null ? '' : string(p.body),
     labels: array(p.labels).map(l => string(object(l).name)), authorId: integer(user.id), authorLogin: string(user.login), authorType: string(user.type), autoMerge: p.auto_merge !== null };
 }
-export function admitPull(pr: Pull, contract: Contract, head: string, proof = false): void {
+/** Only a `pre-pr` round admits a base other than trunk: a stack child publishes its certificate while its base is the parent branch. Every other execution, and the arm, still require trunk. */
+export function admitPull(pr: Pull, contract: Contract, head: string, execution: Execution = 'converge'): void {
   if (pr.state !== 'open' || pr.draft) throw new Error('PR must be open and ready');
   if (pr.head !== head) throw new Error('PR head moved');
-  if (pr.base !== contract.trunk) throw new Error('PR base differs from trunk');
-  if (!proof && pr.labels.some(label => contract.holdLabels.includes(label))) throw new Error('Hold label refuses converge');
+  if (execution !== 'pre-pr' && pr.base !== contract.trunk) throw new Error('PR base differs from trunk');
+  if (execution !== 'verdict-only' && pr.labels.some(label => contract.holdLabels.includes(label))) throw new Error('Hold label refuses converge');
 }
 export interface Trusted { repo: string; sha: string; configPath: string; config: Contract; files: Map<string, string>; workflowId: number; workflowPath: string }
 const trees = new Map<string, Map<string, string>>();
@@ -225,6 +226,19 @@ export async function features(contract: Trusted, head: string, changes: Changed
 }
 export interface TextSource { source: 'body' | 'comment' | 'log'; id: string; text: string }
 export interface ChangedFile { path: string; previous: string | null; patch: string | null; status: string }
+function changedFile(value: unknown): ChangedFile {
+  const f = object(value);
+  return { path: relativePath(f.filename), previous: f.previous_filename === undefined ? null : relativePath(f.previous_filename), patch: f.patch === undefined ? null : string(f.patch), status: string(f.status) };
+}
+/** GitHub's compare of the contract commit and a head: the files and diff every `pre-pr` round reads, before and after the PR exists. It lists at most 300 files. */
+async function compared(repo: string, contract: string, head: string): Promise<{ base: string; files: ChangedFile[]; diff: string }> {
+  const endpoint = `repos/${repo}/compare/${contract}...${head}`;
+  const [comparison, diff] = await Promise.all([api(endpoint), apiDiff(endpoint)]);
+  const c = object(comparison);
+  const files = array(c.files).map(changedFile);
+  if (files.length >= 300) throw new Error('Branch compare truncated');
+  return { base: sha(object(c.merge_base_commit).sha), files, diff };
+}
 export interface Snapshot {
   trusted: Trusted; pull: Pull; base: string; patchId: string; diff: string; files: ChangedFile[];
   features: Feature[]; reachedPaths: string[]; checks: Check[]; sources: TextSource[]; gaps: string[]; inputDigest: string; inputFingerprint: string; verificationDigest: string; dependencyOnly: boolean; testEvidence: TestEvidence;
@@ -307,24 +321,26 @@ function testProvenance(run: Record<string, unknown>, jobs: Record<string, unkno
   return { runId, attempt, jobId: integer(server.id), tests: windows[index], next: windows[index + 1] ?? null };
 }
 type TestSources = { kind: 'unused' | 'unavailable' } | { kind: 'ready'; provenance: ClinextProvenance; runnerSource: string; packageSource: string };
-/** Under pre-pr the snapshot reads no CI state (no Tests run, jobs, log or check runs): publication follows `gh pr create` while checks still move, so binding them would refuse it intermittently, and the CI runner sources stay out of the trusted files, so the PR's policy digest matches the branch snapshot the certificate was built from. */
+/** Under pre-pr the snapshot reads no CI state (no Tests run, jobs, log or check runs): publication follows `gh pr create` while checks still move, so binding them would refuse it intermittently, and the CI runner sources stay out of the trusted files, so the PR's policy digest matches the branch snapshot the certificate was built from. It also reads the files and diff from the compare the branch snapshot reads, not from the PR, whose diff starts at its base: a stack child's base is its parent branch, and the compare with trunk still yields the patch id its certificate was built from. */
 export async function snapshot(repo: string, prNumber: number, configPath: string, execution: Execution): Promise<Snapshot> {
-  const proof = execution === 'verdict-only';
   const ci = execution !== 'pre-pr';
   const [t, p] = await Promise.all([trusted(repo, configPath), pull(repo, prNumber)]);
-  admitPull(p, t.config, p.head, proof);
+  admitPull(p, t.config, p.head, execution);
   const runPromise: Promise<Record<string, unknown> | null> = ci ? workflowRun(t, p.head) : Promise.resolve(null);
   const runJobsPromise = runPromise.then(async run => run ? (await pages(`repos/${repo}/actions/runs/${integer(run.id)}/attempts/${integer(run.run_attempt)}/jobs`, 'jobs')).map(v => object(v)) : []);
   const runLogPromise = runPromise.then(run => run?.status === 'completed' ? commandAsync('gh', ['run', 'view', String(integer(run.id)), '--repo', repo, '--attempt', String(integer(run.run_attempt)), '--log']).catch(() => null) : null);
   const runEvidencePromise = Promise.all([runJobsPromise, runLogPromise]).then(([jobs, log]) => ({ jobs, log }));
   const runEvidenceSettlement = Promise.allSettled([runJobsPromise, runLogPromise, runEvidencePromise]);
-  const prepared = await Promise.all([
-    api(`repos/${repo}/compare/${t.sha}...${p.head}`), pages(`repos/${repo}/pulls/${prNumber}/files`),
-    commandAsync('gh', ['pr', 'diff', String(prNumber), '--repo', repo]), principal(), comments(repo, prNumber), ci ? checks(repo, p.head) : Promise.resolve<Check[]>([]), runPromise,
-  ]).then(async ([comparisonValue, fileValues, diff, author, allComments, observedChecks, run]) => {
-    const base = sha(object(object(comparisonValue).merge_base_commit).sha);
-    const files = fileValues.map(value => { const f = object(value); return { path: relativePath(f.filename), previous: f.previous_filename === undefined ? null : relativePath(f.previous_filename), patch: f.patch === undefined ? null : string(f.patch), status: string(f.status) }; });
+  const changes = execution === 'pre-pr' ? compared(repo, t.sha, p.head) : Promise.all([
+    api(`repos/${repo}/compare/${t.sha}...${p.head}`), pages(`repos/${repo}/pulls/${prNumber}/files`), commandAsync('gh', ['pr', 'diff', String(prNumber), '--repo', repo]),
+  ]).then(([comparisonValue, fileValues, diff]) => {
+    const files = fileValues.map(changedFile);
     if (files.length >= 3000) throw new Error('PR files truncated');
+    return { base: sha(object(object(comparisonValue).merge_base_commit).sha), files, diff };
+  });
+  const prepared = await Promise.all([
+    changes, principal(), comments(repo, prNumber), ci ? checks(repo, p.head) : Promise.resolve<Check[]>([]), runPromise,
+  ]).then(async ([{ base, files, diff }, author, allComments, observedChecks, run]) => {
     const patch = command('git', ['patch-id', '--stable'], diff).trim().split(/\s+/)[0];
     if (!patch) throw new Error('Empty PR diff');
     const testSourcesPromise = runJobsPromise.then(async (jobs): Promise<TestSources> => {
@@ -392,7 +408,7 @@ export async function snapshot(repo: string, prNumber: number, configPath: strin
   const verificationDigest = jsonHash([...t.files].sort(([a], [b]) => a.localeCompare(b)));
   const inputDigest = jsonHash({ head: p.head, base, contract: t.sha, files, diff, sources, checks: observedChecks, gaps, inputFingerprint, verificationDigest, testEvidence });
   const [final, finalCommit] = await Promise.all([pull(repo, prNumber), api(`repos/${repo}/commits/${encodeURIComponent(t.config.trunk)}`)]);
-  admitPull(final, t.config, p.head, proof);
+  admitPull(final, t.config, p.head, execution);
   if (final.body !== p.body || jsonHash(final.labels) !== jsonHash(p.labels) || sha(object(finalCommit).sha) !== t.sha) throw new Error('Snapshot changed during reconciliation');
   return { trusted: t, pull: p, base, patchId: sha(patch), diff, files, features: selection.features, reachedPaths: selection.reachedPaths, checks: observedChecks, sources, gaps, inputDigest, inputFingerprint, verificationDigest, dependencyOnly: safeDependencyChange, testEvidence };
 }
@@ -400,12 +416,7 @@ export async function snapshot(repo: string, prNumber: number, configPath: strin
 export async function branchSnapshot(repo: string, head: string, configPath: string): Promise<Snapshot> {
   const t = await trusted(repo, configPath);
   const target = sha(head);
-  const endpoint = `repos/${repo}/compare/${t.sha}...${target}`;
-  const [comparison, diff] = await Promise.all([api(endpoint), apiDiff(endpoint)]);
-  const c = object(comparison);
-  const base = sha(object(c.merge_base_commit).sha);
-  const files: ChangedFile[] = array(c.files).map(value => { const f = object(value); return { path: relativePath(f.filename), previous: f.previous_filename === undefined ? null : relativePath(f.previous_filename), patch: f.patch === undefined ? null : string(f.patch), status: string(f.status) }; });
-  if (files.length >= 300) throw new Error('Branch compare truncated');
+  const { base, files, diff } = await compared(repo, t.sha, target);
   if (!files.length) throw new Error('Branch has no changes against trunk');
   const patch = command('git', ['patch-id', '--stable'], diff).trim().split(/\s+/)[0];
   if (!patch) throw new Error('Empty branch diff');
