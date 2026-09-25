@@ -1,7 +1,7 @@
 {
   "name": "pstack",
   "displayName": "pstack",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "if you want to go fast, go deep first. pstack helps you write less, but higher quality code. rigorous agent workflows you can parallelize with confidence. Port autoral do pstack da Cursor para Claude Code e Codex.",
   "author": {
     "name": "Lauren Tan"
