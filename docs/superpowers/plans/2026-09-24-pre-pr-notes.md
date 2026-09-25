@@ -1,6 +1,6 @@
 # Pré-PR plan: implementation notes
 
-These notes carry what the parts already built taught the parts still to build. Read them before you start a part of [the plan](2026-09-24-pre-pr.md). The plan's code blocks for Parts 1 and 2 are history now. The code and [`converge-contract.md`](../../../skills/poteto-mode/references/converge-contract.md) are the reference. Decisions that belong to Victor live as Linear sub-issues of CLI-192.
+These notes carry what the parts already built taught the parts still to build. Read them before you start a part of [the plan](2026-09-24-pre-pr.md). The plan's code blocks for Parts 1 to 3 are history now. The code and [`converge-contract.md`](../../../skills/poteto-mode/references/converge-contract.md) are the reference. Decisions that belong to Victor live as Linear sub-issues of CLI-192.
 
 ## Built
 
@@ -19,14 +19,16 @@ These notes carry what the parts already built taught the parts still to build. 
 - **`start.ts` result.** `start.ts` returns `kind: launched` or `kind: certified`.
 - **Plan change.** The plan's Part 4 `sweep.md` prompt now reports its JSON in the Automation run output and never comments on a PR.
 
+**Part 3, the roles.** PR byvict/pstack-vic#31. It departs from the plan in five ways:
+- **One table of single-lane rows.** `singleLaneRows()` in `setup-pstack.ts` holds the two cloud rows and the three pre-pr rows. It derives their lanes from `roleProviders` in `converge/contract.ts`, the rule that admission applies. The pre-pr rows take no alias. `pre-pr fixer` takes the reviewer's lanes, because admission has no rule for the fixer.
+- **Warnings in two places.** `plan` and `write` both print the cross-family warnings on stderr, and the plan JSON carries them in `warnings`.
+- **Plan schema 4.** `plan.json` moves to `schemaVersion: 4`, so the script refuses a plan saved by 0.1.11.
+- **CHANGES.** `CHANGES.md` had no `## Unreleased`. The Part 1 and Part 2 entries became 0.2.0 entries, and Part 3 has its own.
+- **Plan change.** The plan's Part 4 step 1 now picks `RUN` under `${TMPDIR:-/tmp}`. See N6.
+
 ## Open, by part
 
-Numbers follow the Part 1 and Part 2 ledgers.
-
-### Part 3, roles
-
-- **N6.** Admission requires a read-only receipt for the certifier, but Grok's read-only sandbox may block every write. The certifier must write PNG and JSON artifacts under `RUN/lanes/<lane>/artifacts/`. Confirm that a Grok read-only lane can write its evidence directory, or add a mode for it. Without that, a local certifier can never produce driven coverage.
-- **N13.** `clean` is read before each run, so a contract run that leaves non-ignored untracked files makes every later run in the same worktree record `clean: false`. Keep multi-run contracts from leaving untracked files.
+Numbers follow the ledgers of Parts 1 to 3.
 
 ### Before Part 4
 
@@ -48,12 +50,15 @@ Numbers follow the Part 1 and Part 2 ledgers.
 
 ### Part 5, Clinext
 
+- **N13.** `clean` is read before each run, so a contract run that leaves non-ignored untracked files makes every later run in the same worktree record `clean: false`. pstack-vic's `npm test` and `npm run test:bun` leave none (measured 2026-09-25). Check each Clinext contract run the same way.
+- **N24.** A certifier lane is Grok `read-only`, and it cannot write inside its checkout (N6). The verify-clinext `launch` always rewrites the generated contact helpers inside the checkout (`tools/generate-contact-helpers.js` through `writePreservingEol`, called from `helpers/run.mjs`). So `launch` fails in a certifier lane. Vite's dependency cache under `client/node_modules/.vite` is the next likely write, which is a guess, not a measurement. Make `launch` write nothing inside the checkout. Then prove it with one Grok `read-only` lane that runs launch, doctor and cleanup, with `VERIFY_RUN_DIR` and `VERIFY_EVIDENCE_DIR` under `$TMPDIR`.
 - **N9.** The comment embeds the whole certificate, about 3 KB plus 250 B per artifact. 57 Clinext features with 3 artifacts each come to about 69.8 K characters, over GitHub's 65,536-character comment limit. Publication refuses such a body. Choose a smaller certificate form before Part 5.
 - **N18, N19 (CLI-193).** Any change to a file in the policy digest invalidates every outstanding certificate. In Clinext, at least 12 of 91 merges in 14 days changed such a file (measured 2026-09-25). Separately, a merge can land at a later trunk tip than the gate checked. The recommendation is to narrow the policy comparison to what the certificate uses, and not to serialize merges.
 - **N21.** `start.ts` now calls `principal()` and the gate under the "PR opened" Automation's credentials. Verify that its token can run the GraphQL viewer query and read statuses and comments. Also verify that it is the same account that publishes.
 
 ### Later
 
+- **N25.** The matrix defaults keep the four volume authoring rows on Grok, and `pre-pr reviewer` is Grok. A first-run sheet therefore prints four warnings, and the Pré-PR playbook would refuse it. Victor's sheets are crossed: Opus authors in Claude Code, and Sol authors in Codex. Moving the matrix defaults is Victor's call in `/setup-pstack`.
 - **N22.** `publish.ts` could mark the `verdict` statuses of superseded heads as `error`. That would close the reused-head case in structure instead of by rule.
 
 ### Rollout
@@ -62,6 +67,7 @@ Numbers follow the Part 1 and Part 2 ledgers.
 
 ## Resolved
 
+- **N6.** A Grok 4.7 `read-only` lane wrote a file in `$TMPDIR`, and the same write failed in its checkout and under `$HOME/.codex` (Grok CLI 1.0.41, measured 2026-09-25). Grok's documentation also lists `~/.grok`, `/tmp` and `/var/tmp` as writable in `read-only`. The certifier stays `read-only`, with no new mode. `RUN` must live under a temp root, and `converge-contract.md` says so (Part 3).
 - **N2.** A late publication with `test:` or `artifact:` claims no longer changes the policy digest. The `pre-pr` snapshot reads no CI, so the CI runner sources stay out of it (Part 1).
 - **N3.** Superseded by N14 and CLI-195.
 - **N10.** The arm bound the verdict's contract commit to the current trunk tip. Part 2's verdict gate re-derives instead.
