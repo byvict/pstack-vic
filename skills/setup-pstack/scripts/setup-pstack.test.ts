@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { loadMatrix, renderRoleSheet } from "../../../scripts/model-matrix.ts";
+import { loadMatrix, renderRoleSheet, renderSheetDocument } from "../../../scripts/model-matrix.ts";
 import {
   SetupError,
   buildPlan,
@@ -85,6 +85,20 @@ function oldSeventeenSheet(parent: string): string {
     lines.join("\n"),
     "",
   ].join("\n");
+}
+
+function nineteenRowOpusSheet(parent: string): string {
+  const volume = new Set(["feature, refactoring", "bug-fix", "perf-issue", "hillclimb"]);
+  const lines = renderRoleSheet(matrix, parent)
+    .split("\n")
+    .filter((line) => !line.startsWith("pre-pr "))
+    .map((line) => {
+      const role = line.slice(0, line.indexOf(": "));
+      return volume.has(role) ? `${role}: claude:claude-opus-5-5@xhigh` : line;
+    });
+  assert.equal(lines.length, 19);
+  assert.deepEqual(lines.slice(-2), ["pr owner: cursor:grok-4.7@high", "pr verifier: cursor:grok-4.7@high"]);
+  return renderSheetDocument(lines.join("\n"));
 }
 
 function lanesOf(plan: Plan, role: string): string[] {
@@ -259,7 +273,7 @@ describe("buildPlan", () => {
   it("on a first run takes the parent's role defaults, the matrix default efforts, and one probe per family in the map", () => {
     const plan = buildPlan({ parent: "claude", home, matrix });
     assert.equal(plan.sheet, firstRunSheet("claude"));
-    assert.equal(plan.schemaVersion, 3);
+    assert.equal(plan.schemaVersion, 4);
     assert.equal(plan.ledgerPath, join(home, ".claude", "pstack-probes.json"));
     assert.deepEqual(plan.verified, []);
     assert.deepEqual(plan.efforts, {
@@ -547,6 +561,80 @@ describe("buildPlan", () => {
   it("rejects an unknown parent", () => {
     assert.throws(() => buildPlan({ parent: "cursor", home, matrix }), SetupError);
     assert.equal(existsSync(join(home, ".cursor")), false);
+  });
+});
+
+describe("pre-pr rows", () => {
+  it("refuses a non-grok lane on a pre-pr row", () => {
+    assert.throws(() => buildPlan({ parent: "claude", home, matrix, roles: { "pre-pr reviewer": ["claude:claude-opus-5-5@xhigh"] } }), /"pre-pr reviewer" takes one lane, grok:grok-4\.7@high or grok:grok-4\.7@xhigh/);
+  });
+
+  it("refuses an alias, an effort below high, and a panel on the pre-pr rows", () => {
+    const refusal = (message: string) => (error: unknown) => error instanceof SetupError && error.message === message;
+    assert.throws(
+      () => buildPlan({ parent: "claude", home, matrix, roles: { "pre-pr certifier": ["inherit-parent"] } }),
+      refusal('role "pre-pr certifier" takes one lane, grok:grok-4.7@high or grok:grok-4.7@xhigh; got inherit-parent')
+    );
+    assert.throws(
+      () => buildPlan({ parent: "claude", home, matrix, roles: { "pre-pr fixer": ["grok:grok-4.7@medium"] } }),
+      refusal('role "pre-pr fixer" takes one lane, grok:grok-4.7@high or grok:grok-4.7@xhigh; got grok:grok-4.7@medium')
+    );
+    assert.throws(
+      () => buildPlan({ parent: "claude", home, matrix, roles: { "pre-pr reviewer": ["grok:grok-4.7@xhigh", "grok:grok-4.7@high"] } }),
+      refusal('role "pre-pr reviewer" takes one lane, grok:grok-4.7@high or grok:grok-4.7@xhigh; got grok:grok-4.7@xhigh, grok:grok-4.7@high')
+    );
+  });
+
+  it("warns when an authoring row shares the reviewer family and is silent once they differ", () => {
+    const grokAuthor = buildPlan({ parent: "claude", home, matrix, roles: { "feature, refactoring": ["grok:grok-4.7@xhigh"] } });
+    assert.deepEqual(grokAuthor.warnings, [
+      "feature, refactoring and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
+      "bug-fix and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
+      "perf-issue and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
+      "hillclimb and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
+    ]);
+    const opus = ["claude:claude-opus-5-5@xhigh"];
+    const crossed = buildPlan({ parent: "claude", home, matrix, roles: { "feature, refactoring": opus, "bug-fix": opus, "perf-issue": opus, "hillclimb": opus } });
+    assert.deepEqual(crossed.warnings, []);
+  });
+
+  it("warns for an authoring row with any lane in the reviewer's provider, never for an alias or a non-authoring row", () => {
+    const opus = "claude:claude-opus-5-5@xhigh";
+    const plan = buildPlan({
+      parent: "codex",
+      home,
+      matrix,
+      roles: {
+        "feature, refactoring": [opus],
+        "bug-fix": ["inherit-parent"],
+        "perf-issue": [opus, "grok:grok-4.6@high"],
+        hillclimb: ["auto"],
+        "hardest tasks": ["grok:grok-4.7@xhigh"],
+      },
+    });
+    assert.deepEqual(lanesOf(plan, "swarm workers"), ["grok:grok-4.6@xhigh"]);
+    assert.deepEqual(plan.warnings, [
+      "perf-issue and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
+      "hardest tasks and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
+    ]);
+  });
+
+  it("upgrades a 19-row sheet with Opus authors: the pre-pr rows take their defaults, a verified Grok 4.7 is not probed, and nothing warns", () => {
+    putSheet("claude", nineteenRowOpusSheet("claude"));
+    putLedger("claude", ["fable", "opus", "astra", "grok", "grok-4-7", "cursor-grok"]);
+    const state = loadState({ parent: "claude", home, matrix });
+    assert.equal(state.rows.length, 19);
+    const plan = buildPlan({ parent: "claude", home, matrix });
+    assert.deepEqual(plan.rows.map((r) => r.role), matrix.roles.map((r) => r.role));
+    assert.deepEqual(lanesOf(plan, "feature, refactoring"), ["claude:claude-opus-5-5@xhigh"]);
+    assert.deepEqual(lanesOf(plan, "pre-pr reviewer"), ["grok:grok-4.7@xhigh"]);
+    assert.deepEqual(lanesOf(plan, "pre-pr fixer"), ["grok:grok-4.7@xhigh"]);
+    assert.deepEqual(lanesOf(plan, "pre-pr certifier"), ["grok:grok-4.7@high"]);
+    assert.match(plan.sheet, /\ninterrogate reviewers: .*\npre-pr reviewer: grok:grok-4\.7@xhigh\npre-pr fixer: grok:grok-4\.7@xhigh\npre-pr certifier: grok:grok-4\.7@high\npr owner: cursor:grok-4\.7@high\n/);
+    assert.deepEqual(plan.efforts["grok-4-7"], ["high", "xhigh"]);
+    assert.deepEqual(plan.pairs, []);
+    assert.deepEqual(plan.verified.map((v) => v.family), ["fable", "opus", "astra", "grok", "grok-4-7", "cursor-grok"]);
+    assert.deepEqual(plan.warnings, []);
   });
 });
 
@@ -1003,7 +1091,7 @@ describe("command line", () => {
     const saved = JSON.parse(readFileSync(join(runDir, "plan.json"), "utf8"));
     assert.deepEqual(printed, saved);
     assert.equal(saved.parent, "codex");
-    assert.equal(saved.schemaVersion, 3);
+    assert.equal(saved.schemaVersion, 4);
     assert.deepEqual(saved.efforts.grok, ["high"]);
     assert.deepEqual(saved.rows.find((r: { role: string }) => r.role === "swarm workers").lanes, ["auto"]);
     assert.deepEqual(saved.rows.find((r: { role: string }) => r.role === "why synthesizer").lanes, ["claude:claude-opus-5-5@xhigh"]);
@@ -1091,13 +1179,52 @@ describe("command line", () => {
   it("probe refuses a plan.json from the previous schema", () => {
     assert.equal(cli(["plan", "--parent", "claude", "--home", home, "--dir", runDir]).code, 0);
     const path = join(runDir, "plan.json");
-    const plan = JSON.parse(readFileSync(path, "utf8")) as Plan;
-    writeFileSync(path, `${JSON.stringify({ ...plan, schemaVersion: 2 }, null, 2)}\n`);
+    const { warnings, ...older } = JSON.parse(readFileSync(path, "utf8")) as Plan;
+    assert.equal(warnings.length, 4);
+    writeFileSync(path, `${JSON.stringify({ ...older, schemaVersion: 3 }, null, 2)}\n`);
     const result = cli(["probe", "--dir", runDir]);
     assert.equal(result.code, 1);
     assert.match(result.stderr, /plan/);
     assert.match(result.stderr, /run plan again with this version of the script/);
     assert.equal(existsSync(join(home, ".claude", "pstack-models.md")), false);
+  });
+
+  it("plan and write print the plan's warnings on stderr, keep exit 0, and a crossed plan prints none", () => {
+    putLedger("claude", ["fable", "opus", "astra", "grok", "grok-4-7", "cursor-grok"]);
+    const firstRun = [
+      "warning: feature, refactoring and pre-pr reviewer are both grok; certification will refuse until one of them changes family\n",
+      "warning: bug-fix and pre-pr reviewer are both grok; certification will refuse until one of them changes family\n",
+      "warning: perf-issue and pre-pr reviewer are both grok; certification will refuse until one of them changes family\n",
+      "warning: hillclimb and pre-pr reviewer are both grok; certification will refuse until one of them changes family\n",
+    ].join("");
+    const planned = cli(["plan", "--parent", "claude", "--home", home, "--dir", runDir]);
+    assert.equal(planned.code, 0, planned.stderr);
+    assert.equal(planned.stderr, firstRun);
+    assert.deepEqual(JSON.parse(planned.stdout).warnings, [
+      "feature, refactoring and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
+      "bug-fix and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
+      "perf-issue and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
+      "hillclimb and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
+    ]);
+    const written = cli(["write", "--dir", runDir, "--home", home]);
+    assert.equal(written.code, 0, written.stderr);
+    assert.equal(written.stderr, firstRun);
+    assert.equal(JSON.parse(written.stdout).sheet, "created");
+
+    const crossedDir = join(home, "crossed-run");
+    const opus = "claude:claude-opus-5-5@xhigh";
+    const crossed = cli([
+      "plan", "--parent", "claude", "--home", home, "--dir", crossedDir,
+      "--role", `feature, refactoring=${opus}`, "--role", `bug-fix=${opus}`, "--role", `perf-issue=${opus}`, "--role", `hillclimb=${opus}`,
+    ]);
+    assert.equal(crossed.code, 0, crossed.stderr);
+    assert.equal(crossed.stderr, "");
+    assert.deepEqual(JSON.parse(crossed.stdout).warnings, []);
+    const crossedWrite = cli(["write", "--dir", crossedDir, "--home", home]);
+    assert.equal(crossedWrite.code, 0, crossedWrite.stderr);
+    assert.equal(crossedWrite.stderr, "");
+    assert.equal(JSON.parse(crossedWrite.stdout).sheet, "updated");
+    assert.match(readFileSync(sheetPathFor("claude", home), "utf8"), /^feature, refactoring: claude:claude-opus-5-5@xhigh$/m);
   });
 });
 
@@ -1331,7 +1458,7 @@ describe("probe target", () => {
     const plan = mixedPlan();
     savePlan(runDir, plan);
     const saved = loadPlan(runDir);
-    assert.equal(saved.schemaVersion, 3);
+    assert.equal(saved.schemaVersion, 4);
     assert.equal("target" in saved, false);
     assert.ok(saved.pairs.every((pair) => !("transport" in pair)));
 
@@ -1381,7 +1508,7 @@ describe("probe target", () => {
       }
     );
     const after = loadPlan(runDir);
-    assert.equal(after.schemaVersion, 3);
+    assert.equal(after.schemaVersion, 4);
     assert.equal("target" in after, false);
   });
 
