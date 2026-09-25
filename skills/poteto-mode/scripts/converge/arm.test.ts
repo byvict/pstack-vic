@@ -166,7 +166,7 @@ test('a pre-pr verdict re-derives over a new plain comment and arms', t => {
   const f = fixture(); t.after(f.cleanup); publishCertificate(f);
   const live = f.read(); live.comments.push(comment('Looks good to me.')); Object.assign(f.state, live); f.save();
   const result = arm(f, false, ['--pending']); assert.equal(result.status, 0, result.stderr);
-  assert.equal(JSON.parse(result.stdout).steps[3], 'Re-derived the pre-pr verdict over changed PR text');
+  assert.equal(JSON.parse(result.stdout).steps[3], `Re-derived the pre-pr verdict at trunk tip ${'a'.repeat(40)} over changed PR text`);
   assert.deepEqual(f.read().mutations, merge(f.state.head));
 });
 for (const scenario of ['claim', 'injection'] as const) {
@@ -187,4 +187,12 @@ test('a converge verdict still refuses a new comment', t => {
   const result = arm(f, false, ['--pending']); assert.notEqual(result.status, 0);
   assert.match(result.stderr, /^PR text changed after verification$/m);
   assert.deepEqual(f.read().mutations, []);
+});
+test('a pre-pr verdict re-derives on every arm, once, even when nothing moved', t => {
+  const f = fixture(); t.after(f.cleanup); publishCertificate(f);
+  const before = f.calls().length;
+  const result = arm(f, false, ['--pending']); assert.equal(result.status, 0, result.stderr);
+  assert.equal(f.calls().slice(before).filter(call => call[0] === 'pr' && call[1] === 'diff').length, 1);
+  assert.equal(JSON.parse(result.stdout).steps[3], `Re-derived the pre-pr verdict at trunk tip ${'a'.repeat(40)}`);
+  assert.deepEqual(f.read().mutations, merge(f.state.head));
 });
