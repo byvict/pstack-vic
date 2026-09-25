@@ -37,7 +37,7 @@ export async function sweep(options: { repo: string; configPath?: string; dryRun
       if (verdict.kind === 'none') { skip('no trusted verdict on head'); continue; }
       if (verdict.kind === 'foreign') { swept.push({ pr, head, outcome: 'refused', reason: verdict.reason }); continue; }
       const result = await arm({ repo, pr, head, verdict: 'VERIFIED', dryRun: options.dryRun, configPath: options.configPath, pending: true });
-      swept.push({ pr, head, outcome: result.kind, reason: '' });
+      swept.push({ pr, head, outcome: result.kind, reason: result.rederived ?? '' });
     } catch (error) { swept.push({ pr, head, outcome: 'refused', reason: error instanceof Error ? error.message : 'Arm failed' }); }
   }
   return { swept };

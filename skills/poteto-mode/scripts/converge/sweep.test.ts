@@ -52,11 +52,12 @@ test('sweep arms a certificate published before trunk moved, and its dry run mak
   moveTrunk(f); listed(f);
   const dry = f.run('converge-sweep', ['--repo', 'Example/app', '--dry-run']);
   assert.equal(dry.status, 0, dry.stderr);
-  assert.deepEqual(outcomes(dry.stdout), [[1, 'dry-run', '']]);
+  const step = `Re-derived the pre-pr verdict from contract ${'a'.repeat(40)} at trunk tip ${'d'.repeat(40)}`;
+  assert.deepEqual(outcomes(dry.stdout), [[1, 'dry-run', step]]);
   assert.deepEqual(f.read().mutations, []);
   const result = f.run('converge-sweep', ['--repo', 'Example/app']);
   assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(outcomes(result.stdout), [[1, 'armed', '']]);
+  assert.deepEqual(outcomes(result.stdout), [[1, 'armed', step]]);
   assert.deepEqual(f.read().mutations, merge(f.state.head));
 });
 test('sweep refuses a VERIFIED verdict status from another account and exits 1', t => {

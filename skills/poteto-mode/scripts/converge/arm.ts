@@ -69,7 +69,7 @@ export async function disarm(repo: string, pr: number): Promise<boolean> {
   command('gh', ['pr', 'merge', String(pr), '--repo', repo, '--disable-auto']);
   return true;
 }
-export async function arm(options: { repo: string; pr: number; head: string; verdict: string; dryRun: boolean; configPath?: string; pending?: boolean }): Promise<{ kind: 'dry-run' | 'armed'; head: string; steps: string[] }> {
+export async function arm(options: { repo: string; pr: number; head: string; verdict: string; dryRun: boolean; configPath?: string; pending?: boolean }): Promise<{ kind: 'dry-run' | 'armed'; head: string; steps: string[]; rederived: string | null }> {
   const repo = repoName(options.repo);
   const head = sha(options.head);
   if (options.verdict !== 'VERIFIED' || !Number.isSafeInteger(options.pr) || options.pr < 1) throw new Error('Arm requires a PR number and VERIFIED');
@@ -90,11 +90,11 @@ export async function arm(options: { repo: string; pr: number; head: string; ver
     if (jsonHash(await verdict(t, options.pr, head, author)) !== jsonHash(verified)) throw new Error('Verdict changed before arm');
     admitPull(await pull(repo, options.pr), t.config, head);
     const steps = ['Read latest push-to-trunk Tests', 'Read live protection and required checks', 'Read trusted exact-head verdict', ...(rederived ? [rederived] : []), 'gh pr merge --squash --auto --match-head-commit ' + head + (options.pending ? ' (checks pending)' : '')];
-    if (options.dryRun) return { kind: 'dry-run', head, steps };
+    if (options.dryRun) return { kind: 'dry-run', head, steps, rederived };
     command('gh', ['pr', 'merge', String(options.pr), '--repo', repo, '--squash', '--auto', '--match-head-commit', head]);
     const after = await pull(repo, options.pr);
     if (after.state === 'open') admitPull(after, t.config, head);
-    return { kind: 'armed', head, steps };
+    return { kind: 'armed', head, steps, rederived };
   } catch (error) {
     if (!options.dryRun) {
       try { await disarm(repo, options.pr); }
