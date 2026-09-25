@@ -136,3 +136,19 @@ test('sweep judges each PR on its live read, not on the listing', t => {
   assert.deepEqual(outcomes(result.stdout), [[1, 'armed', '']]);
   assert.deepEqual(f.read().mutations, merge(f.state.head));
 });
+test('sweep reads the PR back after a failed disarm command and reports what it finds', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const live = f.read(); live.hold = true; live.autoMerge = true; live.failDisarm = true; live.after = { endpoint: 'pulls/1', reads: 2, set: { prState: 'closed', autoMerge: false } }; Object.assign(f.state, live); f.save(); listed(f);
+  const result = f.run('converge-sweep', ['--repo', 'Example/app']);
+  assert.equal(result.status, 1);
+  assert.deepEqual(outcomes(result.stdout), [[1, 'refused', 'hold label, PR merged or closed before disarm']]);
+  assert.deepEqual(f.read().mutations, []);
+});
+test('sweep checks an armed draft against the verdict gate before the draft skip', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const live = f.read(); live.prDraft = true; live.autoMerge = true; Object.assign(f.state, live); f.save(); listed(f);
+  const result = f.run('converge-sweep', ['--repo', 'Example/app']);
+  assert.equal(result.status, 1);
+  assert.deepEqual(outcomes(result.stdout), [[1, 'refused', 'Latest verdict status is not trusted VERIFIED, auto-merge disarmed']]);
+  assert.deepEqual(f.read().mutations, disabled);
+});

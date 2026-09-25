@@ -1,6 +1,6 @@
 import { parseArgs } from 'node:util';
 import { integer, object, repoName, sha } from './contract.ts';
-import { pages, principal, pull, trusted, verdictStatus, type Trusted } from './github.ts';
+import { pages, principal, pull, RequestError, trusted, verdictStatus, type Trusted } from './github.ts';
 import { verdictGate } from './gate.ts';
 import { arm, disarm } from './arm.ts';
 
@@ -8,7 +8,9 @@ export interface Swept { pr: number; head: string; outcome: 'armed' | 'disarmed'
 const disarmed = { 'would disarm': 'would disarm auto-merge', disarmed: 'auto-merge disarmed', 'already off': 'auto-merge already off', closed: 'PR merged or closed before disarm', 'still armed': 'auto-merge still pending after disarm' } as const;
 async function observedDisarm(repo: string, pr: number, dryRun: boolean): Promise<keyof typeof disarmed> {
   if (dryRun) return 'would disarm';
-  const ran = await disarm(repo, pr);
+  let ran = false;
+  try { ran = await disarm(repo, pr); }
+  catch (error) { if (!(error instanceof RequestError)) throw error; }
   const after = await pull(repo, pr);
   if (after.state !== 'open') return 'closed';
   if (after.autoMerge) return 'still armed';
@@ -27,12 +29,12 @@ async function judge(t: Trusted, pr: number, author: number, options: { configPa
     return result(outcome, done === 'disarmed' ? 'hold label' : 'hold label, ' + disarmed[done]);
   }
   if (held) return result('skipped', 'hold label');
-  if (p.draft) return result('skipped', 'draft');
   if (p.autoMerge) {
     const gate = await verdictGate(t, pr, head, author);
     if (gate.kind === 'certified') return result('skipped', 'auto-merge already pending');
     return result('refused', gate.reason + ', ' + disarmed[await observedDisarm(t.repo, pr, options.dryRun)]);
   }
+  if (p.draft) return result('skipped', 'draft');
   const verdict = await verdictStatus(t.repo, pr, head, author);
   if (verdict.kind === 'none') return result('skipped', 'no trusted verdict on head');
   if (verdict.kind === 'foreign') return result('refused', verdict.reason);
