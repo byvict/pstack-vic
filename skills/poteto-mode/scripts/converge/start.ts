@@ -3,7 +3,8 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { object, repoName, sha, string } from './contract.ts';
-import { admitPull, api, pull, trusted } from './github.ts';
+import { admitPull, api, principal, pull, trusted } from './github.ts';
+import { verdictGate } from './gate.ts';
 import { selectCursorModel } from '../runner/http-lane.ts';
 
 type Effort = 'high' | 'xhigh';
@@ -12,6 +13,7 @@ interface LaunchReceipt {
   model: 'grok-4.7'; effort: Effort; verifierEffort: Effort; modelSelection: string;
   agentId: string; runId: string; agentUrl: string;
 }
+export interface CertifiedHead { schemaVersion: 1; kind: 'certified'; repo: string; pr: number; head: string; verdictUrl: string }
 
 const SHEET_LANE = /^cursor:grok-4\.7@(high|xhigh)$/;
 
@@ -90,7 +92,7 @@ If NOT VERIFIED, inspect the findings and fix the branch yourself. Confirm the l
 If VERIFIED, run converge-arm with the exact current head. It checks the latest trunk Tests, effective branch protection, required checks including verdict, the authenticated current-head verdict, and hold labels. If it refuses, resolve the stated condition or apply needs-victor with evidence. Monitor auto-merge and disarm on a new hold, invalid verdict, changed head, or timeout. After merge, identify and watch the resulting main Tests run. Report the PR URL, all Cursor run URLs, requested model and effort, evidence, fix, verdict URL, merged commit, and main Tests result in a PR comment. Never assert the served model from a request receipt alone. Do not change production data or invent a production change for this workflow.`;
 }
 
-export async function start(options: { repo: string; pr: number; toolingRef: string; stateDirectory?: string; effort?: Effort; sheetPath?: string; configPath?: string }): Promise<LaunchReceipt> {
+export async function start(options: { repo: string; pr: number; toolingRef: string; stateDirectory?: string; effort?: Effort; sheetPath?: string; configPath?: string }): Promise<(LaunchReceipt & { kind: 'launched' }) | CertifiedHead> {
   const repo = repoName(options.repo);
   const toolingRef = sha(options.toolingRef);
   const floors = readSheet(options.sheetPath);
@@ -101,26 +103,31 @@ export async function start(options: { repo: string; pr: number; toolingRef: str
   try {
     const existing = parseReceipt(JSON.parse(readFileSync(receiptPath, 'utf8')));
     if (existing.repo !== repo || existing.pr !== options.pr || existing.toolingRef !== toolingRef || existing.effort !== effort || existing.verifierEffort !== verifierEffort) throw new Error('Existing launch belongs to different inputs');
-    return existing;
+    return { kind: 'launched', ...existing };
   } catch (error) { if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw new Error('Existing launch receipt is invalid or differs; inspect before retry'); }
   if (existsSync(resolve(directory, 'intent.json'))) {
     const key = process.env.CURSOR_API_KEY;
     if (!key) throw new Error('CURSOR_API_KEY is unavailable for launch recovery');
-    return recover(directory, key, { repo, pr: options.pr, toolingRef, effort, verifierEffort });
+    return { kind: 'launched', ...(await recover(directory, key, { repo, pr: options.pr, toolingRef, effort, verifierEffort })) };
   }
   const toolingCommit = object(await api(`repos/byvict/pstack-vic/commits/${toolingRef}`));
   if (sha(toolingCommit.sha) !== toolingRef) throw new Error('Tooling commit does not match requested ref');
   const t = await trusted(repo, options.configPath ?? '.cursor/converge.json');
   const initial = await pull(repo, options.pr);
   admitPull(initial, t.config, initial.head);
+  const verdict = await verdictGate(t, options.pr, initial.head, await principal());
+  if (verdict.kind === 'certified') {
+    admitPull(await pull(repo, options.pr), t.config, initial.head);
+    return { schemaVersion: 1, kind: 'certified', repo, pr: options.pr, head: initial.head, verdictUrl: verdict.url };
+  }
   const key = process.env.CURSOR_API_KEY;
   if (!key) throw new Error('CURSOR_API_KEY is unavailable locally');
   const selected = selectCursorModel(await cursor('/v1/models', key), 'grok-4.7', effort);
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const prompt = ownerPrompt({ repo, pr: options.pr, head: initial.head, toolingRef, effort, verifierEffort });
   const intent = { schemaVersion: 1, repo, pr: options.pr, head: initial.head, toolingRef, model: 'grok-4.7', effort, verifierEffort, modelSelection: selected.evidence, prompt, createdAt: new Date().toISOString() };
-  writeFileSync(resolve(directory, 'intent.json'), JSON.stringify(intent, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
   admitPull(await pull(repo, options.pr), t.config, initial.head);
+  writeFileSync(resolve(directory, 'intent.json'), JSON.stringify(intent, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
   const response = object(await cursor('/v1/agents', key, {
     name: `converge ${repo}#${options.pr} ${initial.head.slice(0, 8)}`,
     repos: [{ url: `https://github.com/${repo}`, prUrl: `https://github.com/${repo}/pull/${options.pr}` }],
@@ -134,7 +141,7 @@ export async function start(options: { repo: string; pr: number; toolingRef: str
   const receipt = parseReceipt({ schemaVersion: 1, repo, pr: options.pr, head: initial.head, toolingRef, model: 'grok-4.7', effort, verifierEffort, modelSelection: selected.evidence,
     agentId: agent.id, runId: run.id, agentUrl: agent.url });
   writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
-  return receipt;
+  return { kind: 'launched', ...receipt };
 }
 
 function parseReceipt(value: unknown): LaunchReceipt {

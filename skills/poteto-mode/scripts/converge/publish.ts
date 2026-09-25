@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
-import { array, digest, integer, jsonHash, object, oneOf, parseFinding, parseReport, parseRound, parseObligation, riskObligation, sameObligation, string, strings, sha, parseExecutionId, type Decision, type Dossier, type Finding, type Report } from './contract.ts';
-import { admitPull, api, comments, isPublication, pages, principal, pull, snapshot } from './github.ts';
+import { array, digest, integer, jsonHash, object, oneOf, parseFinding, parseReport, parseRound, parseObligation, riskObligation, sameObligation, string, strings, sha, parseExecutionId, type Decision, type Dossier, type Finding, type Report, type Role } from './contract.ts';
+import { admitPull, api, comments, isPublication, principal, pull, snapshot, statuses } from './github.ts';
 import { analyze } from './reconcile.ts';
 import { admitLane, type AdmittedLane } from './evidence.ts';
 import { admitCertificate, parseCertificate, type Certificate } from './certify.ts';
@@ -28,6 +28,9 @@ export function decide(report: Report, lanes: AdmittedLane[]): Decision {
   const firstReason = reasons[0];
   if (firstReason) return { verdict: 'INCONCLUSIVE', displayResult: 'INCONCLUSIVE', findings: [], reasons: [firstReason, ...reasons.slice(1)] };
   return { verdict: 'VERIFIED', displayResult: report.mode === 'ci-only' ? 'CI-only' : 'VERIFIED', findings: [], reasons: [] };
+}
+export function retainedLanes(roles: Role[], dossier: Dossier, commentUrl: string): AdmittedLane[] {
+  return roles.map(role => ({ role, coverage: dossier.coverage, risks: dossier.riskAdjudication, findings: [], gaps: [], artifacts: dossier.artifactIds.map(id => ({ id, path: commentUrl, digest: dossier.evidenceDigest, mediaType: 'retained' })), receiptDigest: dossier.evidenceDigest }));
 }
 export function parseDossier(value: unknown): Dossier {
   const v = object(value);
@@ -65,9 +68,6 @@ export function dossierFromComment(value: unknown): Dossier {
   if (dossier.round.id !== match[1]) throw new Error('Verdict marker identity mismatch');
   return dossier;
 }
-export async function statuses(repo: string, head: string): Promise<Record<string, unknown>[]> {
-  return (await pages(`repos/${repo}/commits/${head}/statuses`)).map(v => object(v)).sort((a, b) => integer(b.id) - integer(a.id));
-}
 /** A pre-pr report publishes before the PR's CI finishes, so it carries only its certificate and no CI-backed body claims. */
 export async function publishVerdict(options: { reportFile: string; laneFiles: string[]; evidenceDirectory: string; retainCommentUrl?: string; certificateFile?: string }): Promise<{ dossier: Dossier; commentUrl: string; statusId: number }> {
   const report = parseReport(JSON.parse(readFileSync(options.reportFile, 'utf8')));
@@ -93,7 +93,7 @@ export async function publishVerdict(options: { reportFile: string; laneFiles: s
     const oldStatus = (await statuses(r.repo, old.round.head)).find(s => s.context === 'verdict');
     if (!oldStatus || oldStatus.target_url !== options.retainCommentUrl || integer(object(oldStatus.creator).id) !== author || oldStatus.description !== 'VERIFIED by converge' || oldStatus.state !== (r.execution === 'converge' ? 'success' : 'error')) throw new Error('Retained verdict status is not authoritative');
     retainedFrom = { round: old.round.id, head: old.round.head, commentUrl: options.retainCommentUrl };
-    for (const role of report.lanes) admitted.push({ role, coverage: old.coverage, risks: old.riskAdjudication, findings: [], gaps: [], artifacts: old.artifactIds.map(id => ({ id, path: options.retainCommentUrl ?? '', digest: old.evidenceDigest, mediaType: 'retained' })), receiptDigest: old.evidenceDigest });
+    admitted.push(...retainedLanes(report.lanes, old, options.retainCommentUrl));
   }
   let certificate: Certificate | null = null;
   if (options.certificateFile) {
@@ -110,14 +110,17 @@ export async function publishVerdict(options: { reportFile: string; laneFiles: s
   if (body.length > 65_536) throw new Error(`Verdict comment exceeds GitHub's 65536-character limit (${body.length})`);
   const existing = (await comments(r.repo, r.pr)).filter(c => isPublication(c, author) && string(c.body).startsWith(`<!-- converge:v1 ${r.id} -->`));
   if (existing.some(c => c.body !== body)) throw new Error('Divergent verdict already published for this round');
-  admitPull(await pull(r.repo, r.pr), current.trusted.config, r.head, r.execution === 'verdict-only');
-  const comment = existing[0] ?? object(await api(`repos/${r.repo}/issues/${r.pr}/comments`, { body }));
-  const commentUrl = string(comment.html_url);
-  if (!new RegExp(`^https://github\\.com/${r.repo}/pull/${r.pr}#issuecomment-[0-9]+$`, 'i').test(commentUrl)) throw new Error('Unexpected verdict comment URL');
   const state = r.execution === 'verdict-only' ? 'error' : dossier.decision.verdict === 'VERIFIED' ? 'success' : dossier.decision.verdict === 'NOT VERIFIED' ? 'failure' : 'error';
   const description = `${dossier.decision.verdict} by converge`;
-  const prior = (await statuses(r.repo, r.head)).filter(s => s.context === 'verdict' && s.target_url === commentUrl && integer(object(s.creator).id) === author);
+  const found = existing[0];
+  const prior = found ? (await statuses(r.repo, r.head)).filter(s => s.context === 'verdict' && s.target_url === found.html_url && integer(object(s.creator).id) === author) : [];
   if (prior.some(s => s.state !== state || s.description !== description)) throw new Error('Divergent status already published for this round');
+  const live = await pull(r.repo, r.pr);
+  admitPull(live, current.trusted.config, r.head, r.execution === 'verdict-only');
+  if (live.autoMerge && !prior.length) throw new Error('Auto-merge is pending on this PR; disarm it before publishing a verdict');
+  const comment = found ?? object(await api(`repos/${r.repo}/issues/${r.pr}/comments`, { body }));
+  const commentUrl = string(comment.html_url);
+  if (!new RegExp(`^https://github\\.com/${r.repo}/pull/${r.pr}#issuecomment-[0-9]+$`, 'i').test(commentUrl)) throw new Error('Unexpected verdict comment URL');
   const status = prior[0] ?? object(await api(`repos/${r.repo}/statuses/${r.head}`, { context: 'verdict', state, description, target_url: commentUrl }));
   const commentRead = object(await api(`repos/${r.repo}/issues/comments/${integer(comment.id)}`));
   if (commentRead.body !== body || integer(object(commentRead.user).id) !== author || !(await statuses(r.repo, r.head)).some(s => s.id === status.id && s.state === state && s.target_url === commentUrl && integer(object(s.creator).id) === author)) throw new Error('Publication read-back failed; recover before any other action');

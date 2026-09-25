@@ -16,13 +16,14 @@ function childEnvironment(binary: string, credential: 'writer' | 'installation' 
   return env;
 }
 
+export class RequestError extends Error {}
 export function command(binary: string, args: string[], input?: string): string {
   const result = spawnSync(binary, args, { input, encoding: 'utf8', env: childEnvironment(binary), maxBuffer: 24 * 1024 * 1024, timeout: 90_000 });
-  if (result.error || result.status !== 0) throw new Error(`${binary} request failed`);
+  if (result.error || result.status !== 0) throw new RequestError(`${binary} request failed`);
   return result.stdout;
 }
 export function commandAsync(binary: string, args: string[], credential: 'writer' | 'installation' = 'writer'): Promise<string> {
-  return new Promise((resolve, reject) => execFile(binary, args, { encoding: 'utf8', env: childEnvironment(binary, credential), maxBuffer: 24 * 1024 * 1024, timeout: 90_000 }, (error, stdout) => error ? reject(new Error(`${binary} request failed`)) : resolve(stdout)));
+  return new Promise((resolve, reject) => execFile(binary, args, { encoding: 'utf8', env: childEnvironment(binary, credential), maxBuffer: 24 * 1024 * 1024, timeout: 90_000 }, (error, stdout) => error ? reject(new RequestError(`${binary} request failed`)) : resolve(stdout)));
 }
 export async function api(endpoint: string, body?: unknown): Promise<unknown> {
   if (body !== undefined) return JSON.parse(command('gh', ['api', endpoint, '--method', 'POST', '--input', '-'], JSON.stringify(body)));
@@ -53,7 +54,7 @@ export function admitPull(pr: Pull, contract: Contract, head: string, proof = fa
   if (pr.base !== contract.trunk) throw new Error('PR base differs from trunk');
   if (!proof && pr.labels.some(label => contract.holdLabels.includes(label))) throw new Error('Hold label refuses converge');
 }
-export interface Trusted { repo: string; sha: string; config: Contract; files: Map<string, string>; workflowId: number; workflowPath: string }
+export interface Trusted { repo: string; sha: string; configPath: string; config: Contract; files: Map<string, string>; workflowId: number; workflowPath: string }
 const trees = new Map<string, Map<string, string>>();
 async function tree(repo: string, commit: string): Promise<Map<string, string>> {
   const treeKey = repo + '/' + commit;
@@ -180,7 +181,7 @@ export async function trusted(repo: string, configPath: string): Promise<Trusted
   const workflowPath = relativePath(workflow.path);
   const files = new Map([[configPath, source]]);
   await Promise.all([...new Set([config.verifySkill, config.featureMap, workflowPath].filter((p): p is string => p !== null))].map(async path => files.set(path, await blob(repo, commit, path))));
-  return { repo, sha: commit, config, files, workflowId: integer(workflow.id), workflowPath };
+  return { repo, sha: commit, configPath, config, files, workflowId: integer(workflow.id), workflowPath };
 }
 export async function features(contract: Trusted, head: string, changes: ChangedFile[]): Promise<{ features: Feature[]; reachedPaths: string[] }> {
   if (contract.config.featureMap === null) return { features: [], reachedPaths: [] };
@@ -229,6 +230,21 @@ export async function comments(repo: string, pr: number): Promise<Record<string,
 export function isPublication(comment: Record<string, unknown>, author: number): boolean {
   const body = typeof comment.body === 'string' ? comment.body : '';
   return integer(object(comment.user).id) === author && /^<!-- converge:v1 [a-f0-9-]{36} -->\n```json\n/.test(body);
+}
+export async function statuses(repo: string, head: string): Promise<Record<string, unknown>[]> {
+  return (await pages(`repos/${repo}/commits/${head}/statuses`)).map(v => object(v)).sort((a, b) => integer(b.id) - integer(a.id));
+}
+export type VerdictStatus = { kind: 'trusted'; url: string; commentId: string } | { kind: 'foreign' | 'none'; reason: string };
+/** Only the newest `verdict` status on the head counts. A VERIFIED one that another account posted is `foreign`, not `none`, so a caller can refuse it loudly instead of treating the PR as uncertified. */
+export async function verdictStatus(repo: string, pr: number, head: string, author: number): Promise<VerdictStatus> {
+  const status = (await statuses(repo, head)).find(s => s.context === 'verdict');
+  if (!status || status.state !== 'success' || status.description !== 'VERIFIED by converge') return { kind: 'none', reason: 'Latest verdict status is not trusted VERIFIED' };
+  const creator = object(status.creator);
+  if (integer(creator.id) !== author) return { kind: 'foreign', reason: 'VERIFIED verdict status was posted by another account: ' + (typeof creator.login === 'string' ? creator.login : String(creator.id)) };
+  const url = typeof status.target_url === 'string' ? status.target_url : '';
+  const prefix = `https://github.com/${repo}/pull/${pr}#issuecomment-`;
+  if (!url.startsWith(prefix) || !/^\d+$/.test(url.slice(prefix.length))) return { kind: 'none', reason: 'Verdict status does not link to this PR' };
+  return { kind: 'trusted', url, commentId: url.slice(prefix.length) };
 }
 export async function checks(repo: string, head: string): Promise<Check[]> {
   const all = (await pages(`repos/${repo}/commits/${head}/check-runs?filter=all`, 'check_runs', 'installation')).map(value => {

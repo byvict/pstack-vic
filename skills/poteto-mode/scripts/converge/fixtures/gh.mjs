@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync, writeFileSync, appendFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, appendFileSync, renameSync } from 'node:fs';
 const file = process.env.CONVERGE_FIXTURE;
 const state = JSON.parse(readFileSync(file, 'utf8'));
 const args = process.argv.slice(2);
@@ -9,13 +9,22 @@ function send(value) {
   const text = JSON.stringify(args.includes('--slurp') ? [value] : value);
   process.stdout.write(color ? '\x1b[32m' + text + '\x1b[0m' : text);
 }
-function save() { writeFileSync(file, JSON.stringify(state)); }
+function save() { const next = `${file}.${process.pid}`; writeFileSync(next, JSON.stringify(state)); renameSync(next, file); }
+function later(endpoint) { const after = state.after; if (!after || after.endpoint !== endpoint) return; if (after.reads-- <= 0) Object.assign(state, after.set); save(); }
 function fail() { process.exit(1); }
 const repo = 'Example/app';
 const root = `repos/${repo}`;
 if (args[0] === 'pr' && args[1] === 'diff') process.stdout.write(state.diff);
 else if (args[0] === 'run') process.stdout.write(state.log ?? 'Tests completed\n');
-else if (args[0] === 'pr' && args[1] === 'merge') { state.mutations.push(args); save(); process.stdout.write('{}'); }
+else if (args[0] === 'pr' && args[1] === 'merge') {
+  if (args.includes('--disable-auto') && state.failDisarm === true) fail();
+  state.mutations.push(args);
+  if (args.includes('--auto')) state.autoMerge = true;
+  if (args.includes('--disable-auto') && !state.stickyAutoMerge) state.autoMerge = false;
+  save();
+  if (args.includes('--disable-auto') && state.failDisarm === 'after') fail();
+  process.stdout.write('{}');
+}
 else if (args[0] === 'api') {
   const raw = args[1];
   const endpoint = raw.split('?')[0];
@@ -28,7 +37,7 @@ else if (args[0] === 'api') {
       const comment = { id, body: body.body, user: { id: 7 }, html_url: `https://github.com/${repo}/pull/1#issuecomment-${id}`, updated_at: '2026-09-21T00:00:00Z' };
       state.comments.push(comment); save(); send(comment);
     } else if (endpoint === `${root}/statuses/${state.head}`) {
-      const status = { ...body, id: 200 + state.statuses.length, creator: { id: 7 } };
+      const status = { ...body, id: 200 + state.statuses.length, creator: { id: 7 }, sha: state.head };
       state.statuses.unshift(status); save(); send(status);
     } else fail();
   } else if (endpoint === 'graphql') {
@@ -44,8 +53,12 @@ else if (args[0] === 'api') {
     send({ sha: endpoint.slice('repos/byvict/pstack-vic/commits/'.length) });
   }
   else if (endpoint === root) send({ default_branch: 'main' });
-  else if (endpoint === `${root}/pulls/1`) send({ number: 1, head: { sha: state.head, ref: 'change' }, base: { ref: 'main' }, state: 'open', draft: false, body: state.body, labels: state.hold ? [{ name: 'needs-victor' }] : [], user: { id: 10, login: 'author', type: 'User' }, auto_merge: state.autoMerge ? {} : null });
-  else if (endpoint === `${root}/commits/main`) send({ sha: state.trunk });
+  else if (endpoint === `${root}/pulls/1`) {
+    later('pulls/1');
+    send({ number: 1, head: { sha: state.head, ref: 'change' }, base: { ref: state.prBase }, state: state.prState, draft: state.prDraft, body: state.body, labels: state.hold ? [{ name: 'needs-victor' }] : [], user: { id: 10, login: 'author', type: 'User' }, auto_merge: state.autoMerge ? {} : null });
+  }
+  else if (/^repos\/Example\/app\/pulls\/\d+$/.test(endpoint) && state.pulls.some(p => p.number === Number(endpoint.split('/').at(-1)))) send(state.pulls.find(p => p.number === Number(endpoint.split('/').at(-1))));
+  else if (endpoint === `${root}/commits/main`) { later('commits/main'); send({ sha: state.trunk }); }
   else if (endpoint.startsWith(`${root}/git/trees/`)) send({ truncated: false, tree: Object.keys(state.blobs).map(path => ({ path, mode: '100644' })) });
   else if (endpoint.startsWith(`${root}/contents/`)) {
     const path = endpoint.slice(`${root}/contents/`.length);
@@ -70,12 +83,12 @@ else if (args[0] === 'api') {
     if (state.requireInstallationChecks && (process.env.GH_TOKEN || process.env.GITHUB_TOKEN)) fail();
     send({ check_runs: state.checks.map(c => ({ ...c, head_sha: state.head })) });
   }
-  else if (endpoint === `${root}/actions/workflows/${state.workflowId}/runs`) send({ workflow_runs: [{ id: 8, workflow_id: state.workflowId, head_sha: query.get('head_sha'), event: query.get('event') ?? 'pull_request', head_branch: 'main', run_attempt: 1, status: 'completed', conclusion: state.trunkRed && query.get('event') === 'push' ? 'failure' : 'success', ...state.runOverrides }] });
+  else if (endpoint === `${root}/actions/workflows/${state.workflowId}/runs`) send({ workflow_runs: [{ id: 8, workflow_id: state.workflowId, head_sha: query.get('head_sha'), event: query.get('event') ?? 'pull_request', head_branch: 'main', run_attempt: 1, status: 'completed', conclusion: state.trunkRed && query.get('event') === 'push' ? 'failure' : 'success', ...(query.get('event') === 'push' ? {} : state.runOverrides) }] });
   else if (endpoint === `${root}/actions/runs/${state.runOverrides.id ?? 8}/attempts/${state.runOverrides.run_attempt ?? 1}/jobs`) send({ jobs: state.jobs });
   else if (endpoint === `${root}/issues/1/comments`) send(state.comments);
   else if (endpoint === `${root}/pulls/1/comments`) send([]);
-  else if (endpoint.startsWith(`${root}/issues/comments/`)) send(state.comments.find(c => c.id === Number(endpoint.split('/').at(-1))) ?? {});
-  else if (endpoint.endsWith('/statuses')) send(state.statuses);
+  else if (endpoint.startsWith(`${root}/issues/comments/`)) { const found = state.comments.find(c => c.id === Number(endpoint.split('/').at(-1))); if (!found) fail(); send(found); }
+  else if (endpoint.endsWith('/statuses')) send(state.statuses.filter(s => (s.sha ?? state.head) === endpoint.split('/')[4]));
   else if (endpoint === `${root}/branches/main/protection`) send({ required_status_checks: { contexts: state.protected, checks: state.protected.map(context => ({ context, app_id: context === 'verdict' ? null : 15368 })) } });
   else if (endpoint === `${root}/rules/branches/main`) send([]);
   else fail();
