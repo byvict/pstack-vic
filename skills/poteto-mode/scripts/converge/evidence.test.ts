@@ -96,6 +96,10 @@ test('a pre-pr role refuses a Cursor receipt and a pr verifier refuses a grok on
   const i = localInput('pre-pr reviewer'); t.after(i.cleanup);
   i.receipt.provider = 'cursor'; i.save();
   await assert.rejects(admitLane(join(i.directory, 'manifest.json'), { ...i.report, round: i.round } as never, join(i.directory, 'admitted'), i.round), /Lane receipt model differs from dispatch|requires grok/);
+  const c = localInput('pre-pr reviewer'); t.after(c.cleanup);
+  patchManifest(c.directory, { descriptor: 'cursor:grok-4.7@high' });
+  Object.assign(c.receipt, { parent: 'codex', provider: 'cursor', model: 'grok-4.7', effort: 'high', modelVerified: false, modelEvidence: 'pinned-argv', reportedModel: null, remote: { agentId: 'bc-fixture', runId: 'run-fixture', heads: { kind: 'observed', changedBranches: [] } } }); c.save();
+  await assert.rejects(admitLane(join(c.directory, 'manifest.json'), { ...c.report, round: c.round } as never, join(c.directory, 'admitted'), c.round), /Role pre-pr reviewer requires grok/);
   const v = input(); t.after(v.cleanup);
   patchManifest(v.directory, { descriptor: 'grok:grok-4.7@xhigh' });
   await assert.rejects(admitLane(join(v.directory, 'manifest.json'), v.report, join(v.directory, 'admitted')), /Role pr verifier requires cursor/);
