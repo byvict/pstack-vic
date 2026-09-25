@@ -159,7 +159,7 @@ node skills/poteto-mode/scripts/converge/converge-reconcile --repo Clinextapp/cl
 node skills/poteto-mode/scripts/converge/converge-arm --repo Clinextapp/clinext --pr <n> --head <sha-completo> --verdict VERIFIED --dry-run
 ```
 
-Os comandos usam Node 24, `gh` e `git`, sem checkout local do repositório alvo. O reconciliador lê o contrato fixado no trunk e preserva uma identidade nova por execução. O dry-run faz as leituras reais e falha quando falta algum requisito. `prepare-lane.ts` prepara prompts completos e manifests exclusivos; `publish.ts` admite recibos e bytes de artefatos antes de calcular o veredito. Veja os argumentos e formatos no contrato. O modo `verdict-only` publica status de erro mesmo quando a prova passa, sem autorização de merge.
+Os comandos da nuvem usam Node 24, `gh` e `git`, sem checkout local do repositório alvo. O `converge-certify`, que certifica a branch antes de o PR existir, roda na máquina local contra um checkout do head empurrado; veja a seção Certificado do contrato. O reconciliador lê o contrato fixado no trunk e preserva uma identidade nova por execução. O dry-run faz as leituras reais e falha quando falta algum requisito. `prepare-lane.ts` prepara prompts completos e manifests exclusivos; `publish.ts` admite recibos e bytes de artefatos antes de calcular o veredito. Veja os argumentos e formatos no contrato. O modo `verdict-only` publica status de erro mesmo quando a prova passa, sem autorização de merge.
 
 ## Skills
 

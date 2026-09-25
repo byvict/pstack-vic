@@ -371,7 +371,7 @@ export async function snapshot(repo: string, prNumber: number, configPath: strin
   if (final.body !== p.body || jsonHash(final.labels) !== jsonHash(p.labels) || sha(object(finalCommit).sha) !== t.sha) throw new Error('Snapshot changed during reconciliation');
   return { trusted: t, pull: p, base, patchId: sha(patch), diff, files, features: selection.features, reachedPaths: selection.reachedPaths, checks: observedChecks, sources, gaps, inputDigest, inputFingerprint, verificationDigest, dependencyOnly: safeDependencyChange, testEvidence };
 }
-/** The pushed branch head as a snapshot with no PR: files and diff come from compare against the contract commit. */
+/** Certification runs before the PR exists, so GitHub's compare of the contract commit and the pushed head stands in for the PR's files and diff, and the same analysis runs over both. */
 export async function branchSnapshot(repo: string, head: string, configPath: string): Promise<Snapshot> {
   const t = await trusted(repo, configPath);
   const target = sha(head);
