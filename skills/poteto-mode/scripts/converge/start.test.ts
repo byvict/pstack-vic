@@ -206,6 +206,7 @@ test('a trusted status whose dossier names another head still launches an owner'
     launches++;
     return Response.json({ agent: { id: 'bc_owner', url: 'https://cursor.com/agents/bc_owner' }, run: { id: 'run_owner' } });
   });
+  assert.deepEqual(await verdictGate(await trusted('Example/app', '.cursor/converge.json'), 1, f.state.head, 7), { kind: 'refused', reason: 'Verdict identity or execution does not authorize merge' });
   const receipt = await start({ repo: 'Example/app', pr: 1, toolingRef: 'd'.repeat(40), stateDirectory: join(f.directory, 'owner'), effort: 'high' });
   assert.equal(receipt.kind, 'launched'); assert.equal(launches, 1);
 });
@@ -219,6 +220,7 @@ test('a verdict that a newer publication supersedes still launches an owner', as
     launches++;
     return Response.json({ agent: { id: 'bc_owner', url: 'https://cursor.com/agents/bc_owner' }, run: { id: 'run_owner' } });
   });
+  assert.deepEqual(await verdictGate(await trusted('Example/app', '.cursor/converge.json'), 1, f.state.head, 7), { kind: 'refused', reason: 'A newer converge round supersedes this verdict' });
   const receipt = await start({ repo: 'Example/app', pr: 1, toolingRef: 'd'.repeat(40), stateDirectory: join(f.directory, 'owner'), effort: 'high' });
   assert.equal(receipt.kind, 'launched'); assert.equal(launches, 1);
 });
