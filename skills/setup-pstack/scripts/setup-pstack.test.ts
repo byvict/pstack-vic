@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { loadMatrix, renderRoleSheet } from "../../../scripts/model-matrix.ts";
+import { loadMatrix, renderRoleSheet, renderSheetDocument } from "../../../scripts/model-matrix.ts";
 import {
   SetupError,
   buildPlan,
@@ -87,6 +87,20 @@ function oldSeventeenSheet(parent: string): string {
   ].join("\n");
 }
 
+function nineteenRowOpusSheet(parent: string): string {
+  const volume = new Set(["feature, refactoring", "bug-fix", "perf-issue", "hillclimb"]);
+  const lines = renderRoleSheet(matrix, parent)
+    .split("\n")
+    .filter((line) => !line.startsWith("pre-pr "))
+    .map((line) => {
+      const role = line.slice(0, line.indexOf(": "));
+      return volume.has(role) ? `${role}: claude:claude-opus-5-5@xhigh` : line;
+    });
+  assert.equal(lines.length, 19);
+  assert.deepEqual(lines.slice(-2), ["pr owner: cursor:grok-4.7@high", "pr verifier: cursor:grok-4.7@high"]);
+  return renderSheetDocument(lines.join("\n"));
+}
+
 function lanesOf(plan: Plan, role: string): string[] {
   const row = plan.rows.find((r) => r.role === role);
   assert.ok(row, `plan has no row ${role}`);
@@ -158,16 +172,40 @@ describe("normalizeLane", () => {
 });
 
 describe("Grok 4.7 selection", () => {
-  it("offers 4.7 without assigning it and preserves 4.6 when a role selects 4.7", () => {
+  it("leaves the 4.6 lanes untouched when a role selects 4.7 and probes 4.7 only when the ledger lacks it", () => {
     putSheet("codex", firstRunSheet("codex"));
     const state = loadState({ parent: "codex", home, matrix });
-    assert.deepEqual(state.efforts["grok-4-7"], { status: "outside-map", efforts: ["xhigh"], rows: [] });
+    assert.deepEqual(state.efforts["grok-4-7"], {
+      status: "mixed",
+      efforts: ["high", "xhigh"],
+      rows: [
+        { role: "pre-pr reviewer", lane: "grok:grok-4.7@xhigh" },
+        { role: "pre-pr fixer", lane: "grok:grok-4.7@xhigh" },
+        { role: "pre-pr certifier", lane: "grok:grok-4.7@high" },
+      ],
+    });
     const plan = buildPlan({ parent: "codex", home, matrix, roles: { "bug-fix": ["grok:grok-4.7@xhigh"] } });
     assert.deepEqual(lanesOf(plan, "bug-fix"), ["grok:grok-4.7@xhigh"]);
     assert.deepEqual(lanesOf(plan, "swarm workers"), ["grok:grok-4.6@xhigh"]);
-    const pair = plan.pairs.find((p) => p.pair === "grok-4-7@xhigh");
-    assert.equal(pair?.descriptor, "grok:grok-4.7@xhigh");
-    assert.equal(pair?.route, "runner");
+    assert.deepEqual(lanesOf(plan, "hillclimb"), ["grok:grok-4.6@xhigh"]);
+    assert.deepEqual(plan.efforts.grok, ["xhigh"]);
+    assert.deepEqual(plan.efforts["grok-4-7"], ["high", "xhigh"]);
+    assert.deepEqual(
+      plan.pairs.filter((p) => p.family.startsWith("grok")).map((p) => [p.pair, p.descriptor, p.route]),
+      [
+        ["grok@xhigh", "grok:grok-4.6@xhigh", "runner"],
+        ["grok-4-7@high", "grok:grok-4.7@high", "runner"],
+      ]
+    );
+
+    putLedger("codex", ["grok-4-7"]);
+    const verified = buildPlan({ parent: "codex", home, matrix, roles: { "bug-fix": ["grok:grok-4.7@xhigh"] } });
+    assert.deepEqual(lanesOf(verified, "bug-fix"), ["grok:grok-4.7@xhigh"]);
+    assert.deepEqual(
+      verified.pairs.filter((p) => p.family.startsWith("grok")).map((p) => p.pair),
+      ["grok@xhigh"]
+    );
+    assert.deepEqual(verified.verified.map((v) => v.family), ["grok-4-7"]);
     assert.throws(() => normalizeLane("grok:grok-4.7@max", matrix), SetupError);
   });
 });
@@ -235,7 +273,7 @@ describe("buildPlan", () => {
   it("on a first run takes the parent's role defaults, the matrix default efforts, and one probe per family in the map", () => {
     const plan = buildPlan({ parent: "claude", home, matrix });
     assert.equal(plan.sheet, firstRunSheet("claude"));
-    assert.equal(plan.schemaVersion, 3);
+    assert.equal(plan.schemaVersion, 4);
     assert.equal(plan.ledgerPath, join(home, ".claude", "pstack-probes.json"));
     assert.deepEqual(plan.verified, []);
     assert.deepEqual(plan.efforts, {
@@ -243,6 +281,7 @@ describe("buildPlan", () => {
       opus: ["xhigh"],
       astra: ["max"],
       grok: ["xhigh"],
+      "grok-4-7": ["high", "xhigh"],
       "cursor-grok": ["high"],
     });
     assert.deepEqual(
@@ -252,6 +291,7 @@ describe("buildPlan", () => {
         ["opus", "opus@xhigh", "claude:claude-opus-5-5@xhigh", "native"],
         ["astra", "astra@max", "codex:gpt-6-astra@max", "runner"],
         ["grok", "grok@xhigh", "grok:grok-4.6@xhigh", "runner"],
+        ["grok-4-7", "grok-4-7@high", "grok:grok-4.7@high", "runner"],
         ["cursor-grok", "cursor-grok@high", "cursor:grok-4.7@high", "runner"],
       ]
     );
@@ -321,7 +361,10 @@ describe("buildPlan", () => {
     assert.deepEqual(lanesOf(plan, "bug-fix"), ["grok:grok-4.6@xhigh"]);
     assert.deepEqual(plan.efforts.sol, ["high"]);
     assert.equal(plan.pairs.find((p) => p.pair === "sol@high")?.route, "runner");
-    assert.equal(plan.pairs.length, 5);
+    assert.deepEqual(
+      plan.pairs.map((p) => p.pair),
+      ["fable@max", "opus@xhigh", "sol@high", "astra@max", "grok@xhigh", "grok-4-7@high"]
+    );
   });
 
   it("rejects a role change with an unqualified slug or an unknown role", () => {
@@ -380,7 +423,7 @@ describe("buildPlan", () => {
 
   it("probes no family the ledger verified, whatever effort its lanes take, and probes a family new to this parent", () => {
     putSheet("claude", firstRunSheet("claude"));
-    putLedger("claude", ["fable", "opus", "astra", "grok", "cursor-grok"]);
+    putLedger("claude", ["fable", "opus", "astra", "grok", "grok-4-7", "cursor-grok"]);
     const effortsOnly = buildPlan({ parent: "claude", home, matrix, efforts: { grok: "high", fable: "medium" } });
     assert.deepEqual(effortsOnly.efforts.grok, ["high"]);
     assert.deepEqual(effortsOnly.pairs, []);
@@ -391,6 +434,7 @@ describe("buildPlan", () => {
         ["opus", "claude:claude-opus-5-5", "2026-09-24T00:00:00.000Z"],
         ["astra", "codex:gpt-6-astra", "2026-09-24T00:00:00.000Z"],
         ["grok", "grok:grok-4.6", "2026-09-24T00:00:00.000Z"],
+        ["grok-4-7", "grok:grok-4.7", "2026-09-24T00:00:00.000Z"],
         ["cursor-grok", "cursor:grok-4.7", "2026-09-24T00:00:00.000Z"],
       ]
     );
@@ -399,20 +443,20 @@ describe("buildPlan", () => {
       parent: "claude",
       home,
       matrix,
-      roles: { "bug-fix": ["grok:grok-4.7@xhigh"], "swarm workers": ["codex:gpt-6-sol@high"] },
+      roles: { "bug-fix": ["cursor:kimi-k3@high"], "swarm workers": ["codex:gpt-6-sol@high"] },
     });
     assert.deepEqual(
       newFamilies.pairs.map((p) => [p.pair, p.descriptor, p.route]),
       [
         ["sol@high", "codex:gpt-6-sol@high", "runner"],
-        ["grok-4-7@xhigh", "grok:grok-4.7@xhigh", "runner"],
+        ["kimi@high", "cursor:kimi-k3@high", "runner"],
       ]
     );
-    assert.equal(newFamilies.verified.some((v) => v.family === "sol" || v.family === "grok-4-7"), false);
+    assert.equal(newFamilies.verified.some((v) => v.family === "sol" || v.family === "kimi"), false);
   });
 
   it("probes a new model of a verified family and keeps one parent's ledger from verifying the other", () => {
-    putLedger("claude", ["fable", "opus", "astra", "grok", "cursor-grok"]);
+    putLedger("claude", ["fable", "opus", "astra", "grok", "grok-4-7", "cursor-grok"]);
     const bumped = structuredClone(matrix) as { families: Array<{ family: string; model: string }> };
     const grok = bumped.families.find((f) => f.family === "grok");
     assert.ok(grok);
@@ -422,7 +466,10 @@ describe("buildPlan", () => {
 
     const codex = buildPlan({ parent: "codex", home, matrix });
     assert.deepEqual(codex.verified, []);
-    assert.equal(codex.pairs.length, 5);
+    assert.deepEqual(
+      codex.pairs.map((p) => p.pair),
+      ["fable@max", "opus@xhigh", "astra@max", "grok@xhigh", "grok-4-7@high", "cursor-grok@high"]
+    );
   });
 
   it("treats an unreadable ledger as inconsistent state", () => {
@@ -455,7 +502,7 @@ describe("buildPlan", () => {
     assert.deepEqual(plan.rows.map((r) => r.role), matrix.roles.map((r) => r.role));
   });
 
-  it("keeps an old 17-role sheet and materializes the two Cloud PR defaults", () => {
+  it("keeps an old 17-role sheet and materializes the pre-pr and Cloud PR defaults", () => {
     putSheet("claude", oldSeventeenSheet("claude"));
     const state = loadState({ parent: "claude", home, matrix });
     assert.equal(state.exists, true);
@@ -465,7 +512,7 @@ describe("buildPlan", () => {
       matrix.roles.slice(0, 17).map((r) => r.role)
     );
     const plan = buildPlan({ parent: "claude", home, matrix });
-    assert.equal(plan.rows.length, 19);
+    assert.equal(plan.rows.length, 22);
     assert.deepEqual(lanesOf(plan, "bug-fix"), ["grok:grok-4.6@xhigh"]);
     assert.deepEqual(lanesOf(plan, "interrogate reviewers"), [
       "claude:fable@max",
@@ -473,6 +520,9 @@ describe("buildPlan", () => {
       "grok:grok-4.6@xhigh",
       "claude:claude-opus-5-5@xhigh",
     ]);
+    assert.deepEqual(lanesOf(plan, "pre-pr reviewer"), ["grok:grok-4.7@xhigh"]);
+    assert.deepEqual(lanesOf(plan, "pre-pr fixer"), ["grok:grok-4.7@xhigh"]);
+    assert.deepEqual(lanesOf(plan, "pre-pr certifier"), ["grok:grok-4.7@high"]);
     assert.deepEqual(lanesOf(plan, "pr owner"), ["cursor:grok-4.7@high"]);
     assert.deepEqual(lanesOf(plan, "pr verifier"), ["cursor:grok-4.7@high"]);
   });
@@ -514,6 +564,80 @@ describe("buildPlan", () => {
   });
 });
 
+describe("pre-pr rows", () => {
+  it("refuses a non-grok lane on a pre-pr row", () => {
+    assert.throws(() => buildPlan({ parent: "claude", home, matrix, roles: { "pre-pr reviewer": ["claude:claude-opus-5-5@xhigh"] } }), /"pre-pr reviewer" takes one lane, grok:grok-4\.7@high or grok:grok-4\.7@xhigh/);
+  });
+
+  it("refuses an alias, an effort below high, and a panel on the pre-pr rows", () => {
+    const refusal = (message: string) => (error: unknown) => error instanceof SetupError && error.message === message;
+    assert.throws(
+      () => buildPlan({ parent: "claude", home, matrix, roles: { "pre-pr certifier": ["inherit-parent"] } }),
+      refusal('role "pre-pr certifier" takes one lane, grok:grok-4.7@high or grok:grok-4.7@xhigh; got inherit-parent')
+    );
+    assert.throws(
+      () => buildPlan({ parent: "claude", home, matrix, roles: { "pre-pr fixer": ["grok:grok-4.7@medium"] } }),
+      refusal('role "pre-pr fixer" takes one lane, grok:grok-4.7@high or grok:grok-4.7@xhigh; got grok:grok-4.7@medium')
+    );
+    assert.throws(
+      () => buildPlan({ parent: "claude", home, matrix, roles: { "pre-pr reviewer": ["grok:grok-4.7@xhigh", "grok:grok-4.7@high"] } }),
+      refusal('role "pre-pr reviewer" takes one lane, grok:grok-4.7@high or grok:grok-4.7@xhigh; got grok:grok-4.7@xhigh, grok:grok-4.7@high')
+    );
+  });
+
+  it("warns when an authoring row shares the reviewer family and is silent once they differ", () => {
+    const grokAuthor = buildPlan({ parent: "claude", home, matrix, roles: { "feature, refactoring": ["grok:grok-4.7@xhigh"] } });
+    assert.deepEqual(grokAuthor.warnings, [
+      "feature, refactoring and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
+      "bug-fix and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
+      "perf-issue and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
+      "hillclimb and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
+    ]);
+    const opus = ["claude:claude-opus-5-5@xhigh"];
+    const crossed = buildPlan({ parent: "claude", home, matrix, roles: { "feature, refactoring": opus, "bug-fix": opus, "perf-issue": opus, "hillclimb": opus } });
+    assert.deepEqual(crossed.warnings, []);
+  });
+
+  it("warns for an authoring row with any lane in the reviewer's provider, never for an alias or a non-authoring row", () => {
+    const opus = "claude:claude-opus-5-5@xhigh";
+    const plan = buildPlan({
+      parent: "codex",
+      home,
+      matrix,
+      roles: {
+        "feature, refactoring": [opus],
+        "bug-fix": ["inherit-parent"],
+        "perf-issue": [opus, "grok:grok-4.6@high"],
+        hillclimb: ["auto"],
+        "hardest tasks": ["grok:grok-4.7@xhigh"],
+      },
+    });
+    assert.deepEqual(lanesOf(plan, "swarm workers"), ["grok:grok-4.6@xhigh"]);
+    assert.deepEqual(plan.warnings, [
+      "perf-issue and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
+      "hardest tasks and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
+    ]);
+  });
+
+  it("upgrades a 19-row sheet with Opus authors: the pre-pr rows take their defaults, a verified Grok 4.7 is not probed, and nothing warns", () => {
+    putSheet("claude", nineteenRowOpusSheet("claude"));
+    putLedger("claude", ["fable", "opus", "astra", "grok", "grok-4-7", "cursor-grok"]);
+    const state = loadState({ parent: "claude", home, matrix });
+    assert.equal(state.rows.length, 19);
+    const plan = buildPlan({ parent: "claude", home, matrix });
+    assert.deepEqual(plan.rows.map((r) => r.role), matrix.roles.map((r) => r.role));
+    assert.deepEqual(lanesOf(plan, "feature, refactoring"), ["claude:claude-opus-5-5@xhigh"]);
+    assert.deepEqual(lanesOf(plan, "pre-pr reviewer"), ["grok:grok-4.7@xhigh"]);
+    assert.deepEqual(lanesOf(plan, "pre-pr fixer"), ["grok:grok-4.7@xhigh"]);
+    assert.deepEqual(lanesOf(plan, "pre-pr certifier"), ["grok:grok-4.7@high"]);
+    assert.match(plan.sheet, /\ninterrogate reviewers: .*\npre-pr reviewer: grok:grok-4\.7@xhigh\npre-pr fixer: grok:grok-4\.7@xhigh\npre-pr certifier: grok:grok-4\.7@high\npr owner: cursor:grok-4\.7@high\n/);
+    assert.deepEqual(plan.efforts["grok-4-7"], ["high", "xhigh"]);
+    assert.deepEqual(plan.pairs, []);
+    assert.deepEqual(plan.verified.map((v) => v.family), ["fable", "opus", "astra", "grok", "grok-4-7", "cursor-grok"]);
+    assert.deepEqual(plan.warnings, []);
+  });
+});
+
 // --- Probe, attest, write ------------------------------------------------------
 
 import { chmodSync, readdirSync, statSync } from "node:fs";
@@ -543,7 +667,7 @@ if (name === "claude" && args[0] === "auth") { out(JSON.stringify({ loggedIn: tr
 if (name === "codex" && args[0] === "login") { out("Logged in using ChatGPT"); process.exit(0); }
 if (name === "grok" && args[0] === "models") {
   if (process.env.FAKE_GROK_UNAUTH === "1") { err("Not logged in. Run grok auth login."); process.exit(1); }
-  out("You are logged in with grok.com.\\nAvailable models:\\n  * grok-4.6 (default)");
+  out("You are logged in with grok.com.\\nAvailable models:\\n  * grok-4.6 (default)\\n  * grok-4.7");
   process.exit(0);
 }
 const modelIndex = args.indexOf("--model");
@@ -611,6 +735,7 @@ describe("runProbes", () => {
       [
         ["astra@max", "astra", "passed"],
         ["grok@xhigh", "grok", "passed"],
+        ["grok-4-7@high", "grok-4-7", "passed"],
       ]
     );
     const grok = summary.external.find((r) => r.pair === "grok@xhigh");
@@ -657,7 +782,7 @@ describe("runProbes", () => {
   });
 
   it("runs nothing when every family of the plan is verified", async () => {
-    putLedger("claude", ["fable", "opus", "astra", "grok"]);
+    putLedger("claude", ["fable", "opus", "astra", "grok", "grok-4-7"]);
     const plan = buildPlan({ parent: "claude", home, matrix, roles: CLI_ONLY_ROLES, efforts: { grok: "high" } });
     savePlan(runDir, plan);
     const summary = await runProbes(plan, { dir: runDir, env: fakeEnv({ FAKE_GROK_UNAUTH: "1" }) });
@@ -774,10 +899,14 @@ describe("writeSheet", () => {
     writeSheet(plan, runDir, { home });
     const ledger = JSON.parse(readFileSync(plan.ledgerPath, "utf8"));
     assert.equal(ledger.schemaVersion, 1);
-    assert.deepEqual(Object.keys(ledger.families), ["claude:claude-opus-5-5", "claude:fable", "codex:gpt-6-astra", "grok:grok-4.6"]);
+    assert.deepEqual(Object.keys(ledger.families), ["claude:claude-opus-5-5", "claude:fable", "codex:gpt-6-astra", "grok:grok-4.6", "grok:grok-4.7"]);
     assert.deepEqual(
       { ...ledger.families["grok:grok-4.6"], verifiedAt: "" },
       { family: "grok", descriptor: "grok:grok-4.6@xhigh", verifiedAt: "", evidence: runDir }
+    );
+    assert.deepEqual(
+      { ...ledger.families["grok:grok-4.7"], verifiedAt: "" },
+      { family: "grok-4-7", descriptor: "grok:grok-4.7@high", verifiedAt: "", evidence: runDir }
     );
     const ledgerText = readFileSync(plan.ledgerPath, "utf8");
 
@@ -962,7 +1091,7 @@ describe("command line", () => {
     const saved = JSON.parse(readFileSync(join(runDir, "plan.json"), "utf8"));
     assert.deepEqual(printed, saved);
     assert.equal(saved.parent, "codex");
-    assert.equal(saved.schemaVersion, 3);
+    assert.equal(saved.schemaVersion, 4);
     assert.deepEqual(saved.efforts.grok, ["high"]);
     assert.deepEqual(saved.rows.find((r: { role: string }) => r.role === "swarm workers").lanes, ["auto"]);
     assert.deepEqual(saved.rows.find((r: { role: string }) => r.role === "why synthesizer").lanes, ["claude:claude-opus-5-5@xhigh"]);
@@ -1050,13 +1179,52 @@ describe("command line", () => {
   it("probe refuses a plan.json from the previous schema", () => {
     assert.equal(cli(["plan", "--parent", "claude", "--home", home, "--dir", runDir]).code, 0);
     const path = join(runDir, "plan.json");
-    const plan = JSON.parse(readFileSync(path, "utf8")) as Plan;
-    writeFileSync(path, `${JSON.stringify({ ...plan, schemaVersion: 2 }, null, 2)}\n`);
+    const { warnings, ...older } = JSON.parse(readFileSync(path, "utf8")) as Plan;
+    assert.equal(warnings.length, 4);
+    writeFileSync(path, `${JSON.stringify({ ...older, schemaVersion: 3 }, null, 2)}\n`);
     const result = cli(["probe", "--dir", runDir]);
     assert.equal(result.code, 1);
     assert.match(result.stderr, /plan/);
     assert.match(result.stderr, /run plan again with this version of the script/);
     assert.equal(existsSync(join(home, ".claude", "pstack-models.md")), false);
+  });
+
+  it("plan and write print the plan's warnings on stderr, keep exit 0, and a crossed plan prints none", () => {
+    putLedger("claude", ["fable", "opus", "astra", "grok", "grok-4-7", "cursor-grok"]);
+    const firstRun = [
+      "warning: feature, refactoring and pre-pr reviewer are both grok; certification will refuse until one of them changes family\n",
+      "warning: bug-fix and pre-pr reviewer are both grok; certification will refuse until one of them changes family\n",
+      "warning: perf-issue and pre-pr reviewer are both grok; certification will refuse until one of them changes family\n",
+      "warning: hillclimb and pre-pr reviewer are both grok; certification will refuse until one of them changes family\n",
+    ].join("");
+    const planned = cli(["plan", "--parent", "claude", "--home", home, "--dir", runDir]);
+    assert.equal(planned.code, 0, planned.stderr);
+    assert.equal(planned.stderr, firstRun);
+    assert.deepEqual(JSON.parse(planned.stdout).warnings, [
+      "feature, refactoring and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
+      "bug-fix and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
+      "perf-issue and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
+      "hillclimb and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
+    ]);
+    const written = cli(["write", "--dir", runDir, "--home", home]);
+    assert.equal(written.code, 0, written.stderr);
+    assert.equal(written.stderr, firstRun);
+    assert.equal(JSON.parse(written.stdout).sheet, "created");
+
+    const crossedDir = join(home, "crossed-run");
+    const opus = "claude:claude-opus-5-5@xhigh";
+    const crossed = cli([
+      "plan", "--parent", "claude", "--home", home, "--dir", crossedDir,
+      "--role", `feature, refactoring=${opus}`, "--role", `bug-fix=${opus}`, "--role", `perf-issue=${opus}`, "--role", `hillclimb=${opus}`,
+    ]);
+    assert.equal(crossed.code, 0, crossed.stderr);
+    assert.equal(crossed.stderr, "");
+    assert.deepEqual(JSON.parse(crossed.stdout).warnings, []);
+    const crossedWrite = cli(["write", "--dir", crossedDir, "--home", home]);
+    assert.equal(crossedWrite.code, 0, crossedWrite.stderr);
+    assert.equal(crossedWrite.stderr, "");
+    assert.equal(JSON.parse(crossedWrite.stdout).sheet, "updated");
+    assert.match(readFileSync(sheetPathFor("claude", home), "utf8"), /^feature, refactoring: claude:claude-opus-5-5@xhigh$/m);
   });
 });
 
@@ -1290,7 +1458,7 @@ describe("probe target", () => {
     const plan = mixedPlan();
     savePlan(runDir, plan);
     const saved = loadPlan(runDir);
-    assert.equal(saved.schemaVersion, 3);
+    assert.equal(saved.schemaVersion, 4);
     assert.equal("target" in saved, false);
     assert.ok(saved.pairs.every((pair) => !("transport" in pair)));
 
@@ -1313,6 +1481,7 @@ describe("probe target", () => {
       [
         ["astra@max", "passed"],
         ["grok@xhigh", "passed"],
+        ["grok-4-7@high", "passed"],
         ["cursor-grok@high", "passed"],
       ]
     );
@@ -1339,7 +1508,7 @@ describe("probe target", () => {
       }
     );
     const after = loadPlan(runDir);
-    assert.equal(after.schemaVersion, 3);
+    assert.equal(after.schemaVersion, 4);
     assert.equal("target" in after, false);
   });
 
@@ -1365,6 +1534,7 @@ describe("probe target", () => {
       [
         ["astra", "passed"],
         ["grok", "passed"],
+        ["grok-4-7", "passed"],
         ["cursor-grok", "failed"],
       ]
     );

@@ -69,8 +69,11 @@ Skills name roles by the labels below, the same labels `/setup-pstack` writes to
 | `swarm workers` | Default worker for every swarm lane: coverage matrices, races, gauntlets, exploration partitions. | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
 | `architect runners` | Each lane proposes a design (types, module shape) for the same problem before implementation. One lane per entry. | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` |
 | `interrogate reviewers` | Each lane reviews the diff adversarially from its own angle; a different provider per lane widens the blind spots covered. | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` |
-| `pr owner` | Owns a ready PR in Cursor Cloud through verification, repair and merge; start.ts launches it at the sheet effort as a floor, raised to xhigh for complex work. | `cursor:grok-4.7@high` | `cursor:grok-4.7@high` |
-| `pr verifier` | Independently checks risk, tests and user behavior of the exact PR head without writing code; the owner runs it at no less than the sheet effort. | `cursor:grok-4.7@high` | `cursor:grok-4.7@high` |
+| `pre-pr reviewer` | Reviews the pushed branch read-only before the PR exists: diff, risk classes and recorded runs; must be a different family from the author. | `grok:grok-4.7@xhigh` | `grok:grok-4.7@xhigh` |
+| `pre-pr fixer` | Fixes the reviewer's findings in its own worktree of the branch; the Raiz reviews the diff and fast-forwards it. | `grok:grok-4.7@xhigh` | `grok:grok-4.7@xhigh` |
+| `pre-pr certifier` | Drives the selected features on a disposable app and records the artifacts the certificate binds; each step under 300 s. | `grok:grok-4.7@high` | `grok:grok-4.7@high` |
+| `pr owner` | Owns an uncertified or red PR in Cursor Cloud through verification, repair and merge; start.ts exits when the head is certified. | `cursor:grok-4.7@high` | `cursor:grok-4.7@high` |
+| `pr verifier` | Independently checks risk, tests and user behavior of the exact PR head in Cursor Cloud without writing code. | `cursor:grok-4.7@high` | `cursor:grok-4.7@high` |
 
 A list is a panel: one lane per entry, in this order. A role whose two columns differ takes the parent's native frontier family. Aliases run on the parent model through its native subagent primitive.
 

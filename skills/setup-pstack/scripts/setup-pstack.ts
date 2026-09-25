@@ -41,6 +41,7 @@ import {
   type ModelMatrix,
   type Route,
 } from "../../../scripts/model-matrix.ts";
+import { roleProviders, type Role } from "../../poteto-mode/scripts/converge/contract.ts";
 import { judgeLane, probePrompt, runProbeLane } from "../../poteto-mode/scripts/runner/probe-lane.ts";
 import type { RepoTarget } from "../../poteto-mode/scripts/runner/types.ts";
 
@@ -92,9 +93,30 @@ export interface SheetRow {
 
 const ROW_RE = /^([a-z][a-z0-9 ,-]*): (.+)$/;
 const RETIRED_CONVERGE_ROLES = new Set(['pr reviewer', 'pr fixer, simple', 'pr fixer, complex', 'pr diagnosis pool']);
-// Converge's start.ts reads these rows as effort floors and launches only Grok 4.7; an alias sets no floor.
-const CONVERGE_ROLES = new Set(['pr owner', 'pr verifier']);
-const CONVERGE_LANES = ['cursor:grok-4.7@high', 'cursor:grok-4.7@xhigh'];
+const AUTHORING_ROLES = ["feature, refactoring", "bug-fix", "perf-issue", "hillclimb", "hardest tasks"];
+
+function singleLaneRows(matrix: ModelMatrix): ReadonlyMap<string, readonly string[]> {
+  const admitted = (role: Role): string[] => {
+    const { provider, model, efforts } = roleProviders[role];
+    return efforts.map((effort) => `${provider}:${model}@${effort}`);
+  };
+  const converge = [...admitted("pr verifier"), ...matrix.aliases];
+  return new Map([
+    ["pr owner", converge],
+    ["pr verifier", converge],
+    ["pre-pr reviewer", admitted("pre-pr reviewer")],
+    ["pre-pr fixer", admitted("pre-pr reviewer")],
+    ["pre-pr certifier", admitted("pre-pr certifier")],
+  ]);
+}
+
+function crossFamilyWarnings(rows: readonly SheetRow[]): string[] {
+  const reviewer = parseDescriptor(rows.find((row) => row.role === "pre-pr reviewer")?.lanes[0] ?? "")?.provider;
+  if (reviewer === undefined) return [];
+  return rows
+    .filter((row) => AUTHORING_ROLES.includes(row.role) && row.lanes.some((lane) => parseDescriptor(lane)?.provider === reviewer))
+    .map((row) => `${row.role} and pre-pr reviewer are both ${reviewer}; certification will refuse until one of them changes family`);
+}
 
 /**
  * The role rows of a sheet: `label: lane[, lane]`. Title, blank lines, and
@@ -380,7 +402,7 @@ export interface VerifiedFamily {
 }
 
 export interface Plan {
-  readonly schemaVersion: 3;
+  readonly schemaVersion: 4;
   readonly parent: string;
   readonly createdAt: string;
   readonly sheetPath: string;
@@ -396,6 +418,7 @@ export interface Plan {
   /** Families in the final map that this parent verified before; not probed again, whatever effort their lanes take. */
   readonly verified: readonly VerifiedFamily[];
   readonly migrations: readonly Migration[];
+  readonly warnings: readonly string[];
 }
 
 export interface PlanInput extends StateInput {
@@ -477,9 +500,10 @@ export function buildPlan(input: PlanInput): Plan {
     rows = rows.map((r) => (r.role === role ? { role, lanes: normalized } : r));
   }
 
+  const singleLane = singleLaneRows(matrix);
   for (const row of rows) {
-    const allowed = [...CONVERGE_LANES, ...matrix.aliases];
-    if (CONVERGE_ROLES.has(row.role) && (row.lanes.length !== 1 || !allowed.includes(row.lanes[0]))) {
+    const allowed = singleLane.get(row.role);
+    if (allowed !== undefined && (row.lanes.length !== 1 || !allowed.includes(row.lanes[0]))) {
       fail(`role ${JSON.stringify(row.role)} takes one lane, ${allowed.join(" or ")}; got ${row.lanes.join(", ")}`);
     }
   }
@@ -515,7 +539,7 @@ export function buildPlan(input: PlanInput): Plan {
   }
 
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     parent,
     createdAt: new Date().toISOString(),
     sheetPath: state.sheetPath,
@@ -528,6 +552,7 @@ export function buildPlan(input: PlanInput): Plan {
     pairs,
     verified,
     migrations: state.migrations,
+    warnings: crossFamilyWarnings(rows),
   };
 }
 
@@ -546,7 +571,7 @@ export function loadPlan(dir: string): Plan {
   const path = join(dir, PLAN_FILE);
   if (!existsSync(path)) fail(`no ${PLAN_FILE} in ${dir}; run plan first`);
   const raw = JSON.parse(readFileSync(path, "utf8")) as Plan;
-  if (raw.schemaVersion !== 3) {
+  if (raw.schemaVersion !== 4) {
     fail(`${path}: unsupported schemaVersion ${JSON.stringify(raw.schemaVersion)}; run plan again with this version of the script`);
   }
   return raw;
@@ -1025,6 +1050,9 @@ export async function main(argv: readonly string[], io: Io = {
       return dir;
     };
     const emit = (value: unknown): void => io.stdout(`${JSON.stringify(value, null, 2)}\n`);
+    const warn = (plan: Plan): void => {
+      for (const warning of plan.warnings) io.stderr(`warning: ${warning}\n`);
+    };
 
     switch (command) {
       case "state": {
@@ -1041,6 +1069,7 @@ export async function main(argv: readonly string[], io: Io = {
         const dir = typeof parsed.values.dir === "string" ? parsed.values.dir : mkdtempSync(join(tmpdir(), "pstack-setup-"));
         savePlan(dir, plan);
         emit({ dir, ...plan });
+        warn(plan);
         return 0;
       }
       case "probe": {
@@ -1072,6 +1101,7 @@ export async function main(argv: readonly string[], io: Io = {
       case "write": {
         const dir = requireDir();
         const plan = loadPlan(dir);
+        warn(plan);
         emit(writeSheet(plan, dir, { home }));
         return 0;
       }
