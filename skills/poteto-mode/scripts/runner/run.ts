@@ -956,8 +956,6 @@ async function runCliLane(
   }
 
   const result = await runModel(options, executable, invocation, env, context, ev);
-  ev.exitCode = result.exitCode;
-  ev.signal = result.signal;
 
   if (result.cancelledBy !== null || result.timedOut || result.exitCode !== 0) {
     const rawFailureEvidence = `${result.stderr}\n${result.stdout}`;
@@ -1006,6 +1004,8 @@ async function runCliLane(
  * The model child. An unsandboxed lane gets its config overlay for the
  * child's lifetime, and its worktree recorded before the child starts and
  * after it ends, whether it ended by exit, deadline, cancellation or throw.
+ * The child's exit lands in the evidence first, so a worktree that can no
+ * longer be read still leaves a receipt with the exit it followed.
  */
 async function runModel(
   options: CliRunnerOptions,
@@ -1019,7 +1019,7 @@ async function runModel(
   const overlay = configOverlay(options);
   const staged = overlay === null ? null : stageOverlay(env, overlay);
   try {
-    return await runProcess(
+    const result = await runProcess(
       executable,
       invocation,
       options.cwd,
@@ -1028,6 +1028,9 @@ async function runModel(
       context.deadlineAt,
       context.cancellation
     );
+    ev.exitCode = result.exitCode;
+    ev.signal = result.signal;
+    return result;
   } finally {
     if (staged !== null) rmSync(staged.directory, { recursive: true, force: true });
     if (headBefore !== null) ev.checkout = readCheckout(options.cwd, headBefore);

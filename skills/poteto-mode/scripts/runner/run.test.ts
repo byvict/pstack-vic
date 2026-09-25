@@ -47,7 +47,7 @@ const CLI_PROVIDERS: readonly string[] = Object.entries(MATRIX.providers)
   .map(([name]) => name);
 
 const fake = `#!/usr/bin/env node
-import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, rmSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { execFileSync, spawn } from "node:child_process";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const out = (text) => writeSync(1, text + "\\n");
@@ -138,6 +138,7 @@ if (name === "grok" && stage === "model") {
     }));
   }
   if (process.env.FAKE_GROK_WRITE_PROBE === "1") writeFileSync("probe.txt", "probe");
+  if (process.env.FAKE_GROK_REMOVE_GIT === "1") rmSync(".git", { recursive: true, force: true });
   if (process.env.FAKE_GROK_COMMIT === "1") {
     execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "--allow-empty", "--quiet", "-m", "lane"], {
       env: { ...process.env, GIT_AUTHOR_NAME: "lane", GIT_AUTHOR_EMAIL: "lane@example.invalid", GIT_COMMITTER_NAME: "lane", GIT_COMMITTER_EMAIL: "lane@example.invalid" },
@@ -452,6 +453,7 @@ const FAKE_ENV = [
   "FAKE_GROK_CONFIG_RECORD_PATH",
   "FAKE_GROK_WRITE_PROBE",
   "FAKE_GROK_COMMIT",
+  "FAKE_GROK_REMOVE_GIT",
 ] as const;
 
 function clearFakeEnv(): void {
@@ -1213,6 +1215,17 @@ describe("unsandboxed mode", () => {
       status: "complete",
       checkout: { headBefore: head, headAfter: moved, statusAfter: [] },
     });
+  });
+
+  it("fails the lane without a checkout when its worktree can no longer be read", async () => {
+    const { cwd } = worktree();
+    process.env.FAKE_GROK_REMOVE_GIT = "1";
+    const input = unsandboxed(cwd);
+    assert.equal((await runLane(input)).exitCode, 70);
+    const recorded = receipt(input.receiptPath);
+    matchObject(recorded, { status: "child-failed", checkout: null, exitCode: 0 });
+    assert.match(recorded.error?.evidence ?? "", /git rev-parse --verify HEAD failed/);
+    assert.equal(existsSync(input.outputPath), false);
   });
 
   it("leaves the parent's Grok config alone in read-only mode", async () => {
