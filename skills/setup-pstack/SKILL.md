@@ -146,6 +146,9 @@ arena cross-judge pool: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@x
 swarm workers: grok:grok-4.6@xhigh
 architect runners: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:claude-opus-5-5@xhigh
 interrogate reviewers: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:claude-opus-5-5@xhigh
+pre-pr reviewer: grok:grok-4.7@xhigh
+pre-pr fixer: grok:grok-4.7@xhigh
+pre-pr certifier: grok:grok-4.7@high
 pr owner: cursor:grok-4.7@high
 pr verifier: cursor:grok-4.7@high
 ```
@@ -174,6 +177,9 @@ arena cross-judge pool: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@x
 swarm workers: grok:grok-4.6@xhigh
 architect runners: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:claude-opus-5-5@xhigh
 interrogate reviewers: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:claude-opus-5-5@xhigh
+pre-pr reviewer: grok:grok-4.7@xhigh
+pre-pr fixer: grok:grok-4.7@xhigh
+pre-pr certifier: grok:grok-4.7@high
 pr owner: cursor:grok-4.7@high
 pr verifier: cursor:grok-4.7@high
 ```

@@ -158,16 +158,40 @@ describe("normalizeLane", () => {
 });
 
 describe("Grok 4.7 selection", () => {
-  it("offers 4.7 without assigning it and preserves 4.6 when a role selects 4.7", () => {
+  it("leaves the 4.6 lanes untouched when a role selects 4.7 and probes 4.7 only when the ledger lacks it", () => {
     putSheet("codex", firstRunSheet("codex"));
     const state = loadState({ parent: "codex", home, matrix });
-    assert.deepEqual(state.efforts["grok-4-7"], { status: "outside-map", efforts: ["xhigh"], rows: [] });
+    assert.deepEqual(state.efforts["grok-4-7"], {
+      status: "mixed",
+      efforts: ["high", "xhigh"],
+      rows: [
+        { role: "pre-pr reviewer", lane: "grok:grok-4.7@xhigh" },
+        { role: "pre-pr fixer", lane: "grok:grok-4.7@xhigh" },
+        { role: "pre-pr certifier", lane: "grok:grok-4.7@high" },
+      ],
+    });
     const plan = buildPlan({ parent: "codex", home, matrix, roles: { "bug-fix": ["grok:grok-4.7@xhigh"] } });
     assert.deepEqual(lanesOf(plan, "bug-fix"), ["grok:grok-4.7@xhigh"]);
     assert.deepEqual(lanesOf(plan, "swarm workers"), ["grok:grok-4.6@xhigh"]);
-    const pair = plan.pairs.find((p) => p.pair === "grok-4-7@xhigh");
-    assert.equal(pair?.descriptor, "grok:grok-4.7@xhigh");
-    assert.equal(pair?.route, "runner");
+    assert.deepEqual(lanesOf(plan, "hillclimb"), ["grok:grok-4.6@xhigh"]);
+    assert.deepEqual(plan.efforts.grok, ["xhigh"]);
+    assert.deepEqual(plan.efforts["grok-4-7"], ["high", "xhigh"]);
+    assert.deepEqual(
+      plan.pairs.filter((p) => p.family.startsWith("grok")).map((p) => [p.pair, p.descriptor, p.route]),
+      [
+        ["grok@xhigh", "grok:grok-4.6@xhigh", "runner"],
+        ["grok-4-7@high", "grok:grok-4.7@high", "runner"],
+      ]
+    );
+
+    putLedger("codex", ["grok-4-7"]);
+    const verified = buildPlan({ parent: "codex", home, matrix, roles: { "bug-fix": ["grok:grok-4.7@xhigh"] } });
+    assert.deepEqual(lanesOf(verified, "bug-fix"), ["grok:grok-4.7@xhigh"]);
+    assert.deepEqual(
+      verified.pairs.filter((p) => p.family.startsWith("grok")).map((p) => p.pair),
+      ["grok@xhigh"]
+    );
+    assert.deepEqual(verified.verified.map((v) => v.family), ["grok-4-7"]);
     assert.throws(() => normalizeLane("grok:grok-4.7@max", matrix), SetupError);
   });
 });
@@ -243,6 +267,7 @@ describe("buildPlan", () => {
       opus: ["xhigh"],
       astra: ["max"],
       grok: ["xhigh"],
+      "grok-4-7": ["high", "xhigh"],
       "cursor-grok": ["high"],
     });
     assert.deepEqual(
@@ -252,6 +277,7 @@ describe("buildPlan", () => {
         ["opus", "opus@xhigh", "claude:claude-opus-5-5@xhigh", "native"],
         ["astra", "astra@max", "codex:gpt-6-astra@max", "runner"],
         ["grok", "grok@xhigh", "grok:grok-4.6@xhigh", "runner"],
+        ["grok-4-7", "grok-4-7@high", "grok:grok-4.7@high", "runner"],
         ["cursor-grok", "cursor-grok@high", "cursor:grok-4.7@high", "runner"],
       ]
     );
@@ -321,7 +347,10 @@ describe("buildPlan", () => {
     assert.deepEqual(lanesOf(plan, "bug-fix"), ["grok:grok-4.6@xhigh"]);
     assert.deepEqual(plan.efforts.sol, ["high"]);
     assert.equal(plan.pairs.find((p) => p.pair === "sol@high")?.route, "runner");
-    assert.equal(plan.pairs.length, 5);
+    assert.deepEqual(
+      plan.pairs.map((p) => p.pair),
+      ["fable@max", "opus@xhigh", "sol@high", "astra@max", "grok@xhigh", "grok-4-7@high"]
+    );
   });
 
   it("rejects a role change with an unqualified slug or an unknown role", () => {
@@ -380,7 +409,7 @@ describe("buildPlan", () => {
 
   it("probes no family the ledger verified, whatever effort its lanes take, and probes a family new to this parent", () => {
     putSheet("claude", firstRunSheet("claude"));
-    putLedger("claude", ["fable", "opus", "astra", "grok", "cursor-grok"]);
+    putLedger("claude", ["fable", "opus", "astra", "grok", "grok-4-7", "cursor-grok"]);
     const effortsOnly = buildPlan({ parent: "claude", home, matrix, efforts: { grok: "high", fable: "medium" } });
     assert.deepEqual(effortsOnly.efforts.grok, ["high"]);
     assert.deepEqual(effortsOnly.pairs, []);
@@ -391,6 +420,7 @@ describe("buildPlan", () => {
         ["opus", "claude:claude-opus-5-5", "2026-09-24T00:00:00.000Z"],
         ["astra", "codex:gpt-6-astra", "2026-09-24T00:00:00.000Z"],
         ["grok", "grok:grok-4.6", "2026-09-24T00:00:00.000Z"],
+        ["grok-4-7", "grok:grok-4.7", "2026-09-24T00:00:00.000Z"],
         ["cursor-grok", "cursor:grok-4.7", "2026-09-24T00:00:00.000Z"],
       ]
     );
@@ -399,20 +429,20 @@ describe("buildPlan", () => {
       parent: "claude",
       home,
       matrix,
-      roles: { "bug-fix": ["grok:grok-4.7@xhigh"], "swarm workers": ["codex:gpt-6-sol@high"] },
+      roles: { "bug-fix": ["cursor:kimi-k3@high"], "swarm workers": ["codex:gpt-6-sol@high"] },
     });
     assert.deepEqual(
       newFamilies.pairs.map((p) => [p.pair, p.descriptor, p.route]),
       [
         ["sol@high", "codex:gpt-6-sol@high", "runner"],
-        ["grok-4-7@xhigh", "grok:grok-4.7@xhigh", "runner"],
+        ["kimi@high", "cursor:kimi-k3@high", "runner"],
       ]
     );
-    assert.equal(newFamilies.verified.some((v) => v.family === "sol" || v.family === "grok-4-7"), false);
+    assert.equal(newFamilies.verified.some((v) => v.family === "sol" || v.family === "kimi"), false);
   });
 
   it("probes a new model of a verified family and keeps one parent's ledger from verifying the other", () => {
-    putLedger("claude", ["fable", "opus", "astra", "grok", "cursor-grok"]);
+    putLedger("claude", ["fable", "opus", "astra", "grok", "grok-4-7", "cursor-grok"]);
     const bumped = structuredClone(matrix) as { families: Array<{ family: string; model: string }> };
     const grok = bumped.families.find((f) => f.family === "grok");
     assert.ok(grok);
@@ -422,7 +452,10 @@ describe("buildPlan", () => {
 
     const codex = buildPlan({ parent: "codex", home, matrix });
     assert.deepEqual(codex.verified, []);
-    assert.equal(codex.pairs.length, 5);
+    assert.deepEqual(
+      codex.pairs.map((p) => p.pair),
+      ["fable@max", "opus@xhigh", "astra@max", "grok@xhigh", "grok-4-7@high", "cursor-grok@high"]
+    );
   });
 
   it("treats an unreadable ledger as inconsistent state", () => {
@@ -455,7 +488,7 @@ describe("buildPlan", () => {
     assert.deepEqual(plan.rows.map((r) => r.role), matrix.roles.map((r) => r.role));
   });
 
-  it("keeps an old 17-role sheet and materializes the two Cloud PR defaults", () => {
+  it("keeps an old 17-role sheet and materializes the pre-pr and Cloud PR defaults", () => {
     putSheet("claude", oldSeventeenSheet("claude"));
     const state = loadState({ parent: "claude", home, matrix });
     assert.equal(state.exists, true);
@@ -465,7 +498,7 @@ describe("buildPlan", () => {
       matrix.roles.slice(0, 17).map((r) => r.role)
     );
     const plan = buildPlan({ parent: "claude", home, matrix });
-    assert.equal(plan.rows.length, 19);
+    assert.equal(plan.rows.length, 22);
     assert.deepEqual(lanesOf(plan, "bug-fix"), ["grok:grok-4.6@xhigh"]);
     assert.deepEqual(lanesOf(plan, "interrogate reviewers"), [
       "claude:fable@max",
@@ -473,6 +506,9 @@ describe("buildPlan", () => {
       "grok:grok-4.6@xhigh",
       "claude:claude-opus-5-5@xhigh",
     ]);
+    assert.deepEqual(lanesOf(plan, "pre-pr reviewer"), ["grok:grok-4.7@xhigh"]);
+    assert.deepEqual(lanesOf(plan, "pre-pr fixer"), ["grok:grok-4.7@xhigh"]);
+    assert.deepEqual(lanesOf(plan, "pre-pr certifier"), ["grok:grok-4.7@high"]);
     assert.deepEqual(lanesOf(plan, "pr owner"), ["cursor:grok-4.7@high"]);
     assert.deepEqual(lanesOf(plan, "pr verifier"), ["cursor:grok-4.7@high"]);
   });
@@ -543,7 +579,7 @@ if (name === "claude" && args[0] === "auth") { out(JSON.stringify({ loggedIn: tr
 if (name === "codex" && args[0] === "login") { out("Logged in using ChatGPT"); process.exit(0); }
 if (name === "grok" && args[0] === "models") {
   if (process.env.FAKE_GROK_UNAUTH === "1") { err("Not logged in. Run grok auth login."); process.exit(1); }
-  out("You are logged in with grok.com.\\nAvailable models:\\n  * grok-4.6 (default)");
+  out("You are logged in with grok.com.\\nAvailable models:\\n  * grok-4.6 (default)\\n  * grok-4.7");
   process.exit(0);
 }
 const modelIndex = args.indexOf("--model");
@@ -611,6 +647,7 @@ describe("runProbes", () => {
       [
         ["astra@max", "astra", "passed"],
         ["grok@xhigh", "grok", "passed"],
+        ["grok-4-7@high", "grok-4-7", "passed"],
       ]
     );
     const grok = summary.external.find((r) => r.pair === "grok@xhigh");
@@ -657,7 +694,7 @@ describe("runProbes", () => {
   });
 
   it("runs nothing when every family of the plan is verified", async () => {
-    putLedger("claude", ["fable", "opus", "astra", "grok"]);
+    putLedger("claude", ["fable", "opus", "astra", "grok", "grok-4-7"]);
     const plan = buildPlan({ parent: "claude", home, matrix, roles: CLI_ONLY_ROLES, efforts: { grok: "high" } });
     savePlan(runDir, plan);
     const summary = await runProbes(plan, { dir: runDir, env: fakeEnv({ FAKE_GROK_UNAUTH: "1" }) });
@@ -774,10 +811,14 @@ describe("writeSheet", () => {
     writeSheet(plan, runDir, { home });
     const ledger = JSON.parse(readFileSync(plan.ledgerPath, "utf8"));
     assert.equal(ledger.schemaVersion, 1);
-    assert.deepEqual(Object.keys(ledger.families), ["claude:claude-opus-5-5", "claude:fable", "codex:gpt-6-astra", "grok:grok-4.6"]);
+    assert.deepEqual(Object.keys(ledger.families), ["claude:claude-opus-5-5", "claude:fable", "codex:gpt-6-astra", "grok:grok-4.6", "grok:grok-4.7"]);
     assert.deepEqual(
       { ...ledger.families["grok:grok-4.6"], verifiedAt: "" },
       { family: "grok", descriptor: "grok:grok-4.6@xhigh", verifiedAt: "", evidence: runDir }
+    );
+    assert.deepEqual(
+      { ...ledger.families["grok:grok-4.7"], verifiedAt: "" },
+      { family: "grok-4-7", descriptor: "grok:grok-4.7@high", verifiedAt: "", evidence: runDir }
     );
     const ledgerText = readFileSync(plan.ledgerPath, "utf8");
 
@@ -1313,6 +1354,7 @@ describe("probe target", () => {
       [
         ["astra@max", "passed"],
         ["grok@xhigh", "passed"],
+        ["grok-4-7@high", "passed"],
         ["cursor-grok@high", "passed"],
       ]
     );
@@ -1365,6 +1407,7 @@ describe("probe target", () => {
       [
         ["astra", "passed"],
         ["grok", "passed"],
+        ["grok-4-7", "passed"],
         ["cursor-grok", "failed"],
       ]
     );

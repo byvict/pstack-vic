@@ -436,7 +436,7 @@ describe("roles", () => {
     }
   });
 
-  it("pins the original 17 roles and the two Cloud PR responsibilities", () => {
+  it("pins the 22 roles in matrix order and the two Cloud PR responsibilities", () => {
     assert.deepEqual(
       matrix.roles.map((r) => r.role),
       [
@@ -457,11 +457,14 @@ describe("roles", () => {
         "swarm workers",
         "architect runners",
         "interrogate reviewers",
+        "pre-pr reviewer",
+        "pre-pr fixer",
+        "pre-pr certifier",
         "pr owner",
         "pr verifier",
       ]
     );
-    assert.equal(matrix.roles.length, 19);
+    assert.equal(matrix.roles.length, 22);
     const mixedPanel = [
       "claude:fable@max",
       "codex:gpt-6-astra@max",
@@ -477,12 +480,18 @@ describe("roles", () => {
     }
     assert.equal(
       roleNamed(matrix, "pr verifier")?.description,
-      "Independently checks risk, tests and user behavior of the exact PR head without writing code; the owner runs it at no less than the sheet effort."
+      "Independently checks risk, tests and user behavior of the exact PR head in Cursor Cloud without writing code."
     );
     assert.equal(
       roleNamed(matrix, "pr owner")?.description,
-      "Owns a ready PR in Cursor Cloud through verification, repair and merge; start.ts launches it at the sheet effort as a floor, raised to xhigh for complex work."
+      "Owns an uncertified or red PR in Cursor Cloud through verification, repair and merge; start.ts exits when the head is certified."
     );
+  });
+
+  it("pre-pr roles default to Grok 4.7 lanes on both parents", () => {
+    assert.deepEqual(roleDefault(matrix, "pre-pr reviewer", "claude"), ["grok:grok-4.7@xhigh"]);
+    assert.deepEqual(roleDefault(matrix, "pre-pr certifier", "codex"), ["grok:grok-4.7@high"]);
+    assert.deepEqual(roleDefault(matrix, "pre-pr fixer", "claude"), ["grok:grok-4.7@xhigh"]);
   });
 
   it("reject a role default naming an unknown family, an unselectable effort, or a foreign parent", () => {
