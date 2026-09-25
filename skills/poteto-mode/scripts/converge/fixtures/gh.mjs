@@ -85,7 +85,7 @@ else if (args[0] === 'api') {
   else if (endpoint === `${root}/actions/runs/${state.runOverrides.id ?? 8}/attempts/${state.runOverrides.run_attempt ?? 1}/jobs`) send({ jobs: state.jobs });
   else if (endpoint === `${root}/issues/1/comments`) send(state.comments);
   else if (endpoint === `${root}/pulls/1/comments`) send([]);
-  else if (endpoint.startsWith(`${root}/issues/comments/`)) send(state.comments.find(c => c.id === Number(endpoint.split('/').at(-1))) ?? {});
+  else if (endpoint.startsWith(`${root}/issues/comments/`)) { const found = state.comments.find(c => c.id === Number(endpoint.split('/').at(-1))); if (!found) fail(); send(found); }
   else if (endpoint.endsWith('/statuses')) send(state.statuses.filter(s => (s.sha ?? state.head) === endpoint.split('/')[4]));
   else if (endpoint === `${root}/branches/main/protection`) send({ required_status_checks: { contexts: state.protected, checks: state.protected.map(context => ({ context, app_id: context === 'verdict' ? null : 15368 })) } });
   else if (endpoint === `${root}/rules/branches/main`) send([]);

@@ -216,7 +216,7 @@ test('a verdict that a newer publication supersedes still launches an owner', as
 
 test('a failed GitHub read in the verdict gate fails start.ts instead of launching', async t => {
   const f = fixture(); t.after(f.cleanup); environment(t, f); publishCertificate(f);
-  const live = f.read(); live.failEndpoint = 'issues/comments/'; Object.assign(f.state, live); f.save();
+  const live = f.read(); live.failEndpoint = 'issues/1/comments'; Object.assign(f.state, live); f.save();
   let launches = 0;
   t.mock.method(globalThis, 'fetch', async () => { launches++; return Response.json({}); });
   await assert.rejects(start({ repo: 'Example/app', pr: 1, toolingRef: 'd'.repeat(40), stateDirectory: join(f.directory, 'owner') }), /^Error: gh request failed$/);

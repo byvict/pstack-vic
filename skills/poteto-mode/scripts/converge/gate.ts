@@ -1,5 +1,5 @@
 import { integer, jsonHash, object, type Dossier } from './contract.ts';
-import { api, comments, isPublication, pull, RequestError, snapshot, verdictStatus, type Trusted } from './github.ts';
+import { comments, isPublication, pull, RequestError, snapshot, verdictStatus, type Trusted } from './github.ts';
 import { decide, dossierFromComment, retainedLanes } from './publish.ts';
 import { analyze } from './reconcile.ts';
 
@@ -18,13 +18,14 @@ async function rederivePrePr(t: Trusted, pr: number, dossier: Dossier, url: stri
 async function certify(t: Trusted, pr: number, head: string, author: number): Promise<Gate> {
   const status = await verdictStatus(t.repo, pr, head, author);
   if (status.kind !== 'trusted') throw new Error(status.reason);
-  const comment = object(await api(`repos/${t.repo}/issues/comments/${status.commentId}`));
+  const all = await comments(t.repo, pr);
+  const comment = all.find(c => c.id === Number(status.commentId));
+  if (!comment) throw new Error('Verdict comment is missing from this PR');
   if (integer(object(comment.user).id) !== author) throw new Error('Verdict comment author is untrusted');
   const dossier = dossierFromComment(comment);
   const r = dossier.round;
   if (r.repo !== t.repo || r.pr !== pr || r.head !== head || !['converge', 'pre-pr'].includes(r.execution) || dossier.decision.verdict !== 'VERIFIED' || (r.execution === 'converge' && r.contract !== t.sha)) throw new Error('Verdict identity or execution does not authorize merge');
   if (r.configPath !== t.configPath) throw new Error('Verdict was reconciled against another contract path');
-  const all = await comments(t.repo, pr);
   const newest = all.filter(c => isPublication(c, author)).sort((a, b) => integer(b.id) - integer(a.id))[0];
   if (!newest || newest.id !== comment.id) throw new Error('A newer converge round supersedes this verdict');
   const live = await pull(t.repo, pr);
