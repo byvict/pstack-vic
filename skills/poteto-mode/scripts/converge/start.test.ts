@@ -178,3 +178,15 @@ for (const [name, status] of [['NOT VERIFIED', { state: 'failure', description: 
     assert.equal(launches, 1); assert.equal(receipt.agentId, 'bc_owner');
   });
 }
+
+test('a certified head that moves before the exit refuses and launches nothing', async t => {
+  const f = fixture(); t.after(f.cleanup); environment(t, f);
+  const live = f.read();
+  live.statuses = [{ context: 'verdict', state: 'success', description: 'VERIFIED by converge', target_url: 'https://github.com/Example/app/pull/1#issuecomment-100', id: 200, creator: { id: 7 } }];
+  live.moveHead = { afterReads: 1, head: 'e'.repeat(40) };
+  Object.assign(f.state, live); f.save();
+  let launches = 0;
+  t.mock.method(globalThis, 'fetch', async () => { launches++; return Response.json({}); });
+  await assert.rejects(start({ repo: 'Example/app', pr: 1, toolingRef: 'a'.repeat(40), stateDirectory: join(f.directory, 'owner') }), /^Error: PR head moved$/);
+  assert.equal(launches, 0); assert.equal(existsSync(join(f.directory, 'owner', 'intent.json')), false);
+});

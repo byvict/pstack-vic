@@ -115,7 +115,10 @@ export async function start(options: { repo: string; pr: number; toolingRef: str
   const initial = await pull(repo, options.pr);
   admitPull(initial, t.config, initial.head);
   const verdict = await verdictStatus(repo, options.pr, initial.head, await principal());
-  if (verdict.kind === 'trusted') return { schemaVersion: 1, kind: 'certified', repo, pr: options.pr, head: initial.head, verdictUrl: verdict.url };
+  if (verdict.kind === 'trusted') {
+    admitPull(await pull(repo, options.pr), t.config, initial.head);
+    return { schemaVersion: 1, kind: 'certified', repo, pr: options.pr, head: initial.head, verdictUrl: verdict.url };
+  }
   const key = process.env.CURSOR_API_KEY;
   if (!key) throw new Error('CURSOR_API_KEY is unavailable locally');
   const selected = selectCursorModel(await cursor('/v1/models', key), 'grok-4.7', effort);

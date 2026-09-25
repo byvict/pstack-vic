@@ -44,7 +44,10 @@ else if (args[0] === 'api') {
     send({ sha: endpoint.slice('repos/byvict/pstack-vic/commits/'.length) });
   }
   else if (endpoint === root) send({ default_branch: 'main' });
-  else if (endpoint === `${root}/pulls/1`) send({ number: 1, head: { sha: state.head, ref: 'change' }, base: { ref: state.prBase }, state: 'open', draft: false, body: state.body, labels: state.hold ? [{ name: 'needs-victor' }] : [], user: { id: 10, login: 'author', type: 'User' }, auto_merge: state.autoMerge ? {} : null });
+  else if (endpoint === `${root}/pulls/1`) {
+    if (state.moveHead) { if (state.moveHead.afterReads-- <= 0) state.head = state.moveHead.head; save(); }
+    send({ number: 1, head: { sha: state.head, ref: 'change' }, base: { ref: state.prBase }, state: 'open', draft: false, body: state.body, labels: state.hold ? [{ name: 'needs-victor' }] : [], user: { id: 10, login: 'author', type: 'User' }, auto_merge: state.autoMerge ? {} : null });
+  }
   else if (endpoint === `${root}/commits/main`) send({ sha: state.trunk });
   else if (endpoint.startsWith(`${root}/git/trees/`)) send({ truncated: false, tree: Object.keys(state.blobs).map(path => ({ path, mode: '100644' })) });
   else if (endpoint.startsWith(`${root}/contents/`)) {
