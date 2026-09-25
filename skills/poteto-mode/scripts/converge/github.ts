@@ -230,6 +230,21 @@ export function isPublication(comment: Record<string, unknown>, author: number):
   const body = typeof comment.body === 'string' ? comment.body : '';
   return integer(object(comment.user).id) === author && /^<!-- converge:v1 [a-f0-9-]{36} -->\n```json\n/.test(body);
 }
+export async function statuses(repo: string, head: string): Promise<Record<string, unknown>[]> {
+  return (await pages(`repos/${repo}/commits/${head}/statuses`)).map(v => object(v)).sort((a, b) => integer(b.id) - integer(a.id));
+}
+export type VerdictStatus = { kind: 'trusted'; url: string; commentId: string } | { kind: 'foreign'; refusal: string } | { kind: 'none' };
+/** Only the newest `verdict` status on the head counts. A VERIFIED one that another account posted is `foreign`, not `none`, so a caller can refuse it loudly instead of treating the PR as uncertified. */
+export async function verdictStatus(repo: string, pr: number, head: string, author: number): Promise<VerdictStatus> {
+  const status = (await statuses(repo, head)).find(s => s.context === 'verdict');
+  if (!status || status.state !== 'success' || status.description !== 'VERIFIED by converge') return { kind: 'none' };
+  const creator = object(status.creator);
+  if (integer(creator.id) !== author) return { kind: 'foreign', refusal: 'VERIFIED verdict status was posted by another account: ' + (typeof creator.login === 'string' ? creator.login : String(creator.id)) };
+  const url = string(status.target_url);
+  const prefix = `https://github.com/${repo}/pull/${pr}#issuecomment-`;
+  if (!url.startsWith(prefix) || !/^\d+$/.test(url.slice(prefix.length))) return { kind: 'none' };
+  return { kind: 'trusted', url, commentId: url.slice(prefix.length) };
+}
 export async function checks(repo: string, head: string): Promise<Check[]> {
   const all = (await pages(`repos/${repo}/commits/${head}/check-runs?filter=all`, 'check_runs', 'installation')).map(value => {
     const c = object(value);

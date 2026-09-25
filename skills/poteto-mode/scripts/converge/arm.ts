@@ -1,7 +1,7 @@
 import { parseArgs } from 'node:util';
 import { array, integer, jsonHash, object, repoName, sha, string, type Dossier } from './contract.ts';
-import { admitPull, api, checks, command, comments, isPublication, pages, principal, pull, snapshot, trusted, workflowRun, type Trusted } from './github.ts';
-import { decide, dossierFromComment, retainedLanes, statuses } from './publish.ts';
+import { admitPull, api, checks, command, comments, isPublication, pages, principal, pull, snapshot, trusted, verdictStatus, workflowRun, type Trusted } from './github.ts';
+import { decide, dossierFromComment, retainedLanes } from './publish.ts';
 import { analyze } from './reconcile.ts';
 
 async function trunkHealth(t: Trusted): Promise<void> {
@@ -48,12 +48,11 @@ async function certifiedAtTip(t: Trusted, pr: number, dossier: Dossier, commentU
   if (decision.verdict !== 'VERIFIED') throw new Error(`Certificate is no longer VERIFIED at trunk tip ${t.sha}: ${decision.verdict}`);
 }
 async function verdict(t: Trusted, pr: number, head: string, author: number): Promise<Dossier> {
-  const status = (await statuses(t.repo, head)).find(s => s.context === 'verdict');
-  if (!status || status.state !== 'success' || status.description !== 'VERIFIED by converge' || integer(object(status.creator).id) !== author) throw new Error('Latest verdict status is not trusted VERIFIED');
-  const url = string(status.target_url);
-  const prefix = `https://github.com/${t.repo}/pull/${pr}#issuecomment-`;
-  if (!url.startsWith(prefix) || !/^\d+$/.test(url.slice(prefix.length))) throw new Error('Verdict status does not link to this PR');
-  const comment = object(await api(`repos/${t.repo}/issues/comments/${url.slice(prefix.length)}`));
+  const status = await verdictStatus(t.repo, pr, head, author);
+  if (status.kind === 'foreign') throw new Error(status.refusal);
+  if (status.kind === 'none') throw new Error('Latest verdict status is not trusted VERIFIED');
+  const url = status.url;
+  const comment = object(await api(`repos/${t.repo}/issues/comments/${status.commentId}`));
   if (integer(object(comment.user).id) !== author) throw new Error('Verdict comment author is untrusted');
   const dossier = dossierFromComment(comment);
   const r = dossier.round;

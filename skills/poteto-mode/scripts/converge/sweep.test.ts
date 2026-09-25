@@ -57,3 +57,11 @@ test('sweep arms a certificate published before trunk moved, and its dry run mak
   assert.deepEqual(outcomes(result.stdout), [[1, 'armed', '']]);
   assert.deepEqual(f.read().mutations, merge(f.state.head));
 });
+test('sweep refuses a VERIFIED verdict status from another account and exits 1', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const live = f.read(); live.statuses = [{ context: 'verdict', state: 'success', description: 'VERIFIED by converge', target_url: 'https://github.com/Example/app/pull/1#issuecomment-100', id: 200, creator: { id: 8, login: 'other-bot' } }]; Object.assign(f.state, live); f.save(); listed(f);
+  const result = f.run('converge-sweep', ['--repo', 'Example/app']);
+  assert.equal(result.status, 1);
+  assert.deepEqual(outcomes(result.stdout), [[1, 'refused', 'VERIFIED verdict status was posted by another account: other-bot']]);
+  assert.deepEqual(f.read().mutations, []);
+});

@@ -2,9 +2,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { integer, object, repoName, sha, string } from './contract.ts';
-import { admitPull, api, principal, pull, trusted } from './github.ts';
-import { statuses } from './publish.ts';
+import { object, repoName, sha, string } from './contract.ts';
+import { admitPull, api, principal, pull, trusted, verdictStatus } from './github.ts';
 import { selectCursorModel } from '../runner/http-lane.ts';
 
 type Effort = 'high' | 'xhigh';
@@ -115,11 +114,8 @@ export async function start(options: { repo: string; pr: number; toolingRef: str
   const t = await trusted(repo, options.configPath ?? '.cursor/converge.json');
   const initial = await pull(repo, options.pr);
   admitPull(initial, t.config, initial.head);
-  const author = await principal();
-  const verdict = (await statuses(repo, initial.head)).find(s => s.context === 'verdict');
-  if (verdict && verdict.state === 'success' && verdict.description === 'VERIFIED by converge' && integer(object(verdict.creator).id) === author) {
-    return { schemaVersion: 1, kind: 'certified', repo, pr: options.pr, head: initial.head, verdictUrl: string(verdict.target_url) };
-  }
+  const verdict = await verdictStatus(repo, options.pr, initial.head, await principal());
+  if (verdict.kind === 'trusted') return { schemaVersion: 1, kind: 'certified', repo, pr: options.pr, head: initial.head, verdictUrl: verdict.url };
   const key = process.env.CURSOR_API_KEY;
   if (!key) throw new Error('CURSOR_API_KEY is unavailable locally');
   const selected = selectCursorModel(await cursor('/v1/models', key), 'grok-4.7', effort);

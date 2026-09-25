@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { array, digest, integer, jsonHash, object, oneOf, parseFinding, parseReport, parseRound, parseObligation, riskObligation, sameObligation, string, strings, sha, parseExecutionId, type Decision, type Dossier, type Finding, type Report, type Role } from './contract.ts';
-import { admitPull, api, comments, isPublication, pages, principal, pull, snapshot } from './github.ts';
+import { admitPull, api, comments, isPublication, principal, pull, snapshot, statuses } from './github.ts';
 import { analyze } from './reconcile.ts';
 import { admitLane, type AdmittedLane } from './evidence.ts';
 import { admitCertificate, parseCertificate, type Certificate } from './certify.ts';
@@ -67,9 +67,6 @@ export function dossierFromComment(value: unknown): Dossier {
   const dossier = parseDossier(JSON.parse(match[2] ?? ''));
   if (dossier.round.id !== match[1]) throw new Error('Verdict marker identity mismatch');
   return dossier;
-}
-export async function statuses(repo: string, head: string): Promise<Record<string, unknown>[]> {
-  return (await pages(`repos/${repo}/commits/${head}/statuses`)).map(v => object(v)).sort((a, b) => integer(b.id) - integer(a.id));
 }
 /** A pre-pr report publishes before the PR's CI finishes, so it carries only its certificate and no CI-backed body claims. */
 export async function publishVerdict(options: { reportFile: string; laneFiles: string[]; evidenceDirectory: string; retainCommentUrl?: string; certificateFile?: string }): Promise<{ dossier: Dossier; commentUrl: string; statusId: number }> {

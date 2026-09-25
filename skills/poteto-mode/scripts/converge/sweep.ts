@@ -1,7 +1,6 @@
 import { parseArgs } from 'node:util';
 import { array, integer, object, repoName, sha, string } from './contract.ts';
-import { pages, principal, trusted } from './github.ts';
-import { statuses } from './publish.ts';
+import { pages, principal, trusted, verdictStatus } from './github.ts';
 import { arm } from './arm.ts';
 
 export interface Swept { pr: number; head: string; outcome: 'armed' | 'dry-run' | 'skipped' | 'refused'; reason: string }
@@ -20,8 +19,9 @@ export async function sweep(options: { repo: string; configPath?: string; dryRun
     if (array(p.labels).some(l => t.config.holdLabels.includes(string(object(l).name)))) { skip('hold label'); continue; }
     if (p.auto_merge !== null) { skip('auto-merge already pending'); continue; }
     try {
-      const verdict = (await statuses(repo, head)).find(s => s.context === 'verdict');
-      if (!verdict || verdict.state !== 'success' || verdict.description !== 'VERIFIED by converge' || integer(object(verdict.creator).id) !== author) { skip('no trusted verdict on head'); continue; }
+      const verdict = await verdictStatus(repo, pr, head, author);
+      if (verdict.kind === 'none') { skip('no trusted verdict on head'); continue; }
+      if (verdict.kind === 'foreign') { swept.push({ pr, head, outcome: 'refused', reason: verdict.refusal }); continue; }
       const result = await arm({ repo, pr, head, verdict: 'VERIFIED', dryRun: options.dryRun, configPath: options.configPath, pending: true });
       swept.push({ pr, head, outcome: result.kind, reason: '' });
     } catch (error) { swept.push({ pr, head, outcome: 'refused', reason: error instanceof Error ? error.message : 'Arm failed' }); }
