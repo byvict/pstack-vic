@@ -197,3 +197,12 @@ test('after an arm, a new publication refuses while auto-merge is pending', t =>
   assert.notEqual(second.status, 0); assert.match(second.stderr, /^Auto-merge is pending on this PR; disarm it before publishing a verdict$/m);
   assert.equal(f.read().comments.length, 1); assert.equal(f.read().statuses.length, 1);
 });
+test('a byte-identical publication retry succeeds while auto-merge is pending, because it writes nothing', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const args = ['--report', prReport(f, 'converge'), '--evidence', join(f.directory, 'evidence')];
+  const first = f.run('publish.ts', args); assert.equal(first.status, 0, first.stderr);
+  const live = f.read(); live.autoMerge = true; Object.assign(f.state, live); f.save();
+  const retry = f.run('publish.ts', args); assert.equal(retry.status, 0, retry.stderr);
+  assert.equal(JSON.parse(retry.stdout).statusId, JSON.parse(first.stdout).statusId);
+  assert.equal(f.read().comments.length, 1); assert.equal(f.read().statuses.length, 1);
+});
