@@ -180,7 +180,7 @@ for (const [name, status] of [['NOT VERIFIED', { state: 'failure', description: 
 test('a certified head that moves before the exit refuses and launches nothing', async t => {
   const f = fixture(); t.after(f.cleanup); environment(t, f); publishCertificate(f);
   const live = f.read();
-  live.moveHead = { afterReads: 1, head: 'e'.repeat(40) };
+  live.after = { endpoint: 'pulls/1', reads: 1, set: { head: 'e'.repeat(40) } };
   Object.assign(f.state, live); f.save();
   let launches = 0;
   t.mock.method(globalThis, 'fetch', async () => { launches++; return Response.json({}); });

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync, writeFileSync, appendFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, appendFileSync, renameSync } from 'node:fs';
 const file = process.env.CONVERGE_FIXTURE;
 const state = JSON.parse(readFileSync(file, 'utf8'));
 const args = process.argv.slice(2);
@@ -9,7 +9,8 @@ function send(value) {
   const text = JSON.stringify(args.includes('--slurp') ? [value] : value);
   process.stdout.write(color ? '\x1b[32m' + text + '\x1b[0m' : text);
 }
-function save() { writeFileSync(file, JSON.stringify(state)); }
+function save() { const next = `${file}.${process.pid}`; writeFileSync(next, JSON.stringify(state)); renameSync(next, file); }
+function later(endpoint) { const after = state.after; if (!after || after.endpoint !== endpoint) return; if (after.reads-- <= 0) Object.assign(state, after.set); save(); }
 function fail() { process.exit(1); }
 const repo = 'Example/app';
 const root = `repos/${repo}`;
@@ -45,10 +46,10 @@ else if (args[0] === 'api') {
   }
   else if (endpoint === root) send({ default_branch: 'main' });
   else if (endpoint === `${root}/pulls/1`) {
-    if (state.moveHead) { if (state.moveHead.afterReads-- <= 0) state.head = state.moveHead.head; save(); }
+    later('pulls/1');
     send({ number: 1, head: { sha: state.head, ref: 'change' }, base: { ref: state.prBase }, state: 'open', draft: false, body: state.body, labels: state.hold ? [{ name: 'needs-victor' }] : [], user: { id: 10, login: 'author', type: 'User' }, auto_merge: state.autoMerge ? {} : null });
   }
-  else if (endpoint === `${root}/commits/main`) send({ sha: state.trunk });
+  else if (endpoint === `${root}/commits/main`) { later('commits/main'); send({ sha: state.trunk }); }
   else if (endpoint.startsWith(`${root}/git/trees/`)) send({ truncated: false, tree: Object.keys(state.blobs).map(path => ({ path, mode: '100644' })) });
   else if (endpoint.startsWith(`${root}/contents/`)) {
     const path = endpoint.slice(`${root}/contents/`.length);

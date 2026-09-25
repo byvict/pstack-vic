@@ -97,7 +97,7 @@ test('pending arm accepts queued checks and an unfinished exact-head Tests run',
   assert.equal(JSON.parse(result.stdout).steps.at(-1), 'gh pr merge --squash --auto --match-head-commit ' + f.state.head + ' (checks pending)');
   assert.deepEqual(f.read().mutations, merge(f.state.head));
 });
-for (const conclusion of ['failure', 'neutral']) {
+for (const conclusion of ['failure', 'neutral', 'skipped']) {
   test(`pending arm refuses a required check completed as ${conclusion}`, t => {
     const f = fixture(); t.after(f.cleanup); publish(f);
     const live = f.read(); live.checks = [{ id: 21, name: 'Run test suite', status: 'queued', conclusion: null, app: { id: 15368 } }, { id: 22, name: 'Secrets scan', status: 'completed', conclusion, app: { id: 15368 } }]; Object.assign(f.state, live); f.save();
@@ -196,3 +196,14 @@ test('a pre-pr verdict re-derives on every arm, once, even when nothing moved', 
   assert.equal(JSON.parse(result.stdout).steps[3], `Re-derived the pre-pr verdict at trunk tip ${'a'.repeat(40)}`);
   assert.deepEqual(f.read().mutations, merge(f.state.head));
 });
+for (const drift of ['trunk', 'text'] as const) {
+  test(`a pre-pr arm refuses when the ${drift === 'trunk' ? 'trunk' : 'PR text'} moves during the re-derivation`, t => {
+    const f = fixture(); t.after(f.cleanup); publishCertificate(f);
+    const live = f.read();
+    live.after = drift === 'trunk' ? { endpoint: 'commits/main', reads: 3, set: { trunk: 'd'.repeat(40) } } : { endpoint: 'pulls/1', reads: 3, set: { body: live.body + 'Edited during the arm.\n' } };
+    Object.assign(f.state, live); f.save();
+    const result = arm(f, false, ['--pending']); assert.notEqual(result.status, 0);
+    assert.match(result.stderr, drift === 'trunk' ? /^Trunk moved during re-derivation$/m : /^PR text changed during re-derivation$/m);
+    assert.deepEqual(f.read().mutations, []);
+  });
+}
