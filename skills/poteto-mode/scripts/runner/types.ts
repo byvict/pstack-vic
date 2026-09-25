@@ -159,10 +159,10 @@ export interface RemoteRun {
 }
 
 /**
- * The worktree an `unsandboxed` lane ran in: HEAD before the model child
- * starts, HEAD after it exits, and `git status --porcelain
- * --untracked-files=all` after. The runner only records it; admission refuses
- * a lane that moved HEAD or left changes.
+ * The worktree an `unsandboxed` lane ran in, read through git at the root
+ * resolved before the model child starts: HEAD before, HEAD after the child
+ * exits, and `git status --porcelain --untracked-files=all` after. The runner
+ * only records it; admission refuses a lane that moved HEAD or left changes.
  */
 export interface Checkout {
   readonly headBefore: string;
@@ -193,7 +193,7 @@ interface ReceiptBase {
   readonly usage: NormalizedUsage | null;
   readonly costUsd: number | null;
   readonly error: ReceiptError | null;
-  /** Null in every mode but `unsandboxed`, and when that lane never reached its model child. */
+  /** Null in every mode but `unsandboxed`, and there whenever the model child did not exit on its own or git could not read the worktree after it. */
   readonly checkout: Checkout | null;
 }
 

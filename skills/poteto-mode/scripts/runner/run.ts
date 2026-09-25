@@ -1,4 +1,4 @@
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { execFile, spawn, spawnSync, type ChildProcess } from "node:child_process";
 import {
   accessSync,
   closeSync,
@@ -15,6 +15,7 @@ import {
 } from "node:fs";
 import { constants as osConstants, tmpdir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
+import { promisify } from "node:util";
 import type { Readable } from "node:stream";
 import {
   routeFor,
@@ -213,32 +214,74 @@ export function findExecutable(
  * parent running inside a hook) would point the checkout record at another
  * repository, and admission trusts that record.
  */
-function git(cwd: string, args: readonly string[]): string {
-  const env = Object.fromEntries(
+function gitEnvironment(): NodeJS.ProcessEnv {
+  return Object.fromEntries(
     Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_"))
   );
-  const result = spawnSync("git", ["-C", cwd, "--no-optional-locks", ...args], {
+}
+
+function gitArgv(cwd: string, args: readonly string[]): string[] {
+  return ["-C", cwd, "--no-optional-locks", ...args];
+}
+
+function gitFailure(cwd: string, args: readonly string[], detail: string): Error {
+  return new Error(`git ${args.join(" ")} failed in ${cwd}: ${detail.trim()}`);
+}
+
+function isGitWorktree(cwd: string): boolean {
+  const result = spawnSync("git", gitArgv(cwd, ["rev-parse", "--show-toplevel"]), {
     encoding: "utf8",
-    env,
+    env: gitEnvironment(),
   });
-  if (result.error !== undefined) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(`git ${args.join(" ")} failed in ${cwd}: ${result.stderr.trim()}`);
+  return result.error === undefined && result.status === 0;
+}
+
+const execFileAsync = promisify(execFile);
+
+/** Git during a lane answers to the lane's deadline and cancellation latch, as the model child did. */
+async function laneGit(
+  cwd: string,
+  args: readonly string[],
+  context: LaneContext
+): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync("git", gitArgv(cwd, args), {
+      encoding: "utf8",
+      env: gitEnvironment(),
+      signal: context.cancellation.abortSignal,
+      timeout: context.deadlineAt === null ? 0 : Math.max(1, context.deadlineAt - Date.now()),
+    });
+    return stdout;
+  } catch (error) {
+    const stderr = (error as { stderr?: unknown }).stderr;
+    const detail = typeof stderr === "string" && stderr.trim().length > 0
+      ? stderr
+      : error instanceof Error ? error.message : String(error);
+    throw gitFailure(cwd, args, detail);
   }
-  return result.stdout;
 }
 
-function readHead(cwd: string): string {
-  return git(cwd, ["rev-parse", "--verify", "HEAD"]).trim();
+interface CheckoutStart {
+  readonly root: string;
+  readonly head: string;
 }
 
-function readCheckout(cwd: string, headBefore: string): Checkout {
+/**
+ * The worktree root is resolved once, before the child, so a lane that
+ * repoints a `--cwd` symlink cannot send the after-read to a clean copy.
+ */
+async function startCheckout(cwd: string, context: LaneContext): Promise<CheckoutStart> {
+  const root = (await laneGit(cwd, ["rev-parse", "--show-toplevel"], context)).trim();
+  return { root, head: (await laneGit(root, ["rev-parse", "--verify", "HEAD"], context)).trim() };
+}
+
+async function finishCheckout(start: CheckoutStart, context: LaneContext): Promise<Checkout> {
+  const headAfter = (await laneGit(start.root, ["rev-parse", "--verify", "HEAD"], context)).trim();
+  const status = await laneGit(start.root, ["status", "--porcelain", "--untracked-files=all"], context);
   return {
-    headBefore,
-    headAfter: readHead(cwd),
-    statusAfter: git(cwd, ["status", "--porcelain", "--untracked-files=all"])
-      .split("\n")
-      .filter((line) => line.length > 0),
+    headBefore: start.head,
+    headAfter,
+    statusAfter: status.split("\n").filter((line) => line.length > 0),
   };
 }
 
@@ -250,7 +293,12 @@ interface StagedOverlay {
 function stageOverlay(env: NodeJS.ProcessEnv, overlay: ConfigOverlay): StagedOverlay {
   const directory = mkdtempSync(join(tmpdir(), "pstack-runner-"));
   const file = join(directory, overlay.fileName);
-  writeFileSync(file, overlay.content, { encoding: "utf8", mode: 0o600 });
+  try {
+    writeFileSync(file, overlay.content, { encoding: "utf8", mode: 0o600 });
+  } catch (error) {
+    rmSync(directory, { recursive: true, force: true });
+    throw error;
+  }
   const staged: NodeJS.ProcessEnv = { ...env, [overlay.variable]: file };
   for (const key of overlay.unset) delete staged[key];
   return { env: staged, directory };
@@ -780,12 +828,8 @@ export function validateOptions(options: RunnerOptions): void {
     throw new UsageError(`cwd is not a directory: ${options.cwd}`);
   }
   requireSupportedMode(options.provider, options.mode, process.env);
-  if (options.mode === "unsandboxed") {
-    try {
-      git(options.cwd, ["rev-parse", "--show-toplevel"]);
-    } catch {
-      throw new UsageError(`unsandboxed needs --cwd inside a git worktree: ${options.cwd}`);
-    }
+  if (options.mode === "unsandboxed" && !isGitWorktree(options.cwd)) {
+    throw new UsageError(`unsandboxed needs --cwd inside a git worktree: ${options.cwd}`);
   }
   if (
     options.promptPath === options.outputPath ||
@@ -1003,9 +1047,9 @@ async function runCliLane(
 /**
  * The model child. An unsandboxed lane gets its config overlay for the
  * child's lifetime, and its worktree recorded before the child starts and
- * after it ends, whether it ended by exit, deadline, cancellation or throw.
- * The child's exit lands in the evidence first, so a worktree that can no
- * longer be read still leaves a receipt with the exit it followed.
+ * after it exits on its own. The exit lands in the evidence first, so a
+ * worktree read that fails or runs out of time still leaves a receipt with
+ * the exit it followed.
  */
 async function runModel(
   options: CliRunnerOptions,
@@ -1015,11 +1059,12 @@ async function runModel(
   context: LaneContext,
   ev: CliEvidence
 ): Promise<ProcessResult> {
-  const headBefore = options.mode === "unsandboxed" ? readHead(options.cwd) : null;
+  const start = options.mode === "unsandboxed" ? await startCheckout(options.cwd, context) : null;
   const overlay = configOverlay(options);
   const staged = overlay === null ? null : stageOverlay(env, overlay);
+  let result: ProcessResult;
   try {
-    const result = await runProcess(
+    result = await runProcess(
       executable,
       invocation,
       options.cwd,
@@ -1028,13 +1073,15 @@ async function runModel(
       context.deadlineAt,
       context.cancellation
     );
-    ev.exitCode = result.exitCode;
-    ev.signal = result.signal;
-    return result;
   } finally {
     if (staged !== null) rmSync(staged.directory, { recursive: true, force: true });
-    if (headBefore !== null) ev.checkout = readCheckout(options.cwd, headBefore);
   }
+  ev.exitCode = result.exitCode;
+  ev.signal = result.signal;
+  if (start !== null && result.cancelledBy === null && !result.timedOut) {
+    ev.checkout = await finishCheckout(start, context);
+  }
+  return result;
 }
 
 function laneFor(options: RunnerOptions): Lane {

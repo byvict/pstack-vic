@@ -10,6 +10,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
@@ -47,7 +48,7 @@ const CLI_PROVIDERS: readonly string[] = Object.entries(MATRIX.providers)
   .map(([name]) => name);
 
 const fake = `#!/usr/bin/env node
-import { appendFileSync, existsSync, readFileSync, rmSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { execFileSync, spawn } from "node:child_process";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const out = (text) => writeSync(1, text + "\\n");
@@ -139,6 +140,11 @@ if (name === "grok" && stage === "model") {
   }
   if (process.env.FAKE_GROK_WRITE_PROBE === "1") writeFileSync("probe.txt", "probe");
   if (process.env.FAKE_GROK_REMOVE_GIT === "1") rmSync(".git", { recursive: true, force: true });
+  if (process.env.FAKE_GROK_REPOINT_CWD) {
+    const link = args[args.indexOf("--cwd") + 1];
+    unlinkSync(link);
+    symlinkSync(process.env.FAKE_GROK_REPOINT_CWD, link);
+  }
   if (process.env.FAKE_GROK_COMMIT === "1") {
     execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "--allow-empty", "--quiet", "-m", "lane"], {
       env: { ...process.env, GIT_AUTHOR_NAME: "lane", GIT_AUTHOR_EMAIL: "lane@example.invalid", GIT_COMMITTER_NAME: "lane", GIT_COMMITTER_EMAIL: "lane@example.invalid" },
@@ -454,6 +460,9 @@ const FAKE_ENV = [
   "FAKE_GROK_WRITE_PROBE",
   "FAKE_GROK_COMMIT",
   "FAKE_GROK_REMOVE_GIT",
+  "FAKE_GROK_REPOINT_CWD",
+  "FAKE_REAL_GIT",
+  "FAKE_GIT_STATUS_DELAY_MS",
 ] as const;
 
 function clearFakeEnv(): void {
@@ -1110,6 +1119,16 @@ describe("runLane", () => {
 
 describe("unsandboxed mode", () => {
   const PARENT_ENV = ["CODEX_SANDBOX", "GROK_CONFIG", "GROK_CONFIG_PATH"] as const;
+  const REAL_GIT = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+  const FAKE_GIT = `#!/usr/bin/env node
+import { spawnSync } from "node:child_process";
+const args = process.argv.slice(2);
+if (args.includes("status") && process.env.FAKE_GIT_STATUS_DELAY_MS) {
+  await new Promise((resolve) => setTimeout(resolve, Number(process.env.FAKE_GIT_STATUS_DELAY_MS)));
+}
+const real = spawnSync(process.env.FAKE_REAL_GIT, args, { stdio: "inherit" });
+process.exit(real.status ?? 1);
+`;
   const saved = new Map<string, string | undefined>();
 
   beforeEach(() => {
@@ -1226,6 +1245,38 @@ describe("unsandboxed mode", () => {
     matchObject(recorded, { status: "child-failed", checkout: null, exitCode: 0 });
     assert.match(recorded.error?.evidence ?? "", /git rev-parse --verify HEAD failed/);
     assert.equal(existsSync(input.outputPath), false);
+  });
+
+  it("reads the worktree the lane ran in after the lane repoints a --cwd symlink", async () => {
+    const { cwd, head } = worktree();
+    const clean = join(scratch, "clean");
+    git(scratch, ["clone", "--quiet", cwd, clean]);
+    const link = join(scratch, "link");
+    symlinkSync(cwd, link);
+    process.env.FAKE_GROK_WRITE_PROBE = "1";
+    process.env.FAKE_GROK_REPOINT_CWD = clean;
+    const input = unsandboxed(link);
+    assert.equal((await runLane(input)).exitCode, 0);
+    matchObject(receipt(input.receiptPath), {
+      status: "complete",
+      checkout: { headBefore: head, headAfter: head, statusAfter: ["?? probe.txt"] },
+    });
+  });
+
+  it("keeps the explicit deadline while it reads the worktree after the lane", { timeout: RUN_BUDGET_MS * 2 }, async () => {
+    const { cwd } = worktree();
+    writeFileSync(join(bin, "git"), FAKE_GIT);
+    chmodSync(join(bin, "git"), 0o755);
+    process.env.FAKE_REAL_GIT = REAL_GIT;
+    warm("grok");
+    execFileSync(join(bin, "git"), ["--version"], { stdio: "ignore" });
+    process.env.FAKE_GIT_STATUS_DELAY_MS = String(DESCENDANT_HOLD_MS);
+    const started = Date.now();
+    const input = { ...unsandboxed(cwd), timeoutMs: DRAIN_DEADLINE_MS };
+    const result = await runLane(input, started);
+    assert.ok(Date.now() - started < DESCENDANT_HOLD_MS / 2, "the git read was not cut at the deadline");
+    assert.equal(result.exitCode, 124);
+    matchObject(receipt(input.receiptPath), { status: "timed-out", checkout: null, exitCode: 0 });
   });
 
   it("leaves the parent's Grok config alone in read-only mode", async () => {
