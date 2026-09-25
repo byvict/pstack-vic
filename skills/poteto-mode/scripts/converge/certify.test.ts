@@ -2,13 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fixture } from './fixtures/setup.ts';
+import { commit, fixture } from './fixtures/setup.ts';
 import { hash } from './contract.ts';
 
 function prePrFixture(certifier = true) {
   const f = fixture();
   const config = JSON.parse(f.state.blobs['.cursor/converge.json']);
-  config.prePr = { runs: [{ name: 'suite', command: 'true' }], certifier };
+  config.prePr = { runs: [{ name: 'suite', command: 'echo ok' }], certifier };
   f.state.blobs['.cursor/converge.json'] = JSON.stringify(config);
   f.state.files = [{ filename: 'client/Login.jsx', status: 'modified', patch: '@@ -1 +1 @@\n-old\n+new' }];
   f.state.diff = 'diff --git a/client/Login.jsx b/client/Login.jsx\nindex 1111111..2222222 100644\n--- a/client/Login.jsx\n+++ b/client/Login.jsx\n@@ -1 +1 @@\n-old\n+new\n';
@@ -31,22 +31,27 @@ function lane(f: ReturnType<typeof fixture>, round: Record<string, unknown>, rol
   const manifest = { round, laneId, role, descriptor: `${options.provider ?? 'grok'}:grok-4.7@xhigh`, prompt: 'prompt.txt', promptDigest: hash('read only'), output: 'output.json', receipt: 'receipt.json', createdAt: Date.parse(receipt.startedAt) };
   writeFileSync(join(root, 'prompt.txt'), 'read only'); writeFileSync(join(root, 'output.json'), JSON.stringify(output)); writeFileSync(join(root, 'receipt.json'), JSON.stringify(receipt)); writeFileSync(join(root, 'manifest.json'), JSON.stringify(manifest));
 }
+function record(f: ReturnType<typeof fixture>, run: string, checkout: string, argv = ['echo', 'ok']) {
+  const recorded = certify(f, ['run', '--directory', run, '--name', 'suite', '--cwd', checkout, '--', ...argv]);
+  assert.equal(recorded.status, 0, recorded.stderr);
+}
 function prepared(f: ReturnType<typeof fixture>) {
   const run = join(f.directory, 'run');
-  const recorded = certify(f, ['run', '--directory', run, '--name', 'suite', '--', 'sh', '-c', 'echo ok']);
-  assert.equal(recorded.status, 0, recorded.stderr);
+  const checkout = f.checkout();
+  record(f, run, checkout);
   const report = certify(f, ['report', '--repo', 'Example/app', '--head', f.state.head, '--directory', run]);
   assert.equal(report.status, 0, report.stderr);
   const round = JSON.parse(report.stdout).round;
-  return { run, round };
+  return { run, round, checkout };
 }
 test('run records command, exit code and log digest and propagates the exit code', t => {
   const f = prePrFixture(); t.after(f.cleanup);
   const run = join(f.directory, 'run');
-  const failed = certify(f, ['run', '--directory', run, '--name', 'suite', '--', 'sh', '-c', 'echo boom; exit 3']);
+  const failed = certify(f, ['run', '--directory', run, '--name', 'suite', '--cwd', f.directory, '--', 'sh', '-c', 'echo boom; exit 3']);
   assert.equal(failed.status, 3);
   const record = JSON.parse(readFileSync(join(run, 'runs', 'suite.json'), 'utf8'));
   assert.equal(record.exitCode, 3); assert.equal(record.logDigest, hash(readFileSync(join(run, 'runs', 'suite.log'))));
+  assert.equal(record.command, 'sh -c echo boom; exit 3'); assert.equal(record.head, null); assert.equal(record.clean, false);
 });
 test('report binds the pushed head with pr 0 and names the required lanes', t => {
   const f = prePrFixture(); t.after(f.cleanup);
@@ -61,20 +66,25 @@ test('assemble writes a VERIFIED certificate from clean runs and admitted lanes'
   assert.equal(result.status, 0, result.stderr);
   const certificate = JSON.parse(result.stdout);
   assert.equal(certificate.decision.verdict, 'VERIFIED'); assert.deepEqual(certificate.coverage, ['login']); assert.equal(certificate.authorProvider, 'claude');
+  assert.equal(certificate.toolingRef, 'pstack-vic@' + JSON.parse(readFileSync(new URL('../../../../package.json', import.meta.url), 'utf8')).version);
+  assert.deepEqual([certificate.runs[0].command, certificate.runs[0].head, certificate.runs[0].clean], ['echo ok', f.state.head, true]);
 });
-for (const fault of ['same-family', 'failed-run', 'edited-log', 'missing-run', 'open-finding', 'unmapped-surface', 'missing-certifier'] as const) {
+for (const fault of ['same-family', 'failed-run', 'edited-log', 'missing-run', 'open-finding', 'unmapped-surface', 'missing-certifier', 'other-command', 'moved-head', 'modified-checkout'] as const) {
   test(`assemble refuses ${fault}`, t => {
     const f = prePrFixture(); t.after(f.cleanup);
     if (fault === 'unmapped-surface') { f.state.files = [{ filename: 'client/src/pages/New.jsx', status: 'added', patch: '@@ -0,0 +1 @@\n+new' }]; f.save(); }
-    const { run, round } = prepared(f);
+    const { run, round, checkout } = prepared(f);
     lane(f, round, 'pre-pr reviewer', { provider: fault === 'same-family' ? 'grok' : undefined, findings: fault === 'open-finding' ? [{ kind: 'regression', source: 'lane', path: 'client/Login.jsx', line: 1, rule: 'lost-submit', severity: 'blocking' }] : [] });
     if (fault !== 'missing-certifier') lane(f, round, 'pre-pr certifier');
     if (fault === 'failed-run') writeFileSync(join(run, 'runs', 'suite.json'), JSON.stringify({ ...JSON.parse(readFileSync(join(run, 'runs', 'suite.json'), 'utf8')), exitCode: 1 }));
     if (fault === 'edited-log') writeFileSync(join(run, 'runs', 'suite.log'), 'tampered');
     if (fault === 'missing-run') writeFileSync(join(run, 'runs', 'suite.json'), JSON.stringify({ ...JSON.parse(readFileSync(join(run, 'runs', 'suite.json'), 'utf8')), name: 'other' }));
+    if (fault === 'moved-head') commit(checkout, 'moved');
+    if (fault === 'modified-checkout') writeFileSync(join(checkout, 'client', 'Login.jsx'), 'edited\n');
+    if (fault === 'other-command' || fault === 'moved-head' || fault === 'modified-checkout') record(f, run, checkout, fault === 'other-command' ? ['echo', 'other'] : undefined);
     const result = certify(f, ['assemble', '--directory', run, '--author-provider', fault === 'same-family' ? 'grok' : 'claude', '--output', join(run, 'certificate.json')]);
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, { 'same-family': /same family as the author/, 'failed-run': /Run suite exited 1/, 'edited-log': /Run suite log changed/, 'missing-run': /Required run missing: suite/, 'open-finding': /NOT VERIFIED/, 'unmapped-surface': /lacks a trusted feature recipe/, 'missing-certifier': /Required independent lane unavailable/ }[fault]);
+    assert.match(result.stderr, { 'same-family': /same family as the author/, 'failed-run': /Run suite exited 1/, 'edited-log': /Run suite log changed/, 'missing-run': /Required run missing: suite/, 'open-finding': /NOT VERIFIED/, 'unmapped-surface': /lacks a trusted feature recipe/, 'missing-certifier': /Required independent lane unavailable/, 'other-command': /Run suite command differs from the contract/, 'moved-head': /Run suite was not recorded at the certified head/, 'modified-checkout': /Run suite was recorded on a modified checkout/ }[fault]);
   });
 }
 test('report refuses a repository that does not accept local certification', t => {

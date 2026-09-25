@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -6,6 +6,18 @@ import { spawnSync } from 'node:child_process';
 export const head = 'b'.repeat(40);
 export const trunk = 'a'.repeat(40);
 export const base = 'c'.repeat(40);
+/** Isolated from the user's git config and from an outer GIT_DIR, so a test never signs, hooks or commits into another repository. */
+function git(repo: string, args: string[]): string {
+  const identity = { GIT_AUTHOR_NAME: 'converge', GIT_AUTHOR_EMAIL: 'converge@example.invalid', GIT_COMMITTER_NAME: 'converge', GIT_COMMITTER_EMAIL: 'converge@example.invalid' };
+  const result = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8', env: { ...process.env, ...identity, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_DIR: undefined, GIT_WORK_TREE: undefined, GIT_INDEX_FILE: undefined } });
+  if (result.status !== 0) throw new Error(`git ${args[0]} failed: ${result.stderr}`);
+  return result.stdout.trim();
+}
+export function commit(repo: string, message = 'change'): string {
+  git(repo, ['add', '-A']);
+  git(repo, ['commit', '-q', '--allow-empty', '-m', message]);
+  return git(repo, ['rev-parse', 'HEAD']);
+}
 export function fixture() {
   const directory = mkdtempSync(join(tmpdir(), 'converge-test-'));
   const statePath = join(directory, 'state.json');
@@ -33,6 +45,15 @@ export function fixture() {
   return {
     directory, statePath, state,
     save() { writeFileSync(statePath, JSON.stringify(state)); },
+    checkout(): string {
+      const repo = join(directory, 'checkout');
+      mkdirSync(join(repo, 'client'), { recursive: true });
+      git(repo, ['init', '-q']);
+      writeFileSync(join(repo, 'client', 'Login.jsx'), 'new\n');
+      state.head = state.pushedHead = commit(repo, 'head');
+      writeFileSync(statePath, JSON.stringify(state));
+      return repo;
+    },
     read() { return JSON.parse(readFileSync(statePath, 'utf8')); },
     calls(): string[][] { return readFileSync(statePath + '.calls', 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)); },
     run(script: string, args: string[] = [], env: NodeJS.ProcessEnv = {}) { return spawnSync(process.execPath, [resolve(scriptDirectory, script), ...args], { encoding: 'utf8', timeout: 60_000, env: { ...process.env, ...env, PATH: directory + ':' + process.env.PATH, CONVERGE_FIXTURE: statePath } }); },

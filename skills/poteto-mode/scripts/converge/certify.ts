@@ -2,14 +2,14 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { resolve, join, dirname } from 'node:path';
-import { array, digest, executionId, hash, integer, jsonHash, object, oneOf, parseReport, parseRound, relativePath, roleProviders, roles, sha, string, type Contract, type Decision, type Report, type Role, type Round } from './contract.ts';
+import { array, boolean, digest, executionId, hash, integer, jsonHash, object, oneOf, parseReport, parseRound, relativePath, roleProviders, roles, sha, string, type Contract, type Decision, type Report, type Role, type Round } from './contract.ts';
 import { branchSnapshot } from './github.ts';
 import { analyze } from './reconcile.ts';
 import { admitLane, type AdmittedLane } from './evidence.ts';
 import { decide } from './publish.ts';
 import { loadMatrix } from '../../../../scripts/model-matrix.ts';
 
-export interface Run { name: string; command: string; exitCode: number; startedAt: string; completedAt: string; logDigest: string }
+export interface Run { name: string; command: string; exitCode: number; startedAt: string; completedAt: string; logDigest: string; head: string | null; clean: boolean }
 export interface Certificate {
   schemaVersion: 1; round: Round; authorProvider: string; runs: Run[];
   lanes: { manifest: string; role: Role; provider: string; receiptDigest: string }[];
@@ -22,7 +22,7 @@ function runName(value: unknown): string {
 }
 function parseRun(value: unknown): Run {
   const v = object(value, 'run');
-  return { name: runName(v.name), command: string(v.command), exitCode: integer(v.exitCode), startedAt: string(v.startedAt), completedAt: string(v.completedAt), logDigest: digest(v.logDigest) };
+  return { name: runName(v.name), command: string(v.command), exitCode: integer(v.exitCode), startedAt: string(v.startedAt), completedAt: string(v.completedAt), logDigest: digest(v.logDigest), head: v.head === null ? null : sha(v.head), clean: boolean(v.clean) };
 }
 export function parseCertificate(value: unknown): Certificate {
   const v = object(value, 'certificate');
@@ -34,24 +34,35 @@ export function parseCertificate(value: unknown): Certificate {
   return { schemaVersion: 1, round, authorProvider: string(v.authorProvider), runs: array(v.runs).map(parseRun),
     lanes: array(v.lanes).map(raw => { const l = object(raw); return { manifest: relativePath(l.manifest), role: oneOf(l.role, roles), provider: string(l.provider), receiptDigest: digest(l.receiptDigest) }; }),
     decision: { verdict: 'VERIFIED', displayResult: oneOf(d.displayResult, ['VERIFIED', 'CI-only']), findings: [], reasons: [] },
-    reconcileDigest: digest(v.reconcileDigest), evidenceDigest: digest(v.evidenceDigest), coverage: array(v.coverage).map(c => relativePath(c)), toolingRef: sha(v.toolingRef) };
+    reconcileDigest: digest(v.reconcileDigest), evidenceDigest: digest(v.evidenceDigest), coverage: array(v.coverage).map(c => relativePath(c)), toolingRef: parseToolingRef(v.toolingRef) };
 }
+function parseToolingRef(value: unknown): string {
+  const ref = string(value);
+  if (!/^pstack-vic@\d+\.\d+\.\d+$/.test(ref)) throw new Error('Invalid tooling ref');
+  return ref;
+}
+/** The plugin version, not a git commit: installed plugin copies ship package.json but no .git. */
 function toolingRef(): string {
-  const result = spawnSync('git', ['-C', import.meta.dirname, 'rev-parse', 'HEAD'], { encoding: 'utf8' });
-  if (result.status !== 0) throw new Error('Tooling commit unavailable: run converge-certify from a pstack-vic git checkout');
-  return sha(result.stdout.trim());
+  return parseToolingRef('pstack-vic@' + string(object(JSON.parse(readFileSync(new URL('../../../../package.json', import.meta.url), 'utf8'))).version));
 }
-export function recordRun(directory: string, name: string, argv: string[]): number {
+function checkoutState(cwd: string): { head: string | null; clean: boolean } {
+  const head = spawnSync('git', ['-C', cwd, 'rev-parse', 'HEAD'], { encoding: 'utf8' });
+  const status = spawnSync('git', ['-C', cwd, 'status', '--porcelain', '--untracked-files=no'], { encoding: 'utf8' });
+  return { head: head.status === 0 && /^[a-f0-9]{40}\n$/.test(head.stdout) ? head.stdout.trim() : null, clean: status.status === 0 && status.stdout === '' };
+}
+/** Head and cleanliness are read before the command runs, so a suite that writes tracked files still records the checkout it started from. */
+export function recordRun(directory: string, name: string, argv: string[], cwd = process.cwd()): number {
   runName(name);
   if (!argv.length) throw new Error('Run needs a command');
   const runs = join(directory, 'runs');
   mkdirSync(runs, { recursive: true, mode: 0o700 });
+  const checkout = checkoutState(cwd);
   const startedAt = new Date().toISOString();
-  const child = spawnSync(argv[0] as string, argv.slice(1), { cwd: process.cwd(), encoding: 'buffer', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawnSync(argv[0] as string, argv.slice(1), { cwd, encoding: 'buffer', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
   const log = Buffer.concat([child.stdout ?? Buffer.alloc(0), child.stderr ?? Buffer.alloc(0), child.error ? Buffer.from(child.error.message + '\n') : Buffer.alloc(0)]);
   const exitCode = child.status ?? 128;
   writeFileSync(join(runs, name + '.log'), log, { mode: 0o600 });
-  const record: Run = { name, command: argv.join(' '), exitCode, startedAt, completedAt: new Date().toISOString(), logDigest: hash(log) };
+  const record: Run = { name, command: argv.join(' '), exitCode, startedAt, completedAt: new Date().toISOString(), logDigest: hash(log), ...checkout };
   writeFileSync(join(runs, name + '.json'), JSON.stringify(record, null, 2) + '\n', { mode: 0o600 });
   return exitCode;
 }
@@ -80,6 +91,9 @@ function checkRuns(report: Report, runs: Run[], contract: Contract): void {
     const run = runs.find(r => r.name === required.name);
     if (!run) throw new Error('Required run missing: ' + required.name);
     if (run.exitCode !== 0) throw new Error(`Run ${run.name} exited ${run.exitCode}`);
+    if (run.command !== required.command) throw new Error(`Run ${run.name} command differs from the contract`);
+    if (run.head !== report.round.head) throw new Error(`Run ${run.name} was not recorded at the certified head`);
+    if (!run.clean) throw new Error(`Run ${run.name} was recorded on a modified checkout`);
   }
 }
 /** Re-runs the branch analysis before trusting report.json, so a stale or edited report, or a trunk contract that moved, cannot certify. */
@@ -136,9 +150,9 @@ export async function main(args: string[]): Promise<number> {
     const [command, ...rest] = args;
     if (command === 'run') {
       const separator = rest.indexOf('--');
-      const { values } = parseArgs({ args: separator < 0 ? rest : rest.slice(0, separator), options: { directory: { type: 'string' }, name: { type: 'string' } } });
-      if (!values.directory || !values.name || separator < 0) throw new Error('Usage: converge-certify run --directory RUN --name NAME -- <command...>');
-      return recordRun(resolve(values.directory), values.name, rest.slice(separator + 1));
+      const { values } = parseArgs({ args: separator < 0 ? rest : rest.slice(0, separator), options: { directory: { type: 'string' }, name: { type: 'string' }, cwd: { type: 'string' } } });
+      if (!values.directory || !values.name || separator < 0) throw new Error('Usage: converge-certify run --directory RUN --name NAME [--cwd DIR] -- <command...>');
+      return recordRun(resolve(values.directory), values.name, rest.slice(separator + 1), resolve(values.cwd ?? process.cwd()));
     }
     if (command === 'report') {
       const { values } = parseArgs({ args: rest, options: { repo: { type: 'string' }, head: { type: 'string' }, directory: { type: 'string' }, config: { type: 'string' } } });
