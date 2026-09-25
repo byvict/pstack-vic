@@ -106,7 +106,7 @@ for (const conclusion of ['failure', 'neutral', 'skipped']) {
     assert.deepEqual(f.read().mutations, []);
   });
 }
-for (const scenario of ['hold', 'trunk', 'protection', 'verdict', 'foreign', 'elsewhere', 'unlinked', 'body', 'base'] as const) {
+for (const scenario of ['hold', 'trunk', 'protection', 'verdict', 'foreign', 'elsewhere', 'unlinked', 'author', 'missing', 'body', 'base'] as const) {
   test(`pending arm with no checks yet still stops at ${scenario} without a merge mutation`, t => {
     const f = fixture(); t.after(f.cleanup); publish(f);
     const live = f.read(); live.checks = [];
@@ -117,11 +117,13 @@ for (const scenario of ['hold', 'trunk', 'protection', 'verdict', 'foreign', 'el
     if (scenario === 'foreign') live.statuses[0].creator = { id: 8, login: 'other-bot' };
     if (scenario === 'elsewhere') live.statuses[0].target_url = 'https://github.com/Example/app/pull/2#issuecomment-100';
     if (scenario === 'unlinked') delete live.statuses[0].target_url;
+    if (scenario === 'author') live.comments[0].user = { id: 8 };
+    if (scenario === 'missing') live.comments = [];
     if (scenario === 'body') live.body += '\nChanged after verification';
     if (scenario === 'base') live.prBase = 'change';
     Object.assign(f.state, live); f.save();
     const result = arm(f, false, ['--pending']); assert.notEqual(result.status, 0);
-    assert.match(result.stderr, { hold: /Hold label/, trunk: /Trunk Tests/, protection: /missing required context: verdict/, verdict: /not trusted VERIFIED/, foreign: /^VERIFIED verdict status was posted by another account: other-bot$/m, elsewhere: /^Verdict status does not link to this PR$/m, unlinked: /^Verdict status does not link to this PR$/m, body: /text changed/, base: /PR base differs from trunk/ }[scenario]);
+    assert.match(result.stderr, { hold: /Hold label/, trunk: /Trunk Tests/, protection: /missing required context: verdict/, verdict: /not trusted VERIFIED/, foreign: /^VERIFIED verdict status was posted by another account: other-bot$/m, elsewhere: /^Verdict status does not link to this PR$/m, unlinked: /^Verdict status does not link to this PR$/m, author: /^Verdict comment author is untrusted$/m, missing: /^Verdict comment is missing from this PR$/m, body: /text changed/, base: /PR base differs from trunk/ }[scenario]);
     assert.deepEqual(f.read().mutations, []);
   });
 }

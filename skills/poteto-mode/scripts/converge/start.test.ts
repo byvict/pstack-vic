@@ -4,6 +4,8 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fixture, publishCertificate } from './fixtures/setup.ts';
 import { sheetEfforts, start } from './start.ts';
+import { verdictGate } from './gate.ts';
+import { trusted } from './github.ts';
 
 function environment(t: TestContext, f: ReturnType<typeof fixture>): void {
   const before = { path: process.env.PATH, fixture: process.env.CONVERGE_FIXTURE, key: process.env.CURSOR_API_KEY };
@@ -159,7 +161,13 @@ test('a certified head returns without launching an owner', async t => {
   assert.equal(launches, 0); assert.equal(existsSync(join(f.directory, 'owner', 'intent.json')), false);
 });
 
-for (const [name, status] of [['NOT VERIFIED', { state: 'failure', description: 'NOT VERIFIED by converge', creator: { id: 7 } }], ['from another account', { state: 'success', description: 'VERIFIED by converge', creator: { id: 8 } }], ['linked to another PR', { state: 'success', description: 'VERIFIED by converge', creator: { id: 7 }, target_url: 'https://github.com/Example/app/pull/2#issuecomment-100' }], ['without a link', { state: 'success', description: 'VERIFIED by converge', creator: { id: 7 }, target_url: undefined }], ['with no comment behind it', { state: 'success', description: 'VERIFIED by converge', creator: { id: 7 } }]] as const) {
+for (const [name, status, reason] of [
+  ['NOT VERIFIED', { state: 'failure', description: 'NOT VERIFIED by converge', creator: { id: 7 } }, 'Latest verdict status is not trusted VERIFIED'],
+  ['from another account', { state: 'success', description: 'VERIFIED by converge', creator: { id: 8 } }, 'VERIFIED verdict status was posted by another account: 8'],
+  ['linked to another PR', { state: 'success', description: 'VERIFIED by converge', creator: { id: 7 }, target_url: 'https://github.com/Example/app/pull/2#issuecomment-100' }, 'Verdict status does not link to this PR'],
+  ['without a link', { state: 'success', description: 'VERIFIED by converge', creator: { id: 7 }, target_url: undefined }, 'Verdict status does not link to this PR'],
+  ['with no comment behind it', { state: 'success', description: 'VERIFIED by converge', creator: { id: 7 } }, 'Verdict comment is missing from this PR'],
+] as const) {
   test(`a head whose verdict is ${name} still launches an owner`, async t => {
     const f = fixture(); t.after(f.cleanup); environment(t, f);
     const live = f.read();
@@ -171,6 +179,7 @@ for (const [name, status] of [['NOT VERIFIED', { state: 'failure', description: 
       launches++;
       return Response.json({ agent: { id: 'bc_owner', url: 'https://cursor.com/agents/bc_owner' }, run: { id: 'run_owner' } });
     });
+    assert.deepEqual(await verdictGate(await trusted('Example/app', '.cursor/converge.json'), 1, f.state.head, 7), { kind: 'refused', reason });
     const receipt = await start({ repo: 'Example/app', pr: 1, toolingRef: 'd'.repeat(40), stateDirectory: join(f.directory, 'owner'), effort: 'high' });
     assert.equal(receipt.kind, 'launched');
     assert.equal(launches, 1); assert.equal(receipt.agentId, 'bc_owner');
