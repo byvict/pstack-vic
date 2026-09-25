@@ -2,7 +2,7 @@ import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fixture } from './fixtures/setup.ts';
+import { fixture, publishCertificate } from './fixtures/setup.ts';
 import { sheetEfforts, start } from './start.ts';
 
 function environment(t: TestContext, f: ReturnType<typeof fixture>): void {
@@ -151,10 +151,7 @@ test('explicit effort raises a high sheet floor and an invalid sheet refuses bef
 });
 
 test('a certified head returns without launching an owner', async t => {
-  const f = fixture(); t.after(f.cleanup); environment(t, f);
-  const live = f.read();
-  live.statuses = [{ context: 'verdict', state: 'success', description: 'VERIFIED by converge', target_url: 'https://github.com/Example/app/pull/1#issuecomment-100', id: 200, creator: { id: 7 } }];
-  Object.assign(f.state, live); f.save();
+  const f = fixture(); t.after(f.cleanup); environment(t, f); publishCertificate(f);
   let launches = 0;
   t.mock.method(globalThis, 'fetch', async () => { launches++; return Response.json({}); });
   const result = await start({ repo: 'Example/app', pr: 1, toolingRef: 'a'.repeat(40), stateDirectory: join(f.directory, 'owner'), sheetPath: join(f.directory, 'missing-sheet.md') });
@@ -162,7 +159,7 @@ test('a certified head returns without launching an owner', async t => {
   assert.equal(launches, 0); assert.equal(existsSync(join(f.directory, 'owner', 'intent.json')), false);
 });
 
-for (const [name, status] of [['NOT VERIFIED', { state: 'failure', description: 'NOT VERIFIED by converge', creator: { id: 7 } }], ['from another account', { state: 'success', description: 'VERIFIED by converge', creator: { id: 8 } }], ['linked to another PR', { state: 'success', description: 'VERIFIED by converge', creator: { id: 7 }, target_url: 'https://github.com/Example/app/pull/2#issuecomment-100' }], ['without a link', { state: 'success', description: 'VERIFIED by converge', creator: { id: 7 }, target_url: undefined }]] as const) {
+for (const [name, status] of [['NOT VERIFIED', { state: 'failure', description: 'NOT VERIFIED by converge', creator: { id: 7 } }], ['from another account', { state: 'success', description: 'VERIFIED by converge', creator: { id: 8 } }], ['linked to another PR', { state: 'success', description: 'VERIFIED by converge', creator: { id: 7 }, target_url: 'https://github.com/Example/app/pull/2#issuecomment-100' }], ['without a link', { state: 'success', description: 'VERIFIED by converge', creator: { id: 7 }, target_url: undefined }], ['with no comment behind it', { state: 'success', description: 'VERIFIED by converge', creator: { id: 7 } }]] as const) {
   test(`a head whose verdict is ${name} still launches an owner`, async t => {
     const f = fixture(); t.after(f.cleanup); environment(t, f);
     const live = f.read();
@@ -181,13 +178,25 @@ for (const [name, status] of [['NOT VERIFIED', { state: 'failure', description: 
 }
 
 test('a certified head that moves before the exit refuses and launches nothing', async t => {
-  const f = fixture(); t.after(f.cleanup); environment(t, f);
+  const f = fixture(); t.after(f.cleanup); environment(t, f); publishCertificate(f);
   const live = f.read();
-  live.statuses = [{ context: 'verdict', state: 'success', description: 'VERIFIED by converge', target_url: 'https://github.com/Example/app/pull/1#issuecomment-100', id: 200, creator: { id: 7 } }];
   live.moveHead = { afterReads: 1, head: 'e'.repeat(40) };
   Object.assign(f.state, live); f.save();
   let launches = 0;
   t.mock.method(globalThis, 'fetch', async () => { launches++; return Response.json({}); });
   await assert.rejects(start({ repo: 'Example/app', pr: 1, toolingRef: 'a'.repeat(40), stateDirectory: join(f.directory, 'owner') }), /^Error: PR head moved$/);
   assert.equal(launches, 0); assert.equal(existsSync(join(f.directory, 'owner', 'intent.json')), false);
+});
+
+test('a trusted status whose dossier names another head still launches an owner', async t => {
+  const f = fixture(); t.after(f.cleanup); environment(t, f); publishCertificate(f);
+  const live = f.read(); live.head = 'e'.repeat(40); Object.assign(f.state, live); f.save();
+  let launches = 0;
+  t.mock.method(globalThis, 'fetch', async (url: string | URL) => {
+    if (String(url).endsWith('/v1/models')) return Response.json(inventory);
+    launches++;
+    return Response.json({ agent: { id: 'bc_owner', url: 'https://cursor.com/agents/bc_owner' }, run: { id: 'run_owner' } });
+  });
+  const receipt = await start({ repo: 'Example/app', pr: 1, toolingRef: 'd'.repeat(40), stateDirectory: join(f.directory, 'owner'), effort: 'high' });
+  assert.equal(receipt.kind, 'launched'); assert.equal(launches, 1);
 });

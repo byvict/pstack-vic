@@ -1,7 +1,7 @@
 import { parseArgs } from 'node:util';
 import { array, integer, jsonHash, object, repoName, sha, string, type Dossier } from './contract.ts';
 import { admitPull, api, checks, command, comments, isPublication, pages, principal, pull, snapshot, trusted, verdictStatus, workflowRun, type Trusted } from './github.ts';
-import { decide, dossierFromComment, retainedLanes } from './publish.ts';
+import { decide, linkedDossier, retainedLanes } from './publish.ts';
 import { analyze } from './reconcile.ts';
 
 async function trunkHealth(t: Trusted): Promise<void> {
@@ -52,15 +52,13 @@ async function certifiedAtTip(t: Trusted, pr: number, v: Verified): Promise<void
 async function verdict(t: Trusted, pr: number, head: string, author: number): Promise<Verified> {
   const status = await verdictStatus(t.repo, pr, head, author);
   if (status.kind !== 'trusted') throw new Error(status.reason);
-  const comment = object(await api(`repos/${t.repo}/issues/comments/${status.commentId}`));
-  if (integer(object(comment.user).id) !== author) throw new Error('Verdict comment author is untrusted');
-  const dossier = dossierFromComment(comment);
+  const { dossier, commentId } = await linkedDossier(t.repo, pr, head, author, status.commentId);
   const r = dossier.round;
-  if (r.repo !== t.repo || r.pr !== pr || r.head !== head || (r.contract !== t.sha && r.execution !== 'pre-pr') || !['converge', 'pre-pr'].includes(r.execution) || dossier.decision.verdict !== 'VERIFIED') throw new Error('Verdict identity or execution does not authorize merge');
+  if (r.execution === 'converge' && r.contract !== t.sha) throw new Error('Verdict identity or execution does not authorize merge');
   const all = await comments(t.repo, pr);
   const publications = all.filter(c => isPublication(c, author));
   const newest = publications.sort((a, b) => integer(b.id) - integer(a.id))[0];
-  if (!newest || newest.id !== comment.id) throw new Error('A newer converge round supersedes this verdict');
+  if (!newest || newest.id !== commentId) throw new Error('A newer converge round supersedes this verdict');
   const live = await pull(t.repo, pr);
   const fingerprint = jsonHash({ body: live.body, comments: all.filter(c => !isPublication(c, author)).map(c => [c.id, c.body, c.updated_at]) });
   const moved = r.contract !== t.sha;
