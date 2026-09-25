@@ -155,6 +155,7 @@ test('the published comment carries the certificate and stays byte-identical on 
   assert.equal(retry.status, 0, retry.stderr); assert.equal(f.read().comments.length, 1); assert.equal(f.read().comments[0].body, body);
   assert.throws(() => dossierFromComment(asComment({ ...dossier, certificate: undefined })), /A certificate belongs exactly to a pre-pr verdict/);
   assert.throws(() => dossierFromComment(asComment({ ...dossier, round: { ...(dossier.round as object), execution: 'converge' } })), /A certificate belongs exactly to a pre-pr verdict/);
+  assert.throws(() => dossierFromComment(asComment({ ...dossier, certificate: { ...certificate, coverage: ['login', 'billing'] } })), /Certificate differs from the verdict round/);
 });
 test('a converge publication carries a null certificate and a dossier without the key still parses', t => {
   const f = fixture(); t.after(f.cleanup);
@@ -170,17 +171,18 @@ test('a converge publication carries a null certificate and a dossier without th
   const parsed = dossierFromComment(asComment(old));
   assert.equal(parsed.certificate, null); assert.deepEqual(parsed, dossierFromComment(f.read().comments[0]));
 });
-for (const fault of ['no-runs', 'skipped-run', 'lane-effort', 'artifact-bytes'] as const) {
+for (const fault of ['no-runs', 'skipped-run', 'lane-effort', 'artifact-bytes', 'coverage', 'display-result', 'report'] as const) {
   test(`a full-mode certificate edited with ${fault} is refused at publication before any write`, t => {
     const f = fixture(); t.after(f.cleanup);
     const run = certifiedPr(f, { full: true });
     const file = join(run, 'certificate.json');
     const certificate = JSON.parse(readFileSync(file, 'utf8'));
-    const edit = { 'no-runs': { runs: [] }, 'skipped-run': { runs: [{ name: 'suite', command: 'true', skip: 'ci-only report' }] }, 'lane-effort': { lanes: [{ ...certificate.lanes[0], effort: 'high' }, certificate.lanes[1]] }, 'artifact-bytes': { artifacts: [{ ...certificate.artifacts[0], bytes: certificate.artifacts[0].bytes + 1 }, certificate.artifacts[1]] } }[fault];
+    const edit = { 'no-runs': { runs: [] }, 'skipped-run': { runs: [{ name: 'suite', command: 'true', skip: 'ci-only report' }] }, 'lane-effort': { lanes: [{ ...certificate.lanes[0], effort: 'high' }, certificate.lanes[1]] }, 'artifact-bytes': { artifacts: [{ ...certificate.artifacts[0], bytes: certificate.artifacts[0].bytes + 1 }, certificate.artifacts[1]] }, coverage: { coverage: ['login', 'billing'] }, 'display-result': { decision: { ...certificate.decision, displayResult: 'CI-only' } }, report: {} }[fault];
     writeFileSync(file, JSON.stringify({ ...certificate, ...edit }));
+    if (fault === 'report') writeFileSync(join(run, 'report.json'), JSON.stringify({ ...JSON.parse(readFileSync(join(run, 'report.json'), 'utf8')), unmappedSurfaces: ['client/Other.jsx'] }));
     const published = f.run('publish.ts', ['--report', prReport(f), '--certificate', file, '--evidence', join(f.directory, 'evidence')]);
     assert.notEqual(published.status, 0);
-    assert.match(published.stderr, { 'no-runs': /Required run missing: suite/, 'skipped-run': /A skipped run needs a CI-only certificate/, 'lane-effort': /Certificate lane differs from its manifest/, 'artifact-bytes': /Certificate artifacts differ from the admitted lanes/ }[fault]);
+    assert.match(published.stderr, { 'no-runs': /Required run missing: suite/, 'skipped-run': /A skipped run needs a CI-only certificate/, 'lane-effort': /Certificate lane differs from its manifest/, 'artifact-bytes': /Certificate artifacts differ from the admitted lanes/, coverage: /Certificate coverage differs from the admitted lanes/, 'display-result': /Certificate decision differs from the admitted evidence/, report: /Certificate report differs from the recorded report/ }[fault]);
     assert.deepEqual(f.read().statuses, []); assert.deepEqual(f.read().comments, []);
   });
 }

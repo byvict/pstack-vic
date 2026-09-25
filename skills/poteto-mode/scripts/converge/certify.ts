@@ -176,7 +176,7 @@ export async function assemble(options: { directory: string; authorProvider: str
   writeFileSync(options.output, JSON.stringify(certificate, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
   return certificate;
 }
-/** Re-admits a certificate against the PR report and the live contract: same head, patch, contract and policy, the run policy applied again, and every run, lane and artifact re-verified from bytes. */
+/** Re-admits a certificate against the PR report and the live contract: same head, patch, contract and policy, the run policy applied again, every run, lane and artifact re-verified from bytes, and the decision and coverage derived again, so no field of the published certificate rests on its own word. */
 export async function admitCertificate(file: string, report: Report, evidenceDirectory: string, contract: Contract): Promise<{ certificate: Certificate; lanes: AdmittedLane[] }> {
   const certificate = parseCertificate(JSON.parse(readFileSync(file, 'utf8')));
   const directory = dirname(resolve(file));
@@ -184,6 +184,8 @@ export async function admitCertificate(file: string, report: Report, evidenceDir
   if (c.repo !== r.repo || c.head !== r.head) throw new Error('PR head differs from certificate');
   if (c.patch_id !== r.patch_id || c.contract !== r.contract || c.verificationDigest !== r.verificationDigest || c.configPath !== r.configPath) throw new Error('Certificate patch or policy differs from the PR');
   if (r.execution !== 'pre-pr') throw new Error('Certificate publication needs a pre-pr report');
+  const branch = parseReport(JSON.parse(readFileSync(join(directory, 'report.json'), 'utf8')));
+  if (jsonHash(branch) !== certificate.reconcileDigest || jsonHash(branch.round) !== jsonHash(c)) throw new Error('Certificate report differs from the recorded report');
   const recorded = certificate.runs.filter((run): run is Run => !('skip' in run));
   if (jsonHash(checkRuns(report, recorded, contract)) !== jsonHash(certificate.runs)) throw new Error('Certificate runs differ from the run policy');
   if (jsonHash(readRuns(directory)) !== jsonHash(recorded)) throw new Error('Certificate runs differ from the recorded runs');
@@ -199,6 +201,8 @@ export async function admitCertificate(file: string, report: Report, evidenceDir
   }
   if (jsonHash(artifacts) !== jsonHash(certificate.artifacts)) throw new Error('Certificate artifacts differ from the admitted lanes');
   if (jsonHash(admitted) !== certificate.evidenceDigest) throw new Error('Certificate evidence digest differs');
+  if (jsonHash(admitted.flatMap(l => l.coverage)) !== jsonHash(certificate.coverage)) throw new Error('Certificate coverage differs from the admitted lanes');
+  if (jsonHash(decide(branch, admitted)) !== jsonHash(certificate.decision)) throw new Error('Certificate decision differs from the admitted evidence');
   return { certificate, lanes: admitted };
 }
 export async function main(args: string[]): Promise<number> {

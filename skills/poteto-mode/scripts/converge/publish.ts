@@ -51,10 +51,11 @@ export function parseDossier(value: unknown): Dossier {
   }
   const round = parseRound(v.round);
   const evidenceDigest = digest(v.evidenceDigest);
+  const coverage = strings(v.coverage);
   const certificate = v.certificate === undefined || v.certificate === null ? null : parseCertificate(v.certificate);
   if ((certificate !== null) !== (round.execution === 'pre-pr')) throw new Error('A certificate belongs exactly to a pre-pr verdict');
-  if (certificate && (certificate.round.repo !== round.repo || certificate.round.head !== round.head || certificate.evidenceDigest !== evidenceDigest)) throw new Error('Certificate differs from the verdict round');
-  return { schemaVersion: 1, round, decision, evidenceDigest, reconcileDigest: digest(v.reconcileDigest), coverage: strings(v.coverage), riskAdjudication: array(v.riskAdjudication).map(parseObligation), artifactIds: strings(v.artifactIds), inputFingerprint: digest(v.inputFingerprint), retainedFrom: v.retainedFrom === null ? null : { round: parseExecutionId(object(v.retainedFrom).round), head: sha(object(v.retainedFrom).head), commentUrl: string(object(v.retainedFrom).commentUrl) }, certificate };
+  if (certificate && (certificate.round.repo !== round.repo || certificate.round.head !== round.head || certificate.evidenceDigest !== evidenceDigest || jsonHash(certificate.coverage) !== jsonHash(coverage))) throw new Error('Certificate differs from the verdict round');
+  return { schemaVersion: 1, round, decision, evidenceDigest, reconcileDigest: digest(v.reconcileDigest), coverage, riskAdjudication: array(v.riskAdjudication).map(parseObligation), artifactIds: strings(v.artifactIds), inputFingerprint: digest(v.inputFingerprint), retainedFrom: v.retainedFrom === null ? null : { round: parseExecutionId(object(v.retainedFrom).round), head: sha(object(v.retainedFrom).head), commentUrl: string(object(v.retainedFrom).commentUrl) }, certificate };
 }
 export function dossierFromComment(value: unknown): Dossier {
   const c = object(value);
