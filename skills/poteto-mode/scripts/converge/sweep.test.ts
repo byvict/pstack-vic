@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { fixture, moveTrunk, publishCertificate } from './fixtures/setup.ts';
+import { fixture, moveTrunk, publishCertificate, retarget, stackChild } from './fixtures/setup.ts';
 
 function published(f: ReturnType<typeof fixture>) {
   const report = join(f.directory, 'report.json');
@@ -10,7 +10,7 @@ function published(f: ReturnType<typeof fixture>) {
 }
 function listed(f: ReturnType<typeof fixture>, extra: Record<string, unknown>[] = []) {
   const live = f.read();
-  live.pulls = [{ number: 1, head: { sha: live.head, ref: 'change' }, base: { ref: 'main' }, state: 'open', draft: false, labels: live.hold ? [{ name: 'needs-victor' }] : [], auto_merge: live.autoMerge ? {} : null, user: { id: 10, login: 'author', type: 'User' }, body: live.body }, ...extra];
+  live.pulls = [{ number: 1, head: { sha: live.head, ref: 'change' }, base: { ref: live.prBase }, state: 'open', draft: false, labels: live.hold ? [{ name: 'needs-victor' }] : [], auto_merge: live.autoMerge ? {} : null, user: { id: 10, login: 'author', type: 'User' }, body: live.body }, ...extra];
   Object.assign(f.state, live); f.save();
 }
 function other(number: number, fields: Record<string, unknown>) {
@@ -60,6 +60,20 @@ test('sweep arms a certificate published before trunk moved, and its dry run mak
   assert.deepEqual(outcomes(result.stdout), [[1, 'armed', step]]);
   assert.deepEqual(f.read().mutations, merge(f.state.head));
 });
+for (const policy of [false, true]) {
+  test(`sweep skips a certified stack child until the retarget, then ${policy ? 'refuses it when the parent changed policy' : 'arms it by re-derivation'}`, t => {
+    const f = fixture(); t.after(f.cleanup); stackChild(f); publishCertificate(f); listed(f);
+    const stacked = f.run('converge-sweep', ['--repo', 'Example/app']);
+    assert.equal(stacked.status, 0, stacked.stderr);
+    assert.deepEqual(outcomes(stacked.stdout), [[1, 'skipped', 'base is not trunk']]);
+    if (policy) { const live = f.read(); live.blobs['verify/SKILL.md'] = 'Drive the app another way.'; Object.assign(f.state, live); f.save(); }
+    moveTrunk(f); retarget(f); listed(f);
+    const result = f.run('converge-sweep', ['--repo', 'Example/app']);
+    assert.equal(result.status, policy ? 1 : 0, result.stderr);
+    assert.deepEqual(outcomes(result.stdout), [[1, policy ? 'refused' : 'armed', policy ? `Certificate patch or policy differs at trunk tip ${'d'.repeat(40)}` : `Re-derived the pre-pr verdict from contract ${'a'.repeat(40)} at trunk tip ${'d'.repeat(40)}`]]);
+    assert.deepEqual(f.read().mutations, policy ? [] : merge(f.state.head));
+  });
+}
 test('sweep refuses a VERIFIED verdict status from another account and exits 1', t => {
   const f = fixture(); t.after(f.cleanup);
   const live = f.read(); live.statuses = [{ context: 'verdict', state: 'success', description: 'VERIFIED by converge', target_url: 'https://github.com/Example/app/pull/1#issuecomment-100', id: 200, creator: { id: 8, login: 'other-bot' } }]; Object.assign(f.state, live); f.save(); listed(f);

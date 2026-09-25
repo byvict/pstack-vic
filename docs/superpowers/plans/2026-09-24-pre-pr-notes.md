@@ -26,22 +26,24 @@ These notes carry what the parts already built taught the parts still to build. 
 - **CHANGES.** `CHANGES.md` had no `## Unreleased`. The Part 1 and Part 2 entries became 0.2.0 entries, and Part 3 has its own.
 - **Plan change.** The plan's Part 4 step 1 now picks `RUN` under `${TMPDIR:-/tmp}`. See N6.
 
+**Stack children, before Part 4 (N14; CLI-195).** PR byvict/pstack-vic#33. Outside the plan:
+- **One compare for both `pre-pr` rounds.** The PR snapshot under `pre-pr` reads its files and diff through the function the branch snapshot uses, GitHub's compare of the trunk contract commit and the head. It no longer calls `gh pr diff` or the PR's file list, which start at the PR base. The 300-file limit of the compare now applies to the PR round too.
+- **Base admission by execution.** `admitPull` takes the execution. Only `pre-pr` admits a base other than trunk, in the reconcile snapshot and at publication. The arm, `converge` and `verdict-only` still refuse it, and the sweep still skips it.
+- **`start.ts` runs the gate first.** A certified child returns `kind: certified` with no Cursor call. An uncertified child refuses (`PR base differs from trunk`) and writes no intent. A `converge` verdict on a PR whose base left trunk refuses too.
+- **Measured before the code.** In a lab repository (trunk T0, parent P1 and P2, child C1 on P2), the child's merge base with trunk stayed at T0 after a squash merge of the parent, a rebase of the parent, a new parent commit and an unrelated trunk commit. `git diff main...child | git patch-id --stable` stayed the same in every case. Only a rebase of the child changed its head and patch id.
+
 ## Open, by part
 
 Numbers follow the ledgers of Parts 1 to 3.
 
-### Before Part 4
-
-- **Stack children (N3, N14; CLI-195).** Today a stack child never gets a verdict. Publication refuses while its base is the parent branch, and the PR snapshot takes its patch id from `gh pr diff` against that base. After the retarget, publication refuses at the moved tip. The proposal is a small code PR: a `pre-pr` PR snapshot compares against trunk, and publication of a `pre-pr` verdict accepts a non-trunk base. The arm still requires trunk, and the sweep arms the child after the retarget.
-
 ### Part 4, playbooks and the pstack-vic contract
 
+- **Stacks (CLI-195).** The Pré-PR playbook must say how to open a stack. The child targets its parent branch and is certified on its own head against trunk, so its certificate covers the parent's patch too. Publish the child while its base is the parent, and do not arm it. The sweep arms it after GitHub retargets it to trunk. GitHub retargets only when the parent's branch is deleted after the merge. Clinext deletes head branches on merge, and pstack-vic does not (both read 2026-09-25), so in pstack-vic someone must delete the parent's branch. A child whose parent changes the feature map, a Recipe the child reaches, `converge.json`, the verify skill or the Tests workflow certifies only after the parent merges, because the policy is read on trunk. Only a rebase of the child calls for a new certificate.
 - **N1.** Publication runs while CI is pending, and it refuses a PR body with `check:`, `test:` or `artifact:` claims. The Pré-PR playbook must not write those claims into the PR body.
 - **N4.** A lane receipt that starts before its manifest's `createdAt` is refused. In Task 4.1, playbook step 3 lists `manifest.json` after the launch. It must come before the launch.
 - **N5.** Each run passes `--cwd <worktree at the pushed head>` and an argv that joins exactly to the contract command, on a clean checkout. In Task 4.1, playbook step 2 omits `--cwd`.
 - **N7.** In Task 4.1, playbook step 6 calls `assemble` without `--adjust-rounds N`, which is required.
 - **N11.** Evidence files are named after the lane and artifact id, with no round. A second certifier pass in the same run directory collides. Recover in a new run directory.
-- **N12.** On the first real PR, confirm that the branch round's patch id equals the PR round's (`gh pr diff` against the compare diff).
 - **N15.** No Automation and no sweeper may comment on a PR. A comment changes a `converge` verdict's PR text, and the next sweep disarms that PR. `pr-opened.md` still comments "certified head, no owner". That is harmless for a `pre-pr` verdict, which re-derives over changed text, but check it again when you write that prompt.
 - **N16.** The "PR opened" Automation can run `start.ts` before the Raiz publishes. A full cloud owner then launches on a PR that is about to be certified, and its later publication refuses while auto-merge is pending. Either add a signal (a body marker plus a bounded poll) or accept the cost.
 - **N17 (CLI-194).** After a pending arm, nothing supervises the PR until the next sweep, and a hold applied in between does not stop GitHub's auto-merge. The recommendation is a required `hold` check. It must land before the playbook relies on `--pending`.
@@ -70,4 +72,5 @@ Numbers follow the ledgers of Parts 1 to 3.
 - **N6.** A Grok 4.7 `read-only` lane wrote a file in `$TMPDIR`, and the same write failed in its checkout and under `$HOME/.codex` (Grok CLI 1.0.41, measured 2026-09-25). Grok's documentation also lists `~/.grok`, `/tmp` and `/var/tmp` as writable in `read-only`. The certifier stays `read-only`, with no new mode. `RUN` must live under a temp root, and `converge-contract.md` says so (Part 3).
 - **N2.** A late publication with `test:` or `artifact:` claims no longer changes the policy digest. The `pre-pr` snapshot reads no CI, so the CI runner sources stay out of it (Part 1).
 - **N3.** Superseded by N14 and CLI-195.
+- **N12, N14.** Resolved by CLI-195 (PR byvict/pstack-vic#33). The branch round and the PR round of `pre-pr` read their files and diff through one function, the compare of the contract commit and the head. Their patch ids therefore come from the same source by structure, and the first real PR has nothing to confirm. A stack child now publishes with its base on the parent.
 - **N10.** The arm bound the verdict's contract commit to the current trunk tip. Part 2's verdict gate re-derives instead.

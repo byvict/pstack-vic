@@ -109,7 +109,7 @@ A nuvem, só com modelos Cursor, passa a ser reativa. Três Automations disparam
 - **Varredor.** Uma corrida do arm por PR elegível, com os mesmos gates. Elegível: aberto, base `main`, `verdict` confiável no head atual, sem hold, sem auto-merge pendente.
 - **Fim da Raiz.** Depois do recibo do arm. O AGENTS.md e o `PR_OPENING.md` do Clinext passam a dizer isso no lugar de "termina no link do PR".
 - **Conta única.** O `verdict` publicado pela Raiz e o arm rodado na nuvem precisam vir da mesma conta GitHub, porque o arm confere o criador do status. Conferido na implementação; se divergir, a publicação local usa o mesmo token da nuvem.
-- **Stacks.** Cada PR da stack passa pelo Pré-PR contra sua base. O arm continua exigindo base `main`; o filho é armado pelo Varredor depois que o pai mergeia e o GitHub retargeta.
+- **Stacks.** O filho de stack passa pelo Pré-PR contra a `main`, não contra o pai: o Certificado cobre o patch do pai e o do filho, e o filho publica com a base no pai (CLI-195). O arm continua exigindo base `main`; o filho é armado pelo Varredor depois que o pai mergeia e o GitHub retargeta, o que acontece quando a branch do pai é apagada. Um filho cujo pai muda a política que a rodada do filho lê (mapa, Receita, `converge.json`, skill de verificação ou workflow de Tests) só certifica depois do merge do pai, porque a política é lida na `main`.
 - **Medição.** Por PR: voltas de ajuste, Achados por tipo, tempo de parede de cada etapa, e se a nuvem foi acionada (qual gatilho). Sem dólar: a metade local roda em assinatura.
 
 ## Testing Decisions

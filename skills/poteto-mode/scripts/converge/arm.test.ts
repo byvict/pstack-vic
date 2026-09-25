@@ -17,6 +17,9 @@ function arm(f: ReturnType<typeof fixture>, dry = true, extra: string[] = []) {
 function merge(head: string) {
   return [['pr', 'merge', '1', '--repo', 'Example/app', '--squash', '--auto', '--match-head-commit', head]];
 }
+function compareDiff(call: string[]) {
+  return call[0] === 'api' && call[1]?.startsWith('repos/Example/app/compare/') === true && call.includes('Accept: application/vnd.github.diff');
+}
 test('publisher computes CI-only verdict and retry recovers the same comment and status', t => {
   const f = fixture(); t.after(f.cleanup);
   const first = publish(f);
@@ -142,7 +145,7 @@ for (const full of [false, true]) {
     const strict = arm(f); assert.equal(strict.status, 0, strict.stderr);
     const before = f.calls().length;
     const result = arm(f, false, ['--pending']); assert.equal(result.status, 0, result.stderr);
-    assert.equal(f.calls().slice(before).filter(call => call[0] === 'pr' && call[1] === 'diff').length, 2);
+    assert.equal(f.calls().slice(before).filter(compareDiff).length, 2);
     assert.deepEqual(JSON.parse(result.stdout).steps, ['Read latest push-to-trunk Tests', 'Read live protection and required checks', 'Read trusted exact-head verdict', `Re-derived the pre-pr verdict from contract ${'a'.repeat(40)} at trunk tip ${'d'.repeat(40)}`, `gh pr merge --squash --auto --match-head-commit ${f.state.head} (checks pending)`]);
     assert.deepEqual(f.read().mutations, merge(f.state.head));
   });
@@ -194,7 +197,7 @@ test('a pre-pr verdict re-derives on both verdict passes of every arm, even when
   const f = fixture(); t.after(f.cleanup); publishCertificate(f);
   const before = f.calls().length;
   const result = arm(f, false, ['--pending']); assert.equal(result.status, 0, result.stderr);
-  assert.equal(f.calls().slice(before).filter(call => call[0] === 'pr' && call[1] === 'diff').length, 2);
+  assert.equal(f.calls().slice(before).filter(compareDiff).length, 2);
   assert.equal(JSON.parse(result.stdout).steps[3], `Re-derived the pre-pr verdict at trunk tip ${'a'.repeat(40)}`);
   assert.deepEqual(f.read().mutations, merge(f.state.head));
 });

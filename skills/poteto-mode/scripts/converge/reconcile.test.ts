@@ -2,7 +2,7 @@ import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fixture } from './fixtures/setup.ts';
+import { fixture, stackChild } from './fixtures/setup.ts';
 import { dependencyOnly } from './dependencies.ts';
 import { branchSnapshot } from './github.ts';
 import { analyze } from './reconcile.ts';
@@ -405,4 +405,30 @@ test('a pre-pr PR report keeps finished CI test sources out of the policy digest
   assert.equal(pr.round.verificationDigest, branch.round.verificationDigest); assert.equal(pr.round.patch_id, branch.round.patch_id);
   assert.equal(f.calls().some(call => /\/contents\/(?:tools\/run-all-tests\.js|package\.json)\?/.test(call[1] ?? '')), false);
   assert.notEqual(reconcileAs('converge').round.verificationDigest, branch.round.verificationDigest);
+});
+test('a pre-pr reconciliation of a stack child reads the trunk compare, not the PR diff against its parent', async t => {
+  const f = fixture(); t.after(f.cleanup); withPrePr(f); stackChild(f);
+  const r = f.run('converge-reconcile', ['--repo', 'Example/app', '--pr', '1', '--output', join(f.directory, 'child.json'), '--execution', 'pre-pr']);
+  assert.equal(r.status, 0, r.stderr);
+  const calls = f.calls();
+  assert.equal(calls.some(call => call[0] === 'pr' && call[1] === 'diff'), false);
+  assert.equal(calls.some(call => call[1]?.startsWith('repos/Example/app/pulls/1/files')), false);
+  assert.ok(calls.some(call => call[1]?.startsWith('repos/Example/app/compare/') && call.includes('Accept: application/vnd.github.diff')));
+  inProcess(t, f);
+  const branch = analyze(await branchSnapshot('Example/app', f.state.head, '.cursor/converge.json'), { id: '12345678-1234-1234-1234-123456789abc', configPath: '.cursor/converge.json', execution: 'pre-pr' });
+  assert.equal(JSON.parse(r.stdout).round.patch_id, branch.round.patch_id);
+});
+for (const execution of ['converge', 'verdict-only']) {
+  test(`a ${execution} reconciliation of a stack child still refuses its non-trunk base`, t => {
+    const f = fixture(); t.after(f.cleanup); stackChild(f);
+    const r = f.run('converge-reconcile', ['--repo', 'Example/app', '--pr', '1', '--output', join(f.directory, 'child.json'), '--execution', execution]);
+    assert.notEqual(r.status, 0); assert.match(r.stderr, /^PR base differs from trunk$/m);
+  });
+}
+test('a pre-pr PR snapshot refuses a trunk compare at the branch snapshot limit', t => {
+  const f = fixture(); t.after(f.cleanup); withPrePr(f);
+  f.state.files = Array.from({ length: 300 }, (_, n) => ({ filename: `docs/page-${n}.md`, status: 'modified', patch: '@@ -1 +1 @@\n-old\n+new' })); f.save();
+  const reconcileAs = (execution: string) => f.run('converge-reconcile', ['--repo', 'Example/app', '--pr', '1', '--output', join(f.directory, execution + '.json'), '--execution', execution]);
+  const converge = reconcileAs('converge'); assert.equal(converge.status, 0, converge.stderr);
+  const prePr = reconcileAs('pre-pr'); assert.notEqual(prePr.status, 0); assert.match(prePr.stderr, /^Branch compare truncated$/m);
 });
