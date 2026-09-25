@@ -80,9 +80,9 @@ for (const dryRun of [false, true]) {
 }
 const disabled = [['pr', 'merge', '1', '--repo', 'Example/app', '--disable-auto']];
 for (const [name, knobs, outcome, reason, mutations] of [
-  ['merged before the disarm', { prState: 'closed', autoMerge: false }, 'refused', 'hold label, PR merged or closed before disarm', []],
+  ['merged before the disarm', { after: { endpoint: 'pulls/1', reads: 1, set: { prState: 'closed', autoMerge: false } } }, 'refused', 'hold label, PR merged or closed before disarm', []],
   ['still armed after the disarm', { stickyAutoMerge: true }, 'refused', 'hold label, auto-merge still pending after disarm', disabled],
-  ['already disarmed', { autoMerge: false }, 'skipped', 'hold label, auto-merge already off', []],
+  ['already disarmed', { after: { endpoint: 'pulls/1', reads: 1, set: { autoMerge: false } } }, 'skipped', 'hold label, auto-merge already off', []],
 ] as const) {
   test(`sweep reports a held armed PR ${name} as ${outcome}`, t => {
     const f = fixture(); t.after(f.cleanup);
@@ -118,4 +118,12 @@ test('sweep dry run reports an armed PR without a trusted verdict and makes no m
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(outcomes(result.stdout), [[1, 'dry-run', 'no trusted verdict on head, would disarm auto-merge']]);
   assert.deepEqual(f.read().mutations, []);
+});
+test('sweep judges each PR on its live read, not on the listing', t => {
+  const f = fixture(); t.after(f.cleanup); published(f); listed(f);
+  const live = f.read(); live.pulls[0].head.sha = 'e'.repeat(40); Object.assign(f.state, live); f.save();
+  const result = f.run('converge-sweep', ['--repo', 'Example/app']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(outcomes(result.stdout), [[1, 'armed', '']]);
+  assert.deepEqual(f.read().mutations, merge(f.state.head));
 });

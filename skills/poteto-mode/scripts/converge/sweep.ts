@@ -1,6 +1,6 @@
 import { parseArgs } from 'node:util';
-import { array, integer, object, repoName, sha, string } from './contract.ts';
-import { pages, principal, pull, trusted, verdictStatus } from './github.ts';
+import { integer, object, repoName, sha } from './contract.ts';
+import { pages, principal, pull, trusted, verdictStatus, type Trusted } from './github.ts';
 import { arm, disarm } from './arm.ts';
 
 export interface Swept { pr: number; head: string; outcome: 'armed' | 'disarmed' | 'dry-run' | 'skipped' | 'refused'; reason: string }
@@ -12,33 +12,32 @@ async function unarm(repo: string, pr: number, head: string, cause: string, dryR
   if (after.autoMerge) return { pr, head, outcome: 'refused', reason: cause + ', auto-merge still pending after disarm' };
   return ran ? { pr, head, outcome: 'disarmed', reason: cause } : { pr, head, outcome: 'skipped', reason: cause + ', auto-merge already off' };
 }
+async function judge(t: Trusted, pr: number, author: number, options: { configPath?: string; dryRun: boolean }): Promise<Swept> {
+  const p = await pull(t.repo, pr);
+  const head = p.head;
+  const result = (outcome: Swept['outcome'], reason: string): Swept => ({ pr, head, outcome, reason });
+  if (p.state !== 'open') return result('skipped', 'PR is no longer open');
+  if (p.base !== t.config.trunk) return result('skipped', 'base is not trunk');
+  const held = p.labels.some(label => t.config.holdLabels.includes(label));
+  if (held && p.autoMerge) return unarm(t.repo, pr, head, 'hold label', options.dryRun);
+  if (held) return result('skipped', 'hold label');
+  if (p.draft) return result('skipped', 'draft');
+  const verdict = await verdictStatus(t.repo, pr, head, author);
+  if (p.autoMerge) return verdict.kind === 'trusted' ? result('skipped', 'auto-merge already pending') : unarm(t.repo, pr, head, verdict.kind === 'foreign' ? verdict.reason : 'no trusted verdict on head', options.dryRun);
+  if (verdict.kind === 'none') return result('skipped', 'no trusted verdict on head');
+  if (verdict.kind === 'foreign') return result('refused', verdict.reason);
+  const armed = await arm({ repo: t.repo, pr, head, verdict: 'VERIFIED', dryRun: options.dryRun, configPath: options.configPath, pending: true });
+  return result(armed.kind, armed.rederived ?? '');
+}
 export async function sweep(options: { repo: string; configPath?: string; dryRun: boolean }): Promise<{ swept: Swept[] }> {
-  const repo = repoName(options.repo);
-  const t = await trusted(repo, options.configPath ?? '.cursor/converge.json');
+  const t = await trusted(repoName(options.repo), options.configPath ?? '.cursor/converge.json');
   const author = await principal();
-  const open = (await pages(`repos/${repo}/pulls?state=open&base=${encodeURIComponent(t.config.trunk)}`)).map(v => object(v));
+  const open = (await pages(`repos/${t.repo}/pulls?state=open&base=${encodeURIComponent(t.config.trunk)}`)).map(v => object(v));
   const swept: Swept[] = [];
-  for (const p of open.sort((a, b) => integer(a.number) - integer(b.number))) {
-    const pr = integer(p.number);
-    const head = sha(object(p.head).sha);
-    const skip = (reason: string) => swept.push({ pr, head, outcome: 'skipped', reason });
-    if (string(object(p.base).ref) !== t.config.trunk) { skip('base is not trunk'); continue; }
-    const held = array(p.labels).some(l => t.config.holdLabels.includes(string(object(l).name)));
-    try {
-      if (held && p.auto_merge !== null) { swept.push(await unarm(repo, pr, head, 'hold label', options.dryRun)); continue; }
-      if (held) { skip('hold label'); continue; }
-      if (p.draft === true) { skip('draft'); continue; }
-      const verdict = await verdictStatus(repo, pr, head, author);
-      if (p.auto_merge !== null) {
-        if (verdict.kind === 'trusted') skip('auto-merge already pending');
-        else swept.push(await unarm(repo, pr, head, verdict.kind === 'foreign' ? verdict.reason : 'no trusted verdict on head', options.dryRun));
-        continue;
-      }
-      if (verdict.kind === 'none') { skip('no trusted verdict on head'); continue; }
-      if (verdict.kind === 'foreign') { swept.push({ pr, head, outcome: 'refused', reason: verdict.reason }); continue; }
-      const result = await arm({ repo, pr, head, verdict: 'VERIFIED', dryRun: options.dryRun, configPath: options.configPath, pending: true });
-      swept.push({ pr, head, outcome: result.kind, reason: result.rederived ?? '' });
-    } catch (error) { swept.push({ pr, head, outcome: 'refused', reason: error instanceof Error ? error.message : 'Arm failed' }); }
+  for (const listed of open.sort((a, b) => integer(a.number) - integer(b.number))) {
+    const pr = integer(listed.number);
+    try { swept.push(await judge(t, pr, author, options)); }
+    catch (error) { swept.push({ pr, head: sha(object(listed.head).sha), outcome: 'refused', reason: error instanceof Error ? error.message : 'Sweep failed' }); }
   }
   return { swept };
 }
