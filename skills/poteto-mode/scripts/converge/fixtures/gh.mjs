@@ -16,7 +16,7 @@ const repo = 'Example/app';
 const root = `repos/${repo}`;
 if (args[0] === 'pr' && args[1] === 'diff') process.stdout.write(state.diff);
 else if (args[0] === 'run') process.stdout.write(state.log ?? 'Tests completed\n');
-else if (args[0] === 'pr' && args[1] === 'merge') { state.mutations.push(args); save(); process.stdout.write('{}'); }
+else if (args[0] === 'pr' && args[1] === 'merge') { state.mutations.push(args); if (args.includes('--disable-auto') && !state.stickyAutoMerge) state.autoMerge = false; save(); process.stdout.write('{}'); }
 else if (args[0] === 'api') {
   const raw = args[1];
   const endpoint = raw.split('?')[0];
@@ -47,7 +47,7 @@ else if (args[0] === 'api') {
   else if (endpoint === root) send({ default_branch: 'main' });
   else if (endpoint === `${root}/pulls/1`) {
     later('pulls/1');
-    send({ number: 1, head: { sha: state.head, ref: 'change' }, base: { ref: state.prBase }, state: 'open', draft: false, body: state.body, labels: state.hold ? [{ name: 'needs-victor' }] : [], user: { id: 10, login: 'author', type: 'User' }, auto_merge: state.autoMerge ? {} : null });
+    send({ number: 1, head: { sha: state.head, ref: 'change' }, base: { ref: state.prBase }, state: state.prState, draft: false, body: state.body, labels: state.hold ? [{ name: 'needs-victor' }] : [], user: { id: 10, login: 'author', type: 'User' }, auto_merge: state.autoMerge ? {} : null });
   }
   else if (endpoint === `${root}/commits/main`) { later('commits/main'); send({ sha: state.trunk }); }
   else if (endpoint.startsWith(`${root}/git/trees/`)) send({ truncated: false, tree: Object.keys(state.blobs).map(path => ({ path, mode: '100644' })) });

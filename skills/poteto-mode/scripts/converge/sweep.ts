@@ -1,9 +1,17 @@
 import { parseArgs } from 'node:util';
 import { array, integer, object, repoName, sha, string } from './contract.ts';
-import { pages, principal, trusted, verdictStatus } from './github.ts';
+import { pages, principal, pull, trusted, verdictStatus } from './github.ts';
 import { arm, disarm } from './arm.ts';
 
 export interface Swept { pr: number; head: string; outcome: 'armed' | 'disarmed' | 'dry-run' | 'skipped' | 'refused'; reason: string }
+async function unarm(repo: string, pr: number, head: string, cause: string, dryRun: boolean): Promise<Swept> {
+  if (dryRun) return { pr, head, outcome: 'dry-run', reason: cause + ', would disarm auto-merge' };
+  const ran = await disarm(repo, pr);
+  const after = await pull(repo, pr);
+  if (after.state !== 'open') return { pr, head, outcome: 'refused', reason: cause + ', PR merged or closed before disarm' };
+  if (after.autoMerge) return { pr, head, outcome: 'refused', reason: cause + ', auto-merge still pending after disarm' };
+  return ran ? { pr, head, outcome: 'disarmed', reason: cause } : { pr, head, outcome: 'skipped', reason: cause + ', auto-merge already off' };
+}
 export async function sweep(options: { repo: string; configPath?: string; dryRun: boolean }): Promise<{ swept: Swept[] }> {
   const repo = repoName(options.repo);
   const t = await trusted(repo, options.configPath ?? '.cursor/converge.json');
@@ -17,11 +25,7 @@ export async function sweep(options: { repo: string; configPath?: string; dryRun
     if (string(object(p.base).ref) !== t.config.trunk) { skip('base is not trunk'); continue; }
     const held = array(p.labels).some(l => t.config.holdLabels.includes(string(object(l).name)));
     try {
-      if (held && p.auto_merge !== null) {
-        if (options.dryRun) swept.push({ pr, head, outcome: 'dry-run', reason: 'hold label, would disarm auto-merge' });
-        else { await disarm(repo, pr); swept.push({ pr, head, outcome: 'disarmed', reason: 'hold label' }); }
-        continue;
-      }
+      if (held && p.auto_merge !== null) { swept.push(await unarm(repo, pr, head, 'hold label', options.dryRun)); continue; }
       if (held) { skip('hold label'); continue; }
       if (p.draft === true) { skip('draft'); continue; }
       if (p.auto_merge !== null) { skip('auto-merge already pending'); continue; }

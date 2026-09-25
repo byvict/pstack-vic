@@ -77,3 +77,19 @@ for (const dryRun of [false, true]) {
     assert.deepEqual(f.read().mutations, dryRun ? [] : [['pr', 'merge', '1', '--repo', 'Example/app', '--disable-auto']]);
   });
 }
+const disabled = [['pr', 'merge', '1', '--repo', 'Example/app', '--disable-auto']];
+for (const [name, knobs, outcome, reason, mutations] of [
+  ['merged before the disarm', { prState: 'closed', autoMerge: false }, 'refused', 'hold label, PR merged or closed before disarm', []],
+  ['still armed after the disarm', { stickyAutoMerge: true }, 'refused', 'hold label, auto-merge still pending after disarm', disabled],
+  ['already disarmed', { autoMerge: false }, 'skipped', 'hold label, auto-merge already off', []],
+] as const) {
+  test(`sweep reports a held armed PR ${name} as ${outcome}`, t => {
+    const f = fixture(); t.after(f.cleanup);
+    const live = f.read(); live.hold = true; live.autoMerge = true; Object.assign(f.state, live); f.save(); listed(f);
+    const now = f.read(); Object.assign(now, knobs); Object.assign(f.state, now); f.save();
+    const result = f.run('converge-sweep', ['--repo', 'Example/app']);
+    assert.equal(result.status, outcome === 'refused' ? 1 : 0, result.stderr);
+    assert.deepEqual(outcomes(result.stdout), [[1, outcome, reason]]);
+    assert.deepEqual(f.read().mutations, mutations);
+  });
+}

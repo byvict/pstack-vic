@@ -64,8 +64,10 @@ async function verdict(t: Trusted, pr: number, head: string, author: number): Pr
   if (r.execution === 'converge' && fingerprint !== dossier.inputFingerprint) throw new Error('PR text changed after verification');
   return { dossier, url: status.url, fingerprint };
 }
-export async function disarm(repo: string, pr: number): Promise<void> {
-  if ((await pull(repo, pr)).autoMerge) command('gh', ['pr', 'merge', String(pr), '--repo', repo, '--disable-auto']);
+export async function disarm(repo: string, pr: number): Promise<boolean> {
+  if (!(await pull(repo, pr)).autoMerge) return false;
+  command('gh', ['pr', 'merge', String(pr), '--repo', repo, '--disable-auto']);
+  return true;
 }
 export async function arm(options: { repo: string; pr: number; head: string; verdict: string; dryRun: boolean; configPath?: string; pending?: boolean }): Promise<{ kind: 'dry-run' | 'armed'; head: string; steps: string[] }> {
   const repo = repoName(options.repo);
