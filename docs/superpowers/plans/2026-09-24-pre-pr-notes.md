@@ -32,6 +32,12 @@ These notes carry what the parts already built taught the parts still to build. 
 - **`start.ts` runs the gate first.** A certified child returns `kind: certified` with no Cursor call. An uncertified child refuses (`PR base differs from trunk`) and writes no intent. A `converge` verdict on a PR whose base left trunk refuses too.
 - **Measured before the code.** In a lab repository (trunk T0, parent P1 and P2, child C1 on P2), the child's merge base with trunk stayed at T0 after a squash merge of the parent, a rebase of the parent, a new parent commit and an unrelated trunk commit. `git diff main...child | git patch-id --stable` stayed the same in every case. Only a rebase of the child changed its head and patch id.
 
+**Part 4a, the unsandboxed certifier (CLI-198).** PR byvict/pstack-vic#38, released as 0.2.4. It departs from the plan in four ways:
+- **A fourth refusal.** Admission also refuses a certifier whose `checkout.headBefore` differs from the round head (`Certifier lane ran on another head`). A lane launched on the wrong head is a different fault from a lane that moved HEAD.
+- **Refusals before any receipt.** `validateOptions` calls the same `requireSupportedMode` as `invocationCommand`, so a `cursor` lane and a parent with `CODEX_SANDBOX` are refused before the runner reserves paths. A `--cwd` outside a git worktree is refused the same way.
+- **`GROK_CONFIG` removed.** The child loses `GROK_CONFIG`, because Grok lets an inline overlay win over `GROK_CONFIG_PATH`.
+- **When git fails after the lane.** The child's exit is recorded first. The lane then ends `child-failed` with `checkout: null`, and its exit code is kept.
+
 ## Open, by part
 
 Numbers follow the ledgers of Parts 1 to 3.
