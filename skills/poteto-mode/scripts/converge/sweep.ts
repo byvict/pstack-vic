@@ -1,7 +1,7 @@
 import { parseArgs } from 'node:util';
 import { integer, object, repoName, sha } from './contract.ts';
 import { pages, principal, pull, RequestError, trusted, verdictStatus, type Trusted } from './github.ts';
-import { verdictGate } from './gate.ts';
+import { verdictGate, type Gate } from './gate.ts';
 import { arm, disarm } from './arm.ts';
 
 export interface Swept { pr: number; head: string; outcome: 'armed' | 'disarmed' | 'dry-run' | 'skipped' | 'refused'; reason: string }
@@ -30,7 +30,7 @@ async function judge(t: Trusted, pr: number, author: number, options: { configPa
   }
   if (held) return result('skipped', 'hold label');
   if (p.autoMerge) {
-    const gate = await verdictGate(t, pr, head, author);
+    const gate = await verdictGate(t, pr, head, author).catch((error: unknown): Gate => ({ kind: 'refused', reason: error instanceof Error ? error.message : 'Verdict gate failed' }));
     if (gate.kind === 'certified') return result('skipped', 'auto-merge already pending');
     return result('refused', gate.reason + ', ' + disarmed[await observedDisarm(t.repo, pr, options.dryRun)]);
   }
