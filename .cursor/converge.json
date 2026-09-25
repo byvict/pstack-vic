@@ -1,0 +1,15 @@
+{
+  "repo": "byvict/pstack-vic",
+  "trunk": "main",
+  "requiredChecks": ["test", "verdict", "hold"],
+  "holdLabels": ["needs-victor"],
+  "surfaces": [],
+  "riskClasses": { "irreversible": [], "contained": ["skills/poteto-mode/scripts/converge/**", "skills/poteto-mode/scripts/runner/**"] },
+  "verifySkill": null,
+  "featureMap": null,
+  "evidenceRoot": null,
+  "deployWindow": "04:00 America/Sao_Paulo",
+  "bugbot": "never",
+  "tests": { "workflow": "CI", "job": "test" },
+  "prePr": { "runs": [{ "name": "test", "command": "npm test" }, { "name": "test-bun", "command": "npm run test:bun" }, { "name": "matrix", "command": "npm run matrix:check" }], "certifier": false }
+}

@@ -71,5 +71,5 @@ A corrida de Converge disparada por um `Tests` concluído na `main`, que arma o 
 _Avoid_: sweeper, cron, scheduler
 
 **Hold**:
-O rótulo `needs-victor` que para qualquer merge automático até Victor retirá-lo.
+O rótulo `needs-victor` que para qualquer merge automático até Victor retirá-lo; o check obrigatório `hold` falha enquanto o rótulo está no PR, e assim segura até um auto-merge já armado.
 _Avoid_: bloqueio humano, pause

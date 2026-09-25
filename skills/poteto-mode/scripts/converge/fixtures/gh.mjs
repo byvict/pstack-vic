@@ -89,7 +89,10 @@ else if (args[0] === 'api') {
   else if (endpoint === `${root}/pulls/1/comments`) send([]);
   else if (endpoint.startsWith(`${root}/issues/comments/`)) { const found = state.comments.find(c => c.id === Number(endpoint.split('/').at(-1))); if (!found) fail(); send(found); }
   else if (endpoint.endsWith('/statuses')) send(state.statuses.filter(s => (s.sha ?? state.head) === endpoint.split('/')[4]));
-  else if (endpoint === `${root}/branches/main/protection`) send({ required_status_checks: { contexts: state.protected, checks: state.protected.map(context => ({ context, app_id: context === 'verdict' ? null : 15368 })) } });
-  else if (endpoint === `${root}/rules/branches/main`) send([]);
+  else if (endpoint === `${root}/branches/main/protection`) {
+    if (state.classicProtection === false) { process.stdout.write(JSON.stringify({ message: state.protectionMessage, documentation_url: 'https://docs.github.com/rest/branches/branch-protection#get-branch-protection', status: '404' })); fail(); }
+    send({ required_status_checks: { contexts: state.protected, checks: state.protected.map(context => ({ context, app_id: context === 'verdict' ? null : 15368 })) } });
+  }
+  else if (endpoint === `${root}/rules/branches/main`) send(state.classicProtection === false ? [{ type: 'required_status_checks', parameters: { strict_required_status_checks_policy: false, do_not_enforce_on_create: false, required_status_checks: state.protected.map(context => context === 'verdict' ? { context } : { context, integration_id: 15368 }) }, ruleset_source_type: 'Repository', ruleset_source: repo, ruleset_id: 1 }] : []);
   else fail();
 } else fail();

@@ -25,7 +25,7 @@ export function fixture() {
   const statePath = join(directory, 'state.json');
   const gh = join(directory, 'gh');
   writeFileSync(gh, readFileSync(new URL('./gh.mjs', import.meta.url))); chmodSync(gh, 0o700);
-  const config = { repo: 'Example/app', trunk: 'main', requiredChecks: ['Run test suite', 'Secrets scan', 'verdict'], holdLabels: ['needs-victor'], surfaces: ['client/**', 'server/routes/**'], riskClasses: { irreversible: ['migrations/**'], contained: ['server/domain/**'] }, verifySkill: 'verify/SKILL.md', featureMap: 'features/README.md', evidenceRoot: 'evidence', deployWindow: '04:00 America/Sao_Paulo', bugbot: 'never' };
+  const config = { repo: 'Example/app', trunk: 'main', requiredChecks: ['Run test suite', 'Secrets scan', 'verdict', 'hold'], holdLabels: ['needs-victor'], surfaces: ['client/**', 'server/routes/**'], riskClasses: { irreversible: ['migrations/**'], contained: ['server/domain/**'] }, verifySkill: 'verify/SKILL.md', featureMap: 'features/README.md', evidenceRoot: 'evidence', deployWindow: '04:00 America/Sao_Paulo', bugbot: 'never' };
   const runOverrides: Record<string, unknown> = {};
   const files: { filename: string; status: string; patch: string; previous_filename?: string }[] = [{ filename: 'docs/guide.md', status: 'modified', patch: '@@ -1 +1 @@\n-old\n+new' }];
   const jobs = [
@@ -40,8 +40,8 @@ export function fixture() {
     files, jobs, runOverrides, workflowId: 5,
     blobs: { '.cursor/converge.json': JSON.stringify(config), 'verify/SKILL.md': 'Drive the app.', 'features/README.md': '| [Login](./login.md) | `client/Login.jsx` |\n', 'features/login.md': 'Use Entrar.', '.github/workflows/tests.yml': 'name: Tests\n', 'package.json': JSON.stringify({scripts:{test:'node tools/run-all-tests.js'}}), 'tools/run-all-tests.js': 'function printOneResult() {} function printRunnerFooter() {}' },
     headBlobs: {} as Record<string, string>,
-    checks: [{ id: 11, name: 'Run test suite', status: 'completed', conclusion: 'success', app: { id: 15368 } }, { id: 12, name: 'Secrets scan', status: 'completed', conclusion: 'success', app: { id: 15368 } }],
-    protected: ['Run test suite', 'Secrets scan', 'verdict'], comments: [], statuses: [], pulls: [] as Record<string, unknown>[], pushedHead: head, mutations: [] };
+    checks: [{ id: 11, name: 'Run test suite', status: 'completed', conclusion: 'success', app: { id: 15368 } }, { id: 12, name: 'Secrets scan', status: 'completed', conclusion: 'success', app: { id: 15368 } }, { id: 10, name: 'hold', status: 'completed', conclusion: 'success', app: { id: 15368 } }],
+    protected: ['Run test suite', 'Secrets scan', 'verdict', 'hold'], classicProtection: true, protectionMessage: 'Branch not protected', comments: [], statuses: [], pulls: [] as Record<string, unknown>[], pushedHead: head, mutations: [] };
   writeFileSync(statePath, JSON.stringify(state));
   const scriptDirectory = fileURLToPath(new URL('../', import.meta.url));
   return {
