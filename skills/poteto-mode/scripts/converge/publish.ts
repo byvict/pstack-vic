@@ -4,6 +4,7 @@ import { array, digest, integer, jsonHash, object, oneOf, parseFinding, parseRep
 import { admitPull, api, comments, isPublication, pages, principal, pull, snapshot } from './github.ts';
 import { analyze } from './reconcile.ts';
 import { admitLane, type AdmittedLane } from './evidence.ts';
+import { admitCertificate } from './certify.ts';
 
 export function decide(report: Report, lanes: AdmittedLane[]): Decision {
   const findings = [...report.findings, ...lanes.flatMap(l => l.findings.filter(f => f.severity === 'blocking'))];
@@ -61,9 +62,14 @@ export function dossierFromComment(value: unknown): Dossier {
 export async function statuses(repo: string, head: string): Promise<Record<string, unknown>[]> {
   return (await pages(`repos/${repo}/commits/${head}/statuses`)).map(v => object(v)).sort((a, b) => integer(b.id) - integer(a.id));
 }
-export async function publishVerdict(options: { reportFile: string; laneFiles: string[]; evidenceDirectory: string; retainCommentUrl?: string }): Promise<{ dossier: Dossier; commentUrl: string; statusId: number }> {
+/** A pre-pr report publishes before the PR's CI finishes, so it carries only its certificate and no CI-backed body claims. */
+export async function publishVerdict(options: { reportFile: string; laneFiles: string[]; evidenceDirectory: string; retainCommentUrl?: string; certificateFile?: string }): Promise<{ dossier: Dossier; commentUrl: string; statusId: number }> {
   const report = parseReport(JSON.parse(readFileSync(options.reportFile, 'utf8')));
   const r = report.round;
+  if (options.certificateFile && (options.laneFiles.length || options.retainCommentUrl)) throw new Error('A certificate cannot mix with lanes or retained evidence');
+  if (options.certificateFile && r.execution !== 'pre-pr') throw new Error('Certificate publication needs a pre-pr report');
+  if (r.execution === 'pre-pr' && !options.certificateFile) throw new Error('A pre-pr report publishes only through a certificate');
+  if (options.certificateFile && report.claims.some(c => c.kind === 'check' || c.kind === 'test' || c.kind === 'artifact')) throw new Error('A certified PR body cannot carry check, test or artifact claims');
   const current = await snapshot(r.repo, r.pr, r.configPath, r.execution);
   const reconstructed = analyze(current, { id: r.id, configPath: r.configPath, execution: r.execution });
   if (jsonHash(report) !== jsonHash(reconstructed)) throw new Error('Reconciliation report changed or is stale');
@@ -83,6 +89,7 @@ export async function publishVerdict(options: { reportFile: string; laneFiles: s
     retainedFrom = { round: old.round.id, head: old.round.head, commentUrl: options.retainCommentUrl };
     for (const role of report.lanes) admitted.push({ role, coverage: old.coverage, risks: old.riskAdjudication, findings: [], gaps: [], artifacts: old.artifactIds.map(id => ({ id, path: options.retainCommentUrl ?? '', digest: old.evidenceDigest, mediaType: 'retained' })), receiptDigest: old.evidenceDigest });
   }
+  if (options.certificateFile) admitted.push(...await admitCertificate(options.certificateFile, report, options.evidenceDirectory));
   for (const file of options.laneFiles) admitted.push(await admitLane(file, report, options.evidenceDirectory));
   const refreshed = await snapshot(r.repo, r.pr, r.configPath, r.execution);
   if (refreshed.inputDigest !== r.inputDigest) throw new Error('Inputs changed during evidence admission');
@@ -106,9 +113,9 @@ export async function publishVerdict(options: { reportFile: string; laneFiles: s
 }
 async function main(args: string[]): Promise<number> {
   try {
-    const { values } = parseArgs({ args, options: { report: { type: 'string' }, lane: { type: 'string', multiple: true }, evidence: { type: 'string' }, retain: { type: 'string' } } });
-    if (!values.report || !values.evidence) throw new Error('Usage: publish.ts --report report.json --evidence directory [--lane manifest.json]');
-    process.stdout.write(JSON.stringify(await publishVerdict({ reportFile: values.report, laneFiles: values.lane ?? [], evidenceDirectory: values.evidence, retainCommentUrl: values.retain }), null, 2) + '\n');
+    const { values } = parseArgs({ args, options: { report: { type: 'string' }, lane: { type: 'string', multiple: true }, evidence: { type: 'string' }, retain: { type: 'string' }, certificate: { type: 'string' } } });
+    if (!values.report || !values.evidence) throw new Error('Usage: publish.ts --report report.json --evidence directory [--lane manifest.json | --retain url | --certificate RUN/certificate.json]');
+    process.stdout.write(JSON.stringify(await publishVerdict({ reportFile: values.report, laneFiles: values.lane ?? [], evidenceDirectory: values.evidence, retainCommentUrl: values.retain, certificateFile: values.certificate }), null, 2) + '\n');
     return 0;
   } catch (error) { process.stderr.write((error instanceof SyntaxError ? 'Malformed JSON input' : error instanceof Error ? error.message : 'Publication failed') + '\n'); return 1; }
 }

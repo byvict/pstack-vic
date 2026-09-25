@@ -41,7 +41,7 @@ async function verdict(t: Trusted, pr: number, head: string, author: number): Pr
   if (integer(object(comment.user).id) !== author) throw new Error('Verdict comment author is untrusted');
   const dossier = dossierFromComment(comment);
   const r = dossier.round;
-  if (r.repo !== t.repo || r.pr !== pr || r.head !== head || r.contract !== t.sha || r.execution !== 'converge' || dossier.decision.verdict !== 'VERIFIED') throw new Error('Verdict identity or execution does not authorize merge');
+  if (r.repo !== t.repo || r.pr !== pr || r.head !== head || r.contract !== t.sha || !['converge', 'pre-pr'].includes(r.execution) || dossier.decision.verdict !== 'VERIFIED') throw new Error('Verdict identity or execution does not authorize merge');
   const all = await comments(t.repo, pr);
   const publications = all.filter(c => isPublication(c, author));
   const newest = publications.sort((a, b) => integer(b.id) - integer(a.id))[0];
