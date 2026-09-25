@@ -10,6 +10,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
@@ -47,8 +48,8 @@ const CLI_PROVIDERS: readonly string[] = Object.entries(MATRIX.providers)
   .map(([name]) => name);
 
 const fake = `#!/usr/bin/env node
-import { appendFileSync, existsSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { appendFileSync, existsSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const out = (text) => writeSync(1, text + "\\n");
 const err = (text) => writeSync(2, text + "\\n");
@@ -127,6 +128,28 @@ const reportedModel = model === "fable"
 if (process.env.FAKE_INVALID_MODEL === "1") {
   err("The requested model is not supported with this account.");
   process.exit(1);
+}
+if (name === "grok" && stage === "model") {
+  if (process.env.FAKE_GROK_CONFIG_RECORD_PATH) {
+    const overlay = process.env.GROK_CONFIG_PATH ?? null;
+    writeFileSync(process.env.FAKE_GROK_CONFIG_RECORD_PATH, JSON.stringify({
+      path: overlay,
+      content: overlay === null ? null : readFileSync(overlay, "utf8"),
+      inline: process.env.GROK_CONFIG ?? null,
+    }));
+  }
+  if (process.env.FAKE_GROK_WRITE_PROBE === "1") writeFileSync("probe.txt", "probe");
+  if (process.env.FAKE_GROK_REMOVE_GIT === "1") rmSync(".git", { recursive: true, force: true });
+  if (process.env.FAKE_GROK_REPOINT_CWD) {
+    const link = args[args.indexOf("--cwd") + 1];
+    unlinkSync(link);
+    symlinkSync(process.env.FAKE_GROK_REPOINT_CWD, link);
+  }
+  if (process.env.FAKE_GROK_COMMIT === "1") {
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "--allow-empty", "--quiet", "-m", "lane"], {
+      env: { ...process.env, GIT_AUTHOR_NAME: "lane", GIT_AUTHOR_EMAIL: "lane@example.invalid", GIT_COMMITTER_NAME: "lane", GIT_COMMITTER_EMAIL: "lane@example.invalid" },
+    });
+  }
 }
 if (stage === "model" && process.env.FAKE_DESCENDANT_HOLDS_PIPES_MS) {
   const seconds = Number(process.env.FAKE_DESCENDANT_HOLDS_PIPES_MS) / 1000;
@@ -433,6 +456,13 @@ const FAKE_ENV = [
   "FAKE_DESCENDANT_HOLDS_PIPES_MS",
   "FAKE_DESCENDANT_PID_PATH",
   "FAKE_SELF_SIGNAL",
+  "FAKE_GROK_CONFIG_RECORD_PATH",
+  "FAKE_GROK_WRITE_PROBE",
+  "FAKE_GROK_COMMIT",
+  "FAKE_GROK_REMOVE_GIT",
+  "FAKE_GROK_REPOINT_CWD",
+  "FAKE_REAL_GIT",
+  "FAKE_GIT_STATUS_DELAY_MS",
 ] as const;
 
 function clearFakeEnv(): void {
@@ -478,6 +508,7 @@ describe("runLane", () => {
         modelEvidence: provider === "codex" ? "pinned-argv" : "provider-report",
         preflight: { status: "passed" },
         remote: null,
+        checkout: null,
       });
       if (provider === "claude") {
         assert.equal(receipt(input.receiptPath).reportedModel, "claude-fable-9-9");
@@ -998,6 +1029,7 @@ describe("runLane", () => {
         modelEvidence: "pinned-argv",
         argv: ["POST", "/v1/agents", "composer-2.5", "high"],
         remote: { agentId: "bc_1", runId: "run_1", heads: { kind: "observed", changedBranches: [] } },
+        checkout: null,
       });
       assert.deepEqual(fake.requests, [
         "GET /v1/models",
@@ -1082,6 +1114,179 @@ describe("runLane", () => {
 
     const unknownProvider = { ...options("grok", "unknown-provider"), provider: "gemini" };
     await assert.rejects(runLane(unknownProvider), /provider gemini is not in model-matrix.json/);
+  });
+});
+
+describe("unsandboxed mode", () => {
+  const PARENT_ENV = ["CODEX_SANDBOX", "GROK_CONFIG", "GROK_CONFIG_PATH"] as const;
+  const REAL_GIT = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+  const FAKE_GIT = `#!/usr/bin/env node
+import { spawnSync } from "node:child_process";
+const args = process.argv.slice(2);
+if (args.includes("status") && process.env.FAKE_GIT_STATUS_DELAY_MS) {
+  await new Promise((resolve) => setTimeout(resolve, Number(process.env.FAKE_GIT_STATUS_DELAY_MS)));
+}
+const real = spawnSync(process.env.FAKE_REAL_GIT, args, { stdio: "inherit" });
+process.exit(real.status ?? 1);
+`;
+  const saved = new Map<string, string | undefined>();
+
+  beforeEach(() => {
+    for (const key of PARENT_ENV) {
+      saved.set(key, process.env[key]);
+      delete process.env[key];
+    }
+  });
+
+  afterEach(() => {
+    for (const key of PARENT_ENV) {
+      const value = saved.get(key);
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  function git(cwd: string, args: readonly string[]): string {
+    return execFileSync("git", [...args], {
+      cwd,
+      encoding: "utf8",
+      env: { ...process.env, GIT_AUTHOR_NAME: "test", GIT_AUTHOR_EMAIL: "test@example.invalid", GIT_COMMITTER_NAME: "test", GIT_COMMITTER_EMAIL: "test@example.invalid" },
+    }).trim();
+  }
+
+  function worktree(): { readonly cwd: string; readonly head: string } {
+    const cwd = join(scratch, "worktree");
+    mkdirSync(cwd);
+    git(cwd, ["init", "--quiet"]);
+    git(cwd, ["-c", "commit.gpgsign=false", "commit", "--allow-empty", "--quiet", "-m", "head"]);
+    return { cwd, head: git(cwd, ["rev-parse", "HEAD"]) };
+  }
+
+  function unsandboxed(cwd: string, suffix: string = "unsandboxed"): RunnerOptions {
+    return { ...options("grok", suffix), mode: "unsandboxed", cwd };
+  }
+
+  it("refuses a cwd outside a git worktree before preflight", async () => {
+    const started = join(scratch, "preflight-started");
+    process.env.FAKE_PREFLIGHT_STARTED_PATH = started;
+    const input = unsandboxed(scratch);
+    await assert.rejects(runLane(input), /unsandboxed needs --cwd inside a git worktree/);
+    assert.equal(existsSync(started), false);
+    assert.equal(existsSync(input.receiptPath), false);
+  });
+
+  it("refuses under an outer seatbelt and for an http provider before reserving paths", async () => {
+    const { cwd } = worktree();
+    process.env.CODEX_SANDBOX = "seatbelt";
+    const nested = unsandboxed(cwd);
+    await assert.rejects(runLane(nested), /unsandboxed needs a parent without a seatbelt/);
+    assert.equal(existsSync(nested.receiptPath), false);
+    delete process.env.CODEX_SANDBOX;
+    const cloud = { ...httpOptions("cursor-unsandboxed"), mode: "unsandboxed" as const, cwd };
+    await assert.rejects(runLane(cloud), /unsandboxed.*cursor/);
+    assert.equal(existsSync(cloud.receiptPath), false);
+  });
+
+  it("runs Grok with --sandbox off under the lane's overlay and records an untouched worktree", async () => {
+    const { cwd, head } = worktree();
+    const record = join(scratch, "overlay.json");
+    process.env.FAKE_GROK_CONFIG_RECORD_PATH = record;
+    process.env.GROK_CONFIG = '{"models":{"default_reasoning_effort":"low"}}';
+    process.env.GROK_CONFIG_PATH = join(scratch, "parent-overlay.toml");
+    const input = unsandboxed(cwd);
+    const result = await runLane(input);
+    assert.equal(result.exitCode, 0);
+    const recorded = receipt(input.receiptPath);
+    matchObject(recorded, {
+      status: "complete",
+      mode: "unsandboxed",
+      checkout: { headBefore: head, headAfter: head, statusAfter: [] },
+    });
+    assert.equal(recorded.argv[recorded.argv.indexOf("--sandbox") + 1], "off");
+    const seen = JSON.parse(readFileSync(record, "utf8")) as { path: string; content: string; inline: string | null };
+    assert.equal(seen.content, '[shell_environment_policy]\ninherit = "core"\n');
+    assert.equal(seen.inline, null);
+    assert.notEqual(seen.path, process.env.GROK_CONFIG_PATH);
+    assert.ok(!seen.path.startsWith(cwd));
+    assert.equal(existsSync(seen.path), false);
+    assert.equal(existsSync(dirname(seen.path)), false);
+  });
+
+  it("records the untracked file a lane leaves and still completes", async () => {
+    const { cwd, head } = worktree();
+    process.env.FAKE_GROK_WRITE_PROBE = "1";
+    const input = unsandboxed(cwd);
+    assert.equal((await runLane(input)).exitCode, 0);
+    matchObject(receipt(input.receiptPath), {
+      status: "complete",
+      checkout: { headBefore: head, headAfter: head, statusAfter: ["?? probe.txt"] },
+    });
+  });
+
+  it("records the head a lane moved", async () => {
+    const { cwd, head } = worktree();
+    process.env.FAKE_GROK_COMMIT = "1";
+    const input = unsandboxed(cwd);
+    assert.equal((await runLane(input)).exitCode, 0);
+    const moved = git(cwd, ["rev-parse", "HEAD"]);
+    assert.notEqual(moved, head);
+    matchObject(receipt(input.receiptPath), {
+      status: "complete",
+      checkout: { headBefore: head, headAfter: moved, statusAfter: [] },
+    });
+  });
+
+  it("fails the lane without a checkout when its worktree can no longer be read", async () => {
+    const { cwd } = worktree();
+    process.env.FAKE_GROK_REMOVE_GIT = "1";
+    const input = unsandboxed(cwd);
+    assert.equal((await runLane(input)).exitCode, 70);
+    const recorded = receipt(input.receiptPath);
+    matchObject(recorded, { status: "child-failed", checkout: null, exitCode: 0 });
+    assert.match(recorded.error?.evidence ?? "", /git rev-parse --verify HEAD failed/);
+    assert.equal(existsSync(input.outputPath), false);
+  });
+
+  it("reads the worktree the lane ran in after the lane repoints a --cwd symlink", async () => {
+    const { cwd, head } = worktree();
+    const clean = join(scratch, "clean");
+    git(scratch, ["clone", "--quiet", cwd, clean]);
+    const link = join(scratch, "link");
+    symlinkSync(cwd, link);
+    process.env.FAKE_GROK_WRITE_PROBE = "1";
+    process.env.FAKE_GROK_REPOINT_CWD = clean;
+    const input = unsandboxed(link);
+    assert.equal((await runLane(input)).exitCode, 0);
+    matchObject(receipt(input.receiptPath), {
+      status: "complete",
+      checkout: { headBefore: head, headAfter: head, statusAfter: ["?? probe.txt"] },
+    });
+  });
+
+  it("keeps the explicit deadline while it reads the worktree after the lane", { timeout: RUN_BUDGET_MS * 2 }, async () => {
+    const { cwd } = worktree();
+    writeFileSync(join(bin, "git"), FAKE_GIT);
+    chmodSync(join(bin, "git"), 0o755);
+    process.env.FAKE_REAL_GIT = REAL_GIT;
+    warm("grok");
+    execFileSync(join(bin, "git"), ["--version"], { stdio: "ignore" });
+    process.env.FAKE_GIT_STATUS_DELAY_MS = String(DESCENDANT_HOLD_MS);
+    const started = Date.now();
+    const input = { ...unsandboxed(cwd), timeoutMs: DRAIN_DEADLINE_MS };
+    const result = await runLane(input, started);
+    assert.ok(Date.now() - started < DESCENDANT_HOLD_MS / 2, "the git read was not cut at the deadline");
+    assert.equal(result.exitCode, 124);
+    matchObject(receipt(input.receiptPath), { status: "timed-out", checkout: null, exitCode: 0 });
+  });
+
+  it("leaves the parent's Grok config alone in read-only mode", async () => {
+    const { cwd } = worktree();
+    const record = join(scratch, "overlay.json");
+    process.env.FAKE_GROK_CONFIG_RECORD_PATH = record;
+    const input = { ...options("grok"), cwd };
+    assert.equal((await runLane(input)).exitCode, 0);
+    assert.deepEqual(JSON.parse(readFileSync(record, "utf8")), { path: null, content: null, inline: null });
+    assert.equal(receipt(input.receiptPath).checkout, null);
   });
 });
 

@@ -1,25 +1,35 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFile, spawn, spawnSync, type ChildProcess } from "node:child_process";
 import {
   accessSync,
   closeSync,
   constants as fsConstants,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   openSync,
   readFileSync,
+  rmSync,
   statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { constants as osConstants } from "node:os";
+import { constants as osConstants, tmpdir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
+import { promisify } from "node:util";
 import type { Readable } from "node:stream";
 import {
   routeFor,
   reportedModelMatches as familyReportMatches,
   type Family,
 } from "../../../../scripts/model-matrix.ts";
-import { invocationCommand, preflightCommand, type CommandSpec } from "./commands.ts";
+import {
+  configOverlay,
+  invocationCommand,
+  preflightCommand,
+  requireSupportedMode,
+  type CommandSpec,
+  type ConfigOverlay,
+} from "./commands.ts";
 import { httpLane } from "./http-lane.ts";
 import { parseProviderOutput, reportedModelMatches } from "./parse-output.ts";
 import {
@@ -29,6 +39,7 @@ import {
   MATRIX,
   UsageError,
   type CancellationSignal,
+  type Checkout,
   type CliEvidence,
   type CliRunnerOptions,
   type Lane,
@@ -196,6 +207,101 @@ export function findExecutable(
     }
   }
   return null;
+}
+
+/**
+ * Git in `cwd` and nowhere else: an inherited GIT_DIR or GIT_WORK_TREE (a
+ * parent running inside a hook) would point the checkout record at another
+ * repository, and admission trusts that record.
+ */
+function gitEnvironment(): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_"))
+  );
+}
+
+function gitArgv(cwd: string, args: readonly string[]): string[] {
+  return ["-C", cwd, "--no-optional-locks", ...args];
+}
+
+function gitFailure(cwd: string, args: readonly string[], detail: string): Error {
+  return new Error(`git ${args.join(" ")} failed in ${cwd}: ${detail.trim()}`);
+}
+
+function isGitWorktree(cwd: string): boolean {
+  const result = spawnSync("git", gitArgv(cwd, ["rev-parse", "--show-toplevel"]), {
+    encoding: "utf8",
+    env: gitEnvironment(),
+  });
+  return result.error === undefined && result.status === 0;
+}
+
+const execFileAsync = promisify(execFile);
+
+/** Git during a lane answers to the lane's deadline and cancellation latch, as the model child did. */
+async function laneGit(
+  cwd: string,
+  args: readonly string[],
+  context: LaneContext
+): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync("git", gitArgv(cwd, args), {
+      encoding: "utf8",
+      env: gitEnvironment(),
+      signal: context.cancellation.abortSignal,
+      timeout: context.deadlineAt === null ? 0 : Math.max(1, context.deadlineAt - Date.now()),
+    });
+    return stdout;
+  } catch (error) {
+    const stderr = (error as { stderr?: unknown }).stderr;
+    const detail = typeof stderr === "string" && stderr.trim().length > 0
+      ? stderr
+      : error instanceof Error ? error.message : String(error);
+    throw gitFailure(cwd, args, detail);
+  }
+}
+
+interface CheckoutStart {
+  readonly root: string;
+  readonly head: string;
+}
+
+/**
+ * The worktree root is resolved once, before the child, so a lane that
+ * repoints a `--cwd` symlink cannot send the after-read to a clean copy.
+ */
+async function startCheckout(cwd: string, context: LaneContext): Promise<CheckoutStart> {
+  const root = (await laneGit(cwd, ["rev-parse", "--show-toplevel"], context)).trim();
+  return { root, head: (await laneGit(root, ["rev-parse", "--verify", "HEAD"], context)).trim() };
+}
+
+async function finishCheckout(start: CheckoutStart, context: LaneContext): Promise<Checkout> {
+  const headAfter = (await laneGit(start.root, ["rev-parse", "--verify", "HEAD"], context)).trim();
+  const status = await laneGit(start.root, ["status", "--porcelain", "--untracked-files=all"], context);
+  return {
+    headBefore: start.head,
+    headAfter,
+    statusAfter: status.split("\n").filter((line) => line.length > 0),
+  };
+}
+
+interface StagedOverlay {
+  readonly env: NodeJS.ProcessEnv;
+  readonly directory: string;
+}
+
+function stageOverlay(env: NodeJS.ProcessEnv, overlay: ConfigOverlay): StagedOverlay {
+  const directory = mkdtempSync(join(tmpdir(), "pstack-runner-"));
+  const file = join(directory, overlay.fileName);
+  try {
+    writeFileSync(file, overlay.content, { encoding: "utf8", mode: 0o600 });
+  } catch (error) {
+    rmSync(directory, { recursive: true, force: true });
+    throw error;
+  }
+  const staged: NodeJS.ProcessEnv = { ...env, [overlay.variable]: file };
+  for (const key of overlay.unset) delete staged[key];
+  return { env: staged, directory };
 }
 
 function exitCodeOf(code: number | null, signal: NodeJS.Signals | null): number {
@@ -635,6 +741,7 @@ function finish(
       exitCode: evidence.exitCode,
       signal: evidence.signal,
       ...fields,
+      checkout: evidence.checkout,
       remote: null,
     }
     : {
@@ -647,6 +754,7 @@ function finish(
       exitCode: null,
       signal: null,
       ...fields,
+      checkout: null,
       remote: evidence.remote,
     };
 
@@ -719,6 +827,10 @@ export function validateOptions(options: RunnerOptions): void {
   if (!existsSync(options.cwd) || !statSync(options.cwd).isDirectory()) {
     throw new UsageError(`cwd is not a directory: ${options.cwd}`);
   }
+  requireSupportedMode(options.provider, options.mode, process.env);
+  if (options.mode === "unsandboxed" && !isGitWorktree(options.cwd)) {
+    throw new UsageError(`unsandboxed needs --cwd inside a git worktree: ${options.cwd}`);
+  }
   if (
     options.promptPath === options.outputPath ||
     options.promptPath === options.receiptPath
@@ -760,6 +872,7 @@ function cliLane(options: CliRunnerOptions): Lane {
     argv: [invocation.command, ...invocation.args],
     exitCode: null,
     signal: null,
+    checkout: null,
   };
   return { evidence: ev, run: (context) => runCliLane(options, invocation, preflight, ev, context) };
 }
@@ -886,17 +999,7 @@ async function runCliLane(
     return stoppedBeforeChild(ev, beforeModel, cancellation, "before model execution");
   }
 
-  const result = await runProcess(
-    executable,
-    invocation,
-    options.cwd,
-    env,
-    context.prompt,
-    deadlineAt,
-    cancellation
-  );
-  ev.exitCode = result.exitCode;
-  ev.signal = result.signal;
+  const result = await runModel(options, executable, invocation, env, context, ev);
 
   if (result.cancelledBy !== null || result.timedOut || result.exitCode !== 0) {
     const rawFailureEvidence = `${result.stderr}\n${result.stdout}`;
@@ -939,6 +1042,46 @@ async function runCliLane(
       },
     };
   }
+}
+
+/**
+ * The model child. An unsandboxed lane gets its config overlay for the
+ * child's lifetime, and its worktree recorded before the child starts and
+ * after it exits on its own. The exit lands in the evidence first, so a
+ * worktree read that fails or runs out of time still leaves a receipt with
+ * the exit it followed.
+ */
+async function runModel(
+  options: CliRunnerOptions,
+  executable: string,
+  invocation: CommandSpec,
+  env: NodeJS.ProcessEnv,
+  context: LaneContext,
+  ev: CliEvidence
+): Promise<ProcessResult> {
+  const start = options.mode === "unsandboxed" ? await startCheckout(options.cwd, context) : null;
+  const overlay = configOverlay(options);
+  const staged = overlay === null ? null : stageOverlay(env, overlay);
+  let result: ProcessResult;
+  try {
+    result = await runProcess(
+      executable,
+      invocation,
+      options.cwd,
+      staged?.env ?? env,
+      context.prompt,
+      context.deadlineAt,
+      context.cancellation
+    );
+  } finally {
+    if (staged !== null) rmSync(staged.directory, { recursive: true, force: true });
+  }
+  ev.exitCode = result.exitCode;
+  ev.signal = result.signal;
+  if (start !== null && result.cancelledBy === null && !result.timedOut) {
+    ev.checkout = await finishCheckout(start, context);
+  }
+  return result;
 }
 
 function laneFor(options: RunnerOptions): Lane {

@@ -14,6 +14,14 @@ export interface CommandSpec {
   readonly stdin: "prompt" | "none";
 }
 
+/** A config file the child finds through `variable`, with the variables that would shadow it removed. */
+export interface ConfigOverlay {
+  readonly variable: string;
+  readonly unset: readonly string[];
+  readonly fileName: string;
+  readonly content: string;
+}
+
 function requireCli(provider: Provider): string {
   if (transportFor(provider) === "http") {
     throw new UsageError(
@@ -72,12 +80,55 @@ function codexSandbox(mode: AccessMode): string {
 // built-in `none` profile and the outer sandbox governs; plan mode and the
 // tool list still apply. Measured with Grok CLI 1.0.5 and Codex 0.154.0.
 function grokSandbox(mode: AccessMode, outerSeatbelt: boolean): string {
+  if (mode === "unsandboxed") return "off";
   if (outerSeatbelt) return "none";
   return mode === "read-only" ? "read-only" : "workspace";
 }
 
 export function insideCodexSandbox(env: NodeJS.ProcessEnv): boolean {
   return (env.CODEX_SANDBOX ?? "") !== "";
+}
+
+/**
+ * On macOS no Grok Seatbelt profile lets a lane open a pty or start Chromium,
+ * so the certifier that drives the app runs with Grok's sandbox off (CLI-197,
+ * measured with Grok CLI 1.0.41). That certifier is a Grok lane, so the mode
+ * refuses every other provider. Codex's outer seatbelt denies the pty and
+ * Chromium just the same, so the mode refuses a parent that exports
+ * CODEX_SANDBOX too.
+ */
+export function requireSupportedMode(
+  provider: Provider,
+  mode: AccessMode,
+  env: NodeJS.ProcessEnv
+): void {
+  if (mode !== "unsandboxed") return;
+  if (cliFor(provider) !== "grok") {
+    throw new UsageError(`mode unsandboxed runs only on grok, not on ${provider}`);
+  }
+  if (insideCodexSandbox(env)) {
+    throw new UsageError("unsandboxed needs a parent without a seatbelt");
+  }
+}
+
+/**
+ * With its sandbox off, a Grok lane's shell would inherit the parent's whole
+ * environment, credentials included; `inherit = "core"` keeps only a small
+ * platform set such as PATH and HOME. Grok merges a GROK_CONFIG_PATH file
+ * above the user's config.toml without replacing it, `inherit` is on the
+ * overlay allowlist, and an inline GROK_CONFIG would win over the file, so the
+ * child loses that variable.
+ */
+export function configOverlay(
+  options: Pick<RunnerOptions, "provider" | "mode">
+): ConfigOverlay | null {
+  if (options.mode !== "unsandboxed" || cliFor(options.provider) !== "grok") return null;
+  return {
+    variable: "GROK_CONFIG_PATH",
+    unset: ["GROK_CONFIG"],
+    fileName: "grok-lane.toml",
+    content: '[shell_environment_policy]\ninherit = "core"\n',
+  };
 }
 
 function grokTools(mode: AccessMode): string {
@@ -98,7 +149,8 @@ function permissionMode(mode: AccessMode): string {
 // "request-level floor" only yields to that mode. A lane cannot answer a
 // prompt, so the runner never relies on one: always-approve, and confinement
 // comes from the sandbox (`read-only` / `workspace`, or the outer Codex
-// seatbelt when Grok runs on `none`) plus the tool list.
+// seatbelt when Grok runs on `none`) plus the tool list. An `unsandboxed` lane
+// keeps only the tool list and the disposable worktree its caller passes.
 function grokPermissionMode(): string {
   return "bypassPermissions";
 }
@@ -112,6 +164,7 @@ export function invocationCommand(
   env: NodeJS.ProcessEnv = process.env
 ): CommandSpec {
   const cli = requireCli(options.provider);
+  requireSupportedMode(options.provider, options.mode, env);
   switch (cli) {
     case "claude":
       return {

@@ -41,6 +41,14 @@ function media(bytes: Buffer, type: string): void {
     if (type === 'application/json') JSON.parse(text);
   } else throw new Error('Unsupported artifact media');
 }
+/** The certifier drives the app with Grok's sandbox off (CLI-197), so only its worktree record, left at the round head and clean, shows it wrote nothing there. */
+function certifierCheckout(receipt: Record<string, unknown>, head: string): void {
+  if (receipt.mode !== 'unsandboxed') throw new Error('Certifier lane must run unsandboxed');
+  const checkout = object(receipt.checkout, 'certifier checkout');
+  if (sha(checkout.headBefore) !== head) throw new Error('Certifier lane ran on another head');
+  if (sha(checkout.headAfter) !== head) throw new Error('Certifier lane changed its worktree');
+  if (strings(checkout.statusAfter).length !== 0) throw new Error('Certifier lane left changes in its worktree');
+}
 export async function admitLane(manifestFile: string, report: Report, evidenceDirectory: string, round: Round = report.round): Promise<AdmittedLane> {
   const manifest = object(JSON.parse(readFileSync(manifestFile, 'utf8')));
   const root = dirname(resolve(manifestFile));
@@ -56,7 +64,8 @@ export async function admitLane(manifestFile: string, report: Report, evidenceDi
   const expected = resolveDescriptor(loadMatrix(), string(manifest.descriptor));
   const allowed = roleProviders[role];
   if (expected.family.provider !== allowed.provider || expected.family.model !== allowed.model || !allowed.efforts.includes(expected.descriptor.effort)) throw new Error(`Role ${role} requires ${allowed.provider} ${allowed.model} at ${allowed.efforts.join(' or ')}`);
-  if (receipt.schemaVersion !== 1 || receipt.status !== 'complete' || receipt.mode !== 'read-only' || !((receipt.modelEvidence === 'provider-report' && receipt.modelVerified === true && reportedModelMatches(expected.family, string(receipt.reportedModel))) || (receipt.modelEvidence === 'pinned-argv' && receipt.modelVerified === false && receipt.reportedModel === null && expected.family.reportedModel === null))) throw new Error('Lane receipt does not prove independent completion');
+  if (role === 'pre-pr certifier') certifierCheckout(receipt, round.head);
+  if (receipt.schemaVersion !== 1 || receipt.status !== 'complete' || receipt.mode !== (role === 'pre-pr certifier' ? 'unsandboxed' : 'read-only') || !((receipt.modelEvidence === 'provider-report' && receipt.modelVerified === true && reportedModelMatches(expected.family, string(receipt.reportedModel))) || (receipt.modelEvidence === 'pinned-argv' && receipt.modelVerified === false && receipt.reportedModel === null && expected.family.reportedModel === null))) throw new Error('Lane receipt does not prove independent completion');
   if (receipt.provider !== expected.family.provider || receipt.model !== expected.family.model || receipt.effort !== expected.descriptor.effort) throw new Error('Lane receipt model differs from dispatch');
   const outputPath = relativePath(manifest.output);
   if (resolve(string(receipt.promptPath)) !== resolve(root, promptPath) || resolve(string(receipt.outputPath)) !== resolve(root, outputPath)) throw new Error('Lane receipt paths differ from dispatch');

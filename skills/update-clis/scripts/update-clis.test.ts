@@ -19,7 +19,7 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
 import { loadMatrix, PLUGIN_ROOT } from "../../../scripts/model-matrix.ts";
-import { invocationCommand, preflightCommand } from "../../poteto-mode/scripts/runner/commands.ts";
+import { invocationCommand, preflightCommand, requireSupportedMode } from "../../poteto-mode/scripts/runner/commands.ts";
 import { ACCESS_MODES } from "../../poteto-mode/scripts/runner/types.ts";
 import {
   codexStableVersions,
@@ -836,7 +836,7 @@ describe("cli-touchpoints.json", () => {
     }
   });
 
-  it("names in some contract of the same CLI every flag the runner generates, in every access mode", () => {
+  it("names in some contract of the same CLI every flag the runner generates, in every access mode it accepts", () => {
     const unnamed: string[] = [];
     const named = (cli: string, flag: string): boolean => {
       const token = new RegExp(`(^|[^A-Za-z0-9-])${flag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^A-Za-z0-9-]|$)`);
@@ -850,8 +850,16 @@ describe("cli-touchpoints.json", () => {
       const parent = matrix.parents.claude && matrix.routes.claude[provider] === "runner" ? "claude" : "codex";
       const envs: NodeJS.ProcessEnv[] = cli === "grok" ? [{}, { CODEX_SANDBOX: "seatbelt" }] : [{}];
       const argvs: string[][] = [[...preflightCommand(provider).args]];
+      const accepts = (mode: (typeof ACCESS_MODES)[number], env: NodeJS.ProcessEnv): boolean => {
+        try {
+          requireSupportedMode(provider, mode, env);
+          return true;
+        } catch {
+          return false;
+        }
+      };
       for (const mode of ACCESS_MODES) {
-        for (const env of envs) {
+        for (const env of envs.filter((candidate) => accepts(mode, candidate))) {
           const options = {
             parent, provider, model: family.model, effort: family.defaultEffort, mode,
             promptPath: "/p/prompt.md", cwd: "/p", outputPath: "/p/out.md", receiptPath: "/p/receipt.json", timeoutMs: null, target: null,

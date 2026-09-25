@@ -59,6 +59,13 @@ describe("runner CLI parsing", () => {
     );
   });
 
+  it("parses the unsandboxed mode", () => {
+    const parsed = parseArgs(
+      argv(["--provider", "grok", "--model", "grok-4.7", "--effort", "high", "--mode", "unsandboxed"])
+    );
+    assert.equal(parsed?.mode, "unsandboxed");
+  });
+
   it("parses --repo and --pr into a target for an http provider only", () => {
     const parsed = parseArgs(cursorArgv(["--repo", "acme/app", "--pr", "7"]));
     assert.deepEqual(parsed?.target, { owner: "acme", name: "app", pullNumber: 7 });

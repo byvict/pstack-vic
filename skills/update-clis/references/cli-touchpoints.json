@@ -123,7 +123,7 @@
       "id": "grok.argv",
       "cli": "grok",
       "kind": "lane",
-      "contract": "`grok --prompt-file <file> --model <model> --reasoning-effort <effort> --permission-mode <mode> --sandbox read-only|workspace|none --tools <list> --disallowed-tools <list> --output-format streaming-messages-json --cwd <dir> --no-subagents --disable-web-search --verbatim`",
+      "contract": "`grok --prompt-file <file> --model <model> --reasoning-effort <effort> --permission-mode <mode> --sandbox read-only|workspace|none|off --tools <list> --disallowed-tools <list> --output-format streaming-messages-json --cwd <dir> --no-subagents --disable-web-search --verbatim`",
       "pointers": [{ "file": "skills/poteto-mode/scripts/runner/commands.ts", "anchor": "\"--prompt-file\"," }],
       "coveredBy": ["read", "write", "seatbelt"],
       "measuredOn": "1.0.5"
@@ -230,6 +230,15 @@
       "kind": "lane",
       "contract": "in headless, `run_terminal_cmd` keeps a command in the foreground and returns its output in the same turn; nothing moves it to the background after ~15 s. The model sets each call's timeout (it asked 180 s for a 150 s command) and grok caps it at 300 s (`toolset.bash.max_timeout_secs`): past the cap the command is killed (`timed_out: true`), not backgrounded, and the model retries it. The lane's tool list has no tool that waits on a background task",
       "pointers": [{ "file": "skills/poteto-mode/scripts/runner/commands.ts", "anchor": "function grokTools" }],
+      "coveredBy": [],
+      "measuredOn": "1.0.41"
+    },
+    {
+      "id": "grok.unsandboxed",
+      "cli": "grok",
+      "kind": "lane",
+      "contract": "`--sandbox off` runs tool commands under no Seatbelt profile, so a pty and Chromium start, which no grok profile allows on macOS. `GROK_CONFIG_PATH` names a TOML overlay merged above `config.toml` without replacing it, `shell_environment_policy.inherit = \"core\"` is on its allowlist and keeps a small platform set such as `PATH` and `HOME`, and an inline `GROK_CONFIG` wins over the file",
+      "pointers": [{ "file": "skills/poteto-mode/scripts/runner/commands.ts", "anchor": "export function configOverlay" }],
       "coveredBy": [],
       "measuredOn": "1.0.41"
     },
