@@ -180,7 +180,7 @@ for (const [name, status] of [['NOT VERIFIED', { state: 'failure', description: 
 test('a certified head that moves before the exit refuses and launches nothing', async t => {
   const f = fixture(); t.after(f.cleanup); environment(t, f); publishCertificate(f);
   const live = f.read();
-  live.after = { endpoint: 'pulls/1', reads: 1, set: { head: 'e'.repeat(40) } };
+  live.after = { endpoint: 'pulls/1', reads: 4, set: { head: 'e'.repeat(40) } };
   Object.assign(f.state, live); f.save();
   let launches = 0;
   t.mock.method(globalThis, 'fetch', async () => { launches++; return Response.json({}); });
@@ -199,4 +199,26 @@ test('a trusted status whose dossier names another head still launches an owner'
   });
   const receipt = await start({ repo: 'Example/app', pr: 1, toolingRef: 'd'.repeat(40), stateDirectory: join(f.directory, 'owner'), effort: 'high' });
   assert.equal(receipt.kind, 'launched'); assert.equal(launches, 1);
+});
+
+test('a verdict that a newer publication supersedes still launches an owner', async t => {
+  const f = fixture(); t.after(f.cleanup); environment(t, f); publishCertificate(f);
+  const live = f.read(); live.comments.push({ id: 101, body: '<!-- converge:v1 00000000-0000-4000-8000-000000000000 -->\n```json\n{}\n```\n', user: { id: 7 }, html_url: 'https://github.com/Example/app/pull/1#issuecomment-101', updated_at: '2026-09-22T00:00:00Z' }); Object.assign(f.state, live); f.save();
+  let launches = 0;
+  t.mock.method(globalThis, 'fetch', async (url: string | URL) => {
+    if (String(url).endsWith('/v1/models')) return Response.json(inventory);
+    launches++;
+    return Response.json({ agent: { id: 'bc_owner', url: 'https://cursor.com/agents/bc_owner' }, run: { id: 'run_owner' } });
+  });
+  const receipt = await start({ repo: 'Example/app', pr: 1, toolingRef: 'd'.repeat(40), stateDirectory: join(f.directory, 'owner'), effort: 'high' });
+  assert.equal(receipt.kind, 'launched'); assert.equal(launches, 1);
+});
+
+test('a failed GitHub read in the verdict gate fails start.ts instead of launching', async t => {
+  const f = fixture(); t.after(f.cleanup); environment(t, f); publishCertificate(f);
+  const live = f.read(); live.failEndpoint = 'issues/comments/'; Object.assign(f.state, live); f.save();
+  let launches = 0;
+  t.mock.method(globalThis, 'fetch', async () => { launches++; return Response.json({}); });
+  await assert.rejects(start({ repo: 'Example/app', pr: 1, toolingRef: 'd'.repeat(40), stateDirectory: join(f.directory, 'owner') }), /^Error: gh request failed$/);
+  assert.equal(launches, 0); assert.equal(existsSync(join(f.directory, 'owner', 'intent.json')), false);
 });

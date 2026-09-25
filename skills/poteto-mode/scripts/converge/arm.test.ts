@@ -140,7 +140,7 @@ for (const full of [false, true]) {
     const strict = arm(f); assert.equal(strict.status, 0, strict.stderr);
     const before = f.calls().length;
     const result = arm(f, false, ['--pending']); assert.equal(result.status, 0, result.stderr);
-    assert.equal(f.calls().slice(before).filter(call => call[0] === 'pr' && call[1] === 'diff').length, 1);
+    assert.equal(f.calls().slice(before).filter(call => call[0] === 'pr' && call[1] === 'diff').length, 2);
     assert.deepEqual(JSON.parse(result.stdout).steps, ['Read latest push-to-trunk Tests', 'Read live protection and required checks', 'Read trusted exact-head verdict', `Re-derived the pre-pr verdict from contract ${'a'.repeat(40)} at trunk tip ${'d'.repeat(40)}`, `gh pr merge --squash --auto --match-head-commit ${f.state.head} (checks pending)`]);
     assert.deepEqual(f.read().mutations, merge(f.state.head));
   });
@@ -188,11 +188,11 @@ test('a converge verdict still refuses a new comment', t => {
   assert.match(result.stderr, /^PR text changed after verification$/m);
   assert.deepEqual(f.read().mutations, []);
 });
-test('a pre-pr verdict re-derives on every arm, once, even when nothing moved', t => {
+test('a pre-pr verdict re-derives on both verdict passes of every arm, even when nothing moved', t => {
   const f = fixture(); t.after(f.cleanup); publishCertificate(f);
   const before = f.calls().length;
   const result = arm(f, false, ['--pending']); assert.equal(result.status, 0, result.stderr);
-  assert.equal(f.calls().slice(before).filter(call => call[0] === 'pr' && call[1] === 'diff').length, 1);
+  assert.equal(f.calls().slice(before).filter(call => call[0] === 'pr' && call[1] === 'diff').length, 2);
   assert.equal(JSON.parse(result.stdout).steps[3], `Re-derived the pre-pr verdict at trunk tip ${'a'.repeat(40)}`);
   assert.deepEqual(f.read().mutations, merge(f.state.head));
 });
@@ -200,10 +200,17 @@ for (const drift of ['trunk', 'text'] as const) {
   test(`a pre-pr arm refuses when the ${drift === 'trunk' ? 'trunk' : 'PR text'} moves during the re-derivation`, t => {
     const f = fixture(); t.after(f.cleanup); publishCertificate(f);
     const live = f.read();
-    live.after = drift === 'trunk' ? { endpoint: 'commits/main', reads: 3, set: { trunk: 'd'.repeat(40) } } : { endpoint: 'pulls/1', reads: 3, set: { body: live.body + 'Edited during the arm.\n' } };
+    live.after = drift === 'trunk' ? { endpoint: 'commits/main', reads: 2, set: { trunk: 'd'.repeat(40) } } : { endpoint: 'pulls/1', reads: 2, set: { body: live.body + 'Edited during the arm.\n' } };
     Object.assign(f.state, live); f.save();
     const result = arm(f, false, ['--pending']); assert.notEqual(result.status, 0);
     assert.match(result.stderr, drift === 'trunk' ? /^Trunk moved during re-derivation$/m : /^PR text changed during re-derivation$/m);
     assert.deepEqual(f.read().mutations, []);
   });
 }
+test('the arm refuses a verdict reconciled against another contract path', t => {
+  const f = fixture(); t.after(f.cleanup); publish(f);
+  const live = f.read(); live.blobs['other/converge.json'] = live.blobs['.cursor/converge.json']; Object.assign(f.state, live); f.save();
+  const result = arm(f, false, ['--pending', '--config', 'other/converge.json']); assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /^Verdict was reconciled against another contract path$/m);
+  assert.deepEqual(f.read().mutations, []);
+});

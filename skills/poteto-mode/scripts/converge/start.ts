@@ -3,8 +3,8 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { object, repoName, sha, string } from './contract.ts';
-import { admitPull, api, principal, pull, trusted, verdictStatus } from './github.ts';
-import { linkedDossier } from './publish.ts';
+import { admitPull, api, principal, pull, trusted } from './github.ts';
+import { verdictGate } from './gate.ts';
 import { selectCursorModel } from '../runner/http-lane.ts';
 
 type Effort = 'high' | 'xhigh';
@@ -115,9 +115,8 @@ export async function start(options: { repo: string; pr: number; toolingRef: str
   const t = await trusted(repo, options.configPath ?? '.cursor/converge.json');
   const initial = await pull(repo, options.pr);
   admitPull(initial, t.config, initial.head);
-  const author = await principal();
-  const verdict = await verdictStatus(repo, options.pr, initial.head, author);
-  if (verdict.kind === 'trusted' && await linkedDossier(repo, options.pr, initial.head, author, verdict.commentId).then(() => true, () => false)) {
+  const verdict = await verdictGate(t, options.pr, initial.head, await principal());
+  if (verdict.kind === 'certified') {
     admitPull(await pull(repo, options.pr), t.config, initial.head);
     return { schemaVersion: 1, kind: 'certified', repo, pr: options.pr, head: initial.head, verdictUrl: verdict.url };
   }

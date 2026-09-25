@@ -68,15 +68,6 @@ export function dossierFromComment(value: unknown): Dossier {
   if (dossier.round.id !== match[1]) throw new Error('Verdict marker identity mismatch');
   return dossier;
 }
-/** A trusted `verdict` status only points at its dossier, so the dossier is read back as the authenticated account's comment and bound to this repo, PR and head before anything relies on it. */
-export async function linkedDossier(repo: string, pr: number, head: string, author: number, commentId: string): Promise<{ dossier: Dossier; commentId: number }> {
-  const comment = object(await api(`repos/${repo}/issues/comments/${commentId}`));
-  if (integer(object(comment.user).id) !== author) throw new Error('Verdict comment author is untrusted');
-  const dossier = dossierFromComment(comment);
-  const r = dossier.round;
-  if (r.repo !== repo || r.pr !== pr || r.head !== head || !['converge', 'pre-pr'].includes(r.execution) || dossier.decision.verdict !== 'VERIFIED') throw new Error('Verdict identity or execution does not authorize merge');
-  return { dossier, commentId: integer(comment.id) };
-}
 /** A pre-pr report publishes before the PR's CI finishes, so it carries only its certificate and no CI-backed body claims. */
 export async function publishVerdict(options: { reportFile: string; laneFiles: string[]; evidenceDirectory: string; retainCommentUrl?: string; certificateFile?: string }): Promise<{ dossier: Dossier; commentUrl: string; statusId: number }> {
   const report = parseReport(JSON.parse(readFileSync(options.reportFile, 'utf8')));

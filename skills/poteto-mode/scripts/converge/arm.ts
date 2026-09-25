@@ -1,8 +1,7 @@
 import { parseArgs } from 'node:util';
-import { array, integer, jsonHash, object, repoName, sha, string, type Dossier } from './contract.ts';
-import { admitPull, api, checks, command, comments, isPublication, pages, principal, pull, snapshot, trusted, verdictStatus, workflowRun, type Trusted } from './github.ts';
-import { decide, linkedDossier, retainedLanes } from './publish.ts';
-import { analyze } from './reconcile.ts';
+import { array, integer, jsonHash, object, repoName, sha, string } from './contract.ts';
+import { admitPull, api, checks, command, pages, principal, pull, trusted, workflowRun, type Trusted } from './github.ts';
+import { verdictGate } from './gate.ts';
 
 async function trunkHealth(t: Trusted): Promise<void> {
   const tip = sha(object(await api(`repos/${t.repo}/commits/${encodeURIComponent(t.config.trunk)}`)).sha);
@@ -37,33 +36,6 @@ async function protection(t: Trusted, head: string, pending: boolean): Promise<v
     if (!match.some(check => check.state === 'success')) throw new Error('Required protected check is not successful: ' + c.context);
   }
 }
-interface Verified { dossier: Dossier; url: string; fingerprint: string }
-/** A pre-pr certificate is assembled at one trunk tip, and its publication decided over the PR text of that moment; its lanes never read PR text. So every arm re-derives it: the certificate authorizes merge only while the same patch under the same policy re-derives VERIFIED from its retained coverage, over the current text, at the tip the arm reads. That binds the trunk tip at arm time, not the tip the merge lands on. */
-async function rederivePrePr(t: Trusted, pr: number, v: Verified): Promise<void> {
-  const r = v.dossier.round;
-  const current = await snapshot(t.repo, pr, r.configPath, 'pre-pr');
-  if (current.trusted.sha !== t.sha) throw new Error('Trunk moved during re-derivation');
-  if (current.inputFingerprint !== v.fingerprint) throw new Error('PR text changed during re-derivation');
-  const report = analyze(current, { id: r.id, configPath: r.configPath, execution: 'pre-pr' });
-  if (report.round.head !== r.head || report.round.patch_id !== r.patch_id || report.round.verificationDigest !== r.verificationDigest) throw new Error('Certificate patch or policy differs at trunk tip ' + t.sha);
-  const decision = decide(report, retainedLanes(report.lanes, v.dossier, v.url));
-  if (decision.verdict !== 'VERIFIED') throw new Error(`Certificate is no longer VERIFIED at trunk tip ${t.sha}: ${decision.verdict}`);
-}
-async function verdict(t: Trusted, pr: number, head: string, author: number): Promise<Verified> {
-  const status = await verdictStatus(t.repo, pr, head, author);
-  if (status.kind !== 'trusted') throw new Error(status.reason);
-  const { dossier, commentId } = await linkedDossier(t.repo, pr, head, author, status.commentId);
-  const r = dossier.round;
-  if (r.execution === 'converge' && r.contract !== t.sha) throw new Error('Verdict identity or execution does not authorize merge');
-  const all = await comments(t.repo, pr);
-  const publications = all.filter(c => isPublication(c, author));
-  const newest = publications.sort((a, b) => integer(b.id) - integer(a.id))[0];
-  if (!newest || newest.id !== commentId) throw new Error('A newer converge round supersedes this verdict');
-  const live = await pull(t.repo, pr);
-  const fingerprint = jsonHash({ body: live.body, comments: all.filter(c => !isPublication(c, author)).map(c => [c.id, c.body, c.updated_at]) });
-  if (r.execution === 'converge' && fingerprint !== dossier.inputFingerprint) throw new Error('PR text changed after verification');
-  return { dossier, url: status.url, fingerprint };
-}
 export async function disarm(repo: string, pr: number): Promise<boolean> {
   if (!(await pull(repo, pr)).autoMerge) return false;
   command('gh', ['pr', 'merge', String(pr), '--repo', repo, '--disable-auto']);
@@ -79,16 +51,17 @@ export async function arm(options: { repo: string; pr: number; head: string; ver
     await trunkHealth(t);
     await protection(t, head, options.pending === true);
     const author = await principal();
-    const verified = await verdict(t, options.pr, head, author);
+    const verified = await verdictGate(t, options.pr, head, author);
+    if (verified.kind === 'refused') throw new Error(verified.reason);
     admitPull(await pull(repo, options.pr), t.config, head);
     if (sha(object(await api(`repos/${repo}/commits/${encodeURIComponent(t.config.trunk)}`)).sha) !== t.sha) throw new Error('Trunk moved before arm');
-    const r = verified.dossier.round;
-    if (r.execution === 'pre-pr') await rederivePrePr(t, options.pr, verified);
-    const rederived = r.execution === 'pre-pr' ? 'Re-derived the pre-pr verdict' + (r.contract === t.sha ? '' : ` from contract ${r.contract}`) + ` at trunk tip ${t.sha}` + (verified.fingerprint === verified.dossier.inputFingerprint ? '' : ' over changed PR text') : null;
     await trunkHealth(t);
     await protection(t, head, options.pending === true);
-    if (jsonHash(await verdict(t, options.pr, head, author)) !== jsonHash(verified)) throw new Error('Verdict changed before arm');
+    const again = await verdictGate(t, options.pr, head, author);
+    if (again.kind === 'refused') throw new Error(again.reason);
+    if (jsonHash(again) !== jsonHash(verified)) throw new Error('Verdict changed before arm');
     admitPull(await pull(repo, options.pr), t.config, head);
+    const rederived = verified.rederived;
     const steps = ['Read latest push-to-trunk Tests', 'Read live protection and required checks', 'Read trusted exact-head verdict', ...(rederived ? [rederived] : []), 'gh pr merge --squash --auto --match-head-commit ' + head + (options.pending ? ' (checks pending)' : '')];
     if (options.dryRun) return { kind: 'dry-run', head, steps, rederived };
     command('gh', ['pr', 'merge', String(options.pr), '--repo', repo, '--squash', '--auto', '--match-head-commit', head]);

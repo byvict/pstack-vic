@@ -16,13 +16,14 @@ function childEnvironment(binary: string, credential: 'writer' | 'installation' 
   return env;
 }
 
+export class RequestError extends Error {}
 export function command(binary: string, args: string[], input?: string): string {
   const result = spawnSync(binary, args, { input, encoding: 'utf8', env: childEnvironment(binary), maxBuffer: 24 * 1024 * 1024, timeout: 90_000 });
-  if (result.error || result.status !== 0) throw new Error(`${binary} request failed`);
+  if (result.error || result.status !== 0) throw new RequestError(`${binary} request failed`);
   return result.stdout;
 }
 export function commandAsync(binary: string, args: string[], credential: 'writer' | 'installation' = 'writer'): Promise<string> {
-  return new Promise((resolve, reject) => execFile(binary, args, { encoding: 'utf8', env: childEnvironment(binary, credential), maxBuffer: 24 * 1024 * 1024, timeout: 90_000 }, (error, stdout) => error ? reject(new Error(`${binary} request failed`)) : resolve(stdout)));
+  return new Promise((resolve, reject) => execFile(binary, args, { encoding: 'utf8', env: childEnvironment(binary, credential), maxBuffer: 24 * 1024 * 1024, timeout: 90_000 }, (error, stdout) => error ? reject(new RequestError(`${binary} request failed`)) : resolve(stdout)));
 }
 export async function api(endpoint: string, body?: unknown): Promise<unknown> {
   if (body !== undefined) return JSON.parse(command('gh', ['api', endpoint, '--method', 'POST', '--input', '-'], JSON.stringify(body)));
@@ -53,7 +54,7 @@ export function admitPull(pr: Pull, contract: Contract, head: string, proof = fa
   if (pr.base !== contract.trunk) throw new Error('PR base differs from trunk');
   if (!proof && pr.labels.some(label => contract.holdLabels.includes(label))) throw new Error('Hold label refuses converge');
 }
-export interface Trusted { repo: string; sha: string; config: Contract; files: Map<string, string>; workflowId: number; workflowPath: string }
+export interface Trusted { repo: string; sha: string; configPath: string; config: Contract; files: Map<string, string>; workflowId: number; workflowPath: string }
 const trees = new Map<string, Map<string, string>>();
 async function tree(repo: string, commit: string): Promise<Map<string, string>> {
   const treeKey = repo + '/' + commit;
@@ -180,7 +181,7 @@ export async function trusted(repo: string, configPath: string): Promise<Trusted
   const workflowPath = relativePath(workflow.path);
   const files = new Map([[configPath, source]]);
   await Promise.all([...new Set([config.verifySkill, config.featureMap, workflowPath].filter((p): p is string => p !== null))].map(async path => files.set(path, await blob(repo, commit, path))));
-  return { repo, sha: commit, config, files, workflowId: integer(workflow.id), workflowPath };
+  return { repo, sha: commit, configPath, config, files, workflowId: integer(workflow.id), workflowPath };
 }
 export async function features(contract: Trusted, head: string, changes: ChangedFile[]): Promise<{ features: Feature[]; reachedPaths: string[] }> {
   if (contract.config.featureMap === null) return { features: [], reachedPaths: [] };
