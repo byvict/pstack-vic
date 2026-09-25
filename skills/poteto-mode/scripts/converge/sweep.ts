@@ -1,9 +1,9 @@
 import { parseArgs } from 'node:util';
 import { array, integer, object, repoName, sha, string } from './contract.ts';
 import { pages, principal, trusted, verdictStatus } from './github.ts';
-import { arm } from './arm.ts';
+import { arm, disarm } from './arm.ts';
 
-export interface Swept { pr: number; head: string; outcome: 'armed' | 'dry-run' | 'skipped' | 'refused'; reason: string }
+export interface Swept { pr: number; head: string; outcome: 'armed' | 'disarmed' | 'dry-run' | 'skipped' | 'refused'; reason: string }
 export async function sweep(options: { repo: string; configPath?: string; dryRun: boolean }): Promise<{ swept: Swept[] }> {
   const repo = repoName(options.repo);
   const t = await trusted(repo, options.configPath ?? '.cursor/converge.json');
@@ -15,10 +15,16 @@ export async function sweep(options: { repo: string; configPath?: string; dryRun
     const head = sha(object(p.head).sha);
     const skip = (reason: string) => swept.push({ pr, head, outcome: 'skipped', reason });
     if (string(object(p.base).ref) !== t.config.trunk) { skip('base is not trunk'); continue; }
-    if (p.draft === true) { skip('draft'); continue; }
-    if (array(p.labels).some(l => t.config.holdLabels.includes(string(object(l).name)))) { skip('hold label'); continue; }
-    if (p.auto_merge !== null) { skip('auto-merge already pending'); continue; }
+    const held = array(p.labels).some(l => t.config.holdLabels.includes(string(object(l).name)));
     try {
+      if (held && p.auto_merge !== null) {
+        if (options.dryRun) swept.push({ pr, head, outcome: 'dry-run', reason: 'hold label, would disarm auto-merge' });
+        else { await disarm(repo, pr); swept.push({ pr, head, outcome: 'disarmed', reason: 'hold label' }); }
+        continue;
+      }
+      if (held) { skip('hold label'); continue; }
+      if (p.draft === true) { skip('draft'); continue; }
+      if (p.auto_merge !== null) { skip('auto-merge already pending'); continue; }
       const verdict = await verdictStatus(repo, pr, head, author);
       if (verdict.kind === 'none') { skip('no trusted verdict on head'); continue; }
       if (verdict.kind === 'foreign') { swept.push({ pr, head, outcome: 'refused', reason: verdict.refusal }); continue; }

@@ -65,3 +65,13 @@ test('sweep refuses a VERIFIED verdict status from another account and exits 1',
   assert.deepEqual(outcomes(result.stdout), [[1, 'refused', 'VERIFIED verdict status was posted by another account: other-bot']]);
   assert.deepEqual(f.read().mutations, []);
 });
+for (const dryRun of [false, true]) {
+  test(`sweep ${dryRun ? 'dry run reports' : 'disarms'} a held PR whose auto-merge is pending`, t => {
+    const f = fixture(); t.after(f.cleanup);
+    const live = f.read(); live.hold = true; live.autoMerge = true; Object.assign(f.state, live); f.save(); listed(f);
+    const result = f.run('converge-sweep', ['--repo', 'Example/app', ...(dryRun ? ['--dry-run'] : [])]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(outcomes(result.stdout), [[1, dryRun ? 'dry-run' : 'disarmed', dryRun ? 'hold label, would disarm auto-merge' : 'hold label']]);
+    assert.deepEqual(f.read().mutations, dryRun ? [] : [['pr', 'merge', '1', '--repo', 'Example/app', '--disable-auto']]);
+  });
+}
