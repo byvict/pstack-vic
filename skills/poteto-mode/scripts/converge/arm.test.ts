@@ -136,7 +136,10 @@ for (const full of [false, true]) {
     const f = fixture(); t.after(f.cleanup); publishCertificate(f, { full });
     moveTrunk(f);
     const strict = arm(f); assert.equal(strict.status, 0, strict.stderr);
+    const before = f.calls().length;
     const result = arm(f, false, ['--pending']); assert.equal(result.status, 0, result.stderr);
+    assert.equal(f.calls().slice(before).filter(call => call[0] === 'pr' && call[1] === 'diff').length, 1);
+    assert.deepEqual(JSON.parse(result.stdout).steps, ['Read latest push-to-trunk Tests', 'Read live protection and required checks', 'Read trusted exact-head verdict', `Re-derived the pre-pr verdict from contract ${'a'.repeat(40)} at trunk tip ${'d'.repeat(40)}`, `gh pr merge --squash --auto --match-head-commit ${f.state.head} (checks pending)`]);
     assert.deepEqual(f.read().mutations, merge(f.state.head));
   });
 }

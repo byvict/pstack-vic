@@ -37,17 +37,18 @@ async function protection(t: Trusted, head: string, pending: boolean): Promise<v
     if (!match.some(check => check.state === 'success')) throw new Error('Required protected check is not successful: ' + c.context);
   }
 }
-/** A certificate is assembled at one trunk tip. Once trunk moves, it still authorizes merge only while the same patch under the same policy re-derives VERIFIED at the new tip from its retained coverage. */
-async function certifiedAtTip(t: Trusted, pr: number, dossier: Dossier, commentUrl: string): Promise<void> {
-  const r = dossier.round;
+interface Verified { dossier: Dossier; url: string; rederive: string | null }
+/** A pre-pr certificate is assembled at one trunk tip. When trunk has moved by arm time, the certificate still authorizes merge only while the same patch under the same policy re-derives VERIFIED from its retained coverage at the tip the arm reads. That binds the trunk tip at arm time, not the tip the merge lands on. */
+async function certifiedAtTip(t: Trusted, pr: number, v: Verified): Promise<void> {
+  const r = v.dossier.round;
   const current = await snapshot(t.repo, pr, r.configPath, 'pre-pr');
-  if (current.trusted.sha !== t.sha) throw new Error('Trunk moved before arm');
+  if (current.trusted.sha !== t.sha) throw new Error('Trunk moved during re-derivation');
   const report = analyze(current, { id: r.id, configPath: r.configPath, execution: 'pre-pr' });
   if (report.round.head !== r.head || report.round.patch_id !== r.patch_id || report.round.verificationDigest !== r.verificationDigest) throw new Error('Certificate patch or policy differs at trunk tip ' + t.sha);
-  const decision = decide(report, retainedLanes(report.lanes, dossier, commentUrl));
+  const decision = decide(report, retainedLanes(report.lanes, v.dossier, v.url));
   if (decision.verdict !== 'VERIFIED') throw new Error(`Certificate is no longer VERIFIED at trunk tip ${t.sha}: ${decision.verdict}`);
 }
-async function verdict(t: Trusted, pr: number, head: string, author: number): Promise<Dossier> {
+async function verdict(t: Trusted, pr: number, head: string, author: number): Promise<Verified> {
   const status = await verdictStatus(t.repo, pr, head, author);
   if (status.kind === 'foreign') throw new Error(status.refusal);
   if (status.kind === 'none') throw new Error('Latest verdict status is not trusted VERIFIED');
@@ -64,8 +65,7 @@ async function verdict(t: Trusted, pr: number, head: string, author: number): Pr
   const live = await pull(t.repo, pr);
   const fingerprint = jsonHash({ body: live.body, comments: all.filter(c => !isPublication(c, author)).map(c => [c.id, c.body, c.updated_at]) });
   if (fingerprint !== dossier.inputFingerprint) throw new Error('PR text changed after verification');
-  if (r.contract !== t.sha) await certifiedAtTip(t, pr, dossier, url);
-  return dossier;
+  return { dossier, url, rederive: r.contract === t.sha ? null : `Re-derived the pre-pr verdict from contract ${r.contract} at trunk tip ${t.sha}` };
 }
 export async function disarm(repo: string, pr: number): Promise<void> {
   if ((await pull(repo, pr)).autoMerge) command('gh', ['pr', 'merge', String(pr), '--repo', repo, '--disable-auto']);
@@ -80,14 +80,15 @@ export async function arm(options: { repo: string; pr: number; head: string; ver
     await trunkHealth(t);
     await protection(t, head, options.pending === true);
     const author = await principal();
-    const dossier = await verdict(t, options.pr, head, author);
+    const verified = await verdict(t, options.pr, head, author);
     admitPull(await pull(repo, options.pr), t.config, head);
     if (sha(object(await api(`repos/${repo}/commits/${encodeURIComponent(t.config.trunk)}`)).sha) !== t.sha) throw new Error('Trunk moved before arm');
+    if (verified.rederive) await certifiedAtTip(t, options.pr, verified);
     await trunkHealth(t);
     await protection(t, head, options.pending === true);
-    if (jsonHash(await verdict(t, options.pr, head, author)) !== jsonHash(dossier)) throw new Error('Verdict changed before arm');
+    if (jsonHash(await verdict(t, options.pr, head, author)) !== jsonHash(verified)) throw new Error('Verdict changed before arm');
     admitPull(await pull(repo, options.pr), t.config, head);
-    const steps = ['Read latest push-to-trunk Tests', 'Read live protection and required checks', 'Read trusted exact-head verdict', 'gh pr merge --squash --auto --match-head-commit ' + head + (options.pending ? ' (checks pending)' : '')];
+    const steps = ['Read latest push-to-trunk Tests', 'Read live protection and required checks', 'Read trusted exact-head verdict', ...(verified.rederive ? [verified.rederive] : []), 'gh pr merge --squash --auto --match-head-commit ' + head + (options.pending ? ' (checks pending)' : '')];
     if (options.dryRun) return { kind: 'dry-run', head, steps };
     command('gh', ['pr', 'merge', String(options.pr), '--repo', repo, '--squash', '--auto', '--match-head-commit', head]);
     const after = await pull(repo, options.pr);
