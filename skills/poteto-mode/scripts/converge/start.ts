@@ -126,8 +126,8 @@ export async function start(options: { repo: string; pr: number; toolingRef: str
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const prompt = ownerPrompt({ repo, pr: options.pr, head: initial.head, toolingRef, effort, verifierEffort });
   const intent = { schemaVersion: 1, repo, pr: options.pr, head: initial.head, toolingRef, model: 'grok-4.7', effort, verifierEffort, modelSelection: selected.evidence, prompt, createdAt: new Date().toISOString() };
-  writeFileSync(resolve(directory, 'intent.json'), JSON.stringify(intent, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
   admitPull(await pull(repo, options.pr), t.config, initial.head);
+  writeFileSync(resolve(directory, 'intent.json'), JSON.stringify(intent, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
   const response = object(await cursor('/v1/agents', key, {
     name: `converge ${repo}#${options.pr} ${initial.head.slice(0, 8)}`,
     repos: [{ url: `https://github.com/${repo}`, prUrl: `https://github.com/${repo}/pull/${options.pr}` }],

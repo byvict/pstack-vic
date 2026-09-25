@@ -222,3 +222,19 @@ test('a failed GitHub read in the verdict gate fails start.ts instead of launchi
   await assert.rejects(start({ repo: 'Example/app', pr: 1, toolingRef: 'd'.repeat(40), stateDirectory: join(f.directory, 'owner') }), /^Error: gh request failed$/);
   assert.equal(launches, 0); assert.equal(existsSync(join(f.directory, 'owner', 'intent.json')), false);
 });
+
+test('a head move after the gate refuses leaves no launch intent, and a retry launches', async t => {
+  const f = fixture(); t.after(f.cleanup); environment(t, f);
+  const live = f.read(); live.after = { endpoint: 'pulls/1', reads: 1, set: { head: 'e'.repeat(40) } }; Object.assign(f.state, live); f.save();
+  let launches = 0;
+  t.mock.method(globalThis, 'fetch', async (url: string | URL) => {
+    if (String(url).endsWith('/v1/models')) return Response.json(inventory);
+    launches++;
+    return Response.json({ agent: { id: 'bc_owner', url: 'https://cursor.com/agents/bc_owner' }, run: { id: 'run_owner' } });
+  });
+  const options = { repo: 'Example/app', pr: 1, toolingRef: 'd'.repeat(40), stateDirectory: join(f.directory, 'owner'), effort: 'high' as const };
+  await assert.rejects(start(options), /^Error: PR head moved$/);
+  assert.equal(existsSync(join(f.directory, 'owner', 'intent.json')), false);
+  const retry = await start(options);
+  assert.equal(retry.kind, 'launched'); assert.equal(launches, 1);
+});
