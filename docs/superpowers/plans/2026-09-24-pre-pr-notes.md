@@ -58,7 +58,6 @@ Numbers follow the ledgers of Parts 1 to 3.
 
 ### Later
 
-- **N25.** The matrix defaults keep the four volume authoring rows on Grok, and `pre-pr reviewer` is Grok. A first-run sheet therefore prints four warnings, and the Pré-PR playbook would refuse it. Victor's sheets are crossed: Opus authors in Claude Code, and Sol authors in Codex. Moving the matrix defaults is Victor's call in `/setup-pstack`.
 - **N22.** `publish.ts` could mark the `verdict` statuses of superseded heads as `error`. That would close the reused-head case in structure instead of by rule.
 
 ### Rollout
@@ -67,6 +66,7 @@ Numbers follow the ledgers of Parts 1 to 3.
 
 ## Resolved
 
+- **N25 (CLI-196).** The four authoring volume rows now default to the parent's native code family: Opus in Claude Code and Sol in Codex, both at xhigh. `pre-pr reviewer` stays Grok, so a first-run plan has no warning on either parent (measured with `setup-pstack.ts plan` on an empty home, 2026-09-25). `swarm workers` and `how explorer` stay Grok (0.2.1).
 - **N6.** A Grok 4.7 `read-only` lane wrote a file in `$TMPDIR`, and the same write failed in its checkout and under `$HOME/.codex` (Grok CLI 1.0.41, measured 2026-09-25). Grok's documentation also lists `~/.grok`, `/tmp` and `/var/tmp` as writable in `read-only`. The certifier stays `read-only`, with no new mode. `RUN` must live under a temp root, and `converge-contract.md` says so (Part 3).
 - **N2.** A late publication with `test:` or `artifact:` claims no longer changes the policy digest. The `pre-pr` snapshot reads no CI, so the CI runner sources stay out of it (Part 1).
 - **N3.** Superseded by N14 and CLI-195.
