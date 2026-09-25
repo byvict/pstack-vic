@@ -18,7 +18,7 @@ Este port mantém a prosa da Cursor onde ela não depende da Cursor e substitui 
    ```
 
    ```shell
-   codex plugin marketplace add byvict/pstack-vic --ref v0.1.11
+   codex plugin marketplace add byvict/pstack-vic --ref v0.2.0
    codex plugin add pstack@pstack-vic
    ```
 
