@@ -216,3 +216,58 @@ test('the arm refuses a verdict reconciled against another contract path', t => 
   assert.match(result.stderr, /^Verdict was reconciled against another contract path$/m);
   assert.deepEqual(f.read().mutations, []);
 });
+for (const pending of [false, true]) {
+  test(`${pending ? 'a pending' : 'a strict'} arm on a trunk that only a ruleset protects reads the required checks from the rules`, t => {
+    const f = fixture(); t.after(f.cleanup); publish(f);
+    const live = f.read(); live.classicProtection = false; Object.assign(f.state, live); f.save();
+    const result = arm(f, false, pending ? ['--pending'] : []); assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(f.read().mutations, merge(f.state.head));
+  });
+}
+test('a trunk that only a ruleset protects still refuses a contract context the rules lack', t => {
+  const f = fixture(); t.after(f.cleanup); publish(f);
+  const live = f.read(); live.classicProtection = false; live.protected = ['Run test suite', 'Secrets scan', 'hold']; Object.assign(f.state, live); f.save();
+  const result = arm(f, false, ['--pending']); assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /^Branch protection missing required context: verdict$/m);
+  assert.deepEqual(f.read().mutations, []);
+});
+test('a protection read that fails with another 404 is still an error', t => {
+  const f = fixture(); t.after(f.cleanup); publish(f);
+  const live = f.read(); live.classicProtection = false; live.protectionMessage = 'Not Found'; Object.assign(f.state, live); f.save();
+  const result = arm(f, false, ['--pending']); assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /^gh request failed$/m);
+  assert.deepEqual(f.read().mutations, []);
+});
+test('a pending arm refuses when the latest hold run failed', t => {
+  const f = fixture(); t.after(f.cleanup); publish(f);
+  const live = f.read(); live.checks = [{ id: 31, name: 'hold', status: 'completed', conclusion: 'failure', app: { id: 15368 } }]; Object.assign(f.state, live); f.save();
+  const result = arm(f, false, ['--pending']); assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /^Required protected check failed: hold$/m);
+  assert.deepEqual(f.read().mutations, []);
+});
+for (const hold of ['in progress after a failure', 'without a run'] as const) {
+  test(`a pending arm passes with the hold check ${hold}`, t => {
+    const f = fixture(); t.after(f.cleanup); publish(f);
+    const live = f.read();
+    live.checks = hold === 'without a run' ? [] : [{ id: 31, name: 'hold', status: 'completed', conclusion: 'failure', app: { id: 15368 } }, { id: 32, name: 'hold', status: 'in_progress', conclusion: null, app: { id: 15368 } }];
+    Object.assign(f.state, live); f.save();
+    const result = arm(f, false, ['--pending']); assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(f.read().mutations, merge(f.state.head));
+  });
+}
+test('the arm refuses a contract hold check that protection does not require', t => {
+  const f = fixture(); t.after(f.cleanup); publish(f);
+  const live = f.read(); live.protected = ['Run test suite', 'Secrets scan', 'verdict']; Object.assign(f.state, live); f.save();
+  const result = arm(f, false, ['--pending']); assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /^Branch protection missing required context: hold$/m);
+  assert.deepEqual(f.read().mutations, []);
+});
+test('a pending arm refuses a contract without the hold check, and a strict arm does not need it', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const config = JSON.parse(f.state.blobs['.cursor/converge.json']); config.requiredChecks = ['Run test suite', 'Secrets scan', 'verdict']; f.state.blobs['.cursor/converge.json'] = JSON.stringify(config); f.save();
+  publish(f);
+  const pending = arm(f, false, ['--pending']); assert.notEqual(pending.status, 0);
+  assert.match(pending.stderr, /^Pending arm requires "hold" in requiredChecks$/m);
+  assert.deepEqual(f.read().mutations, []);
+  const strict = arm(f); assert.equal(strict.status, 0, strict.stderr);
+});

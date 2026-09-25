@@ -1,0 +1,31 @@
+name: hold
+
+# Required check on main, so needs-victor stops GitHub's auto-merge even
+# after a pending arm. No paths filter: a skipped workflow leaves a required
+# check Pending forever. No if: a job skipped by a condition reports Success.
+# Every label change starts a new run on the PR head, and the newest run
+# of the check name decides. A re-run replays the original event's labels,
+# so toggle a label or push instead of re-running.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled]
+
+permissions: {}
+
+concurrency:
+  group: hold-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  hold:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Refuse while needs-victor is on the PR
+        env:
+          HELD: ${{ contains(github.event.pull_request.labels.*.name, 'needs-victor') }}
+        run: |
+          if [ "$HELD" = true ]; then
+            echo "::error::needs-victor holds this PR; remove the label to release the merge"
+            exit 1
+          fi

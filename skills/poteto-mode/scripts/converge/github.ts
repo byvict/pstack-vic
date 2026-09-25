@@ -16,14 +16,23 @@ function childEnvironment(binary: string, credential: 'writer' | 'installation' 
   return env;
 }
 
-export class RequestError extends Error {}
+export class RequestError extends Error {
+  response: string;
+  constructor(message: string, response = '') { super(message); this.response = response; }
+}
+/** GitHub answers the classic protection read of a branch without classic protection with this 404 body, which gh prints on stdout. A missing branch answers `Branch not found`. */
+export function branchNotProtected(error: unknown): boolean {
+  if (!(error instanceof RequestError)) return false;
+  try { const body = object(JSON.parse(error.response)); return body.status === '404' && body.message === 'Branch not protected'; }
+  catch { return false; }
+}
 export function command(binary: string, args: string[], input?: string): string {
   const result = spawnSync(binary, args, { input, encoding: 'utf8', env: childEnvironment(binary), maxBuffer: 24 * 1024 * 1024, timeout: 90_000 });
   if (result.error || result.status !== 0) throw new RequestError(`${binary} request failed`);
   return result.stdout;
 }
 export function commandAsync(binary: string, args: string[], credential: 'writer' | 'installation' = 'writer'): Promise<string> {
-  return new Promise((resolve, reject) => execFile(binary, args, { encoding: 'utf8', env: childEnvironment(binary, credential), maxBuffer: 24 * 1024 * 1024, timeout: 90_000 }, (error, stdout) => error ? reject(new RequestError(`${binary} request failed`)) : resolve(stdout)));
+  return new Promise((resolve, reject) => execFile(binary, args, { encoding: 'utf8', env: childEnvironment(binary, credential), maxBuffer: 24 * 1024 * 1024, timeout: 90_000 }, (error, stdout) => error ? reject(new RequestError(`${binary} request failed`, stdout)) : resolve(stdout)));
 }
 export async function api(endpoint: string, body?: unknown): Promise<unknown> {
   if (body !== undefined) return JSON.parse(command('gh', ['api', endpoint, '--method', 'POST', '--input', '-'], JSON.stringify(body)));
