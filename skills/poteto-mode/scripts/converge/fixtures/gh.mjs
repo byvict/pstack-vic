@@ -17,11 +17,13 @@ const root = `repos/${repo}`;
 if (args[0] === 'pr' && args[1] === 'diff') process.stdout.write(state.diff);
 else if (args[0] === 'run') process.stdout.write(state.log ?? 'Tests completed\n');
 else if (args[0] === 'pr' && args[1] === 'merge') {
-  if (args.includes('--disable-auto') && state.failDisarm) fail();
+  if (args.includes('--disable-auto') && state.failDisarm === true) fail();
   state.mutations.push(args);
   if (args.includes('--auto')) state.autoMerge = true;
   if (args.includes('--disable-auto') && !state.stickyAutoMerge) state.autoMerge = false;
-  save(); process.stdout.write('{}');
+  save();
+  if (args.includes('--disable-auto') && state.failDisarm === 'after') fail();
+  process.stdout.write('{}');
 }
 else if (args[0] === 'api') {
   const raw = args[1];

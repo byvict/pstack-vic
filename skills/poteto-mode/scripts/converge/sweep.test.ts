@@ -165,3 +165,18 @@ test('sweep reads trunk per PR, so a trunk move during the sweep does not fail a
   assert.deepEqual(outcomes(result.stdout), [[1, 'skipped', 'auto-merge already pending']]);
   assert.deepEqual(f.read().mutations, []);
 });
+test('sweep counts a disarm whose command failed after taking effect as disarmed', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const live = f.read(); live.hold = true; live.autoMerge = true; live.failDisarm = 'after'; Object.assign(f.state, live); f.save(); listed(f);
+  const result = f.run('converge-sweep', ['--repo', 'Example/app']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(outcomes(result.stdout), [[1, 'disarmed', 'hold label']]);
+  assert.deepEqual(f.read().mutations, disabled);
+});
+test('sweep reports a refusal with the live head, not the listing head', t => {
+  const f = fixture(); t.after(f.cleanup); published(f); listed(f);
+  const live = f.read(); live.pulls[0].head.sha = 'e'.repeat(40); live.failEndpoint = '/protection'; Object.assign(f.state, live); f.save();
+  const result = f.run('converge-sweep', ['--repo', 'Example/app']);
+  assert.equal(result.status, 1);
+  assert.deepEqual(JSON.parse(result.stdout).swept, [{ pr: 1, head: f.state.head, outcome: 'refused', reason: 'gh request failed' }]);
+});

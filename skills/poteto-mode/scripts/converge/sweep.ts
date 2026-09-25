@@ -1,6 +1,6 @@
 import { parseArgs } from 'node:util';
 import { integer, object, repoName, sha } from './contract.ts';
-import { pages, principal, pull, RequestError, trusted, verdictStatus } from './github.ts';
+import { pages, principal, pull, RequestError, trusted, verdictStatus, type Pull, type Trusted } from './github.ts';
 import { verdictGate, type Gate } from './gate.ts';
 import { arm, disarm } from './arm.ts';
 
@@ -8,17 +8,22 @@ export interface Swept { pr: number; head: string; outcome: 'armed' | 'disarmed'
 const disarmed = { 'would disarm': 'would disarm auto-merge', disarmed: 'auto-merge disarmed', 'already off': 'auto-merge already off', closed: 'PR merged or closed before disarm', 'still armed': 'auto-merge still pending after disarm' } as const;
 async function observedDisarm(repo: string, pr: number, dryRun: boolean): Promise<keyof typeof disarmed> {
   if (dryRun) return 'would disarm';
-  let ran = false;
+  let ran: boolean | null = null;
   try { ran = await disarm(repo, pr); }
   catch (error) { if (!(error instanceof RequestError)) throw error; }
   const after = await pull(repo, pr);
   if (after.state !== 'open') return 'closed';
   if (after.autoMerge) return 'still armed';
-  return ran ? 'disarmed' : 'already off';
+  return ran === false ? 'already off' : 'disarmed';
 }
 async function judge(repo: string, pr: number, author: number, options: { configPath?: string; dryRun: boolean }): Promise<Swept> {
   const t = await trusted(repo, options.configPath ?? '.cursor/converge.json');
   const p = await pull(repo, pr);
+  try { return await decideOne(t, p, author, options); }
+  catch (error) { return { pr, head: p.head, outcome: 'refused', reason: error instanceof Error ? error.message : 'Sweep failed' }; }
+}
+async function decideOne(t: Trusted, p: Pull, author: number, options: { configPath?: string; dryRun: boolean }): Promise<Swept> {
+  const pr = p.number;
   const head = p.head;
   const result = (outcome: Swept['outcome'], reason: string): Swept => ({ pr, head, outcome, reason });
   if (p.state !== 'open') return result('skipped', 'PR is no longer open');
