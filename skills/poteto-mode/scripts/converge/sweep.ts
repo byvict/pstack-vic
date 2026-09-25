@@ -1,6 +1,6 @@
 import { parseArgs } from 'node:util';
 import { integer, object, repoName, sha } from './contract.ts';
-import { pages, principal, pull, RequestError, trusted, verdictStatus, type Trusted } from './github.ts';
+import { pages, principal, pull, RequestError, trusted, verdictStatus } from './github.ts';
 import { verdictGate, type Gate } from './gate.ts';
 import { arm, disarm } from './arm.ts';
 
@@ -16,8 +16,9 @@ async function observedDisarm(repo: string, pr: number, dryRun: boolean): Promis
   if (after.autoMerge) return 'still armed';
   return ran ? 'disarmed' : 'already off';
 }
-async function judge(t: Trusted, pr: number, author: number, options: { configPath?: string; dryRun: boolean }): Promise<Swept> {
-  const p = await pull(t.repo, pr);
+async function judge(repo: string, pr: number, author: number, options: { configPath?: string; dryRun: boolean }): Promise<Swept> {
+  const t = await trusted(repo, options.configPath ?? '.cursor/converge.json');
+  const p = await pull(repo, pr);
   const head = p.head;
   const result = (outcome: Swept['outcome'], reason: string): Swept => ({ pr, head, outcome, reason });
   if (p.state !== 'open') return result('skipped', 'PR is no longer open');
@@ -48,7 +49,7 @@ export async function sweep(options: { repo: string; configPath?: string; dryRun
   const swept: Swept[] = [];
   for (const listed of open.sort((a, b) => integer(a.number) - integer(b.number))) {
     const pr = integer(listed.number);
-    try { swept.push(await judge(t, pr, author, options)); }
+    try { swept.push(await judge(t.repo, pr, author, options)); }
     catch (error) { swept.push({ pr, head: sha(object(listed.head).sha), outcome: 'refused', reason: error instanceof Error ? error.message : 'Sweep failed' }); }
   }
   return { swept };

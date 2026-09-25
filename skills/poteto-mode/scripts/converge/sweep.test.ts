@@ -157,3 +157,11 @@ test('sweep checks an armed draft against the verdict gate before the draft skip
   assert.deepEqual(outcomes(result.stdout), [[1, 'refused', 'Latest verdict status is not trusted VERIFIED, auto-merge disarmed']]);
   assert.deepEqual(f.read().mutations, disabled);
 });
+test('sweep reads trunk per PR, so a trunk move during the sweep does not fail an armed certified PR', t => {
+  const f = fixture(); t.after(f.cleanup); publishCertificate(f);
+  const live = f.read(); live.autoMerge = true; live.after = { endpoint: 'commits/main', reads: 1, set: { trunk: 'd'.repeat(40) } }; Object.assign(f.state, live); f.save(); listed(f);
+  const result = f.run('converge-sweep', ['--repo', 'Example/app']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(outcomes(result.stdout), [[1, 'skipped', 'auto-merge already pending']]);
+  assert.deepEqual(f.read().mutations, []);
+});
