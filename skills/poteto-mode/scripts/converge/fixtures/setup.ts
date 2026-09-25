@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import assert from 'node:assert/strict';
+import { hash } from '../contract.ts';
 export const head = 'b'.repeat(40);
 export const trunk = 'a'.repeat(40);
 export const base = 'c'.repeat(40);
@@ -59,4 +61,52 @@ export function fixture() {
     run(script: string, args: string[] = [], env: NodeJS.ProcessEnv = {}) { return spawnSync(process.execPath, [resolve(scriptDirectory, script), ...args], { encoding: 'utf8', timeout: 60_000, env: { ...process.env, ...env, PATH: directory + ':' + process.env.PATH, CONVERGE_FIXTURE: statePath } }); },
     cleanup() { rmSync(directory, { recursive: true, force: true }); },
   };
+}
+function lane(run: string, round: Record<string, unknown>, role: 'pre-pr reviewer' | 'pre-pr certifier', steps = 0) {
+  const laneId = role.replace(' ', '-');
+  const root = join(run, 'lanes', laneId);
+  const prefix = `artifacts/converge/${round.id}/${laneId}/`;
+  mkdirSync(join(root, prefix), { recursive: true });
+  const png = readFileSync(new URL('../../../../../assets/logo.png', import.meta.url));
+  const action = Buffer.from('{"entry":"Entrar","result":"Dashboard"}');
+  writeFileSync(join(root, prefix, 'screen.png'), png); writeFileSync(join(root, prefix, 'action.json'), action);
+  const certifier = role === 'pre-pr certifier';
+  const extra = Array.from({ length: steps }, (_, n) => { const bytes = Buffer.from(JSON.stringify({ step: n })); writeFileSync(join(root, prefix, `step-${n}.json`), bytes); return { id: `step-${n}`, path: prefix + `step-${n}.json`, bytes: bytes.length, sha256: hash(bytes), mediaType: 'application/json' }; });
+  const artifacts = certifier ? [{ id: 'screen', path: prefix + 'screen.png', bytes: png.length, sha256: hash(png), mediaType: 'image/png' }, { id: 'action', path: prefix + 'action.json', bytes: action.length, sha256: hash(action), mediaType: 'application/json' }, ...extra] : [];
+  const coverage = certifier ? [{ featureId: 'login', entryPoint: 'Entrar', result: 'driven', artifactIds: ['screen', 'action'] }] : [];
+  const output = { schemaVersion: 1, round: round.id, laneId, role, observedHead: round.head, observedContract: round.contract, kind: 'complete', findings: [], artifacts, coverage, riskProofs: [] };
+  const receipt = { schemaVersion: 1, parent: 'claude', provider: 'grok', model: 'grok-4.7', effort: 'xhigh', mode: 'read-only', status: 'complete', promptPath: join(root, 'prompt.txt'), outputPath: join(root, 'output.json'), startedAt: '2026-09-24T00:00:00.000Z', completedAt: '2026-09-24T00:00:02.000Z', modelVerified: true, modelEvidence: 'provider-report', reportedModel: 'grok-4.7-build', remote: null, executable: '/usr/local/bin/grok', exitCode: 0, signal: null };
+  writeFileSync(join(root, 'prompt.txt'), 'read only'); writeFileSync(join(root, 'output.json'), JSON.stringify(output)); writeFileSync(join(root, 'receipt.json'), JSON.stringify(receipt));
+  writeFileSync(join(root, 'manifest.json'), JSON.stringify({ round, laneId, role, descriptor: 'grok:grok-4.7@xhigh', prompt: 'prompt.txt', promptDigest: hash('read only'), output: 'output.json', receipt: 'receipt.json', createdAt: Date.parse(receipt.startedAt) }));
+}
+export function certifiedPr(f: ReturnType<typeof fixture>, options: { body?: string; full?: boolean; record?: boolean; steps?: number } = {}) {
+  const config = JSON.parse(f.state.blobs['.cursor/converge.json']);
+  config.prePr = { runs: [{ name: 'suite', command: 'true' }], certifier: options.full === true };
+  f.state.blobs['.cursor/converge.json'] = JSON.stringify(config); f.state.body = options.body ?? '## Verification\ncertificate: pre-pr\n';
+  if (options.full) {
+    f.state.files = [{ filename: 'client/Login.jsx', status: 'modified', patch: '@@ -1 +1 @@\n-old\n+new' }];
+    f.state.diff = 'diff --git a/client/Login.jsx b/client/Login.jsx\nindex 1111111..2222222 100644\n--- a/client/Login.jsx\n+++ b/client/Login.jsx\n@@ -1 +1 @@\n-old\n+new\n';
+  }
+  f.save();
+  const checkout = f.checkout();
+  const run = join(f.directory, 'run');
+  if (options.record !== false) {
+    const recorded = f.run('converge-certify', ['run', '--directory', run, '--name', 'suite', '--cwd', checkout, '--', 'true']);
+    assert.equal(recorded.status, 0, recorded.stderr);
+  }
+  const local = f.run('converge-certify', ['report', '--repo', 'Example/app', '--head', f.state.head, '--directory', run]);
+  assert.equal(local.status, 0, local.stderr);
+  const { round, mode, lanes } = JSON.parse(local.stdout);
+  assert.deepEqual([mode, lanes], options.full ? ['full', ['pre-pr reviewer', 'pre-pr certifier']] : ['ci-only', ['pre-pr reviewer']]);
+  lane(run, round, 'pre-pr reviewer');
+  if (options.full) lane(run, round, 'pre-pr certifier', options.steps);
+  const assembled = f.run('converge-certify', ['assemble', '--directory', run, '--author-provider', 'claude', '--output', join(run, 'certificate.json'), '--adjust-rounds', '1']);
+  assert.equal(assembled.status, 0, assembled.stderr);
+  return run;
+}
+export function prReport(f: ReturnType<typeof fixture>, execution = 'pre-pr') {
+  const report = join(f.directory, 'pr-report.json');
+  const result = f.run('converge-reconcile', ['--repo', 'Example/app', '--pr', '1', '--output', report, '--execution', execution]);
+  assert.equal(result.status, 0, result.stderr);
+  return report;
 }
