@@ -1279,15 +1279,21 @@ process.exit(real.status ?? 1);
     matchObject(receipt(input.receiptPath), { status: "timed-out", checkout: null, exitCode: 0 });
   });
 
-  it("leaves the parent's Grok config alone in read-only mode", async () => {
-    const { cwd } = worktree();
-    const record = join(scratch, "overlay.json");
-    process.env.FAKE_GROK_CONFIG_RECORD_PATH = record;
-    const input = { ...options("grok"), cwd };
-    assert.equal((await runLane(input)).exitCode, 0);
-    assert.deepEqual(JSON.parse(readFileSync(record, "utf8")), { path: null, content: null, inline: null });
-    assert.equal(receipt(input.receiptPath).checkout, null);
-  });
+  for (const mode of ["read-only", "isolated-write"] as const) {
+    it(`gives the ${mode} Grok lane the same overlay and no checkout`, async () => {
+      const { cwd } = worktree();
+      const record = join(scratch, "overlay.json");
+      process.env.FAKE_GROK_CONFIG_RECORD_PATH = record;
+      process.env.GROK_CONFIG = '{"models":{"default_reasoning_effort":"low"}}';
+      const input = { ...options("grok", mode), mode, cwd };
+      assert.equal((await runLane(input)).exitCode, 0);
+      const seen = JSON.parse(readFileSync(record, "utf8")) as { path: string; content: string; inline: string | null };
+      assert.equal(seen.content, '[shell_environment_policy]\ninherit = "core"\n');
+      assert.equal(seen.inline, null);
+      assert.equal(existsSync(dirname(seen.path)), false);
+      assert.equal(receipt(input.receiptPath).checkout, null);
+    });
+  }
 });
 
 describe("evidence", () => {
