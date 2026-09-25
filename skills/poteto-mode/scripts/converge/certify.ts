@@ -71,9 +71,10 @@ function parseToolingRef(value: unknown): string {
 function toolingRef(): string {
   return parseToolingRef('pstack-vic@' + string(object(JSON.parse(readFileSync(new URL('../../../../package.json', import.meta.url), 'utf8'))).version));
 }
+/** Untracked files count, because a new file nobody added passes the suite locally and is missing from the pushed head; ignored files do not. */
 function checkoutState(cwd: string): { head: string | null; clean: boolean } {
   const head = spawnSync('git', ['-C', cwd, 'rev-parse', 'HEAD'], { encoding: 'utf8' });
-  const status = spawnSync('git', ['-C', cwd, 'status', '--porcelain', '--untracked-files=no'], { encoding: 'utf8' });
+  const status = spawnSync('git', ['-C', cwd, 'status', '--porcelain', '--untracked-files=normal'], { encoding: 'utf8' });
   return { head: head.status === 0 && /^[a-f0-9]{40}\n$/.test(head.stdout) ? head.stdout.trim() : null, clean: status.status === 0 && status.stdout === '' };
 }
 /** Head and cleanliness are read before the command runs, so a suite that writes tracked files still records the checkout it started from. */
@@ -106,23 +107,27 @@ function readRuns(directory: string): Run[] {
   if (!existsSync(runs)) return [];
   return readdirSync(runs).filter(f => f.endsWith('.json')).sort().map(f => {
     const run = parseRun(JSON.parse(readFileSync(join(runs, f), 'utf8')));
-    if (hash(readFileSync(join(runs, f.replace(/\.json$/, '.log')))) !== run.logDigest) throw new Error(`Run ${run.name} log changed after it was recorded`);
+    if (f !== run.name + '.json') throw new Error('Run record file name differs from its name');
+    if (hash(readFileSync(join(runs, run.name + '.log'))) !== run.logDigest) throw new Error(`Run ${run.name} log changed after it was recorded`);
     return run;
   });
 }
-/** Assembly and publication share this policy, so a hand-edited certificate cannot publish a run list that assembly would refuse; a ci-only report lists each unrecorded contract run as skipped. */
+/** Assembly and publication share this policy, so a hand-edited certificate cannot publish a run list that assembly would refuse. Every recorded run must pass in both modes, because the certificate lists it; only a ci-only report may leave a contract run unrecorded, and lists it as skipped. */
 function checkRuns(report: Report, runs: Run[], contract: Contract): (Run | SkippedRun)[] {
   if (!contract.prePr) throw new Error('Repository does not accept local certification');
-  if (report.mode === 'ci-only') return [...runs, ...contract.prePr.runs.filter(c => !runs.some(r => r.name === c.name)).map(c => ({ name: c.name, command: c.command, skip: 'ci-only report' }))];
-  for (const required of contract.prePr.runs) {
-    const run = runs.find(r => r.name === required.name);
-    if (!run) throw new Error('Required run missing: ' + required.name);
+  const listed = contract.prePr.runs;
+  for (const run of runs) {
+    const required = listed.find(c => c.name === run.name);
+    if (!required) throw new Error(`Run ${run.name} is not in the contract`);
     if (run.exitCode !== 0) throw new Error(`Run ${run.name} exited ${run.exitCode}`);
     if (run.command !== required.command) throw new Error(`Run ${run.name} command differs from the contract`);
     if (run.head !== report.round.head) throw new Error(`Run ${run.name} was not recorded at the certified head`);
     if (!run.clean) throw new Error(`Run ${run.name} was recorded on a modified checkout`);
   }
-  return runs;
+  const unrecorded = listed.filter(c => !runs.some(r => r.name === c.name));
+  const missing = unrecorded[0];
+  if (report.mode === 'full' && missing) throw new Error('Required run missing: ' + missing.name);
+  return [...runs, ...unrecorded.map(c => ({ name: c.name, command: c.command, skip: 'ci-only report' }))];
 }
 function unchanged(file: string, expected: string, message: string): Buffer {
   const stat = lstatSync(file);
@@ -176,7 +181,7 @@ export async function assemble(options: { directory: string; authorProvider: str
   writeFileSync(options.output, JSON.stringify(certificate, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
   return certificate;
 }
-/** Re-admits a certificate against the PR report and the live contract: same head, patch, contract and policy, the run policy applied again, every run, lane and artifact re-verified from bytes, and the decision and coverage derived again, so no field of the published certificate rests on its own word. */
+/** Re-derives every derived field against the PR report and the live contract (head, patch and policy, the run policy, each run, lane and artifact from bytes, the digests, coverage and decision), so a hand-edited certificate cannot publish what its evidence does not yield. adjustRounds, toolingRef and authorProvider are the Raiz's declarations and only format-checked. */
 export async function admitCertificate(file: string, report: Report, evidenceDirectory: string, contract: Contract): Promise<{ certificate: Certificate; lanes: AdmittedLane[] }> {
   const certificate = parseCertificate(JSON.parse(readFileSync(file, 'utf8')));
   const directory = dirname(resolve(file));

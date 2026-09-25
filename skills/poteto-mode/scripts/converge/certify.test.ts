@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { commit, fixture } from './fixtures/setup.ts';
 import { hash } from './contract.ts';
@@ -34,8 +34,8 @@ function lane(f: ReturnType<typeof fixture>, round: Record<string, unknown>, rol
   const manifest = { round, laneId, role, descriptor: `${options.provider ?? 'grok'}:grok-4.7@xhigh`, prompt: 'prompt.txt', promptDigest: hash('read only'), output: 'output.json', receipt: 'receipt.json', createdAt: Date.parse(receipt.startedAt) };
   writeFileSync(join(root, 'prompt.txt'), 'read only'); writeFileSync(join(root, 'output.json'), JSON.stringify(output)); writeFileSync(join(root, 'receipt.json'), JSON.stringify(receipt)); writeFileSync(join(root, 'manifest.json'), JSON.stringify(manifest));
 }
-function record(f: ReturnType<typeof fixture>, run: string, checkout: string, argv = ['echo', 'ok']) {
-  const recorded = certify(f, ['run', '--directory', run, '--name', 'suite', '--cwd', checkout, '--', ...argv]);
+function record(f: ReturnType<typeof fixture>, run: string, checkout: string, argv = ['echo', 'ok'], name = 'suite') {
+  const recorded = certify(f, ['run', '--directory', run, '--name', name, '--cwd', checkout, '--', ...argv]);
   assert.equal(recorded.status, 0, recorded.stderr);
 }
 function prepared(f: ReturnType<typeof fixture>) {
@@ -119,7 +119,7 @@ test('assemble refuses a missing or out-of-range adjust round count', t => {
   }
   assert.equal(existsSync(join(run, 'certificate.json')), false);
 });
-for (const fault of ['same-family', 'failed-run', 'edited-log', 'missing-run', 'open-finding', 'unmapped-surface', 'missing-certifier', 'other-command', 'moved-head', 'modified-checkout'] as const) {
+for (const fault of ['same-family', 'failed-run', 'edited-log', 'missing-run', 'renamed-run', 'unlisted-run', 'open-finding', 'unmapped-surface', 'missing-certifier', 'other-command', 'moved-head', 'modified-checkout', 'untracked-file', 'artifact-bytes'] as const) {
   test(`assemble refuses ${fault}`, t => {
     const f = prePrFixture(); t.after(f.cleanup);
     if (fault === 'unmapped-surface') { f.state.files = [{ filename: 'client/src/pages/New.jsx', status: 'added', patch: '@@ -0,0 +1 @@\n+new' }]; f.save(); }
@@ -128,13 +128,33 @@ for (const fault of ['same-family', 'failed-run', 'edited-log', 'missing-run', '
     if (fault !== 'missing-certifier') lane(f, round, 'pre-pr certifier');
     if (fault === 'failed-run') writeFileSync(join(run, 'runs', 'suite.json'), JSON.stringify({ ...JSON.parse(readFileSync(join(run, 'runs', 'suite.json'), 'utf8')), exitCode: 1 }));
     if (fault === 'edited-log') writeFileSync(join(run, 'runs', 'suite.log'), 'tampered');
-    if (fault === 'missing-run') writeFileSync(join(run, 'runs', 'suite.json'), JSON.stringify({ ...JSON.parse(readFileSync(join(run, 'runs', 'suite.json'), 'utf8')), name: 'other' }));
+    if (fault === 'missing-run') { rmSync(join(run, 'runs', 'suite.json')); rmSync(join(run, 'runs', 'suite.log')); }
+    if (fault === 'renamed-run') writeFileSync(join(run, 'runs', 'suite.json'), JSON.stringify({ ...JSON.parse(readFileSync(join(run, 'runs', 'suite.json'), 'utf8')), name: 'other' }));
+    if (fault === 'unlisted-run') record(f, run, checkout, ['echo', 'ok'], 'lint');
     if (fault === 'moved-head') commit(checkout, 'moved');
     if (fault === 'modified-checkout') writeFileSync(join(checkout, 'client', 'Login.jsx'), 'edited\n');
-    if (fault === 'other-command' || fault === 'moved-head' || fault === 'modified-checkout') record(f, run, checkout, fault === 'other-command' ? ['echo', 'other'] : undefined);
+    if (fault === 'untracked-file') writeFileSync(join(checkout, 'client', 'New.jsx'), 'new\n');
+    if (fault === 'other-command' || fault === 'moved-head' || fault === 'modified-checkout' || fault === 'untracked-file') record(f, run, checkout, fault === 'other-command' ? ['echo', 'other'] : undefined);
+    if (fault === 'untracked-file') assert.equal(JSON.parse(readFileSync(join(run, 'runs', 'suite.json'), 'utf8')).clean, false);
+    if (fault === 'artifact-bytes') { const file = join(run, 'lanes', 'pre-pr-certifier', `artifacts/converge/${round.id}/pre-pr-certifier/screen.png`); const png = readFileSync(file); png[png.length - 1] ^= 1; writeFileSync(file, png); }
     const result = certify(f, ['assemble', '--directory', run, '--author-provider', fault === 'same-family' ? 'grok' : 'claude', '--output', join(run, 'certificate.json'), '--adjust-rounds', '0']);
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, { 'same-family': /same family as the author/, 'failed-run': /Run suite exited 1/, 'edited-log': /Run suite log changed/, 'missing-run': /Required run missing: suite/, 'open-finding': /NOT VERIFIED/, 'unmapped-surface': /lacks a trusted feature recipe/, 'missing-certifier': /Required independent lane unavailable/, 'other-command': /Run suite command differs from the contract/, 'moved-head': /Run suite was not recorded at the certified head/, 'modified-checkout': /Run suite was recorded on a modified checkout/ }[fault]);
+    assert.match(result.stderr, { 'same-family': /same family as the author/, 'failed-run': /Run suite exited 1/, 'edited-log': /Run suite log changed/, 'missing-run': /Required run missing: suite/, 'renamed-run': /Run record file name differs from its name/, 'unlisted-run': /Run lint is not in the contract/, 'open-finding': /NOT VERIFIED/, 'unmapped-surface': /lacks a trusted feature recipe/, 'missing-certifier': /Required independent lane unavailable/, 'other-command': /Run suite command differs from the contract/, 'moved-head': /Run suite was not recorded at the certified head/, 'modified-checkout': /Run suite was recorded on a modified checkout/, 'untracked-file': /Run suite was recorded on a modified checkout/, 'artifact-bytes': /Artifact bytes differ from lane report/ }[fault]);
+  });
+}
+for (const fault of ['failed-run', 'moved-head', 'unlisted-run'] as const) {
+  test(`a ci-only report still refuses a recorded run: ${fault}`, t => {
+    const f = prePrFixture(true, false); t.after(f.cleanup);
+    const { run, round, checkout } = prepared(f);
+    assert.equal(JSON.parse(readFileSync(join(run, 'report.json'), 'utf8')).mode, 'ci-only');
+    lane(f, round, 'pre-pr reviewer');
+    if (fault === 'failed-run') writeFileSync(join(run, 'runs', 'suite.json'), JSON.stringify({ ...JSON.parse(readFileSync(join(run, 'runs', 'suite.json'), 'utf8')), exitCode: 1 }));
+    if (fault === 'moved-head') { commit(checkout, 'moved'); record(f, run, checkout); }
+    if (fault === 'unlisted-run') record(f, run, checkout, ['echo', 'ok'], 'lint');
+    const result = certify(f, ['assemble', '--directory', run, '--author-provider', 'claude', '--output', join(run, 'certificate.json'), '--adjust-rounds', '0']);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, { 'failed-run': /Run suite exited 1/, 'moved-head': /Run suite was not recorded at the certified head/, 'unlisted-run': /Run lint is not in the contract/ }[fault]);
+    assert.equal(existsSync(join(run, 'certificate.json')), false);
   });
 }
 test('report refuses a repository that does not accept local certification', t => {
