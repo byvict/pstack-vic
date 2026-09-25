@@ -1,17 +1,19 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import {
   accessSync,
   closeSync,
   constants as fsConstants,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   openSync,
   readFileSync,
+  rmSync,
   statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { constants as osConstants } from "node:os";
+import { constants as osConstants, tmpdir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import type { Readable } from "node:stream";
 import {
@@ -19,7 +21,14 @@ import {
   reportedModelMatches as familyReportMatches,
   type Family,
 } from "../../../../scripts/model-matrix.ts";
-import { invocationCommand, preflightCommand, type CommandSpec } from "./commands.ts";
+import {
+  configOverlay,
+  invocationCommand,
+  preflightCommand,
+  requireSupportedMode,
+  type CommandSpec,
+  type ConfigOverlay,
+} from "./commands.ts";
 import { httpLane } from "./http-lane.ts";
 import { parseProviderOutput, reportedModelMatches } from "./parse-output.ts";
 import {
@@ -29,6 +38,7 @@ import {
   MATRIX,
   UsageError,
   type CancellationSignal,
+  type Checkout,
   type CliEvidence,
   type CliRunnerOptions,
   type Lane,
@@ -196,6 +206,54 @@ export function findExecutable(
     }
   }
   return null;
+}
+
+/**
+ * Git in `cwd` and nowhere else: an inherited GIT_DIR or GIT_WORK_TREE (a
+ * parent running inside a hook) would point the checkout record at another
+ * repository, and admission trusts that record.
+ */
+function git(cwd: string, args: readonly string[]): string {
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_"))
+  );
+  const result = spawnSync("git", ["-C", cwd, "--no-optional-locks", ...args], {
+    encoding: "utf8",
+    env,
+  });
+  if (result.error !== undefined) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`git ${args.join(" ")} failed in ${cwd}: ${result.stderr.trim()}`);
+  }
+  return result.stdout;
+}
+
+function readHead(cwd: string): string {
+  return git(cwd, ["rev-parse", "--verify", "HEAD"]).trim();
+}
+
+function readCheckout(cwd: string, headBefore: string): Checkout {
+  return {
+    headBefore,
+    headAfter: readHead(cwd),
+    statusAfter: git(cwd, ["status", "--porcelain", "--untracked-files=all"])
+      .split("\n")
+      .filter((line) => line.length > 0),
+  };
+}
+
+interface StagedOverlay {
+  readonly env: NodeJS.ProcessEnv;
+  readonly directory: string;
+}
+
+function stageOverlay(env: NodeJS.ProcessEnv, overlay: ConfigOverlay): StagedOverlay {
+  const directory = mkdtempSync(join(tmpdir(), "pstack-runner-"));
+  const file = join(directory, overlay.fileName);
+  writeFileSync(file, overlay.content, { encoding: "utf8", mode: 0o600 });
+  const staged: NodeJS.ProcessEnv = { ...env, [overlay.variable]: file };
+  for (const key of overlay.unset) delete staged[key];
+  return { env: staged, directory };
 }
 
 function exitCodeOf(code: number | null, signal: NodeJS.Signals | null): number {
@@ -635,6 +693,7 @@ function finish(
       exitCode: evidence.exitCode,
       signal: evidence.signal,
       ...fields,
+      checkout: evidence.checkout,
       remote: null,
     }
     : {
@@ -647,6 +706,7 @@ function finish(
       exitCode: null,
       signal: null,
       ...fields,
+      checkout: null,
       remote: evidence.remote,
     };
 
@@ -719,6 +779,14 @@ export function validateOptions(options: RunnerOptions): void {
   if (!existsSync(options.cwd) || !statSync(options.cwd).isDirectory()) {
     throw new UsageError(`cwd is not a directory: ${options.cwd}`);
   }
+  requireSupportedMode(options.provider, options.mode, process.env);
+  if (options.mode === "unsandboxed") {
+    try {
+      git(options.cwd, ["rev-parse", "--show-toplevel"]);
+    } catch {
+      throw new UsageError(`unsandboxed needs --cwd inside a git worktree: ${options.cwd}`);
+    }
+  }
   if (
     options.promptPath === options.outputPath ||
     options.promptPath === options.receiptPath
@@ -760,6 +828,7 @@ function cliLane(options: CliRunnerOptions): Lane {
     argv: [invocation.command, ...invocation.args],
     exitCode: null,
     signal: null,
+    checkout: null,
   };
   return { evidence: ev, run: (context) => runCliLane(options, invocation, preflight, ev, context) };
 }
@@ -886,15 +955,7 @@ async function runCliLane(
     return stoppedBeforeChild(ev, beforeModel, cancellation, "before model execution");
   }
 
-  const result = await runProcess(
-    executable,
-    invocation,
-    options.cwd,
-    env,
-    context.prompt,
-    deadlineAt,
-    cancellation
-  );
+  const result = await runModel(options, executable, invocation, env, context, ev);
   ev.exitCode = result.exitCode;
   ev.signal = result.signal;
 
@@ -938,6 +999,38 @@ async function runCliLane(
         evidence: evidence(`${result.stderr}\n${result.stdout}`),
       },
     };
+  }
+}
+
+/**
+ * The model child. An unsandboxed lane gets its config overlay for the
+ * child's lifetime, and its worktree recorded before the child starts and
+ * after it ends, whether it ended by exit, deadline, cancellation or throw.
+ */
+async function runModel(
+  options: CliRunnerOptions,
+  executable: string,
+  invocation: CommandSpec,
+  env: NodeJS.ProcessEnv,
+  context: LaneContext,
+  ev: CliEvidence
+): Promise<ProcessResult> {
+  const headBefore = options.mode === "unsandboxed" ? readHead(options.cwd) : null;
+  const overlay = configOverlay(options);
+  const staged = overlay === null ? null : stageOverlay(env, overlay);
+  try {
+    return await runProcess(
+      executable,
+      invocation,
+      options.cwd,
+      staged?.env ?? env,
+      context.prompt,
+      context.deadlineAt,
+      context.cancellation
+    );
+  } finally {
+    if (staged !== null) rmSync(staged.directory, { recursive: true, force: true });
+    if (headBefore !== null) ev.checkout = readCheckout(options.cwd, headBefore);
   }
 }
 

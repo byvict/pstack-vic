@@ -9,7 +9,7 @@ export const MATRIX: ModelMatrix = loadMatrix();
 export const PARENTS: readonly string[] = Object.keys(MATRIX.parents);
 export const PROVIDERS: readonly string[] = Object.keys(MATRIX.providers);
 export const EFFORTS: readonly string[] = MATRIX.efforts;
-export const ACCESS_MODES = ["read-only", "isolated-write"] as const;
+export const ACCESS_MODES = ["read-only", "isolated-write", "unsandboxed"] as const;
 
 export type Parent = string;
 export type Provider = string;
@@ -158,6 +158,18 @@ export interface RemoteRun {
   readonly heads: HeadsEvidence;
 }
 
+/**
+ * The worktree an `unsandboxed` lane ran in: HEAD before the model child
+ * starts, HEAD after it exits, and `git status --porcelain
+ * --untracked-files=all` after. The runner only records it; admission refuses
+ * a lane that moved HEAD or left changes.
+ */
+export interface Checkout {
+  readonly headBefore: string;
+  readonly headAfter: string;
+  readonly statusAfter: readonly string[];
+}
+
 interface ReceiptBase {
   readonly schemaVersion: 1;
   readonly status: ReceiptStatus;
@@ -181,6 +193,8 @@ interface ReceiptBase {
   readonly usage: NormalizedUsage | null;
   readonly costUsd: number | null;
   readonly error: ReceiptError | null;
+  /** Null in every mode but `unsandboxed`, and when that lane never reached its model child. */
+  readonly checkout: Checkout | null;
 }
 
 export interface CliReceipt extends ReceiptBase {
@@ -201,7 +215,7 @@ export interface HttpReceipt extends ReceiptBase {
 
 /**
  * schemaVersion stays 1: every existing field keeps its type and meaning, and
- * `remote` is additive and nullable. `remote !== null` is how a consumer with
+ * `remote` and `checkout` are additive and nullable. `remote !== null` is how a consumer with
  * no matrix tells the transports apart; there is no `transport` field because
  * `provider` already decides it.
  */
@@ -246,6 +260,7 @@ export interface CliEvidence {
   argv: readonly string[];
   exitCode: number | null;
   signal: string | null;
+  checkout: Checkout | null;
 }
 
 export interface HttpEvidence {

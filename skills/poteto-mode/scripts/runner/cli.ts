@@ -33,6 +33,11 @@ execution.
 required for ${HTTP_PROVIDERS.join(", ")} and refused for every other provider;
 that list comes from model-matrix.json like the provider list above. A cloud
 lane authenticates with CURSOR_API_KEY from the environment.
+
+--mode unsandboxed runs grok with its own sandbox off, for a lane that must
+open a pty or start a browser. It is refused for every other provider and when
+CODEX_SANDBOX is set. --cwd must sit inside a git worktree; the receipt records
+its HEAD before and after the model runs and its git status after.
 `;
 
 interface Io {
