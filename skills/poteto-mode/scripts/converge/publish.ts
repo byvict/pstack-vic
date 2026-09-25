@@ -11,13 +11,14 @@ export function decide(report: Report, lanes: AdmittedLane[]): Decision {
   if (lanes.some(l => l.findings.some(f => f.severity === 'requires-proof'))) reasons.push('Independent verifier requires further proof');
   for (const role of report.lanes) if (lanes.filter(l => l.role === role).length !== 1) reasons.push('Required independent lane unavailable');
   if (lanes.some(l => !report.lanes.includes(l.role))) reasons.push('Unexpected independent lane');
-  const verifier = lanes.find(l => l.role === 'pr verifier');
-  for (const feature of report.touchedFeatures) if (!verifier?.coverage.includes(feature.id)) reasons.push('Required live feature coverage unavailable');
+  const coverage = new Set(lanes.flatMap(l => l.coverage));
+  const proofs = lanes.flatMap(l => l.risks);
+  for (const feature of report.touchedFeatures) if (!coverage.has(feature.id)) reasons.push('Required live feature coverage unavailable');
   if (report.unmappedSurfaces.length) reasons.push('Changed user surface lacks a trusted feature recipe');
-  for (const hit of report.hardList.filter(f => f.severity === 'requires-proof')) if (!verifier?.risks.some(proof => sameObligation(proof, riskObligation(hit)))) reasons.push('Verifier did not prove required risk safe');
+  for (const hit of report.hardList.filter(f => f.severity === 'requires-proof')) if (!proofs.some(proof => sameObligation(proof, riskObligation(hit)))) reasons.push('Verifier did not prove required risk safe');
   for (const claim of report.claims) {
     if (claim.resolution === 'supported') continue;
-    if (claim.kind === 'feature' && verifier?.coverage.includes(claim.name)) continue;
+    if (claim.kind === 'feature' && coverage.has(claim.name)) continue;
     if (claim.resolution === 'missing') findings.push({ kind: 'false-claim', source: 'body', path: null, line: claim.line, rule: 'claimed-evidence-absent', severity: 'blocking' });
     else reasons.push('Verification claim lacks independently attributable evidence');
   }
