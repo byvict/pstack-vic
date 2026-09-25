@@ -1,6 +1,6 @@
 import { parseArgs } from 'node:util';
 import { array, integer, jsonHash, object, repoName, sha, string } from './contract.ts';
-import { admitPull, api, checks, command, pages, principal, pull, trusted, workflowRun, type Trusted } from './github.ts';
+import { admitPull, api, branchNotProtected, checks, command, pages, principal, pull, trusted, workflowRun, type Trusted } from './github.ts';
 import { verdictGate } from './gate.ts';
 
 async function trunkHealth(t: Trusted): Promise<void> {
@@ -11,11 +11,19 @@ async function trunkHealth(t: Trusted): Promise<void> {
   if (!jobs.some(j => j.name === t.config.tests.job && j.conclusion === 'success' && j.head_sha === tip)) throw new Error('Trunk test job is not successful at the current tip');
 }
 const unfinished = ['queued', 'in_progress', 'waiting', 'requested', 'pending'];
-async function protection(t: Trusted, head: string, pending: boolean): Promise<void> {
-  const protection = object(await api(`repos/${t.repo}/branches/${encodeURIComponent(t.config.trunk)}/protection`));
+interface RequiredCheck { context: string; appId: number | null }
+/** A trunk that only rulesets protect has no classic protection, so its required checks come from the branch rules alone. */
+async function classicChecks(t: Trusted): Promise<RequiredCheck[]> {
+  let protection: Record<string, unknown>;
+  try { protection = object(await api(`repos/${t.repo}/branches/${encodeURIComponent(t.config.trunk)}/protection`)); }
+  catch (error) { if (branchNotProtected(error)) return []; throw error; }
   const statusChecks = object(protection.required_status_checks, 'required status checks');
   const required = array(statusChecks.checks).map(v => { const c = object(v); return { context: string(c.context), appId: c.app_id === null || c.app_id === -1 ? null : integer(c.app_id) }; });
   for (const context of array(statusChecks.contexts).map(v => string(v))) if (!required.some(c => c.context === context)) required.push({ context, appId: null });
+  return required;
+}
+async function protection(t: Trusted, head: string, pending: boolean): Promise<void> {
+  const required = await classicChecks(t);
   const rules = array(await api(`repos/${t.repo}/rules/branches/${encodeURIComponent(t.config.trunk)}`)).map(v => object(v));
   for (const rule of rules) if (rule.type === 'required_status_checks') {
     for (const v of array(object(rule.parameters).required_status_checks)) {
@@ -47,6 +55,7 @@ export async function arm(options: { repo: string; pr: number; head: string; ver
   if (options.verdict !== 'VERIFIED' || !Number.isSafeInteger(options.pr) || options.pr < 1) throw new Error('Arm requires a PR number and VERIFIED');
   try {
     const t = await trusted(repo, options.configPath ?? '.cursor/converge.json');
+    if (options.pending && !t.config.requiredChecks.includes('hold')) throw new Error('Pending arm requires "hold" in requiredChecks');
     admitPull(await pull(repo, options.pr), t.config, head);
     await trunkHealth(t);
     await protection(t, head, options.pending === true);
