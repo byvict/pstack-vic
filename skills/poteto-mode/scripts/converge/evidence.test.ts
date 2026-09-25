@@ -78,7 +78,8 @@ function localInput(role: 'pre-pr reviewer' | 'pre-pr certifier', pr = 0) {
   const i = input();
   const round = { ...i.report.round, pr, execution: 'pre-pr' as const };
   const manifest = { round, laneId: role.replace(' ', '-'), role, descriptor: 'grok:grok-4.7@xhigh', prompt: 'prompt.txt', promptDigest: hash('read only'), output: 'output.json', receipt: 'receipt.json', createdAt: Date.parse(i.receipt.startedAt) };
-  const receipt = { ...i.receipt, parent: 'claude', provider: 'grok', model: 'grok-4.7', effort: 'xhigh', modelVerified: true, modelEvidence: 'provider-report', reportedModel: 'grok-4.7-build', remote: null, executable: '/usr/local/bin/grok', exitCode: 0, signal: null };
+  const certifier = role === 'pre-pr certifier';
+  const receipt: Record<string, unknown> = { ...i.receipt, parent: 'claude', provider: 'grok', model: 'grok-4.7', effort: 'xhigh', mode: certifier ? 'unsandboxed' : 'read-only', modelVerified: true, modelEvidence: 'provider-report', reportedModel: 'grok-4.7-build', remote: null, executable: '/usr/local/bin/grok', exitCode: 0, signal: null, checkout: certifier ? { headBefore: head, headAfter: head, statusAfter: [] } : null };
   const prefix = `artifacts/converge/${round.id}/${manifest.laneId}/`;
   const output = { ...i.output, laneId: manifest.laneId, role, artifacts: i.output.artifacts.map(a => ({ ...a, path: prefix + a.path.split('/').at(-1) })) };
   mkdirSync(join(i.directory, prefix), { recursive: true });
@@ -91,6 +92,31 @@ test('a local grok certifier lane admits artifacts from disk against the local r
   const report = { ...i.report, round: i.round, lanes: ['pre-pr reviewer', 'pre-pr certifier'] as const };
   const result = await admitLane(join(i.directory, 'manifest.json'), report as never, join(i.directory, 'admitted'), i.round);
   assert.deepEqual(result.coverage, ['login']); assert.equal(result.role, 'pre-pr certifier');
+});
+test('a certifier lane is admitted only from an unsandboxed receipt that left its worktree at the round head and clean', async t => {
+  const faults: [string, (receipt: Record<string, unknown>) => void, RegExp][] = [
+    ['read-only', r => { r.mode = 'read-only'; r.checkout = null; }, /Certifier lane must run unsandboxed/],
+    ['isolated-write', r => { r.mode = 'isolated-write'; }, /Certifier lane must run unsandboxed/],
+    ['no checkout', r => { r.checkout = null; }, /Invalid certifier checkout/],
+    ['other head', r => { r.checkout = { headBefore: 'e'.repeat(40), headAfter: 'e'.repeat(40), statusAfter: [] }; }, /Certifier lane ran on another head/],
+    ['moved head', r => { r.checkout = { headBefore: head, headAfter: 'e'.repeat(40), statusAfter: [] }; }, /Certifier lane changed its worktree/],
+    ['untracked file', r => { r.checkout = { headBefore: head, headAfter: head, statusAfter: ['?? probe.txt'] }; }, /Certifier lane left changes in its worktree/],
+    ['modified file', r => { r.checkout = { headBefore: head, headAfter: head, statusAfter: [' M client/src/App.jsx'] }; }, /Certifier lane left changes in its worktree/],
+  ];
+  for (const [name, fault, refusal] of faults) {
+    const i = localInput('pre-pr certifier'); t.after(i.cleanup);
+    fault(i.receipt); i.save();
+    const report = { ...i.report, round: i.round, lanes: ['pre-pr reviewer', 'pre-pr certifier'] as const };
+    await assert.rejects(admitLane(join(i.directory, 'manifest.json'), report as never, join(i.directory, 'admitted'), i.round), refusal, name);
+  }
+});
+test('a pre-pr reviewer lane keeps requiring a read-only receipt', async t => {
+  const i = localInput('pre-pr reviewer'); t.after(i.cleanup);
+  const report = { ...i.report, round: i.round, lanes: ['pre-pr reviewer'] as const };
+  const result = await admitLane(join(i.directory, 'manifest.json'), report as never, join(i.directory, 'admitted'), i.round);
+  assert.equal(result.role, 'pre-pr reviewer');
+  Object.assign(i.receipt, { mode: 'unsandboxed', checkout: { headBefore: head, headAfter: head, statusAfter: [] } }); i.save();
+  await assert.rejects(admitLane(join(i.directory, 'manifest.json'), report as never, join(i.directory, 'admitted'), i.round), /Lane receipt does not prove independent completion/);
 });
 test('a pre-pr role refuses a Cursor receipt and a pr verifier refuses a grok one', async t => {
   const i = localInput('pre-pr reviewer'); t.after(i.cleanup);
