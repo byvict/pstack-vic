@@ -64,7 +64,7 @@ export type Execution = 'converge' | 'verdict-only' | 'pre-pr';
 export const executions = ['converge', 'verdict-only', 'pre-pr'] as const;
 export type Role = 'pr verifier' | 'pre-pr reviewer' | 'pre-pr certifier';
 export const roles = ['pr verifier', 'pre-pr reviewer', 'pre-pr certifier'] as const;
-/** Which provider and model may sign each lane role; admission refuses any other receipt. */
+/** Pinned in code, not read from the model sheet, because a verdict is only as independent as its signer: the Cloud verifier stays Cursor, and pre-pr lanes run on the local Grok Build CLI so verification leaves the Cursor pool. */
 export const roleProviders: Record<Role, { provider: string; model: string; efforts: string[] }> = {
   'pr verifier': { provider: 'cursor', model: 'grok-4.7', efforts: ['high', 'xhigh'] },
   'pre-pr reviewer': { provider: 'grok', model: 'grok-4.7', efforts: ['high', 'xhigh'] },
@@ -89,7 +89,9 @@ export function parseContract(value: unknown): Contract {
       const r = object(raw, 'run');
       const name = string(r.name);
       if (!/^[a-z][a-z0-9-]{0,39}$/.test(name)) throw new Error('Unsafe run name');
-      return { name, command: string(r.command) };
+      const command = string(r.command);
+      if (!/^[^ ]+(?: [^ ]+)*$/.test(command) || /['"`$|&;<>(){}*?[\]~#!\\\x00-\x1f\x7f]/.test(command)) throw new Error('Unsafe run command');
+      return { name, command };
     }) };
     if (new Set(prePr.runs.map(r => r.name)).size !== prePr.runs.length) throw new Error('Duplicate run name');
   }

@@ -18,6 +18,11 @@ test('a prePr block names runs and whether the app is driven', () => {
 test('a prePr run name is a safe file stem', () => {
   assert.throws(() => parseContract({ ...base, verifySkill: null, featureMap: null, evidenceRoot: null, prePr: { runs: [{ name: '../x', command: 'npm test' }], certifier: false } }), /Unsafe run name/);
 });
+test('a prePr run command is argv joined by single spaces', () => {
+  const prePr = (command: string) => parseContract({ ...base, verifySkill: null, featureMap: null, evidenceRoot: null, prePr: { runs: [{ name: 'suite', command }], certifier: false } });
+  for (const command of ['npm test', 'npm run test:bun', 'npm run matrix:check', 'node --test --flag=value a/b.ts']) assert.equal(prePr(command).prePr?.runs[0]?.command, command);
+  for (const command of ['', ' npm test', 'npm test ', 'npm  test', ...[..."'\"`$|&;<>(){}*?[]~#!\\", '\t', '\n', '\x00', '\x7f'].map(c => `npm test${c}x`)]) assert.throws(() => prePr(command), /Unsafe run command/, JSON.stringify(command));
+});
 test('round pr 0 is valid only for pre-pr', () => {
   assert.equal(parseRound({ ...round, pr: 0, execution: 'pre-pr' }).pr, 0);
   assert.throws(() => parseRound({ ...round, pr: 0, execution: 'converge' }), /Invalid PR/);
