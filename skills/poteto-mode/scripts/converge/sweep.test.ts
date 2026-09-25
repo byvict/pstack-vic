@@ -30,8 +30,10 @@ test('sweep arms the certified PR on trunk and skips the stacked, held, armed an
   assert.deepEqual(outcomes(result.stdout), [[1, 'armed', ''], [2, 'skipped', 'base is not trunk'], [3, 'skipped', 'hold label'], [4, 'skipped', 'auto-merge already pending'], [5, 'skipped', 'draft']]);
   assert.deepEqual(f.read().mutations, merge(f.state.head));
 });
-test('sweep skips a PR without a trusted verdict and exits 0', t => {
-  const f = fixture(); t.after(f.cleanup); listed(f);
+for (const unlinked of [false, true]) test(`sweep skips a PR ${unlinked ? 'whose VERIFIED status has no link' : 'without a verdict status'} and exits 0`, t => {
+  const f = fixture(); t.after(f.cleanup);
+  if (unlinked) { const live = f.read(); live.statuses = [{ context: 'verdict', state: 'success', description: 'VERIFIED by converge', id: 200, creator: { id: 7 } }]; Object.assign(f.state, live); f.save(); }
+  listed(f);
   const result = f.run('converge-sweep', ['--repo', 'Example/app']);
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(outcomes(result.stdout), [[1, 'skipped', 'no trusted verdict on head']]);

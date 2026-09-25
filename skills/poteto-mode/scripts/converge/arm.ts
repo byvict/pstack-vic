@@ -51,8 +51,7 @@ async function certifiedAtTip(t: Trusted, pr: number, v: Verified): Promise<void
 }
 async function verdict(t: Trusted, pr: number, head: string, author: number): Promise<Verified> {
   const status = await verdictStatus(t.repo, pr, head, author);
-  if (status.kind === 'foreign') throw new Error(status.refusal);
-  if (status.kind === 'none') throw new Error('Latest verdict status is not trusted VERIFIED');
+  if (status.kind !== 'trusted') throw new Error(status.reason);
   const comment = object(await api(`repos/${t.repo}/issues/comments/${status.commentId}`));
   if (integer(object(comment.user).id) !== author) throw new Error('Verdict comment author is untrusted');
   const dossier = dossierFromComment(comment);

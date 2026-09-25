@@ -233,16 +233,16 @@ export function isPublication(comment: Record<string, unknown>, author: number):
 export async function statuses(repo: string, head: string): Promise<Record<string, unknown>[]> {
   return (await pages(`repos/${repo}/commits/${head}/statuses`)).map(v => object(v)).sort((a, b) => integer(b.id) - integer(a.id));
 }
-export type VerdictStatus = { kind: 'trusted'; url: string; commentId: string } | { kind: 'foreign'; refusal: string } | { kind: 'none' };
+export type VerdictStatus = { kind: 'trusted'; url: string; commentId: string } | { kind: 'foreign' | 'none'; reason: string };
 /** Only the newest `verdict` status on the head counts. A VERIFIED one that another account posted is `foreign`, not `none`, so a caller can refuse it loudly instead of treating the PR as uncertified. */
 export async function verdictStatus(repo: string, pr: number, head: string, author: number): Promise<VerdictStatus> {
   const status = (await statuses(repo, head)).find(s => s.context === 'verdict');
-  if (!status || status.state !== 'success' || status.description !== 'VERIFIED by converge') return { kind: 'none' };
+  if (!status || status.state !== 'success' || status.description !== 'VERIFIED by converge') return { kind: 'none', reason: 'Latest verdict status is not trusted VERIFIED' };
   const creator = object(status.creator);
-  if (integer(creator.id) !== author) return { kind: 'foreign', refusal: 'VERIFIED verdict status was posted by another account: ' + (typeof creator.login === 'string' ? creator.login : String(creator.id)) };
-  const url = string(status.target_url);
+  if (integer(creator.id) !== author) return { kind: 'foreign', reason: 'VERIFIED verdict status was posted by another account: ' + (typeof creator.login === 'string' ? creator.login : String(creator.id)) };
+  const url = typeof status.target_url === 'string' ? status.target_url : '';
   const prefix = `https://github.com/${repo}/pull/${pr}#issuecomment-`;
-  if (!url.startsWith(prefix) || !/^\d+$/.test(url.slice(prefix.length))) return { kind: 'none' };
+  if (!url.startsWith(prefix) || !/^\d+$/.test(url.slice(prefix.length))) return { kind: 'none', reason: 'Verdict status does not link to this PR' };
   return { kind: 'trusted', url, commentId: url.slice(prefix.length) };
 }
 export async function checks(repo: string, head: string): Promise<Check[]> {

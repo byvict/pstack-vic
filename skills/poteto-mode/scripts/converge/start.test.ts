@@ -162,7 +162,7 @@ test('a certified head returns without launching an owner', async t => {
   assert.equal(launches, 0); assert.equal(existsSync(join(f.directory, 'owner', 'intent.json')), false);
 });
 
-for (const [name, status] of [['NOT VERIFIED', { state: 'failure', description: 'NOT VERIFIED by converge', creator: { id: 7 } }], ['from another account', { state: 'success', description: 'VERIFIED by converge', creator: { id: 8 } }], ['linked to another PR', { state: 'success', description: 'VERIFIED by converge', creator: { id: 7 }, target_url: 'https://github.com/Example/app/pull/2#issuecomment-100' }]] as const) {
+for (const [name, status] of [['NOT VERIFIED', { state: 'failure', description: 'NOT VERIFIED by converge', creator: { id: 7 } }], ['from another account', { state: 'success', description: 'VERIFIED by converge', creator: { id: 8 } }], ['linked to another PR', { state: 'success', description: 'VERIFIED by converge', creator: { id: 7 }, target_url: 'https://github.com/Example/app/pull/2#issuecomment-100' }], ['without a link', { state: 'success', description: 'VERIFIED by converge', creator: { id: 7 }, target_url: undefined }]] as const) {
   test(`a head whose verdict is ${name} still launches an owner`, async t => {
     const f = fixture(); t.after(f.cleanup); environment(t, f);
     const live = f.read();
