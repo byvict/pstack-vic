@@ -17,11 +17,6 @@ function environment(t: TestContext, f: ReturnType<typeof fixture>): void {
   });
 }
 
-function launched(result: Awaited<ReturnType<typeof start>>) {
-  assert.ok(!('kind' in result), 'start returned a certified head instead of a launch');
-  return result;
-}
-
 const inventory = { items: [{ id: 'grok-4.7', parameters: [{ id: 'reasoning_effort' }, { id: 'fast' }], variants: [
   { params: [{ id: 'reasoning_effort', value: 'high' }, { id: 'fast', value: 'true' }], isDefault: true },
   { params: [{ id: 'reasoning_effort', value: 'high' }, { id: 'fast', value: 'false' }] },
@@ -45,10 +40,12 @@ test('ready PR handoff persists intent before launch and returns the same receip
     return Response.json({ agent: { id: 'bc_test', url: 'https://cursor.com/agents/bc_test' }, run: { id: 'run_test' } });
   });
   const options = { repo: 'Example/app', pr: 1, toolingRef: 'd'.repeat(40), stateDirectory: directory, effort: 'high' as const };
-  const first = launched(await start(options));
+  const first = await start(options);
+  assert.equal(first.kind, 'launched');
   assert.equal(first.agentId, 'bc_test');
   assert.equal(first.modelSelection.includes('requested effort high'), true);
   assert.equal(readFileSync(join(directory, 'launch.json'), 'utf8').includes('test-key'), false);
+  assert.equal('kind' in JSON.parse(readFileSync(join(directory, 'launch.json'), 'utf8')), false);
   assert.deepEqual(await start(options), first);
   assert.equal(launches, 1);
 });
@@ -92,7 +89,8 @@ test('lost launch response recovers the one matching Cursor agent', async t => {
   });
   const options = { repo: 'Example/app', pr: 1, toolingRef: 'd'.repeat(40), stateDirectory: directory, effort: 'high' as const };
   await assert.rejects(start(options), /connection lost/);
-  const recovered = launched(await start(options));
+  const recovered = await start(options);
+  assert.equal(recovered.kind, 'launched');
   assert.equal(recovered.agentId, 'bc_recovered');
   assert.equal(recovered.runId, 'run_recovered');
   assert.equal(posts, 1);
@@ -120,7 +118,8 @@ test('sheet floors raise the owner launch and bind the verifier effort', async t
     prompt = body.prompt.text;
     return Response.json({ agent: { id: 'bc_sheet', url: 'https://cursor.com/agents/bc_sheet' }, run: { id: 'run_sheet' } });
   });
-  const receipt = launched(await start({ repo: 'Example/app', pr: 1, toolingRef: 'd'.repeat(40), stateDirectory: directory, effort: 'high', sheetPath }));
+  const receipt = await start({ repo: 'Example/app', pr: 1, toolingRef: 'd'.repeat(40), stateDirectory: directory, effort: 'high', sheetPath });
+  assert.equal(receipt.kind, 'launched');
   assert.equal(receipt.effort, 'xhigh');
   assert.equal(receipt.verifierEffort, 'xhigh');
   assert.match(prompt, /descriptor cursor:grok-4\.7@xhigh and launch it with pstack-runner .*? --effort xhigh --mode read-only/);
@@ -140,7 +139,8 @@ test('explicit effort raises a high sheet floor and an invalid sheet refuses bef
     prompt = JSON.parse(String(init?.body)).prompt.text;
     return Response.json({ agent: { id: 'bc_raise', url: 'https://cursor.com/agents/bc_raise' }, run: { id: 'run_raise' } });
   });
-  const raised = launched(await start({ repo: 'Example/app', pr: 1, toolingRef: 'd'.repeat(40), stateDirectory: join(f.directory, 'raise'), effort: 'xhigh', sheetPath }));
+  const raised = await start({ repo: 'Example/app', pr: 1, toolingRef: 'd'.repeat(40), stateDirectory: join(f.directory, 'raise'), effort: 'xhigh', sheetPath });
+  assert.equal(raised.kind, 'launched');
   assert.equal(raised.effort, 'xhigh');
   assert.equal(raised.verifierEffort, 'high');
   assert.match(prompt, /cursor:grok-4\.7@high for a simple change or cursor:grok-4\.7@xhigh for a complex change/);
@@ -174,7 +174,8 @@ for (const [name, status] of [['NOT VERIFIED', { state: 'failure', description: 
       launches++;
       return Response.json({ agent: { id: 'bc_owner', url: 'https://cursor.com/agents/bc_owner' }, run: { id: 'run_owner' } });
     });
-    const receipt = launched(await start({ repo: 'Example/app', pr: 1, toolingRef: 'd'.repeat(40), stateDirectory: join(f.directory, 'owner'), effort: 'high' }));
+    const receipt = await start({ repo: 'Example/app', pr: 1, toolingRef: 'd'.repeat(40), stateDirectory: join(f.directory, 'owner'), effort: 'high' });
+    assert.equal(receipt.kind, 'launched');
     assert.equal(launches, 1); assert.equal(receipt.agentId, 'bc_owner');
   });
 }
