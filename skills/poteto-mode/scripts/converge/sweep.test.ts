@@ -180,3 +180,27 @@ test('sweep reports a refusal with the live head, not the listing head', t => {
   assert.equal(result.status, 1);
   assert.deepEqual(JSON.parse(result.stdout).swept, [{ pr: 1, head: f.state.head, outcome: 'refused', reason: 'gh request failed' }]);
 });
+function unparsable(): string {
+  try { JSON.parse('not json'); } catch (error) { return error instanceof Error ? error.message : ''; }
+  return '';
+}
+for (const dryRun of [false, true]) {
+  test(`sweep ${dryRun ? 'dry run reports' : 'disarms'} every armed PR on the default branch when the trunk contract does not load`, t => {
+    const f = fixture(); t.after(f.cleanup);
+    const live = f.read(); live.autoMerge = true; Object.assign(f.state, live); f.save(); listed(f, [other(2, {})]);
+    const broken = f.read(); broken.blobs['.cursor/converge.json'] = 'not json'; Object.assign(f.state, broken); f.save();
+    const result = f.run('converge-sweep', ['--repo', 'Example/app', ...(dryRun ? ['--dry-run'] : [])]);
+    assert.equal(result.status, 1);
+    const cause = `Trunk contract unavailable: ${unparsable()}`;
+    assert.deepEqual(outcomes(result.stdout), [[1, 'refused', cause + (dryRun ? ', would disarm auto-merge' : ', auto-merge disarmed')], [2, 'refused', cause]]);
+    assert.deepEqual(f.read().mutations, dryRun ? [] : disabled);
+  });
+}
+test('sweep disarms an armed PR when the trunk contract stops loading during the sweep', t => {
+  const f = fixture(); t.after(f.cleanup); published(f);
+  const live = f.read(); live.autoMerge = true; live.after = { endpoint: 'commits/main', reads: 1, set: { blobs: { ...live.blobs, '.cursor/converge.json': 'not json' } } }; Object.assign(f.state, live); f.save(); listed(f);
+  const result = f.run('converge-sweep', ['--repo', 'Example/app']);
+  assert.equal(result.status, 1);
+  assert.deepEqual(outcomes(result.stdout), [[1, 'refused', `Trunk contract unavailable: ${unparsable()}, auto-merge disarmed`]]);
+  assert.deepEqual(f.read().mutations, disabled);
+});

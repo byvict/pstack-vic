@@ -1,6 +1,6 @@
 import { parseArgs } from 'node:util';
-import { integer, object, repoName, sha } from './contract.ts';
-import { pages, principal, pull, RequestError, trusted, verdictStatus, type Pull, type Trusted } from './github.ts';
+import { integer, object, repoName, sha, string } from './contract.ts';
+import { api, pages, principal, pull, RequestError, trusted, verdictStatus, type Pull, type Trusted } from './github.ts';
 import { verdictGate, type Gate } from './gate.ts';
 import { arm, disarm } from './arm.ts';
 
@@ -16,8 +16,22 @@ async function observedDisarm(repo: string, pr: number, dryRun: boolean): Promis
   if (after.autoMerge) return 'still armed';
   return ran === false ? 'already off' : 'disarmed';
 }
+/** A trunk contract that does not load leaves no policy anyone can check an armed PR against, so the sweep fails safe and disarms. A failed GitHub read is not such a failure: the reads a disarm needs are failing too, so it still throws. */
+async function contract(repo: string, configPath?: string): Promise<Trusted | { failure: string }> {
+  try { return await trusted(repo, configPath ?? '.cursor/converge.json'); }
+  catch (error) {
+    if (error instanceof RequestError || !(error instanceof Error)) throw error;
+    return { failure: 'Trunk contract unavailable: ' + error.message };
+  }
+}
+async function withoutContract(repo: string, pr: number, failure: string, dryRun: boolean): Promise<Swept> {
+  const p = await pull(repo, pr);
+  if (!p.autoMerge) return { pr, head: p.head, outcome: 'refused', reason: failure };
+  return { pr, head: p.head, outcome: 'refused', reason: failure + ', ' + disarmed[await observedDisarm(repo, pr, dryRun)] };
+}
 async function judge(repo: string, pr: number, author: number, options: { configPath?: string; dryRun: boolean }): Promise<Swept> {
-  const t = await trusted(repo, options.configPath ?? '.cursor/converge.json');
+  const t = await contract(repo, options.configPath);
+  if ('failure' in t) return withoutContract(repo, pr, t.failure, options.dryRun);
   const p = await pull(repo, pr);
   try { return await decideOne(t, p, author, options); }
   catch (error) { return { pr, head: p.head, outcome: 'refused', reason: error instanceof Error ? error.message : 'Sweep failed' }; }
@@ -47,17 +61,22 @@ async function decideOne(t: Trusted, p: Pull, author: number, options: { configP
   const armed = await arm({ repo: t.repo, pr, head, verdict: 'VERIFIED', dryRun: options.dryRun, configPath: options.configPath, pending: true });
   return result(armed.kind, armed.rederived ?? '');
 }
-export async function sweep(options: { repo: string; configPath?: string; dryRun: boolean }): Promise<{ swept: Swept[] }> {
-  const t = await trusted(repoName(options.repo), options.configPath ?? '.cursor/converge.json');
-  const author = await principal();
-  const open = (await pages(`repos/${t.repo}/pulls?state=open&base=${encodeURIComponent(t.config.trunk)}`)).map(v => object(v));
+async function eachOpen(repo: string, base: string, one: (pr: number) => Promise<Swept>): Promise<{ swept: Swept[] }> {
+  const open = (await pages(`repos/${repo}/pulls?state=open&base=${encodeURIComponent(base)}`)).map(v => object(v));
   const swept: Swept[] = [];
   for (const listed of open.sort((a, b) => integer(a.number) - integer(b.number))) {
     const pr = integer(listed.number);
-    try { swept.push(await judge(t.repo, pr, author, options)); }
+    try { swept.push(await one(pr)); }
     catch (error) { swept.push({ pr, head: sha(object(listed.head).sha), outcome: 'refused', reason: error instanceof Error ? error.message : 'Sweep failed' }); }
   }
   return { swept };
+}
+export async function sweep(options: { repo: string; configPath?: string; dryRun: boolean }): Promise<{ swept: Swept[] }> {
+  const repo = repoName(options.repo);
+  const t = await contract(repo, options.configPath);
+  if ('failure' in t) return eachOpen(repo, string(object(await api(`repos/${repo}`)).default_branch), pr => withoutContract(repo, pr, t.failure, options.dryRun));
+  const author = await principal();
+  return eachOpen(t.repo, t.config.trunk, pr => judge(t.repo, pr, author, options));
 }
 export async function main(args: string[]): Promise<number> {
   try {
