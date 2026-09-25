@@ -44,7 +44,7 @@ Numbers follow the ledgers of Parts 1 to 3.
 - **N12.** On the first real PR, confirm that the branch round's patch id equals the PR round's (`gh pr diff` against the compare diff).
 - **N15.** No Automation and no sweeper may comment on a PR. A comment changes a `converge` verdict's PR text, and the next sweep disarms that PR. `pr-opened.md` still comments "certified head, no owner". That is harmless for a `pre-pr` verdict, which re-derives over changed text, but check it again when you write that prompt.
 - **N16.** The "PR opened" Automation can run `start.ts` before the Raiz publishes. A full cloud owner then launches on a PR that is about to be certified, and its later publication refuses while auto-merge is pending. Either add a signal (a body marker plus a bounded poll) or accept the cost.
-- **N17 (CLI-194).** After a pending arm, nothing supervises the PR until the next sweep, and a hold applied in between does not stop GitHub's auto-merge. The recommendation is a required `hold` check. It must land before the playbook relies on `--pending`.
+- **Steps 4 and 5 of Task 4.2 (CLI-194).** `.cursor/converge.json` exists, with `hold` in `requiredChecks`. Victor runs the label and ruleset commands from CLI-194's PR body. Until he does, every arm on pstack-vic refuses (`Branch protection missing required context: verdict`).
 - **N20.** The contract requires any writer to disarm before it pushes to an armed PR, because a force-push back to an earlier certified head keeps that head's VERIFIED status. The plan's `repair.md` prompt must say so.
 - **N23.** The first sweep after trunk moves past an armed `converge` PR's contract commit disarms that PR. It stays refused until its owner republishes with `--retain` and arms again. The owner prompt in `start.ts` and the `converge.md` rewrite must say so.
 
@@ -55,6 +55,7 @@ Numbers follow the ledgers of Parts 1 to 3.
 - **N9.** The comment embeds the whole certificate, about 3 KB plus 250 B per artifact. 57 Clinext features with 3 artifacts each come to about 69.8 K characters, over GitHub's 65,536-character comment limit. Publication refuses such a body. Choose a smaller certificate form before Part 5.
 - **N18, N19 (CLI-193).** Any change to a file in the policy digest invalidates every outstanding certificate. In Clinext, at least 12 of 91 merges in 14 days changed such a file (measured 2026-09-25). Separately, a merge can land at a later trunk tip than the gate checked. The recommendation is to narrow the policy comparison to what the certificate uses, and not to serialize merges.
 - **N21.** `start.ts` now calls `principal()` and the gate under the "PR opened" Automation's credentials. Verify that its token can run the GraphQL viewer query and read statuses and comments. Also verify that it is the same account that publishes.
+- **N26 (CLI-194).** Clinext needs the same `hold` check before its sweep arms with `--pending`, because `--pending` refuses a contract without `hold` in `requiredChecks`. Copy `.github/workflows/hold.yml`, add `hold` to `requiredChecks` in `.cursor/converge.json`, and add `hold` with `app_id` 15368 to the classic protection's `required_status_checks`. Keep the "Workflow Run Failed" Automation filtered on `Tests` and `Secrets scan`, so a failed `hold` run never launches a repair owner.
 
 ### Later
 
@@ -71,3 +72,4 @@ Numbers follow the ledgers of Parts 1 to 3.
 - **N2.** A late publication with `test:` or `artifact:` claims no longer changes the policy digest. The `pre-pr` snapshot reads no CI, so the CI runner sources stay out of it (Part 1).
 - **N3.** Superseded by N14 and CLI-195.
 - **N10.** The arm bound the verdict's contract commit to the current trunk tip. Part 2's verdict gate re-derives instead.
+- **N17 (CLI-194).** A required `hold` check now stops GitHub's auto-merge after a pending arm. The `hold` workflow fails while `needs-victor` is on the PR, and `converge-arm --pending` refuses a contract without `hold` in `requiredChecks`. `converge-contract.md`, under Merge and progress, lists the check's limits. The same PR fixed the arm on a trunk that only rulesets protect. GitHub answers its classic protection read with 404 `Branch not protected`, and the arm used to fail there before any gate.
