@@ -1,7 +1,8 @@
 import { parseArgs } from 'node:util';
 import { array, integer, jsonHash, object, repoName, sha, string, type Dossier } from './contract.ts';
-import { admitPull, api, checks, command, comments, isPublication, pages, principal, pull, trusted, workflowRun, type Trusted } from './github.ts';
-import { dossierFromComment, statuses } from './publish.ts';
+import { admitPull, api, checks, command, comments, isPublication, pages, principal, pull, snapshot, trusted, workflowRun, type Trusted } from './github.ts';
+import { decide, dossierFromComment, retainedLanes, statuses } from './publish.ts';
+import { analyze } from './reconcile.ts';
 
 async function trunkHealth(t: Trusted): Promise<void> {
   const tip = sha(object(await api(`repos/${t.repo}/commits/${encodeURIComponent(t.config.trunk)}`)).sha);
@@ -36,6 +37,16 @@ async function protection(t: Trusted, head: string, pending: boolean): Promise<v
     if (!match.some(check => check.state === 'success')) throw new Error('Required protected check is not successful: ' + c.context);
   }
 }
+/** A certificate is assembled at one trunk tip. Once trunk moves, it still authorizes merge only while the same patch under the same policy re-derives VERIFIED at the new tip from its retained coverage. */
+async function certifiedAtTip(t: Trusted, pr: number, dossier: Dossier, commentUrl: string): Promise<void> {
+  const r = dossier.round;
+  const current = await snapshot(t.repo, pr, r.configPath, 'pre-pr');
+  if (current.trusted.sha !== t.sha) throw new Error('Trunk moved before arm');
+  const report = analyze(current, { id: r.id, configPath: r.configPath, execution: 'pre-pr' });
+  if (report.round.head !== r.head || report.round.patch_id !== r.patch_id || report.round.verificationDigest !== r.verificationDigest) throw new Error('Certificate patch or policy differs at trunk tip ' + t.sha);
+  const decision = decide(report, retainedLanes(report.lanes, dossier, commentUrl));
+  if (decision.verdict !== 'VERIFIED') throw new Error(`Certificate is no longer VERIFIED at trunk tip ${t.sha}: ${decision.verdict}`);
+}
 async function verdict(t: Trusted, pr: number, head: string, author: number): Promise<Dossier> {
   const status = (await statuses(t.repo, head)).find(s => s.context === 'verdict');
   if (!status || status.state !== 'success' || status.description !== 'VERIFIED by converge' || integer(object(status.creator).id) !== author) throw new Error('Latest verdict status is not trusted VERIFIED');
@@ -46,7 +57,7 @@ async function verdict(t: Trusted, pr: number, head: string, author: number): Pr
   if (integer(object(comment.user).id) !== author) throw new Error('Verdict comment author is untrusted');
   const dossier = dossierFromComment(comment);
   const r = dossier.round;
-  if (r.repo !== t.repo || r.pr !== pr || r.head !== head || r.contract !== t.sha || !['converge', 'pre-pr'].includes(r.execution) || dossier.decision.verdict !== 'VERIFIED') throw new Error('Verdict identity or execution does not authorize merge');
+  if (r.repo !== t.repo || r.pr !== pr || r.head !== head || (r.contract !== t.sha && r.execution !== 'pre-pr') || !['converge', 'pre-pr'].includes(r.execution) || dossier.decision.verdict !== 'VERIFIED') throw new Error('Verdict identity or execution does not authorize merge');
   const all = await comments(t.repo, pr);
   const publications = all.filter(c => isPublication(c, author));
   const newest = publications.sort((a, b) => integer(b.id) - integer(a.id))[0];
@@ -54,6 +65,7 @@ async function verdict(t: Trusted, pr: number, head: string, author: number): Pr
   const live = await pull(t.repo, pr);
   const fingerprint = jsonHash({ body: live.body, comments: all.filter(c => !isPublication(c, author)).map(c => [c.id, c.body, c.updated_at]) });
   if (fingerprint !== dossier.inputFingerprint) throw new Error('PR text changed after verification');
+  if (r.contract !== t.sha) await certifiedAtTip(t, pr, dossier, url);
   return dossier;
 }
 export async function disarm(repo: string, pr: number): Promise<void> {

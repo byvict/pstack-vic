@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
-import { array, digest, integer, jsonHash, object, oneOf, parseFinding, parseReport, parseRound, parseObligation, riskObligation, sameObligation, string, strings, sha, parseExecutionId, type Decision, type Dossier, type Finding, type Report } from './contract.ts';
+import { array, digest, integer, jsonHash, object, oneOf, parseFinding, parseReport, parseRound, parseObligation, riskObligation, sameObligation, string, strings, sha, parseExecutionId, type Decision, type Dossier, type Finding, type Report, type Role } from './contract.ts';
 import { admitPull, api, comments, isPublication, pages, principal, pull, snapshot } from './github.ts';
 import { analyze } from './reconcile.ts';
 import { admitLane, type AdmittedLane } from './evidence.ts';
@@ -28,6 +28,9 @@ export function decide(report: Report, lanes: AdmittedLane[]): Decision {
   const firstReason = reasons[0];
   if (firstReason) return { verdict: 'INCONCLUSIVE', displayResult: 'INCONCLUSIVE', findings: [], reasons: [firstReason, ...reasons.slice(1)] };
   return { verdict: 'VERIFIED', displayResult: report.mode === 'ci-only' ? 'CI-only' : 'VERIFIED', findings: [], reasons: [] };
+}
+export function retainedLanes(roles: Role[], dossier: Dossier, commentUrl: string): AdmittedLane[] {
+  return roles.map(role => ({ role, coverage: dossier.coverage, risks: dossier.riskAdjudication, findings: [], gaps: [], artifacts: dossier.artifactIds.map(id => ({ id, path: commentUrl, digest: dossier.evidenceDigest, mediaType: 'retained' })), receiptDigest: dossier.evidenceDigest }));
 }
 export function parseDossier(value: unknown): Dossier {
   const v = object(value);
@@ -93,7 +96,7 @@ export async function publishVerdict(options: { reportFile: string; laneFiles: s
     const oldStatus = (await statuses(r.repo, old.round.head)).find(s => s.context === 'verdict');
     if (!oldStatus || oldStatus.target_url !== options.retainCommentUrl || integer(object(oldStatus.creator).id) !== author || oldStatus.description !== 'VERIFIED by converge' || oldStatus.state !== (r.execution === 'converge' ? 'success' : 'error')) throw new Error('Retained verdict status is not authoritative');
     retainedFrom = { round: old.round.id, head: old.round.head, commentUrl: options.retainCommentUrl };
-    for (const role of report.lanes) admitted.push({ role, coverage: old.coverage, risks: old.riskAdjudication, findings: [], gaps: [], artifacts: old.artifactIds.map(id => ({ id, path: options.retainCommentUrl ?? '', digest: old.evidenceDigest, mediaType: 'retained' })), receiptDigest: old.evidenceDigest });
+    admitted.push(...retainedLanes(report.lanes, old, options.retainCommentUrl));
   }
   let certificate: Certificate | null = null;
   if (options.certificateFile) {

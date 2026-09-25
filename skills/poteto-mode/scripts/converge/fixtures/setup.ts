@@ -110,3 +110,11 @@ export function prReport(f: ReturnType<typeof fixture>, execution = 'pre-pr') {
   assert.equal(result.status, 0, result.stderr);
   return report;
 }
+export function publishCertificate(f: ReturnType<typeof fixture>, options: Parameters<typeof certifiedPr>[1] = {}) {
+  const run = certifiedPr(f, options);
+  const published = f.run('publish.ts', ['--report', prReport(f), '--certificate', join(run, 'certificate.json'), '--evidence', join(f.directory, 'evidence')]);
+  assert.equal(published.status, 0, published.stderr);
+}
+export function moveTrunk(f: ReturnType<typeof fixture>, tip = 'd'.repeat(40)) {
+  const live = f.read(); live.trunk = tip; live.jobs[0].head_sha = tip; Object.assign(f.state, live); f.save();
+}

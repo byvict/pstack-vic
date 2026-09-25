@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { fixture } from './fixtures/setup.ts';
+import { fixture, moveTrunk, publishCertificate } from './fixtures/setup.ts';
 
 function publish(f: ReturnType<typeof fixture>, proof = false) {
   const report = join(f.directory, 'report.json');
@@ -130,3 +130,26 @@ test('trunk health reads the Tests job name from the contract', t => {
   const armed = arm(f, false); assert.equal(armed.status, 0, armed.stderr);
   assert.deepEqual(f.read().mutations, merge(f.state.head));
 });
+for (const full of [false, true]) {
+  test(`a ${full ? 'full-mode' : 'ci-only'} certificate from an earlier trunk tip arms once it re-derives VERIFIED at the new tip`, t => {
+    const f = fixture(); t.after(f.cleanup); publishCertificate(f, { full });
+    moveTrunk(f);
+    const strict = arm(f); assert.equal(strict.status, 0, strict.stderr);
+    const result = arm(f, false, ['--pending']); assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(f.read().mutations, merge(f.state.head));
+  });
+}
+for (const scenario of ['policy', 'decision', 'converge'] as const) {
+  test(`a moved trunk refuses the arm on ${scenario} without a merge mutation`, t => {
+    const f = fixture(); t.after(f.cleanup);
+    if (scenario === 'converge') publish(f); else publishCertificate(f);
+    moveTrunk(f);
+    const live = f.read();
+    if (scenario === 'policy') live.blobs['verify/SKILL.md'] = 'Drive the app another way.';
+    if (scenario === 'decision') delete live.files[0].patch;
+    Object.assign(f.state, live); f.save();
+    const result = arm(f, false, ['--pending']); assert.notEqual(result.status, 0);
+    assert.match(result.stderr, { policy: /^Certificate patch or policy differs at trunk tip d{40}$/m, decision: /^Certificate is no longer VERIFIED at trunk tip d{40}: INCONCLUSIVE$/m, converge: /^Verdict identity or execution does not authorize merge$/m }[scenario]);
+    assert.deepEqual(f.read().mutations, []);
+  });
+}
