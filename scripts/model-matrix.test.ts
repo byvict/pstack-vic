@@ -412,9 +412,14 @@ describe("roles", () => {
     }
   });
 
-  it("carry the decided default map: volume on grok, frontier solo on the parent's native frontier, panels mixed, why and reflect inherit", () => {
-    // Decisions of 2026-09-17 (plan, fase 6 bullets). The labels are the sheet lines /setup-pstack writes.
-    for (const label of ["feature, refactoring", "bug-fix", "perf-issue", "hillclimb", "swarm workers", "how explorer"]) {
+  it("carry the decided default map: authoring on the parent's native code family, swarm and exploration on grok, frontier solo on the parent's native frontier, panels mixed, why and reflect inherit", () => {
+    // Decisions of 2026-09-17 (plan, fase 6 bullets); CLI-196 moved the four authoring volume rows off grok on 2026-09-25.
+    // The labels are the sheet lines /setup-pstack writes.
+    for (const label of ["feature, refactoring", "bug-fix", "perf-issue", "hillclimb"]) {
+      assert.deepEqual(roleDefault(matrix, label, "claude"), ["claude:claude-opus-5-5@xhigh"], `${label}/claude`);
+      assert.deepEqual(roleDefault(matrix, label, "codex"), ["codex:gpt-6-sol@xhigh"], `${label}/codex`);
+    }
+    for (const label of ["swarm workers", "how explorer"]) {
       for (const parent of parents) {
         assert.deepEqual(roleDefault(matrix, label, parent), ["grok:grok-4.6@xhigh"], `${label}/${parent}`);
       }

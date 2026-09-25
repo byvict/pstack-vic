@@ -634,6 +634,25 @@ Parte 3 do plano [`docs/superpowers/plans/2026-09-24-pre-pr.md`](docs/superpower
 - `plan` real contra o sheet e o ledger de Victor nos dois pais: as três linhas pré-PR entram pelo default, sem sonda e sem aviso, porque a autoria está em Opus no Claude Code e em Sol no Codex. Com `--role "feature, refactoring=grok:grok-4.7@xhigh"`, o `plan` imprime o aviso e sai com 0. Com `--role "pre-pr reviewer=claude:claude-opus-5-5@xhigh"`, sai com 1 e a recusa nomeia as duas lanes aceitas.
 - `npm run matrix:check`, `npm run agents:check`, `npm run collision:check`, `claude plugin validate .` e `git diff --check` limpos.
 
+# 0.2.1 — Autoria na família de código nativa do pai (CLI-196) (2026-09-25)
+
+A nota N25 do plano do Pré-PR achou um conflito nos defaults da matriz. As quatro linhas de volume de autoria estavam em Grok, a mesma Família do `pre-pr reviewer`. Um primeiro run do `/setup-pstack` imprimia quatro avisos nos dois pais, e a certificação pré-PR recusaria esse sheet. Os sheets de Victor já eram cruzados: Opus autora no Claude Code, e Sol autora no Codex. A CLI-196, sub-issue da CLI-192, leva esse cruzamento para os defaults.
+
+## Desenho
+
+- **Default por pai nas quatro linhas de autoria.** `feature, refactoring`, `bug-fix`, `perf-issue` e `hillclimb` passam de `grok@xhigh` para `{ "claude": "opus@xhigh", "codex": "sol@xhigh" }` em `model-matrix.json`. A tabela de papéis de `provider-dispatch.md` e os dois sheets de exemplo do `setup-pstack/SKILL.md` foram renderizados de novo.
+- **O que não muda.** `swarm workers` e `how explorer` continuam em `grok:grok-4.6@xhigh`. Os painéis continuam com fable, astra, grok e opus, e Sol continua fora deles pela decisão de 2026-09-17. O `setup-pstack.ts` não muda. O aviso de Família igual continua o mesmo e só deixa de aparecer no primeiro run.
+- **Reversão parcial do item 3 das "Decisões transversais".** O item 3 pôs as seis linhas de volume em Grok, como o 0.15.2 e a fase 6. Para as quatro linhas de autoria, isso deixa de valer: elas usam a família de código nativa do pai. Para `swarm workers` e `how explorer`, o item 3 continua valendo. No Codex, Sol volta ao mapa do primeiro run, só nessas quatro linhas.
+- **Prosa.** O `poteto-mode/SKILL.md` separa as linhas de autoria, na família de código nativa do pai, de exploração e swarm, na família de código rápida. O `setup-pstack/SKILL.md` diz que Sol fica fora do mapa do primeiro run só no Claude Code. A frase gerada abaixo da tabela de papéis e a nota de `roles` na matriz agora dão as duas razões de um default por pai. A N25 sai de "Later" e vai para "Resolved" nas notas do plano.
+- **Versão 0.2.1**, porque o `/setup-pstack` e a tabela de papéis vêm do plugin instalado nos dois pais.
+
+## Verificação
+
+- Com a matriz nova e os testes antigos, 14 testes falham: 1 em `model-matrix.test.ts` e 13 em `setup-pstack.test.ts`. Cada um afirmava um default de autoria em Grok. O ajuste troca o valor esperado para Opus ou Sol, ou passa a medir `swarm workers` e `how explorer` quando o efeito é da família Grok. Os dois cenários de quatro avisos agora põem as quatro linhas em Grok com `roles` e `--role`. Asserts novos: o primeiro run do Codex tem Sol `unassigned`, o primeiro run dos dois pais tem `warnings: []`, e o teste do sheet misto confere que a troca de texto mudou o sheet.
+- `npm test`: 563 testes, 0 falhas. `npm run test:bun`: 52 testes, 0 falhas.
+- `setup-pstack.ts plan` num home vazio. Claude Code: sai com 0, `warnings: []`, 6 pares (fable e opus nativos; astra, grok, grok-4-7 e cursor-grok pelo runner). Codex: sai com 0, `warnings: []`, 7 pares, porque entra `codex:gpt-6-sol@xhigh`, nativo. Na `main` 0.2.0, os dois pais imprimiam quatro avisos, com 6 pares cada.
+- `npm run matrix:check`, `npm run agents:check`, `npm run collision:check`, `claude plugin validate .` e `git diff --check` limpos.
+
 # Unreleased — Filho de stack publica o Certificado com a base no pai (CLI-195) (2026-09-25)
 
 Sub-issue CLI-195 da CLI-192, feita antes da parte 4 do plano, porque a parte 4 escreve no playbook como abrir stacks. Um filho de stack agora nasce certificado. Ele publica o Certificado com a base no pai, e o Varredor o arma depois que o pai mergeia e o GitHub o retargeta para a `main`. A referência está em `skills/poteto-mode/references/converge-contract.md`.

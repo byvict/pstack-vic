@@ -111,7 +111,7 @@ describe("parseSheet", () => {
   it("reads role rows and ignores the header and prose", () => {
     const rows = parseSheet(firstRunSheet("claude"), matrix);
     assert.equal(rows.length, matrix.roles.length);
-    assert.deepEqual(rows[0], { role: "feature, refactoring", lanes: ["grok:grok-4.6@xhigh"] });
+    assert.deepEqual(rows[0], { role: "feature, refactoring", lanes: ["claude:claude-opus-5-5@xhigh"] });
     assert.deepEqual(
       rows.find((r) => r.role === "arena runners")?.lanes,
       ["claude:fable@max", "codex:gpt-6-astra@max", "grok:grok-4.6@xhigh", "claude:claude-opus-5-5@xhigh"]
@@ -187,7 +187,7 @@ describe("Grok 4.7 selection", () => {
     const plan = buildPlan({ parent: "codex", home, matrix, roles: { "bug-fix": ["grok:grok-4.7@xhigh"] } });
     assert.deepEqual(lanesOf(plan, "bug-fix"), ["grok:grok-4.7@xhigh"]);
     assert.deepEqual(lanesOf(plan, "swarm workers"), ["grok:grok-4.6@xhigh"]);
-    assert.deepEqual(lanesOf(plan, "hillclimb"), ["grok:grok-4.6@xhigh"]);
+    assert.deepEqual(lanesOf(plan, "how explorer"), ["grok:grok-4.6@xhigh"]);
     assert.deepEqual(plan.efforts.grok, ["xhigh"]);
     assert.deepEqual(plan.efforts["grok-4-7"], ["high", "xhigh"]);
     assert.deepEqual(
@@ -219,6 +219,7 @@ describe("loadState", () => {
     assert.deepEqual(state.efforts.grok, { status: "unassigned", efforts: ["xhigh"], rows: [] });
     assert.deepEqual(state.efforts.sol, { status: "outside-map", efforts: ["max"], rows: [] });
     assert.equal("conflicts" in state, false);
+    assert.equal(loadState({ parent: "codex", home, matrix }).efforts.sol.status, "unassigned");
   });
 
   it("reads a Codex sheet, normalizes its lanes, and derives the efforts in use per family", () => {
@@ -314,8 +315,9 @@ describe("buildPlan", () => {
 
   it("rewrites every occurrence of a family when its effort changes and moves no role", () => {
     const plan = buildPlan({ parent: "claude", home, matrix, efforts: { grok: "high" } });
-    assert.deepEqual(lanesOf(plan, "bug-fix"), ["grok:grok-4.6@high"]);
+    assert.deepEqual(lanesOf(plan, "bug-fix"), ["claude:claude-opus-5-5@xhigh"]);
     assert.deepEqual(lanesOf(plan, "swarm workers"), ["grok:grok-4.6@high"]);
+    assert.deepEqual(lanesOf(plan, "how explorer"), ["grok:grok-4.6@high"]);
     assert.deepEqual(lanesOf(plan, "arena runners"), [
       "claude:fable@max",
       "codex:gpt-6-astra@max",
@@ -358,7 +360,7 @@ describe("buildPlan", () => {
     });
     assert.deepEqual(lanesOf(plan, "swarm workers"), ["codex:gpt-6-sol@high"]);
     assert.deepEqual(lanesOf(plan, "why synthesizer"), ["auto"]);
-    assert.deepEqual(lanesOf(plan, "bug-fix"), ["grok:grok-4.6@xhigh"]);
+    assert.deepEqual(lanesOf(plan, "bug-fix"), ["claude:claude-opus-5-5@xhigh"]);
     assert.deepEqual(plan.efforts.sol, ["high"]);
     assert.equal(plan.pairs.find((p) => p.pair === "sol@high")?.route, "runner");
     assert.deepEqual(
@@ -406,7 +408,7 @@ describe("buildPlan", () => {
       roles: { "bug-fix": ["grok:grok-4.6@xhigh"] },
     });
     assert.deepEqual(lanesOf(plan, "bug-fix"), ["grok:grok-4.6@xhigh"]);
-    assert.deepEqual(lanesOf(plan, "hillclimb"), ["grok:grok-4.6@high"]);
+    assert.deepEqual(lanesOf(plan, "how explorer"), ["grok:grok-4.6@high"]);
     assert.deepEqual(lanesOf(plan, "swarm workers"), ["grok:grok-4.6@high"]);
     assert.deepEqual(lanesOf(plan, "arena runners"), [
       "claude:fable@max",
@@ -468,7 +470,7 @@ describe("buildPlan", () => {
     assert.deepEqual(codex.verified, []);
     assert.deepEqual(
       codex.pairs.map((p) => p.pair),
-      ["fable@max", "opus@xhigh", "astra@max", "grok@xhigh", "grok-4-7@high", "cursor-grok@high"]
+      ["fable@max", "opus@xhigh", "sol@xhigh", "astra@max", "grok@xhigh", "grok-4-7@high", "cursor-grok@high"]
     );
   });
 
@@ -497,7 +499,7 @@ describe("buildPlan", () => {
     putSheet("claude", "# pstack model configuration\n\nswarm workers: claude:claude-opus-5-5@xhigh, grok:grok-4.6@xhigh\n");
     const plan = buildPlan({ parent: "claude", home, matrix });
     assert.deepEqual(lanesOf(plan, "swarm workers"), ["claude:claude-opus-5-5@xhigh", "grok:grok-4.6@xhigh"]);
-    assert.deepEqual(lanesOf(plan, "bug-fix"), ["grok:grok-4.6@xhigh"]);
+    assert.deepEqual(lanesOf(plan, "bug-fix"), ["claude:claude-opus-5-5@xhigh"]);
     assert.equal(plan.rows.length, matrix.roles.length);
     assert.deepEqual(plan.rows.map((r) => r.role), matrix.roles.map((r) => r.role));
   });
@@ -513,7 +515,7 @@ describe("buildPlan", () => {
     );
     const plan = buildPlan({ parent: "claude", home, matrix });
     assert.equal(plan.rows.length, 22);
-    assert.deepEqual(lanesOf(plan, "bug-fix"), ["grok:grok-4.6@xhigh"]);
+    assert.deepEqual(lanesOf(plan, "bug-fix"), ["claude:claude-opus-5-5@xhigh"]);
     assert.deepEqual(lanesOf(plan, "interrogate reviewers"), [
       "claude:fable@max",
       "codex:gpt-6-astra@max",
@@ -547,15 +549,16 @@ describe("buildPlan", () => {
 
   it("on a mixed sheet planned with no input renders the file byte for byte", () => {
     const mixed = firstRunSheet("claude").replace(
-      "hillclimb: grok:grok-4.6@xhigh",
-      "hillclimb: grok:grok-4.6@high"
+      "how explorer: grok:grok-4.6@xhigh",
+      "how explorer: grok:grok-4.6@high"
     );
+    assert.notEqual(mixed, firstRunSheet("claude"));
     putSheet("claude", mixed);
     const plan = buildPlan({ parent: "claude", home, matrix });
     assert.equal(plan.sheet, mixed);
     assert.deepEqual(plan.efforts.grok, ["high", "xhigh"]);
-    assert.deepEqual(lanesOf(plan, "bug-fix"), ["grok:grok-4.6@xhigh"]);
-    assert.deepEqual(lanesOf(plan, "hillclimb"), ["grok:grok-4.6@high"]);
+    assert.deepEqual(lanesOf(plan, "swarm workers"), ["grok:grok-4.6@xhigh"]);
+    assert.deepEqual(lanesOf(plan, "how explorer"), ["grok:grok-4.6@high"]);
   });
 
   it("rejects an unknown parent", () => {
@@ -586,16 +589,22 @@ describe("pre-pr rows", () => {
   });
 
   it("warns when an authoring row shares the reviewer family and is silent once they differ", () => {
-    const grokAuthor = buildPlan({ parent: "claude", home, matrix, roles: { "feature, refactoring": ["grok:grok-4.7@xhigh"] } });
-    assert.deepEqual(grokAuthor.warnings, [
+    const grok = ["grok:grok-4.6@xhigh"];
+    const grokAuthors = buildPlan({
+      parent: "claude",
+      home,
+      matrix,
+      roles: { "feature, refactoring": ["grok:grok-4.7@xhigh"], "bug-fix": grok, "perf-issue": grok, hillclimb: grok },
+    });
+    assert.deepEqual(grokAuthors.warnings, [
       "feature, refactoring and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
       "bug-fix and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
       "perf-issue and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
       "hillclimb and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
     ]);
-    const opus = ["claude:claude-opus-5-5@xhigh"];
-    const crossed = buildPlan({ parent: "claude", home, matrix, roles: { "feature, refactoring": opus, "bug-fix": opus, "perf-issue": opus, "hillclimb": opus } });
-    assert.deepEqual(crossed.warnings, []);
+    for (const parent of ["claude", "codex"]) {
+      assert.deepEqual(buildPlan({ parent, home, matrix }).warnings, [], `${parent} first run`);
+    }
   });
 
   it("warns for an authoring row with any lane in the reviewer's provider, never for an alias or a non-authoring row", () => {
@@ -917,7 +926,8 @@ describe("writeSheet", () => {
     const written = writeSheet(effort, effortDir, { home });
     assert.deepEqual([written.sheet, written.ledger], ["updated", "unchanged"]);
     assert.equal(readFileSync(plan.ledgerPath, "utf8"), ledgerText);
-    assert.match(readFileSync(plan.sheetPath, "utf8"), /^bug-fix: grok:grok-4\.6@high$/m);
+    assert.match(readFileSync(plan.sheetPath, "utf8"), /^swarm workers: grok:grok-4\.6@high$/m);
+    assert.match(readFileSync(plan.sheetPath, "utf8"), /^bug-fix: claude:claude-opus-5-5@max$/m);
 
     const solDir = join(home, "sol-run");
     const sol = buildPlan({ parent: "claude", home, matrix, roles: { ...CLI_ONLY_ROLES, "swarm workers": ["codex:gpt-6-sol@high"] } });
@@ -1180,7 +1190,7 @@ describe("command line", () => {
     assert.equal(cli(["plan", "--parent", "claude", "--home", home, "--dir", runDir]).code, 0);
     const path = join(runDir, "plan.json");
     const { warnings, ...older } = JSON.parse(readFileSync(path, "utf8")) as Plan;
-    assert.equal(warnings.length, 4);
+    assert.deepEqual(warnings, []);
     writeFileSync(path, `${JSON.stringify({ ...older, schemaVersion: 3 }, null, 2)}\n`);
     const result = cli(["probe", "--dir", runDir]);
     assert.equal(result.code, 1);
@@ -1191,15 +1201,19 @@ describe("command line", () => {
 
   it("plan and write print the plan's warnings on stderr, keep exit 0, and a crossed plan prints none", () => {
     putLedger("claude", ["fable", "opus", "astra", "grok", "grok-4-7", "cursor-grok"]);
-    const firstRun = [
+    const grokWarnings = [
       "warning: feature, refactoring and pre-pr reviewer are both grok; certification will refuse until one of them changes family\n",
       "warning: bug-fix and pre-pr reviewer are both grok; certification will refuse until one of them changes family\n",
       "warning: perf-issue and pre-pr reviewer are both grok; certification will refuse until one of them changes family\n",
       "warning: hillclimb and pre-pr reviewer are both grok; certification will refuse until one of them changes family\n",
     ].join("");
-    const planned = cli(["plan", "--parent", "claude", "--home", home, "--dir", runDir]);
+    const grok = "grok:grok-4.6@xhigh";
+    const planned = cli([
+      "plan", "--parent", "claude", "--home", home, "--dir", runDir,
+      "--role", `feature, refactoring=${grok}`, "--role", `bug-fix=${grok}`, "--role", `perf-issue=${grok}`, "--role", `hillclimb=${grok}`,
+    ]);
     assert.equal(planned.code, 0, planned.stderr);
-    assert.equal(planned.stderr, firstRun);
+    assert.equal(planned.stderr, grokWarnings);
     assert.deepEqual(JSON.parse(planned.stdout).warnings, [
       "feature, refactoring and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
       "bug-fix and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
@@ -1208,7 +1222,7 @@ describe("command line", () => {
     ]);
     const written = cli(["write", "--dir", runDir, "--home", home]);
     assert.equal(written.code, 0, written.stderr);
-    assert.equal(written.stderr, firstRun);
+    assert.equal(written.stderr, grokWarnings);
     assert.equal(JSON.parse(written.stdout).sheet, "created");
 
     const crossedDir = join(home, "crossed-run");
