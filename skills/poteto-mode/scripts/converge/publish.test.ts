@@ -173,3 +173,15 @@ test('a pre-pr PR report reads no CI, so publication succeeds after the PR check
   assert.equal(f.read().statuses[0].state, 'success');
   assert.deepEqual(f.calls().filter(call => call[0] === 'run' || /\/check-runs|\/actions\/(?:workflows\/\d+\/runs|runs\/)/.test(call[1] ?? '')), []);
 });
+for (const execution of ['converge', 'pre-pr'] as const) {
+  test(`${execution} publication refuses while auto-merge is pending, before any write`, t => {
+    const f = fixture(); t.after(f.cleanup);
+    const run = execution === 'pre-pr' ? certifiedPr(f) : '';
+    f.state.autoMerge = true; f.save();
+    const certificate = execution === 'pre-pr' ? ['--certificate', join(run, 'certificate.json')] : [];
+    const published = f.run('publish.ts', ['--report', prReport(f, execution), '--evidence', join(f.directory, 'evidence'), ...certificate]);
+    assert.notEqual(published.status, 0);
+    assert.match(published.stderr, /^Auto-merge is pending on this PR; disarm it before publishing a verdict$/m);
+    assert.deepEqual(f.read().statuses, []); assert.deepEqual(f.read().comments, []);
+  });
+}

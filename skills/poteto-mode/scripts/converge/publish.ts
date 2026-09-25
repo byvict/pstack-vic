@@ -119,7 +119,9 @@ export async function publishVerdict(options: { reportFile: string; laneFiles: s
   if (body.length > 65_536) throw new Error(`Verdict comment exceeds GitHub's 65536-character limit (${body.length})`);
   const existing = (await comments(r.repo, r.pr)).filter(c => isPublication(c, author) && string(c.body).startsWith(`<!-- converge:v1 ${r.id} -->`));
   if (existing.some(c => c.body !== body)) throw new Error('Divergent verdict already published for this round');
-  admitPull(await pull(r.repo, r.pr), current.trusted.config, r.head, r.execution === 'verdict-only');
+  const live = await pull(r.repo, r.pr);
+  admitPull(live, current.trusted.config, r.head, r.execution === 'verdict-only');
+  if (live.autoMerge) throw new Error('Auto-merge is pending on this PR; disarm it before publishing a verdict');
   const comment = existing[0] ?? object(await api(`repos/${r.repo}/issues/${r.pr}/comments`, { body }));
   const commentUrl = string(comment.html_url);
   if (!new RegExp(`^https://github\\.com/${r.repo}/pull/${r.pr}#issuecomment-[0-9]+$`, 'i').test(commentUrl)) throw new Error('Unexpected verdict comment URL');
