@@ -107,6 +107,7 @@ export async function publishVerdict(options: { reportFile: string; laneFiles: s
   const dossier: Dossier = { schemaVersion: 1, round: r, decision: decide(report, admitted), reconcileDigest: jsonHash(report), evidenceDigest: jsonHash(admitted), coverage: admitted.flatMap(l => l.coverage), riskAdjudication: admitted.flatMap(l => l.risks), artifactIds: admitted.flatMap(l => l.artifacts.map(a => a.id)), inputFingerprint: report.inputFingerprint, retainedFrom, certificate };
   const author = await principal();
   const body = `<!-- converge:v1 ${r.id} -->\n\`\`\`json\n${JSON.stringify(dossier, null, 2)}\n\`\`\`\n`;
+  if (body.length > 65_536) throw new Error(`Verdict comment exceeds GitHub's 65536-character limit (${body.length})`);
   const existing = (await comments(r.repo, r.pr)).filter(c => isPublication(c, author) && string(c.body).startsWith(`<!-- converge:v1 ${r.id} -->`));
   if (existing.some(c => c.body !== body)) throw new Error('Divergent verdict already published for this round');
   admitPull(await pull(r.repo, r.pr), current.trusted.config, r.head, r.execution === 'verdict-only');
