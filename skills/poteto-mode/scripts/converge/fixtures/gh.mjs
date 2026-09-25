@@ -52,7 +52,18 @@ else if (args[0] === 'api') {
     const content = state.blobs[path];
     if (content === undefined) fail();
     send({ type: 'file', encoding: 'base64', size: Buffer.byteLength(content), content: Buffer.from(content).toString('base64') });
-  } else if (endpoint.startsWith(`${root}/compare/`)) send({ merge_base_commit: { sha: state.base } });
+  }
+  else if (endpoint.startsWith(`${root}/compare/`) && args.some(a => a.includes('application/vnd.github.diff'))) {
+    const [, head] = endpoint.slice(`${root}/compare/`.length).split('...');
+    if (head !== (state.pushedHead ?? state.head)) fail();
+    process.stdout.write(state.diff);
+  }
+  else if (endpoint.startsWith(`${root}/compare/`)) {
+    const [, head] = endpoint.slice(`${root}/compare/`.length).split('...');
+    if (head !== (state.pushedHead ?? state.head)) fail();
+    send({ merge_base_commit: { sha: state.base }, files: state.files });
+  }
+  else if (endpoint === `${root}/pulls` && query.get('base') === 'main') send(state.pulls ?? []);
   else if (endpoint === `${root}/pulls/1/files`) send(state.files);
   else if (endpoint === `${root}/actions/workflows`) send({ workflows: [{ id: state.workflowId, name: 'Tests', path: '.github/workflows/tests.yml', state: 'active' }] });
   else if (endpoint.includes('/check-runs')) {

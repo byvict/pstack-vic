@@ -1,6 +1,6 @@
 import { writeFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
-import { executionId, matches, testOnly, type Claim, type Finding, type Report } from './contract.ts';
+import { executionId, executions, matches, testOnly, type Claim, type Execution, type Finding, type Report } from './contract.ts';
 import { snapshot, type Snapshot, type TextSource } from './github.ts';
 
 const secretRules = [
@@ -52,7 +52,7 @@ function ordinaryDoc(path: string): boolean {
   return /(?:\.md|\.txt|\.rst)$/.test(path) && !/(?:^|\/)(?:AGENTS|CLAUDE|SKILL)\.md$/.test(path) && !/^(?:\.cursor|\.github|skills|scripts|tools)\//.test(path)
     || /^(?:LICENSE|README|CHANGELOG)(?:\.md|\.txt)?$/.test(path);
 }
-export function analyze(s: Snapshot, options: { id: string; configPath: string; execution: 'converge' | 'verdict-only' }): Report {
+export function analyze(s: Snapshot, options: { id: string; configPath: string; execution: Execution }): Report {
   const paths = [...new Set(s.files.flatMap(f => f.previous ? [f.path, f.previous] : [f.path]))];
   const c = s.trusted.config;
   const surfacePaths = paths.filter(path => c.surfaces.some(pattern => matches(path, pattern)));
@@ -85,24 +85,29 @@ export function analyze(s: Snapshot, options: { id: string; configPath: string; 
   const injection = [...screenInjection(s.sources), ...diffSources.flatMap(source => screenInjection([source]).map(f => ({ ...f, source: 'diff' as const, path: source.id })))];
   const findings = [...hardList.filter(f => f.severity === 'blocking'), ...injection];
   const mode = paths.length > 0 && (paths.every(ordinaryDoc) || s.dependencyOnly) && !surfacePaths.length && !riskPaths.length && !hardList.length ? 'ci-only' : 'full';
-  const lanes: Report['lanes'] = mode === 'ci-only' ? [] : ['pr verifier'];
+  const lanes: Report['lanes'] = options.execution === 'pre-pr'
+    ? (mode === 'full' && c.prePr?.certifier ? ['pre-pr reviewer', 'pre-pr certifier'] : ['pre-pr reviewer'])
+    : mode === 'ci-only' ? [] : ['pr verifier'];
+  const ciGap = /Tests workflow|Required check is not successful|Tests logs/;
+  const gaps = options.execution === 'pre-pr' ? s.gaps.filter(g => !ciGap.test(g)) : [...s.gaps];
   return { schemaVersion: 1, round: { id: options.id, repo: c.repo, pr: s.pull.number, head: s.pull.head, contract: s.trusted.sha, base: s.base,
     patch_id: s.patchId, verificationDigest: s.verificationDigest, inputDigest: s.inputDigest, configPath: options.configPath, execution: options.execution },
     mode, touchedFeatures, unmappedSurfaces: surfacePaths.filter(p => !s.reachedPaths.includes(p) && !testOnly(p) && !(touchedFeatures.length && (/^client\/(?:src\/)?(?:components|hooks|contexts|lib|utils)\//.test(p) || /^server\/routes\//.test(p) || /^client\/(?:src\/)?App\.[jt]sx?$/.test(p)))),
-    claims: claims(s), hardList, injection, findings, checks: s.checks, lanes, gaps: [...s.gaps], inputFingerprint: s.inputFingerprint };
+    claims: claims(s), hardList, injection, findings, checks: s.checks, lanes, gaps, inputFingerprint: s.inputFingerprint };
 }
-export async function reconcile(options: { repo: string; pr: number; configPath?: string; execution?: 'converge' | 'verdict-only'; output: string }): Promise<Report> {
+export async function reconcile(options: { repo: string; pr: number; configPath?: string; execution?: Execution; output: string }): Promise<Report> {
   const configPath = options.configPath ?? '.cursor/converge.json';
   const execution = options.execution ?? 'converge';
-  const report = analyze(await snapshot(options.repo, options.pr, configPath, execution === 'verdict-only'), { id: executionId(), configPath, execution });
+  const report = analyze(await snapshot(options.repo, options.pr, configPath, execution), { id: executionId(), configPath, execution });
   writeFileSync(options.output, JSON.stringify(report, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
   return report;
 }
 export async function main(args: string[]): Promise<number> {
   try {
     const { values } = parseArgs({ args, options: { repo: { type: 'string' }, pr: { type: 'string' }, config: { type: 'string' }, output: { type: 'string' }, execution: { type: 'string' } } });
-    if (!values.repo || !values.pr || !values.output || !/^\d+$/.test(values.pr) || (values.execution && !['converge', 'verdict-only'].includes(values.execution))) throw new Error('Usage: converge-reconcile --repo owner/repo --pr N --config path --output report.json [--execution verdict-only]');
-    const result = await reconcile({ repo: values.repo, pr: Number(values.pr), configPath: values.config, output: values.output, execution: values.execution === 'verdict-only' ? 'verdict-only' : 'converge' });
+    const execution = executions.find(value => value === (values.execution ?? 'converge'));
+    if (!values.repo || !values.pr || !values.output || !/^\d+$/.test(values.pr) || !execution) throw new Error('Usage: converge-reconcile --repo owner/repo --pr N --config path --output report.json [--execution verdict-only|pre-pr]');
+    const result = await reconcile({ repo: values.repo, pr: Number(values.pr), configPath: values.config, output: values.output, execution });
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
     return 0;
   } catch (error) { process.stderr.write((error instanceof SyntaxError ? 'Malformed JSON input' : error instanceof Error ? error.message : 'Reconcile failed') + '\n'); return 1; }
