@@ -206,3 +206,30 @@ test('sweep disarms an armed PR when the trunk contract stops loading during the
   assert.deepEqual(outcomes(result.stdout), [[1, 'refused', `Trunk contract unavailable: ${unparsable()}, auto-merge disarmed`]]);
   assert.deepEqual(f.read().mutations, disabled);
 });
+for (const dryRun of [false, true]) {
+  test(`sweep ${dryRun ? 'dry run ' : ''}exits 1 on a trunk contract that does not load, even with no open PR`, t => {
+    const f = fixture(); t.after(f.cleanup);
+    const live = f.read(); live.blobs['.cursor/converge.json'] = 'not json'; Object.assign(f.state, live); f.save();
+    const result = f.run('converge-sweep', ['--repo', 'Example/app', ...(dryRun ? ['--dry-run'] : [])]);
+    assert.equal(result.status, 1);
+    assert.deepEqual(JSON.parse(result.stdout), { swept: [] });
+    assert.equal(result.stderr, `Trunk contract unavailable: ${unparsable()}\n`);
+    assert.deepEqual(f.read().mutations, []);
+  });
+}
+test('sweep treats a failed contract read at the start as a contract failure and disarms the armed PR', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const live = f.read(); live.autoMerge = true; live.failEndpoint = '/actions/workflows'; Object.assign(f.state, live); f.save(); listed(f);
+  const result = f.run('converge-sweep', ['--repo', 'Example/app']);
+  assert.equal(result.status, 1);
+  assert.deepEqual(outcomes(result.stdout), [[1, 'refused', 'Trunk contract unavailable: gh request failed, auto-merge disarmed']]);
+  assert.deepEqual(f.read().mutations, disabled);
+});
+test('sweep treats a contract read that starts failing during the sweep as a contract failure and disarms the armed PR', t => {
+  const f = fixture(); t.after(f.cleanup); published(f);
+  const live = f.read(); live.autoMerge = true; live.after = { endpoint: 'commits/main', reads: 0, set: { failEndpoint: '/actions/workflows' } }; Object.assign(f.state, live); f.save(); listed(f);
+  const result = f.run('converge-sweep', ['--repo', 'Example/app']);
+  assert.equal(result.status, 1);
+  assert.deepEqual(outcomes(result.stdout), [[1, 'refused', 'Trunk contract unavailable: gh request failed, auto-merge disarmed']]);
+  assert.deepEqual(f.read().mutations, disabled);
+});

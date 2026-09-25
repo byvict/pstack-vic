@@ -16,11 +16,11 @@ async function observedDisarm(repo: string, pr: number, dryRun: boolean): Promis
   if (after.autoMerge) return 'still armed';
   return ran === false ? 'already off' : 'disarmed';
 }
-/** A trunk contract that does not load leaves no policy anyone can check an armed PR against, so the sweep fails safe and disarms. A failed GitHub read is not such a failure: the reads a disarm needs are failing too, so it still throws. */
+/** A trunk contract that does not load, for any reason, leaves no policy anyone can check an armed PR against, so the sweep fails safe and disarms. */
 async function contract(repo: string, configPath?: string): Promise<Trusted | { failure: string }> {
   try { return await trusted(repo, configPath ?? '.cursor/converge.json'); }
   catch (error) {
-    if (error instanceof RequestError || !(error instanceof Error)) throw error;
+    if (!(error instanceof Error)) throw error;
     return { failure: 'Trunk contract unavailable: ' + error.message };
   }
 }
@@ -71,19 +71,23 @@ async function eachOpen(repo: string, base: string, one: (pr: number) => Promise
   }
   return { swept };
 }
-export async function sweep(options: { repo: string; configPath?: string; dryRun: boolean }): Promise<{ swept: Swept[] }> {
+export async function sweep(options: { repo: string; configPath?: string; dryRun: boolean }): Promise<{ swept: Swept[]; failure: string | null }> {
   const repo = repoName(options.repo);
   const t = await contract(repo, options.configPath);
-  if ('failure' in t) return eachOpen(repo, string(object(await api(`repos/${repo}`)).default_branch), pr => withoutContract(repo, pr, t.failure, options.dryRun));
+  if ('failure' in t) {
+    const { swept } = await eachOpen(repo, string(object(await api(`repos/${repo}`)).default_branch), pr => withoutContract(repo, pr, t.failure, options.dryRun));
+    return { swept, failure: t.failure };
+  }
   const author = await principal();
-  return eachOpen(t.repo, t.config.trunk, pr => judge(t.repo, pr, author, options));
+  return { ...(await eachOpen(t.repo, t.config.trunk, pr => judge(t.repo, pr, author, options))), failure: null };
 }
 export async function main(args: string[]): Promise<number> {
   try {
     const { values } = parseArgs({ args, options: { repo: { type: 'string' }, config: { type: 'string' }, 'dry-run': { type: 'boolean', default: false } } });
     if (!values.repo) throw new Error('Usage: converge-sweep --repo owner/repo [--config path] [--dry-run]');
     const result = await sweep({ repo: values.repo, configPath: values.config, dryRun: values['dry-run'] });
-    process.stdout.write(JSON.stringify(result, null, 2) + '\n');
-    return result.swept.some(s => s.outcome === 'refused') ? 1 : 0;
+    process.stdout.write(JSON.stringify({ swept: result.swept }, null, 2) + '\n');
+    if (result.failure) process.stderr.write(result.failure + '\n');
+    return result.failure || result.swept.some(s => s.outcome === 'refused') ? 1 : 0;
   } catch (error) { process.stderr.write((error instanceof Error ? error.message : 'Sweep failed') + '\n'); return 1; }
 }
