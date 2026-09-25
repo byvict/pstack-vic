@@ -37,12 +37,13 @@ async function protection(t: Trusted, head: string, pending: boolean): Promise<v
     if (!match.some(check => check.state === 'success')) throw new Error('Required protected check is not successful: ' + c.context);
   }
 }
-interface Verified { dossier: Dossier; url: string; rederive: string | null }
-/** A pre-pr certificate is assembled at one trunk tip. When trunk has moved by arm time, the certificate still authorizes merge only while the same patch under the same policy re-derives VERIFIED from its retained coverage at the tip the arm reads. That binds the trunk tip at arm time, not the tip the merge lands on. */
+interface Verified { dossier: Dossier; url: string; fingerprint: string; rederive: string | null }
+/** A pre-pr certificate is assembled at one trunk tip, and its publication decided over the PR text of that moment; its lanes never read PR text. When the tip or the text has changed by arm time, the certificate still authorizes merge only while the same patch under the same policy re-derives VERIFIED from its retained coverage, over the current text, at the tip the arm reads. That binds the trunk tip at arm time, not the tip the merge lands on. */
 async function certifiedAtTip(t: Trusted, pr: number, v: Verified): Promise<void> {
   const r = v.dossier.round;
   const current = await snapshot(t.repo, pr, r.configPath, 'pre-pr');
   if (current.trusted.sha !== t.sha) throw new Error('Trunk moved during re-derivation');
+  if (current.inputFingerprint !== v.fingerprint) throw new Error('PR text changed during re-derivation');
   const report = analyze(current, { id: r.id, configPath: r.configPath, execution: 'pre-pr' });
   if (report.round.head !== r.head || report.round.patch_id !== r.patch_id || report.round.verificationDigest !== r.verificationDigest) throw new Error('Certificate patch or policy differs at trunk tip ' + t.sha);
   const decision = decide(report, retainedLanes(report.lanes, v.dossier, v.url));
@@ -52,7 +53,6 @@ async function verdict(t: Trusted, pr: number, head: string, author: number): Pr
   const status = await verdictStatus(t.repo, pr, head, author);
   if (status.kind === 'foreign') throw new Error(status.refusal);
   if (status.kind === 'none') throw new Error('Latest verdict status is not trusted VERIFIED');
-  const url = status.url;
   const comment = object(await api(`repos/${t.repo}/issues/comments/${status.commentId}`));
   if (integer(object(comment.user).id) !== author) throw new Error('Verdict comment author is untrusted');
   const dossier = dossierFromComment(comment);
@@ -64,8 +64,11 @@ async function verdict(t: Trusted, pr: number, head: string, author: number): Pr
   if (!newest || newest.id !== comment.id) throw new Error('A newer converge round supersedes this verdict');
   const live = await pull(t.repo, pr);
   const fingerprint = jsonHash({ body: live.body, comments: all.filter(c => !isPublication(c, author)).map(c => [c.id, c.body, c.updated_at]) });
-  if (fingerprint !== dossier.inputFingerprint) throw new Error('PR text changed after verification');
-  return { dossier, url, rederive: r.contract === t.sha ? null : `Re-derived the pre-pr verdict from contract ${r.contract} at trunk tip ${t.sha}` };
+  const moved = r.contract !== t.sha;
+  const edited = fingerprint !== dossier.inputFingerprint;
+  if (edited && r.execution !== 'pre-pr') throw new Error('PR text changed after verification');
+  const rederive = moved || edited ? 'Re-derived the pre-pr verdict' + (moved ? ` from contract ${r.contract} at trunk tip ${t.sha}` : '') + (edited ? ' over changed PR text' : '') : null;
+  return { dossier, url: status.url, fingerprint, rederive };
 }
 export async function disarm(repo: string, pr: number): Promise<void> {
   if ((await pull(repo, pr)).autoMerge) command('gh', ['pr', 'merge', String(pr), '--repo', repo, '--disable-auto']);
