@@ -16,7 +16,13 @@ const repo = 'Example/app';
 const root = `repos/${repo}`;
 if (args[0] === 'pr' && args[1] === 'diff') process.stdout.write(state.diff);
 else if (args[0] === 'run') process.stdout.write(state.log ?? 'Tests completed\n');
-else if (args[0] === 'pr' && args[1] === 'merge') { state.mutations.push(args); if (args.includes('--disable-auto') && !state.stickyAutoMerge) state.autoMerge = false; save(); process.stdout.write('{}'); }
+else if (args[0] === 'pr' && args[1] === 'merge') {
+  if (args.includes('--disable-auto') && state.failDisarm) fail();
+  state.mutations.push(args);
+  if (args.includes('--auto')) state.autoMerge = true;
+  if (args.includes('--disable-auto') && !state.stickyAutoMerge) state.autoMerge = false;
+  save(); process.stdout.write('{}');
+}
 else if (args[0] === 'api') {
   const raw = args[1];
   const endpoint = raw.split('?')[0];
@@ -29,7 +35,7 @@ else if (args[0] === 'api') {
       const comment = { id, body: body.body, user: { id: 7 }, html_url: `https://github.com/${repo}/pull/1#issuecomment-${id}`, updated_at: '2026-09-21T00:00:00Z' };
       state.comments.push(comment); save(); send(comment);
     } else if (endpoint === `${root}/statuses/${state.head}`) {
-      const status = { ...body, id: 200 + state.statuses.length, creator: { id: 7 } };
+      const status = { ...body, id: 200 + state.statuses.length, creator: { id: 7 }, sha: state.head };
       state.statuses.unshift(status); save(); send(status);
     } else fail();
   } else if (endpoint === 'graphql') {
@@ -47,8 +53,9 @@ else if (args[0] === 'api') {
   else if (endpoint === root) send({ default_branch: 'main' });
   else if (endpoint === `${root}/pulls/1`) {
     later('pulls/1');
-    send({ number: 1, head: { sha: state.head, ref: 'change' }, base: { ref: state.prBase }, state: state.prState, draft: false, body: state.body, labels: state.hold ? [{ name: 'needs-victor' }] : [], user: { id: 10, login: 'author', type: 'User' }, auto_merge: state.autoMerge ? {} : null });
+    send({ number: 1, head: { sha: state.head, ref: 'change' }, base: { ref: state.prBase }, state: state.prState, draft: state.prDraft, body: state.body, labels: state.hold ? [{ name: 'needs-victor' }] : [], user: { id: 10, login: 'author', type: 'User' }, auto_merge: state.autoMerge ? {} : null });
   }
+  else if (/^repos\/Example\/app\/pulls\/\d+$/.test(endpoint) && state.pulls.some(p => p.number === Number(endpoint.split('/').at(-1)))) send(state.pulls.find(p => p.number === Number(endpoint.split('/').at(-1))));
   else if (endpoint === `${root}/commits/main`) { later('commits/main'); send({ sha: state.trunk }); }
   else if (endpoint.startsWith(`${root}/git/trees/`)) send({ truncated: false, tree: Object.keys(state.blobs).map(path => ({ path, mode: '100644' })) });
   else if (endpoint.startsWith(`${root}/contents/`)) {
@@ -79,7 +86,7 @@ else if (args[0] === 'api') {
   else if (endpoint === `${root}/issues/1/comments`) send(state.comments);
   else if (endpoint === `${root}/pulls/1/comments`) send([]);
   else if (endpoint.startsWith(`${root}/issues/comments/`)) send(state.comments.find(c => c.id === Number(endpoint.split('/').at(-1))) ?? {});
-  else if (endpoint.endsWith('/statuses')) send(state.statuses);
+  else if (endpoint.endsWith('/statuses')) send(state.statuses.filter(s => (s.sha ?? state.head) === endpoint.split('/')[4]));
   else if (endpoint === `${root}/branches/main/protection`) send({ required_status_checks: { contexts: state.protected, checks: state.protected.map(context => ({ context, app_id: context === 'verdict' ? null : 15368 })) } });
   else if (endpoint === `${root}/rules/branches/main`) send([]);
   else fail();

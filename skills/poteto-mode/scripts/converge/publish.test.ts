@@ -185,3 +185,15 @@ for (const execution of ['converge', 'pre-pr'] as const) {
     assert.deepEqual(f.read().statuses, []); assert.deepEqual(f.read().comments, []);
   });
 }
+test('after an arm, a new publication refuses while auto-merge is pending', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const first = f.run('publish.ts', ['--report', prReport(f, 'converge'), '--evidence', join(f.directory, 'evidence')]);
+  assert.equal(first.status, 0, first.stderr);
+  const armed = f.run('converge-arm', ['--repo', 'Example/app', '--pr', '1', '--head', f.state.head, '--verdict', 'VERIFIED']);
+  assert.equal(armed.status, 0, armed.stderr);
+  const report = join(f.directory, 'second.json');
+  assert.equal(f.run('converge-reconcile', ['--repo', 'Example/app', '--pr', '1', '--output', report]).status, 0);
+  const second = f.run('publish.ts', ['--report', report, '--evidence', join(f.directory, 'evidence')]);
+  assert.notEqual(second.status, 0); assert.match(second.stderr, /^Auto-merge is pending on this PR; disarm it before publishing a verdict$/m);
+  assert.equal(f.read().comments.length, 1); assert.equal(f.read().statuses.length, 1);
+});

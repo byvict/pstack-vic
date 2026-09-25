@@ -190,7 +190,7 @@ test('a certified head that moves before the exit refuses and launches nothing',
 
 test('a trusted status whose dossier names another head still launches an owner', async t => {
   const f = fixture(); t.after(f.cleanup); environment(t, f); publishCertificate(f);
-  const live = f.read(); live.head = 'e'.repeat(40); Object.assign(f.state, live); f.save();
+  const live = f.read(); live.head = 'e'.repeat(40); live.statuses.unshift({ ...live.statuses[0], id: 201, sha: live.head }); Object.assign(f.state, live); f.save();
   let launches = 0;
   t.mock.method(globalThis, 'fetch', async (url: string | URL) => {
     if (String(url).endsWith('/v1/models')) return Response.json(inventory);
