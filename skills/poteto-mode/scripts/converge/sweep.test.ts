@@ -22,12 +22,12 @@ function outcomes(stdout: string) {
 function merge(head: string) {
   return [['pr', 'merge', '1', '--repo', 'Example/app', '--squash', '--auto', '--match-head-commit', head]];
 }
-test('sweep arms the certified PR on trunk and skips the stacked, held, armed and draft ones', t => {
+test('sweep arms the certified PR on trunk and skips the stacked, held and draft ones', t => {
   const f = fixture(); t.after(f.cleanup); published(f);
-  listed(f, [other(2, { base: { ref: 'change' } }), other(3, { labels: [{ name: 'needs-victor' }] }), other(4, { auto_merge: {} }), other(5, { draft: true })]);
+  listed(f, [other(2, { base: { ref: 'change' } }), other(3, { labels: [{ name: 'needs-victor' }] }), other(5, { draft: true })]);
   const result = f.run('converge-sweep', ['--repo', 'Example/app']);
   assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(outcomes(result.stdout), [[1, 'armed', ''], [2, 'skipped', 'base is not trunk'], [3, 'skipped', 'hold label'], [4, 'skipped', 'auto-merge already pending'], [5, 'skipped', 'draft']]);
+  assert.deepEqual(outcomes(result.stdout), [[1, 'armed', ''], [2, 'skipped', 'base is not trunk'], [3, 'skipped', 'hold label'], [5, 'skipped', 'draft']]);
   assert.deepEqual(f.read().mutations, merge(f.state.head));
 });
 for (const unlinked of [false, true]) test(`sweep skips a PR ${unlinked ? 'whose VERIFIED status has no link' : 'without a verdict status'} and exits 0`, t => {
@@ -93,3 +93,28 @@ for (const [name, knobs, outcome, reason, mutations] of [
     assert.deepEqual(f.read().mutations, mutations);
   });
 }
+for (const [name, verdict, outcome, reason] of [
+  ['a trusted verdict', 'trusted', 'skipped', 'auto-merge already pending'],
+  ['no verdict', 'none', 'disarmed', 'no trusted verdict on head'],
+  ['a verdict from another account', 'foreign', 'disarmed', 'VERIFIED verdict status was posted by another account: other-bot'],
+] as const) {
+  test(`sweep keeps auto-merge only on a head with a trusted verdict: ${name} is ${outcome}`, t => {
+    const f = fixture(); t.after(f.cleanup);
+    if (verdict === 'trusted') published(f);
+    const live = f.read(); live.autoMerge = true;
+    if (verdict === 'foreign') live.statuses = [{ context: 'verdict', state: 'success', description: 'VERIFIED by converge', target_url: 'https://github.com/Example/app/pull/1#issuecomment-100', id: 200, creator: { id: 8, login: 'other-bot' } }];
+    Object.assign(f.state, live); f.save(); listed(f);
+    const result = f.run('converge-sweep', ['--repo', 'Example/app']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(outcomes(result.stdout), [[1, outcome, reason]]);
+    assert.deepEqual(f.read().mutations, outcome === 'disarmed' ? disabled : []);
+  });
+}
+test('sweep dry run reports an armed PR without a trusted verdict and makes no mutation', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const live = f.read(); live.autoMerge = true; Object.assign(f.state, live); f.save(); listed(f);
+  const result = f.run('converge-sweep', ['--repo', 'Example/app', '--dry-run']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(outcomes(result.stdout), [[1, 'dry-run', 'no trusted verdict on head, would disarm auto-merge']]);
+  assert.deepEqual(f.read().mutations, []);
+});

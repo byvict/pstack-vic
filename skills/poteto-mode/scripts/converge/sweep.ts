@@ -28,8 +28,12 @@ export async function sweep(options: { repo: string; configPath?: string; dryRun
       if (held && p.auto_merge !== null) { swept.push(await unarm(repo, pr, head, 'hold label', options.dryRun)); continue; }
       if (held) { skip('hold label'); continue; }
       if (p.draft === true) { skip('draft'); continue; }
-      if (p.auto_merge !== null) { skip('auto-merge already pending'); continue; }
       const verdict = await verdictStatus(repo, pr, head, author);
+      if (p.auto_merge !== null) {
+        if (verdict.kind === 'trusted') skip('auto-merge already pending');
+        else swept.push(await unarm(repo, pr, head, verdict.kind === 'foreign' ? verdict.reason : 'no trusted verdict on head', options.dryRun));
+        continue;
+      }
       if (verdict.kind === 'none') { skip('no trusted verdict on head'); continue; }
       if (verdict.kind === 'foreign') { swept.push({ pr, head, outcome: 'refused', reason: verdict.reason }); continue; }
       const result = await arm({ repo, pr, head, verdict: 'VERIFIED', dryRun: options.dryRun, configPath: options.configPath, pending: true });
