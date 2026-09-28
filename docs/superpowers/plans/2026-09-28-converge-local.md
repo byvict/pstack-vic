@@ -219,7 +219,7 @@ test('assemble refuses a certifier lane of a provider without an unsandboxed mod
 });
 ```
 
-The second test's `lane(..., { provider: 'claude' })` writes a descriptor `claude:grok-4.7@xhigh`, which `resolveDescriptor` refuses first (`no matrix family for claude:grok-4.7`). Make the `lane` helper accept a `model` option: `descriptor: \`${options.provider ?? 'grok'}:${options.model ?? 'grok-4.7'}@xhigh\`` and `model: options.model ?? 'grok-4.7'` in the receipt, and pass `{ provider: 'claude', model: 'claude-opus-5-5' }` with `reportedModel: 'claude-opus-5-5'` (add a `reportedModel` option that defaults to `'grok-4.7-build'`).
+The second test's `lane(..., { provider: 'claude' })` writes a descriptor with provider claude, model grok-4.7 and effort xhigh, which `resolveDescriptor` refuses first (`no matrix family for claude:grok-4.7`). Make the `lane` helper accept a `model` option: `descriptor: \`${options.provider ?? 'grok'}:${options.model ?? 'grok-4.7'}@xhigh\`` and `model: options.model ?? 'grok-4.7'` in the receipt, and pass `{ provider: 'claude', model: 'claude-opus-5-5' }` with `reportedModel: 'claude-opus-5-5'` (add a `reportedModel` option that defaults to `'grok-4.7-build'`).
 
 In `evidence.test.ts`, find the test that asserts the `Role ... requires grok grok-4.7` refusal (search `requires grok`) and replace its expectation: a `pre-pr reviewer` manifest with descriptor `cursor:grok-4.7@high` and an http receipt is refused with `/Role pre-pr reviewer runs on a CLI lane, not cursor/`; a `pr verifier` manifest with descriptor `grok:grok-4.7@high` and a CLI receipt is refused with `/Role pr verifier runs on a cloud lane, not grok/`.
 
