@@ -148,7 +148,7 @@ test('the published comment carries the certificate and stays byte-identical on 
   const certificate = JSON.parse(readFileSync(join(run, 'certificate.json'), 'utf8'));
   const dossier = commentDossier(f.read().comments[0]);
   assert.deepEqual(dossier.certificate, certificate); assert.deepEqual(JSON.parse(published.stdout).dossier.certificate, certificate);
-  assert.deepEqual([certificate.runs.length, certificate.lanes.length, certificate.artifacts.length, certificate.adjustRounds, certificate.authorProvider], [1, 2, 2, 1, 'claude']);
+  assert.deepEqual([certificate.runs.length, certificate.lanes.length, certificate.artifacts.length, certificate.adjustRounds, certificate.authorProviders], [1, 2, 2, 1, ['claude']]);
   assert.match(certificate.toolingRef, /^pstack-vic@\d+\.\d+\.\d+$/);
   const body = f.read().comments[0].body;
   const retry = f.run('publish.ts', args);

@@ -76,7 +76,7 @@ test('assemble writes a VERIFIED certificate from clean runs and admitted lanes'
   const result = certify(f, ['assemble', '--directory', run, '--author-provider', 'claude', '--output', join(run, 'certificate.json'), '--adjust-rounds', '2']);
   assert.equal(result.status, 0, result.stderr);
   const certificate = JSON.parse(result.stdout);
-  assert.equal(certificate.decision.verdict, 'VERIFIED'); assert.deepEqual(certificate.coverage, ['login']); assert.equal(certificate.authorProvider, 'claude');
+  assert.equal(certificate.decision.verdict, 'VERIFIED'); assert.deepEqual(certificate.coverage, ['login']); assert.deepEqual(certificate.authorProviders, ['claude']);
   assert.equal(certificate.toolingRef, 'pstack-vic@' + JSON.parse(readFileSync(new URL('../../../../package.json', import.meta.url), 'utf8')).version);
   assert.deepEqual([certificate.runs[0].command, certificate.runs[0].head, certificate.runs[0].clean], ['echo ok', f.state.head, true]);
   assert.equal(certificate.adjustRounds, 2);
@@ -165,7 +165,7 @@ for (const fault of ['same-family', 'failed-run', 'edited-log', 'missing-run', '
     if (fault === 'artifact-bytes') { const file = join(run, 'lanes', 'pre-pr-certifier', `artifacts/converge/${round.id}/pre-pr-certifier/screen.png`); const png = readFileSync(file); png[png.length - 1] ^= 1; writeFileSync(file, png); }
     const result = certify(f, ['assemble', '--directory', run, '--author-provider', fault === 'same-family' ? 'grok' : 'claude', '--output', join(run, 'certificate.json'), '--adjust-rounds', '0']);
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, { 'same-family': /same family as the author/, 'failed-run': /Run suite exited 1/, 'edited-log': /Run suite log changed/, 'missing-run': /Required run missing: suite/, 'renamed-run': /Run record file name differs from its name/, 'unlisted-run': /Run lint is not in the contract/, 'open-finding': /NOT VERIFIED/, 'unmapped-surface': /lacks a trusted feature recipe/, 'missing-certifier': /Required independent lane unavailable/, 'other-command': /Run suite command differs from the contract/, 'moved-head': /Run suite was not recorded at the certified head/, 'modified-checkout': /Run suite was recorded on a modified checkout/, 'untracked-file': /Run suite was recorded on a modified checkout/, 'artifact-bytes': /Artifact bytes differ from lane report/ }[fault]);
+    assert.match(result.stderr, { 'same-family': /same family as an author/, 'failed-run': /Run suite exited 1/, 'edited-log': /Run suite log changed/, 'missing-run': /Required run missing: suite/, 'renamed-run': /Run record file name differs from its name/, 'unlisted-run': /Run lint is not in the contract/, 'open-finding': /NOT VERIFIED/, 'unmapped-surface': /lacks a trusted feature recipe/, 'missing-certifier': /Required independent lane unavailable/, 'other-command': /Run suite command differs from the contract/, 'moved-head': /Run suite was not recorded at the certified head/, 'modified-checkout': /Run suite was recorded on a modified checkout/, 'untracked-file': /Run suite was recorded on a modified checkout/, 'artifact-bytes': /Artifact bytes differ from lane report/ }[fault]);
   });
 }
 for (const fault of ['failed-run', 'moved-head', 'unlisted-run'] as const) {
@@ -198,11 +198,13 @@ test('assemble refuses a report edited after it was written', t => {
   const result = certify(f, ['assemble', '--directory', run, '--author-provider', 'claude', '--output', join(run, 'certificate.json'), '--adjust-rounds', '0']);
   assert.notEqual(result.status, 0); assert.match(result.stderr, /Reconciliation report changed or is stale/);
 });
-test('assemble refuses an author provider outside the model matrix', t => {
+test('assemble refuses an author family that is outside the model matrix, malformed, repeated or empty', t => {
   const f = prePrFixture(); t.after(f.cleanup);
   const run = join(f.directory, 'run');
-  const result = certify(f, ['assemble', '--directory', run, '--author-provider', 'Grok', '--output', join(run, 'certificate.json'), '--adjust-rounds', '0']);
-  assert.notEqual(result.status, 0); assert.match(result.stderr, /Unknown author provider: Grok/);
+  for (const [value, message] of [['claude,gemini', /Unknown author provider: gemini/], ['Grok', /Invalid author family/], ['claude, claude', /Duplicate author family/], [' , ', /Certificate needs at least one author family/]] as const) {
+    const result = certify(f, ['assemble', '--directory', run, '--author-provider', value, '--output', join(run, 'certificate.json'), '--adjust-rounds', '0']);
+    assert.notEqual(result.status, 0); assert.match(result.stderr, message);
+  }
 });
 test('assemble writes the certificate only in the run directory', t => {
   const f = prePrFixture(); t.after(f.cleanup);
@@ -210,4 +212,24 @@ test('assemble writes the certificate only in the run directory', t => {
   lane(f, round, 'pre-pr reviewer'); lane(f, round, 'pre-pr certifier');
   const result = certify(f, ['assemble', '--directory', run, '--author-provider', 'claude', '--output', join(f.directory, 'certificate.json'), '--adjust-rounds', '0']);
   assert.notEqual(result.status, 0); assert.match(result.stderr, /Certificate must be written in the run directory/);
+});
+test('assemble takes a list of author families and refuses a reviewer from any of them', t => {
+  const f = prePrFixture(false, false); t.after(f.cleanup);
+  const { run, round } = prepared(f);
+  lane(f, round, 'pre-pr reviewer');
+  const refused = certify(f, ['assemble', '--directory', run, '--author-provider', 'claude, grok', '--output', join(run, 'certificate.json'), '--adjust-rounds', '0']);
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /Reviewer lane is the same family as an author \(grok\); change the model sheet/);
+  const assembled = certify(f, ['assemble', '--directory', run, '--author-provider', 'claude,codex', '--output', join(run, 'certificate.json'), '--adjust-rounds', '0']);
+  assert.equal(assembled.status, 0, assembled.stderr);
+  const certificate = JSON.parse(readFileSync(join(run, 'certificate.json'), 'utf8'));
+  assert.equal(certificate.schemaVersion, 2);
+  assert.deepEqual(certificate.authorProviders, ['claude', 'codex']);
+  assert.equal(certificate.authorProvider, undefined);
+});
+test('parseCertificate refuses schema 1, an empty author list and an unknown author', () => {
+  const base = { schemaVersion: 2, authorProviders: ['claude'] };
+  assert.throws(() => parseCertificate({ ...base, schemaVersion: 1 }), /Unknown certificate schema/);
+  assert.throws(() => parseCertificate({ ...base, authorProviders: [] }), /Certificate needs at least one author family/);
+  assert.throws(() => parseCertificate({ ...base, authorProviders: ['Claude'] }), /Invalid author family/);
 });

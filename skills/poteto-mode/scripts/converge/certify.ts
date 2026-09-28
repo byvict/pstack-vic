@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { resolve, join, dirname } from 'node:path';
-import { array, boolean, digest, executionId, hash, integer, jsonHash, object, oneOf, parseReport, parseRound, relativePath, roles, sha, string, type Contract, type Decision, type Report, type Role, type Round } from './contract.ts';
+import { array, boolean, digest, executionId, hash, integer, jsonHash, object, oneOf, parseReport, parseRound, relativePath, roles, sha, string, strings, type Contract, type Decision, type Report, type Role, type Round } from './contract.ts';
 import { branchSnapshot } from './github.ts';
 import { analyze } from './reconcile.ts';
 import { admitLane, type AdmittedLane } from './evidence.ts';
@@ -14,7 +14,7 @@ export interface SkippedRun { name: string; command: string; skip: string }
 export interface CertificateLane { manifest: string; role: Role; provider: string; model: string; effort: string; reportedModel: string | null; receiptDigest: string }
 export interface CertificateArtifact { lane: string; id: string; path: string; bytes: number; sha256: string; mediaType: string }
 export interface Certificate {
-  schemaVersion: 1; round: Round; authorProvider: string; runs: (Run | SkippedRun)[]; lanes: CertificateLane[]; artifacts: CertificateArtifact[];
+  schemaVersion: 2; round: Round; authorProviders: string[]; runs: (Run | SkippedRun)[]; lanes: CertificateLane[]; artifacts: CertificateArtifact[];
   decision: Decision; reconcileDigest: string; evidenceDigest: string; coverage: string[]; adjustRounds: number; toolingRef: string;
 }
 function runName(value: unknown): string {
@@ -31,13 +31,21 @@ function laneId(value: unknown): string {
   if (id.includes('/')) throw new Error('Invalid lane id');
   return id;
 }
+function authorProviders(value: unknown): string[] {
+  const list = strings(value);
+  if (!list.length) throw new Error('Certificate needs at least one author family');
+  for (const provider of list) if (!/^[a-z][a-z0-9-]*$/.test(provider)) throw new Error('Invalid author family');
+  if (new Set(list).size !== list.length) throw new Error('Duplicate author family');
+  return list;
+}
 function adjustRounds(value: unknown): number {
   if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 6) throw new Error('Adjust rounds must be an integer from 0 to 6');
   return value;
 }
 export function parseCertificate(value: unknown): Certificate {
   const v = object(value, 'certificate');
-  if (v.schemaVersion !== 1) throw new Error('Unknown certificate schema');
+  if (v.schemaVersion !== 2) throw new Error('Unknown certificate schema');
+  const authors = authorProviders(v.authorProviders);
   const round = parseRound(v.round);
   if (round.execution !== 'pre-pr') throw new Error('Certificate execution must be pre-pr');
   const d = object(v.decision);
@@ -51,7 +59,7 @@ export function parseCertificate(value: unknown): Certificate {
     return { name: runName(r.name), command: string(r.command), skip };
   });
   if (new Set(runs.map(r => r.name)).size !== runs.length) throw new Error('Duplicate run name');
-  return { schemaVersion: 1, round, authorProvider: string(v.authorProvider), runs,
+  return { schemaVersion: 2, round, authorProviders: authors, runs,
     lanes: array(v.lanes).map(raw => { const l = object(raw); return { manifest: relativePath(l.manifest), role: oneOf(l.role, roles), provider: string(l.provider), model: string(l.model), effort: string(l.effort), reportedModel: l.reportedModel === null ? null : string(l.reportedModel), receiptDigest: digest(l.receiptDigest) }; }),
     artifacts: array(v.artifacts).map(raw => {
       const a = object(raw, 'artifact');
@@ -150,10 +158,11 @@ function laneEntries(directory: string, manifest: string, lane: AdmittedLane): {
   };
 }
 /** Re-runs the branch analysis before trusting report.json, so a stale or edited report, or a trunk contract that moved, cannot certify. */
-export async function assemble(options: { directory: string; authorProvider: string; output: string; adjustRounds: number }): Promise<Certificate> {
+export async function assemble(options: { directory: string; authorProviders: string[]; output: string; adjustRounds: number }): Promise<Certificate> {
   adjustRounds(options.adjustRounds);
+  const authors = authorProviders(options.authorProviders);
   if (dirname(options.output) !== options.directory) throw new Error('Certificate must be written in the run directory');
-  if (!Object.hasOwn(loadMatrix().providers, options.authorProvider)) throw new Error(`Unknown author provider: ${options.authorProvider}`);
+  for (const provider of authors) if (!Object.hasOwn(loadMatrix().providers, provider)) throw new Error(`Unknown author provider: ${provider}`);
   const report = parseReport(JSON.parse(readFileSync(join(options.directory, 'report.json'), 'utf8')));
   const r = report.round;
   if (r.execution !== 'pre-pr' || r.pr !== 0) throw new Error('Report is not a local pre-pr report');
@@ -170,18 +179,18 @@ export async function assemble(options: { directory: string; authorProvider: str
     const lane = await admitLane(join(options.directory, manifest), report, join(options.directory, 'evidence'), r);
     const entries = laneEntries(options.directory, manifest, lane);
     const provider = entries.lane.provider;
-    if (lane.role === 'pre-pr reviewer' && provider === options.authorProvider) throw new Error(`Reviewer lane is the same family as the author (${provider}); change the feature, refactoring row of the model sheet`);
+    if (lane.role === 'pre-pr reviewer' && authors.includes(provider)) throw new Error(`Reviewer lane is the same family as an author (${provider}); change the model sheet`);
     admitted.push(lane);
     lanes.push(entries.lane);
     artifacts.push(...entries.artifacts);
   }
   const decision = decide(report, admitted);
   if (decision.verdict !== 'VERIFIED') throw new Error(`Certificate refused: ${decision.verdict}: ${[...decision.findings.map(f => `${f.kind} ${f.rule} ${f.path ?? ''}:${f.line}`), ...decision.reasons].join('; ')}`);
-  const certificate: Certificate = { schemaVersion: 1, round: r, authorProvider: options.authorProvider, runs, lanes, artifacts, decision, reconcileDigest: jsonHash(report), evidenceDigest: jsonHash(admitted), coverage: admitted.flatMap(l => l.coverage), adjustRounds: options.adjustRounds, toolingRef: toolingRef() };
+  const certificate: Certificate = { schemaVersion: 2, round: r, authorProviders: authors, runs, lanes, artifacts, decision, reconcileDigest: jsonHash(report), evidenceDigest: jsonHash(admitted), coverage: admitted.flatMap(l => l.coverage), adjustRounds: options.adjustRounds, toolingRef: toolingRef() };
   writeFileSync(options.output, JSON.stringify(certificate, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
   return certificate;
 }
-/** Re-derives every derived field against the PR report and the live contract (head, patch and policy, the run policy, each run, lane and artifact from bytes, the digests, coverage and decision), so a hand-edited certificate cannot publish what its evidence does not yield. adjustRounds, toolingRef and authorProvider are the Raiz's declarations and only format-checked. */
+/** Re-derives every derived field against the PR report and the live contract (head, patch and policy, the run policy, each run, lane and artifact from bytes, the digests, coverage and decision), so a hand-edited certificate cannot publish what its evidence does not yield. adjustRounds, toolingRef and authorProviders are the Raiz's declarations and only format-checked. */
 export async function admitCertificate(file: string, report: Report, evidenceDirectory: string, contract: Contract): Promise<{ certificate: Certificate; lanes: AdmittedLane[] }> {
   const certificate = parseCertificate(JSON.parse(readFileSync(file, 'utf8')));
   const directory = dirname(resolve(file));
@@ -200,7 +209,7 @@ export async function admitCertificate(file: string, report: Report, evidenceDir
     const result = await admitLane(join(directory, lane.manifest), report, evidenceDirectory, c);
     const entries = laneEntries(directory, lane.manifest, result);
     if (jsonHash(entries.lane) !== jsonHash(lane)) throw new Error('Certificate lane differs from its manifest');
-    if (lane.role === 'pre-pr reviewer' && lane.provider === certificate.authorProvider) throw new Error('Reviewer lane is the same family as the author');
+    if (lane.role === 'pre-pr reviewer' && certificate.authorProviders.includes(lane.provider)) throw new Error('Reviewer lane is the same family as an author');
     admitted.push(result);
     artifacts.push(...entries.artifacts);
   }
@@ -228,8 +237,8 @@ export async function main(args: string[]): Promise<number> {
     if (command === 'assemble') {
       const { values } = parseArgs({ args: rest, options: { directory: { type: 'string' }, 'author-provider': { type: 'string' }, output: { type: 'string' }, 'adjust-rounds': { type: 'string' } } });
       const rounds = values['adjust-rounds'];
-      if (!values.directory || !values['author-provider'] || !values.output || rounds === undefined) throw new Error('Usage: converge-certify assemble --directory RUN --author-provider PROVIDER --output RUN/certificate.json --adjust-rounds N');
-      process.stdout.write(JSON.stringify(await assemble({ directory: resolve(values.directory), authorProvider: values['author-provider'], output: resolve(values.output), adjustRounds: /^\d+$/.test(rounds) ? Number(rounds) : NaN }), null, 2) + '\n');
+      if (!values.directory || !values['author-provider'] || !values.output || rounds === undefined) throw new Error('Usage: converge-certify assemble --directory RUN --author-provider PROVIDER[,PROVIDER...] --output RUN/certificate.json --adjust-rounds N');
+      process.stdout.write(JSON.stringify(await assemble({ directory: resolve(values.directory), authorProviders: values['author-provider'].split(',').map(s => s.trim()).filter(Boolean), output: resolve(values.output), adjustRounds: /^\d+$/.test(rounds) ? Number(rounds) : NaN }), null, 2) + '\n');
       return 0;
     }
     throw new Error('Usage: converge-certify <run|report|assemble> ...');
