@@ -435,6 +435,9 @@ const GROK_RETRY_RUN_BUDGET_MS = 5_000 + RUN_BUDGET_MS;
 const DRAIN_DEADLINE_MS = 4_000;
 const DESCENDANT_HOLD_MS = 30_000;
 
+const PREFLIGHT_DEADLINE_MS = 3_000;
+const PREFLIGHT_HOLD_MS = 10 * PREFLIGHT_DEADLINE_MS;
+
 const FAKE_ENV = [
   "FAKE_TIMEOUT",
   "FAKE_INVALID_MODEL",
@@ -697,13 +700,13 @@ describe("runLane", () => {
 
   it("does not spawn the model when preflight exhausts the wrapper deadline", async () => {
     const modelStarted = join(scratch, "deadline-model.started");
-    const input = { ...options("claude", "preflight-deadline"), timeoutMs: 300 };
+    const input = { ...options("claude", "preflight-deadline"), timeoutMs: PREFLIGHT_DEADLINE_MS };
     const runner = startRunner(input, {
-      FAKE_PREFLIGHT_DELAY_MS: "1000",
+      FAKE_PREFLIGHT_DELAY_MS: String(PREFLIGHT_HOLD_MS),
       FAKE_MODEL_STARTED_PATH: modelStarted,
     });
 
-    assert.equal(await exitWithin(runner, 2_000), 124);
+    assert.equal(await exitWithin(runner, RUN_BUDGET_MS), 124);
     assert.equal(existsSync(modelStarted), false);
     matchObject(receipt(input.receiptPath), {
       status: "timed-out",
