@@ -4,7 +4,7 @@ GitHub is the source of truth. A local report is an input cache; `publish.ts` re
 
 ## Commands
 
-Use Node 24, authenticated `gh`, `git`, and a working `CURSOR_API_KEY`. The owner starts with `start.ts`, as shown in [Converge](../playbooks/converge.md). The Cloud owner runs:
+Use Node 24, authenticated `gh`, `git`, and a working `CURSOR_API_KEY`. The Cloud owner and its `start.ts` launcher are retired, and 0.5.0 removes them; [Converge](../playbooks/converge.md) describes the local daemon that replaces them. Until then the Cloud owner's commands are:
 
 ```sh
 node skills/poteto-mode/scripts/converge/converge-reconcile --repo OWNER/REPO --pr NUMBER --output /tmp/converge/round/report.json

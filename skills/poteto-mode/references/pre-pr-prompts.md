@@ -1,6 +1,6 @@
 # Pré-PR lane prompts
 
-The Raiz fills the `{{...}}` placeholders and writes the result to the lane's `prompt.txt`. Both lanes end with one JSON document as their final response, in the shape `admitLane` reads (`skills/poteto-mode/scripts/converge/evidence.ts`); the runner writes that response to the lane's `--output` path.
+The Raiz fills the `{{...}}` placeholders and writes the result to the lane's `prompt.txt`. `{{laneDirectory}}` is the absolute path of the lane directory, `$RUN/lanes/<lane id>`. `{{artifactPrefix}}` is the absolute `{{laneDirectory}}/artifacts/converge/<round id>/<lane id>/`, with `<round id>` the `round.id` of `report.json`: the lane writes its artifacts there and lists their paths relative to `{{laneDirectory}}`, so each listed path starts with `artifacts/converge/<round id>/<lane id>/`, the prefix that admission checks. Both lanes end with one JSON document as their final response, in the shape `admitLane` reads (`skills/poteto-mode/scripts/converge/evidence.ts`); the runner writes that response to the lane's `--output` path.
 
 ## Reviewer
 
