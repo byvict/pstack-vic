@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, mkdirSync, lstatSync, realpathSync } from 'node:fs';
 import { resolve, dirname, sep } from 'node:path';
-import { array, digest, hash, integer, jsonHash, object, oneOf, parseFinding, parseRound, parseObligation, riskObligation, roleProviders, roles, sameObligation, relativePath, sha, string, strings, type Finding, type Report, type Role, type RiskObligation, type Round } from './contract.ts';
+import { array, digest, hash, integer, jsonHash, object, oneOf, parseFinding, parseRound, parseObligation, riskObligation, roles, sameObligation, relativePath, sha, string, strings, type Finding, type Report, type Role, type RiskObligation, type Round } from './contract.ts';
 import { containsSecret } from './reconcile.ts';
 import { loadMatrix, resolveDescriptor, reportedModelMatches } from '../../../../scripts/model-matrix.ts';
 
@@ -62,8 +62,11 @@ export async function admitLane(manifestFile: string, report: Report, evidenceDi
   const receiptBytes = readOwned(relativePath(manifest.receipt), root);
   const receipt = object(JSON.parse(receiptBytes.toString('utf8')));
   const expected = resolveDescriptor(loadMatrix(), string(manifest.descriptor));
-  const allowed = roleProviders[role];
-  if (expected.family.provider !== allowed.provider || expected.family.model !== allowed.model || !allowed.efforts.includes(expected.descriptor.effort)) throw new Error(`Role ${role} requires ${allowed.provider} ${allowed.model} at ${allowed.efforts.join(' or ')}`);
+  const provider = loadMatrix().providers[expected.family.provider];
+  if (!provider) throw new Error(`Unknown provider ${expected.family.provider}`);
+  const cloud = role === 'pr verifier';
+  if ((provider.transport === 'http') !== cloud) throw new Error(`Role ${role} runs on a ${cloud ? 'cloud' : 'CLI'} lane, not ${expected.family.provider}`);
+  if (role === 'pre-pr certifier' && !provider.unsandboxed) throw new Error(`Certifier provider ${expected.family.provider} has no unsandboxed mode`);
   if (role === 'pre-pr certifier') certifierCheckout(receipt, round.head);
   if (receipt.schemaVersion !== 1 || receipt.status !== 'complete' || receipt.mode !== (role === 'pre-pr certifier' ? 'unsandboxed' : 'read-only') || !((receipt.modelEvidence === 'provider-report' && receipt.modelVerified === true && reportedModelMatches(expected.family, string(receipt.reportedModel))) || (receipt.modelEvidence === 'pinned-argv' && receipt.modelVerified === false && receipt.reportedModel === null && expected.family.reportedModel === null))) throw new Error('Lane receipt does not prove independent completion');
   if (receipt.provider !== expected.family.provider || receipt.model !== expected.family.model || receipt.effort !== expected.descriptor.effort) throw new Error('Lane receipt model differs from dispatch');

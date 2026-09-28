@@ -19,7 +19,7 @@ function prePrFixture(certifier = true, surface = true) {
   return f;
 }
 function certify(f: ReturnType<typeof fixture>, args: string[]) { return f.run('converge-certify', args); }
-function lane(f: ReturnType<typeof fixture>, round: Record<string, unknown>, role: 'pre-pr reviewer' | 'pre-pr certifier', options: { provider?: string; findings?: unknown[]; coverage?: boolean } = {}) {
+function lane(f: ReturnType<typeof fixture>, round: Record<string, unknown>, role: 'pre-pr reviewer' | 'pre-pr certifier', options: { provider?: string; model?: string; reportedModel?: string; findings?: unknown[]; coverage?: boolean } = {}) {
   const laneId = role.replace(' ', '-');
   const root = join(f.directory, 'run', 'lanes', laneId);
   const prefix = `artifacts/converge/${round.id}/${laneId}/`;
@@ -30,8 +30,16 @@ function lane(f: ReturnType<typeof fixture>, round: Record<string, unknown>, rol
   const artifacts = role === 'pre-pr certifier' ? [{ id: 'screen', path: prefix + 'screen.png', bytes: png.length, sha256: hash(png), mediaType: 'image/png' }, { id: 'action', path: prefix + 'action.json', bytes: action.length, sha256: hash(action), mediaType: 'application/json' }] : [];
   const coverage = role === 'pre-pr certifier' && options.coverage !== false ? [{ featureId: 'login', entryPoint: 'Entrar', result: 'driven', artifactIds: ['screen', 'action'] }] : [];
   const output = { schemaVersion: 1, round: round.id, laneId, role, observedHead: round.head, observedContract: round.contract, kind: 'complete', findings: options.findings ?? [], artifacts, coverage, riskProofs: [] };
-  const receipt = { schemaVersion: 1, parent: 'claude', provider: options.provider ?? 'grok', model: 'grok-4.7', effort: 'xhigh', ...(role === 'pre-pr certifier' ? { mode: 'unsandboxed', checkout: { headBefore: round.head, headAfter: round.head, statusAfter: [] } } : { mode: 'read-only', checkout: null }), status: 'complete', promptPath: join(root, 'prompt.txt'), outputPath: join(root, 'output.json'), startedAt: '2026-09-24T00:00:00.000Z', completedAt: '2026-09-24T00:00:02.000Z', modelVerified: true, modelEvidence: 'provider-report', reportedModel: 'grok-4.7-build', remote: null, executable: '/usr/local/bin/grok', exitCode: 0, signal: null };
-  const manifest = { round, laneId, role, descriptor: `${options.provider ?? 'grok'}:grok-4.7@xhigh`, prompt: 'prompt.txt', promptDigest: hash('read only'), output: 'output.json', receipt: 'receipt.json', createdAt: Date.parse(receipt.startedAt) };
+  const receipt = { schemaVersion: 1, parent: 'claude', provider: options.provider ?? 'grok', model: options.model ?? 'grok-4.7', effort: 'xhigh', ...(role === 'pre-pr certifier' ? { mode: 'unsandboxed', checkout: { headBefore: round.head, headAfter: round.head, statusAfter: [] } } : { mode: 'read-only', checkout: null }), status: 'complete', promptPath: join(root, 'prompt.txt'), outputPath: join(root, 'output.json'), startedAt: '2026-09-24T00:00:00.000Z', completedAt: '2026-09-24T00:00:02.000Z', modelVerified: true, modelEvidence: 'provider-report', reportedModel: options.reportedModel ?? 'grok-4.7-build', remote: null, executable: '/usr/local/bin/grok', exitCode: 0, signal: null };
+  const manifest = { round, laneId, role, descriptor: `${options.provider ?? 'grok'}:${options.model ?? 'grok-4.7'}@xhigh`, prompt: 'prompt.txt', promptDigest: hash('read only'), output: 'output.json', receipt: 'receipt.json', createdAt: Date.parse(receipt.startedAt) };
+  writeFileSync(join(root, 'prompt.txt'), 'read only'); writeFileSync(join(root, 'output.json'), JSON.stringify(output)); writeFileSync(join(root, 'receipt.json'), JSON.stringify(receipt)); writeFileSync(join(root, 'manifest.json'), JSON.stringify(manifest));
+}
+function codexLane(f: ReturnType<typeof fixture>, round: Record<string, unknown>) {
+  const root = join(f.directory, 'run', 'lanes', 'pre-pr-reviewer');
+  mkdirSync(root, { recursive: true });
+  const output = { schemaVersion: 1, round: round.id, laneId: 'pre-pr-reviewer', role: 'pre-pr reviewer', observedHead: round.head, observedContract: round.contract, kind: 'complete', findings: [], artifacts: [], coverage: [], riskProofs: [] };
+  const receipt = { schemaVersion: 1, parent: 'claude', provider: 'codex', model: 'gpt-6-sol', effort: 'high', mode: 'read-only', checkout: null, status: 'complete', promptPath: join(root, 'prompt.txt'), outputPath: join(root, 'output.json'), startedAt: '2026-09-24T00:00:00.000Z', completedAt: '2026-09-24T00:00:02.000Z', modelVerified: false, modelEvidence: 'pinned-argv', reportedModel: null, remote: null, executable: '/usr/local/bin/codex', exitCode: 0, signal: null };
+  const manifest = { round, laneId: 'pre-pr-reviewer', role: 'pre-pr reviewer', descriptor: 'codex:gpt-6-sol@high', prompt: 'prompt.txt', promptDigest: hash('read only'), output: 'output.json', receipt: 'receipt.json', createdAt: Date.parse(receipt.startedAt) };
   writeFileSync(join(root, 'prompt.txt'), 'read only'); writeFileSync(join(root, 'output.json'), JSON.stringify(output)); writeFileSync(join(root, 'receipt.json'), JSON.stringify(receipt)); writeFileSync(join(root, 'manifest.json'), JSON.stringify(manifest));
 }
 function record(f: ReturnType<typeof fixture>, run: string, checkout: string, argv = ['echo', 'ok'], name = 'suite') {
@@ -105,6 +113,24 @@ test('a ci-only certificate marks every unrecorded contract run as skipped', t =
   assert.deepEqual(certificate.runs, [{ name: 'suite', command: 'echo ok', skip: 'ci-only report' }]);
   assert.deepEqual(certificate.artifacts, []); assert.equal(certificate.adjustRounds, 0);
   assert.deepEqual(parseCertificate(certificate), certificate);
+});
+test('assemble admits a Codex reviewer lane and records its provider from the descriptor', t => {
+  const f = prePrFixture(false, false); t.after(f.cleanup);
+  const { run, round } = prepared(f);
+  codexLane(f, round);
+  const assembled = certify(f, ['assemble', '--directory', run, '--author-provider', 'claude', '--output', join(run, 'certificate.json'), '--adjust-rounds', '0']);
+  assert.equal(assembled.status, 0, assembled.stderr);
+  const certificate = parseCertificate(JSON.parse(readFileSync(join(run, 'certificate.json'), 'utf8')));
+  assert.deepEqual(certificate.lanes.map(l => [l.role, l.provider, l.model, l.effort, l.reportedModel]), [['pre-pr reviewer', 'codex', 'gpt-6-sol', 'high', null]]);
+});
+test('assemble refuses a certifier lane of a provider without an unsandboxed mode', t => {
+  const f = prePrFixture(); t.after(f.cleanup);
+  const { run, round } = prepared(f);
+  lane(f, round, 'pre-pr reviewer');
+  lane(f, round, 'pre-pr certifier', { provider: 'claude', model: 'claude-opus-5-5', reportedModel: 'claude-opus-5-5' });
+  const assembled = certify(f, ['assemble', '--directory', run, '--author-provider', 'codex', '--output', join(run, 'certificate.json'), '--adjust-rounds', '0']);
+  assert.equal(assembled.status, 1);
+  assert.match(assembled.stderr, /Certifier provider claude has no unsandboxed mode/);
 });
 test('assemble refuses a missing or out-of-range adjust round count', t => {
   const f = prePrFixture(); t.after(f.cleanup);

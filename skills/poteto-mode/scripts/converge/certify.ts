@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { resolve, join, dirname } from 'node:path';
-import { array, boolean, digest, executionId, hash, integer, jsonHash, object, oneOf, parseReport, parseRound, relativePath, roleProviders, roles, sha, string, type Contract, type Decision, type Report, type Role, type Round } from './contract.ts';
+import { array, boolean, digest, executionId, hash, integer, jsonHash, object, oneOf, parseReport, parseRound, relativePath, roles, sha, string, type Contract, type Decision, type Report, type Role, type Round } from './contract.ts';
 import { branchSnapshot } from './github.ts';
 import { analyze } from './reconcile.ts';
 import { admitLane, type AdmittedLane } from './evidence.ts';
@@ -145,7 +145,7 @@ function laneEntries(directory: string, manifest: string, lane: AdmittedLane): {
   if (receipt.provider !== family.provider || receipt.model !== family.model || receipt.effort !== descriptor.effort) throw new Error('Lane receipt model differs from dispatch');
   const id = laneId(m.laneId);
   return {
-    lane: { manifest, role: lane.role, provider: roleProviders[lane.role].provider, model: family.model, effort: descriptor.effort, reportedModel: receipt.reportedModel === null ? null : string(receipt.reportedModel), receiptDigest: lane.receiptDigest },
+    lane: { manifest, role: lane.role, provider: family.provider, model: family.model, effort: descriptor.effort, reportedModel: receipt.reportedModel === null ? null : string(receipt.reportedModel), receiptDigest: lane.receiptDigest },
     artifacts: lane.artifacts.map(a => ({ lane: id, id: a.id, path: a.path, bytes: unchanged(join(root, a.path), a.digest, 'Artifact bytes changed after admission').length, sha256: a.digest, mediaType: a.mediaType })),
   };
 }
@@ -168,9 +168,9 @@ export async function assemble(options: { directory: string; authorProvider: str
   for (const id of ids) {
     const manifest = relativePath(join('lanes', id, 'manifest.json'));
     const lane = await admitLane(join(options.directory, manifest), report, join(options.directory, 'evidence'), r);
-    const provider = roleProviders[lane.role].provider;
-    if (lane.role === 'pre-pr reviewer' && provider === options.authorProvider) throw new Error(`Reviewer lane is the same family as the author (${provider}); change the feature, refactoring row of the model sheet`);
     const entries = laneEntries(options.directory, manifest, lane);
+    const provider = entries.lane.provider;
+    if (lane.role === 'pre-pr reviewer' && provider === options.authorProvider) throw new Error(`Reviewer lane is the same family as the author (${provider}); change the feature, refactoring row of the model sheet`);
     admitted.push(lane);
     lanes.push(entries.lane);
     artifacts.push(...entries.artifacts);
