@@ -131,6 +131,18 @@ test('a pre-pr role refuses a Cursor receipt and a pr verifier refuses a grok on
   patchManifest(v.directory, { descriptor: 'grok:grok-4.7@high' });
   await assert.rejects(admitLane(join(v.directory, 'manifest.json'), v.report, join(v.directory, 'admitted')), /Role pr verifier runs on a cloud lane, not grok/);
 });
+test('a pr verifier is admitted only as cursor grok-4.7 at high or xhigh', async t => {
+  const cases = [['cursor:grok-4.7@xhigh', 'grok-4.7', 'xhigh', true], ['cursor:grok-4.7@medium', 'grok-4.7', 'medium', false], ['cursor:composer-2.5@high', 'composer-2.5', 'high', false], ['cursor:kimi-k3@low', 'kimi-k3', 'low', false]] as const;
+  const remote = input(); t.after(remote.cleanup); mockRemote(t, remote);
+  for (const [descriptor, model, effort, admitted] of cases) {
+    const i = input(); t.after(i.cleanup);
+    Object.assign(i.receipt, { model, effort }); i.save();
+    patchManifest(i.directory, { descriptor });
+    const admission = admitLane(join(i.directory, 'manifest.json'), i.report, join(i.directory, 'admitted'));
+    if (admitted) assert.deepEqual((await admission).coverage, ['login'], descriptor);
+    else await assert.rejects(admission, /^Error: Role pr verifier requires cursor grok-4\.7 at high or xhigh$/, descriptor);
+  }
+});
 test('a pre-pr role refuses a PR-numbered pre-pr round reached through the default round', async t => {
   const i = localInput('pre-pr reviewer', 1); t.after(i.cleanup);
   const report: Report = { ...i.report, round: i.round, lanes: ['pre-pr reviewer'] };

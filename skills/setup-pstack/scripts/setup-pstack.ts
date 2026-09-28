@@ -41,6 +41,7 @@ import {
   type ModelMatrix,
   type Route,
 } from "../../../scripts/model-matrix.ts";
+import { CLOUD_VERIFIER } from "../../poteto-mode/scripts/converge/contract.ts";
 import { judgeLane, probePrompt, runProbeLane } from "../../poteto-mode/scripts/runner/probe-lane.ts";
 import type { RepoTarget } from "../../poteto-mode/scripts/runner/types.ts";
 
@@ -93,8 +94,8 @@ export interface SheetRow {
 const ROW_RE = /^([a-z][a-z0-9 ,-]*): (.+)$/;
 const RETIRED_CONVERGE_ROLES = new Set(['pr reviewer', 'pr fixer, simple', 'pr fixer, complex', 'pr diagnosis pool']);
 const AUTHORING_ROLES = ["feature, refactoring", "bug-fix", "perf-issue", "hillclimb", "hardest tasks"];
-/** The Cursor cloud rows keep their pinned lanes until the cloud removal; the daemon never reads them. */
-const CLOUD_LANES = ["cursor:grok-4.7@high", "cursor:grok-4.7@xhigh"];
+/** The Cursor cloud rows keep the Cloud verifier's pinned lanes until the cloud removal; the daemon never reads them. */
+const CLOUD_LANES = CLOUD_VERIFIER.efforts.map((effort) => `${CLOUD_VERIFIER.provider}:${CLOUD_VERIFIER.model}@${effort}`);
 
 /** The rows that take exactly one lane, and which lanes: derived from the matrix, so a family added there is admitted here. The raiz is a session of the parent, hence only the parent's native provider. */
 export function singleLaneRows(matrix: ModelMatrix, parent: string): ReadonlyMap<string, readonly string[]> {

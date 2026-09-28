@@ -64,6 +64,8 @@ export type Execution = 'converge' | 'verdict-only' | 'pre-pr';
 export const executions = ['converge', 'verdict-only', 'pre-pr'] as const;
 export type Role = 'pr verifier' | 'pre-pr reviewer' | 'pre-pr certifier';
 export const roles = ['pr verifier', 'pre-pr reviewer', 'pre-pr certifier'] as const;
+/** The Cloud verifier's pinned lane, the one family and efforts that admission, lane preparation, start.ts and setup-pstack's Cursor cloud rows (`pr owner`, `pr verifier`) accept. It exists only for those rows and is deleted with them in 0.5.0; the pre-PR roles stay unpinned. */
+export const CLOUD_VERIFIER: { readonly provider: string; readonly model: string; readonly efforts: readonly string[] } = { provider: 'cursor', model: 'grok-4.7', efforts: ['high', 'xhigh'] };
 export interface PrePr { runs: { name: string; command: string }[]; certifier: boolean }
 export interface Contract {
   repo: string; trunk: string; requiredChecks: string[]; holdLabels: string[];
