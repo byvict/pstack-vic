@@ -34,7 +34,7 @@ function laneId(value: unknown): string {
 function authorProviders(value: unknown): string[] {
   const list = strings(value);
   if (!list.length) throw new Error('Certificate needs at least one author family');
-  for (const provider of list) if (!/^[a-z][a-z0-9-]*$/.test(provider)) throw new Error('Invalid author family');
+  for (const provider of list) if (!/^[a-z][a-z0-9-]*$/.test(provider)) throw new Error(`Invalid author family: ${provider}`);
   if (new Set(list).size !== list.length) throw new Error('Duplicate author family');
   return list;
 }
@@ -59,8 +59,9 @@ export function parseCertificate(value: unknown): Certificate {
     return { name: runName(r.name), command: string(r.command), skip };
   });
   if (new Set(runs.map(r => r.name)).size !== runs.length) throw new Error('Duplicate run name');
-  return { schemaVersion: 2, round, authorProviders: authors, runs,
-    lanes: array(v.lanes).map(raw => { const l = object(raw); return { manifest: relativePath(l.manifest), role: oneOf(l.role, roles), provider: string(l.provider), model: string(l.model), effort: string(l.effort), reportedModel: l.reportedModel === null ? null : string(l.reportedModel), receiptDigest: digest(l.receiptDigest) }; }),
+  const lanes = array(v.lanes).map((raw): CertificateLane => { const l = object(raw); return { manifest: relativePath(l.manifest), role: oneOf(l.role, roles), provider: string(l.provider), model: string(l.model), effort: string(l.effort), reportedModel: l.reportedModel === null ? null : string(l.reportedModel), receiptDigest: digest(l.receiptDigest) }; });
+  for (const lane of lanes) if (lane.role === 'pre-pr reviewer' && authors.includes(lane.provider)) throw new Error('Reviewer lane is the same family as an author');
+  return { schemaVersion: 2, round, authorProviders: authors, runs, lanes,
     artifacts: array(v.artifacts).map(raw => {
       const a = object(raw, 'artifact');
       const bytes = integer(a.bytes);
@@ -190,7 +191,7 @@ export async function assemble(options: { directory: string; authorProviders: st
   writeFileSync(options.output, JSON.stringify(certificate, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
   return certificate;
 }
-/** Re-derives every derived field against the PR report and the live contract (head, patch and policy, the run policy, each run, lane and artifact from bytes, the digests, coverage and decision), so a hand-edited certificate cannot publish what its evidence does not yield. adjustRounds, toolingRef and authorProviders are the Raiz's declarations and only format-checked. */
+/** Re-derives every derived field against the PR report and the live contract (head, patch and policy, the run policy, each run, lane and artifact from bytes, the digests, coverage and decision), so a hand-edited certificate cannot publish what its evidence does not yield. adjustRounds, toolingRef and authorProviders are the Raiz's declarations: only their format is checked, and parseCertificate checks that no reviewer lane has an author family. */
 export async function admitCertificate(file: string, report: Report, evidenceDirectory: string, contract: Contract): Promise<{ certificate: Certificate; lanes: AdmittedLane[] }> {
   const certificate = parseCertificate(JSON.parse(readFileSync(file, 'utf8')));
   const directory = dirname(resolve(file));

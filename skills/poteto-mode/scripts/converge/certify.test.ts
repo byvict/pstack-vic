@@ -218,7 +218,7 @@ test('assemble refuses a report edited after it was written', t => {
 test('assemble refuses an author family that is outside the model matrix, malformed, repeated or empty', t => {
   const f = prePrFixture(); t.after(f.cleanup);
   const run = join(f.directory, 'run');
-  for (const [value, message] of [['claude,gemini', /Unknown author provider: gemini/], ['Grok', /Invalid author family/], ['claude, claude', /Duplicate author family/], [' , ', /Certificate needs at least one author family/]] as const) {
+  for (const [value, message] of [['claude,gemini', /Unknown author provider: gemini/], ['Grok', /Invalid author family: Grok$/m], ['claude, claude', /Duplicate author family/], [' , ', /Certificate needs at least one author family/]] as const) {
     const result = certify(f, ['assemble', '--directory', run, '--author-provider', value, '--output', join(run, 'certificate.json'), '--adjust-rounds', '0']);
     assert.notEqual(result.status, 0); assert.match(result.stderr, message);
   }
@@ -248,5 +248,5 @@ test('parseCertificate refuses schema 1, an empty author list and an unknown aut
   const base = { schemaVersion: 2, authorProviders: ['claude'] };
   assert.throws(() => parseCertificate({ ...base, schemaVersion: 1 }), /Unknown certificate schema/);
   assert.throws(() => parseCertificate({ ...base, authorProviders: [] }), /Certificate needs at least one author family/);
-  assert.throws(() => parseCertificate({ ...base, authorProviders: ['Claude'] }), /Invalid author family/);
+  assert.throws(() => parseCertificate({ ...base, authorProviders: ['Claude'] }), /^Error: Invalid author family: Claude$/);
 });
