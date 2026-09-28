@@ -733,7 +733,7 @@ Fecha a nota N27, aberta pela prova da 0.2.4 (CLI-198). O shell de uma lane Grok
 
 # 0.3.0 — Papéis pré-PR configuráveis, lista de Autores, Certificado compacto (2026-09-28)
 
-Parte 1 do plano [`docs/superpowers/plans/2026-09-28-converge-local.md`](docs/superpowers/plans/2026-09-28-converge-local.md), desenho em [`docs/superpowers/specs/2026-09-28-converge-local-design.md`](docs/superpowers/specs/2026-09-28-converge-local-design.md). Victor decidiu em 2026-09-28 tirar o Cursor do fluxo e escolher os papéis pré e pós-PR no `/setup-pstack` como qualquer outro. Esta versão abre os papéis; o daemon vem na 0.4.0.
+Parte 1 do plano `docs/superpowers/plans/2026-09-28-converge-local.md`, desenho em `docs/superpowers/specs/2026-09-28-converge-local-design.md`. O plano e o desenho chegam à `main` com o PR 2 do mesmo plano. Victor decidiu em 2026-09-28 tirar o Cursor do fluxo e escolher os papéis pré e pós-PR no `/setup-pstack` como qualquer outro. Esta versão abre os papéis; o daemon vem na 0.4.0.
 
 ## Desenho
 
