@@ -123,7 +123,7 @@ test('a ci-only certificate publishes its skipped run and the arm accepts it', t
 });
 test('a verdict comment over GitHub\'s size limit is refused before any write', t => {
   const f = fixture(); t.after(f.cleanup);
-  const run = certifiedPr(f, { full: true, body: '## Verification\nfeature: login\n', steps: 200 });
+  const run = certifiedPr(f, { full: true, body: '## Verification\nfeature: login\n', features: 200 });
   const published = f.run('publish.ts', ['--report', prReport(f), '--certificate', join(run, 'certificate.json'), '--evidence', join(f.directory, 'evidence')]);
   assert.notEqual(published.status, 0);
   const size = Number(published.stderr.match(/^Verdict comment exceeds GitHub's 65536-character limit \((\d+)\)$/m)?.[1]);
@@ -140,7 +140,7 @@ function asComment(dossier: Record<string, unknown>) {
 }
 test('the published comment carries the certificate and stays byte-identical on retry', t => {
   const f = fixture(); t.after(f.cleanup);
-  const run = certifiedPr(f, { full: true, body: '## Verification\nfeature: login\n' });
+  const run = certifiedPr(f, { full: true, body: '## Verification\nfeature: login\n', steps: 3 });
   const report = prReport(f);
   const args = ['--report', report, '--certificate', join(run, 'certificate.json'), '--evidence', join(f.directory, 'evidence')];
   const published = f.run('publish.ts', args);
@@ -148,7 +148,7 @@ test('the published comment carries the certificate and stays byte-identical on 
   const certificate = JSON.parse(readFileSync(join(run, 'certificate.json'), 'utf8'));
   const dossier = commentDossier(f.read().comments[0]);
   assert.deepEqual(dossier.certificate, certificate); assert.deepEqual(JSON.parse(published.stdout).dossier.certificate, certificate);
-  assert.deepEqual([certificate.runs.length, certificate.lanes.length, certificate.artifacts.length, certificate.adjustRounds, certificate.authorProvider], [1, 2, 2, 1, 'claude']);
+  assert.deepEqual([certificate.runs.length, certificate.lanes.length, certificate.artifacts.length, certificate.adjustRounds, certificate.authorProviders], [1, 2, 2, 1, ['claude']]);
   assert.match(certificate.toolingRef, /^pstack-vic@\d+\.\d+\.\d+$/);
   const body = f.read().comments[0].body;
   const retry = f.run('publish.ts', args);
@@ -156,6 +156,21 @@ test('the published comment carries the certificate and stays byte-identical on 
   assert.throws(() => dossierFromComment(asComment({ ...dossier, certificate: undefined })), /A certificate belongs exactly to a pre-pr verdict/);
   assert.throws(() => dossierFromComment(asComment({ ...dossier, round: { ...(dossier.round as object), execution: 'converge' } })), /A certificate belongs exactly to a pre-pr verdict/);
   assert.throws(() => dossierFromComment(asComment({ ...dossier, certificate: { ...certificate, coverage: ['login', 'billing'] } })), /Certificate differs from the verdict round/);
+});
+test('a published certificate rewritten to list its reviewer family as an author fails the dossier parse, so the arm refuses it', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const run = certifiedPr(f);
+  const published = f.run('publish.ts', ['--report', prReport(f), '--certificate', join(run, 'certificate.json'), '--evidence', join(f.directory, 'evidence')]);
+  assert.equal(published.status, 0, published.stderr);
+  const dossier = commentDossier(f.read().comments[0]);
+  const certificate = dossier.certificate as { lanes: { role: string; provider: string }[] };
+  assert.deepEqual(certificate.lanes.map(l => [l.role, l.provider]), [['pre-pr reviewer', 'grok']]);
+  const forged = asComment({ ...dossier, certificate: { ...certificate, authorProviders: ['grok'] } });
+  assert.throws(() => dossierFromComment(forged), /^Error: Reviewer lane is the same family as an author$/);
+  const live = f.read(); live.comments[0].body = forged.body; Object.assign(f.state, live); f.save();
+  const armed = f.run('converge-arm', ['--repo', 'Example/app', '--pr', '1', '--head', f.state.head, '--verdict', 'VERIFIED', '--dry-run']);
+  assert.notEqual(armed.status, 0); assert.match(armed.stderr, /^Reviewer lane is the same family as an author$/m);
+  assert.deepEqual(f.read().mutations, []);
 });
 test('a converge publication carries a null certificate and a dossier without the key still parses', t => {
   const f = fixture(); t.after(f.cleanup);

@@ -41,7 +41,7 @@ import {
   type ModelMatrix,
   type Route,
 } from "../../../scripts/model-matrix.ts";
-import { roleProviders, type Role } from "../../poteto-mode/scripts/converge/contract.ts";
+import { CLOUD_VERIFIER } from "../../poteto-mode/scripts/converge/contract.ts";
 import { judgeLane, probePrompt, runProbeLane } from "../../poteto-mode/scripts/runner/probe-lane.ts";
 import type { RepoTarget } from "../../poteto-mode/scripts/runner/types.ts";
 
@@ -94,19 +94,23 @@ export interface SheetRow {
 const ROW_RE = /^([a-z][a-z0-9 ,-]*): (.+)$/;
 const RETIRED_CONVERGE_ROLES = new Set(['pr reviewer', 'pr fixer, simple', 'pr fixer, complex', 'pr diagnosis pool']);
 const AUTHORING_ROLES = ["feature, refactoring", "bug-fix", "perf-issue", "hillclimb", "hardest tasks"];
+/** The Cursor cloud rows keep the Cloud verifier's pinned lanes until the cloud removal; the daemon never reads them. */
+const CLOUD_LANES = CLOUD_VERIFIER.efforts.map((effort) => `${CLOUD_VERIFIER.provider}:${CLOUD_VERIFIER.model}@${effort}`);
 
-export function singleLaneRows(matrix: ModelMatrix): ReadonlyMap<string, readonly string[]> {
-  const admitted = (role: Role): string[] => {
-    const { provider, model, efforts } = roleProviders[role];
-    return efforts.map((effort) => `${provider}:${model}@${effort}`);
-  };
-  const converge = [...admitted("pr verifier"), ...matrix.aliases];
+/** The rows that take exactly one lane, and which lanes: derived from the matrix, so a family added there is admitted here. The reviewer takes only a CLI family the runner launches from this parent, because the runner refuses the parent's native provider and a native subagent writes no receipt; the fixer may be native, as a subagent in its worktree. The raiz is a session of the parent, hence only the parent's native provider. */
+export function singleLaneRows(matrix: ModelMatrix, parent: string): ReadonlyMap<string, readonly string[]> {
+  const lanes = (families: readonly Family[]): string[] => families.flatMap((f) => f.efforts.map((effort) => `${f.provider}:${f.model}@${effort}`));
+  const cli = matrix.families.filter((f) => matrix.providers[f.provider].transport === "cli");
+  const runner = cli.filter((f) => routeFor(matrix, parent, f.provider) === "runner");
+  const unsandboxed = cli.filter((f) => matrix.providers[f.provider].unsandboxed);
+  const native = matrix.families.filter((f) => matrix.providers[f.provider].nativeIn === parent);
   return new Map([
-    ["pr owner", converge],
-    ["pr verifier", converge],
-    ["pre-pr reviewer", admitted("pre-pr reviewer")],
-    ["pre-pr fixer", admitted("pre-pr reviewer")],
-    ["pre-pr certifier", admitted("pre-pr certifier")],
+    ["pr owner", [...CLOUD_LANES, ...matrix.aliases]],
+    ["pr verifier", [...CLOUD_LANES, ...matrix.aliases]],
+    ["pre-pr reviewer", lanes(runner)],
+    ["pre-pr fixer", [...lanes(cli), ...matrix.aliases]],
+    ["pre-pr certifier", lanes(unsandboxed)],
+    ["converge raiz", lanes(native)],
   ]);
 }
 
@@ -500,7 +504,7 @@ export function buildPlan(input: PlanInput): Plan {
     rows = rows.map((r) => (r.role === role ? { role, lanes: normalized } : r));
   }
 
-  const singleLane = singleLaneRows(matrix);
+  const singleLane = singleLaneRows(matrix, parent);
   for (const row of rows) {
     const allowed = singleLane.get(row.role);
     if (allowed !== undefined && (row.lanes.length !== 1 || !allowed.includes(row.lanes[0]))) {

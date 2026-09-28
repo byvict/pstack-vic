@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, mkdirSync, lstatSync, realpathSync } from 'node:fs';
 import { resolve, dirname, sep } from 'node:path';
-import { array, digest, hash, integer, jsonHash, object, oneOf, parseFinding, parseRound, parseObligation, riskObligation, roleProviders, roles, sameObligation, relativePath, sha, string, strings, type Finding, type Report, type Role, type RiskObligation, type Round } from './contract.ts';
+import { array, CLOUD_VERIFIER, digest, hash, integer, jsonHash, object, oneOf, parseFinding, parseRound, parseObligation, riskObligation, roles, sameObligation, relativePath, sha, string, strings, type Finding, type Report, type Role, type RiskObligation, type Round } from './contract.ts';
 import { containsSecret } from './reconcile.ts';
 import { loadMatrix, resolveDescriptor, reportedModelMatches } from '../../../../scripts/model-matrix.ts';
 
@@ -62,8 +62,12 @@ export async function admitLane(manifestFile: string, report: Report, evidenceDi
   const receiptBytes = readOwned(relativePath(manifest.receipt), root);
   const receipt = object(JSON.parse(receiptBytes.toString('utf8')));
   const expected = resolveDescriptor(loadMatrix(), string(manifest.descriptor));
-  const allowed = roleProviders[role];
-  if (expected.family.provider !== allowed.provider || expected.family.model !== allowed.model || !allowed.efforts.includes(expected.descriptor.effort)) throw new Error(`Role ${role} requires ${allowed.provider} ${allowed.model} at ${allowed.efforts.join(' or ')}`);
+  const provider = loadMatrix().providers[expected.family.provider];
+  if (!provider) throw new Error(`Unknown provider ${expected.family.provider}`);
+  const cloud = role === 'pr verifier';
+  if ((provider.transport === 'http') !== cloud) throw new Error(`Role ${role} runs on a ${cloud ? 'cloud' : 'CLI'} lane, not ${expected.family.provider}`);
+  if (cloud && (expected.family.provider !== CLOUD_VERIFIER.provider || expected.family.model !== CLOUD_VERIFIER.model || !CLOUD_VERIFIER.efforts.includes(expected.descriptor.effort))) throw new Error(`Role pr verifier requires ${CLOUD_VERIFIER.provider} ${CLOUD_VERIFIER.model} at ${CLOUD_VERIFIER.efforts.join(' or ')}`);
+  if (role === 'pre-pr certifier' && !provider.unsandboxed) throw new Error(`Certifier provider ${expected.family.provider} has no unsandboxed mode`);
   if (role === 'pre-pr certifier') certifierCheckout(receipt, round.head);
   if (receipt.schemaVersion !== 1 || receipt.status !== 'complete' || receipt.mode !== (role === 'pre-pr certifier' ? 'unsandboxed' : 'read-only') || !((receipt.modelEvidence === 'provider-report' && receipt.modelVerified === true && reportedModelMatches(expected.family, string(receipt.reportedModel))) || (receipt.modelEvidence === 'pinned-argv' && receipt.modelVerified === false && receipt.reportedModel === null && expected.family.reportedModel === null))) throw new Error('Lane receipt does not prove independent completion');
   if (receipt.provider !== expected.family.provider || receipt.model !== expected.family.model || receipt.effort !== expected.descriptor.effort) throw new Error('Lane receipt model differs from dispatch');
@@ -79,7 +83,7 @@ export async function admitLane(manifestFile: string, report: Report, evidenceDi
   if (output.kind === 'unavailable') return { role, coverage: [], risks: [], findings: [], gaps: ['Independent lane unavailable'], artifacts: [], receiptDigest: hash(receiptBytes) };
   if (output.kind !== 'complete') throw new Error('Invalid lane completion');
   const remote = receipt.remote === null ? null : object(receipt.remote);
-  if ((loadMatrix().providers[expected.family.provider]?.transport === 'http') !== (remote !== null)) throw new Error('Receipt transport differs from dispatch');
+  if ((provider.transport === 'http') !== (remote !== null)) throw new Error('Receipt transport differs from dispatch');
   let agentId = '';
   let runId = '';
   let listed: Record<string, unknown>[] = [];
@@ -120,11 +124,17 @@ export async function admitLane(manifestFile: string, report: Report, evidenceDi
     artifacts.push({ id, path, digest: expectedDigest, mediaType: string(a.mediaType) });
   }
   function admitted(ids: unknown): boolean { const names = strings(ids); return names.length > 0 && names.every(id => artifacts.some(a => a.id === id)); }
+  /** Every declared artifact was verified above; the lane keeps only the ones its evidence binds, because the certificate carries only what re-derivation reads (N9). */
+  const bound = new Set<string>();
+  const first = (ids: string[], types: string[]): string | undefined => ids.find(id => artifacts.some(a => a.id === id && types.includes(a.mediaType)));
   const coverage: string[] = [];
   const gaps: string[] = [];
   for (const value of array(output.coverage)) {
     const c = object(value);
-    if (c.result === 'driven' && admitted(c.artifactIds) && strings(c.artifactIds).some(id => artifacts.some(a => a.id === id && a.mediaType === 'image/png')) && strings(c.artifactIds).some(id => artifacts.some(a => a.id === id && ['text/plain', 'application/json'].includes(a.mediaType))) && string(c.entryPoint).length > 0) coverage.push(relativePath(c.featureId));
+    const ids = c.result === 'driven' && admitted(c.artifactIds) ? strings(c.artifactIds) : [];
+    const png = first(ids, ['image/png']);
+    const text = first(ids, ['text/plain', 'application/json']);
+    if (png !== undefined && text !== undefined && string(c.entryPoint).length > 0) { coverage.push(relativePath(c.featureId)); bound.add(png); bound.add(text); }
     else gaps.push('Live user path was not driven with evidence');
   }
   const risks: RiskObligation[] = [];
@@ -134,9 +144,9 @@ export async function admitLane(manifestFile: string, report: Report, evidenceDi
     const obligation = parseObligation(risk.obligation);
     const original = report.hardList.find(f => f.severity === 'requires-proof' && sameObligation(riskObligation(f), obligation));
     if (!original) throw new Error('Reviewer proof does not identify a requested obligation');
-    if (risk.result === 'proved-safe' && admitted(risk.artifactIds)) risks.push(obligation);
-    else if (risk.result === 'defect' && admitted(risk.artifactIds)) findings.push({ ...original, severity: 'blocking' });
+    if (risk.result === 'proved-safe' && admitted(risk.artifactIds)) { risks.push(obligation); for (const id of strings(risk.artifactIds)) bound.add(id); }
+    else if (risk.result === 'defect' && admitted(risk.artifactIds)) { findings.push({ ...original, severity: 'blocking' }); for (const id of strings(risk.artifactIds)) bound.add(id); }
     else gaps.push('Reviewer risk proof unavailable');
   }
-  return { role, coverage, risks, findings, gaps, artifacts, receiptDigest: hash(receiptBytes) };
+  return { role, coverage, risks, findings, gaps, artifacts: artifacts.filter(a => bound.has(a.id)), receiptDigest: hash(receiptBytes) };
 }

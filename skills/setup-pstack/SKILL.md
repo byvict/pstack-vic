@@ -37,7 +37,7 @@ Use the harness and tool surface running this skill: Claude Code (`--parent clau
 node scripts/setup-pstack.ts state --parent <parent>
 ```
 
-The JSON says whether the parent's sheet exists (`exists`), its path, the normalized rows, the `migrations` it applied in memory (old Fable revisions become `fable`; `opus` and old Opus revisions become `claude-opus-5-5`; `gpt-5.6-sol` becomes `gpt-6-sol`, preserving provider, effort, role, and lane order), and one `efforts` entry per matrix family with its `status`, the distinct `efforts` in use, and the `rows` that use them. A family's status is `current` (every lane of the family shares one effort), `mixed` (its lanes use two or more efforts; a valid sheet, not a conflict), `unassigned` (first run: the matrix Default effort is proposed), or `outside-map` (no role uses the family, so no effort can persist for it; on a Claude Code parent, Sol is outside the first-run map by the 2026-09-17 decision, and on a Codex parent it is the default of the four authoring rows).
+The JSON says whether the parent's sheet exists (`exists`), its path, the normalized rows, the `migrations` it applied in memory (old Fable revisions become `fable`; `opus` and old Opus revisions become `claude-opus-5-5`; `gpt-5.6-sol` becomes `gpt-6-sol`, preserving provider, effort, role, and lane order), and one `efforts` entry per matrix family with its `status`, the distinct `efforts` in use, and the `rows` that use them. A family's status is `current` (every lane of the family shares one effort), `mixed` (its lanes use two or more efforts; a valid sheet, not a conflict), `unassigned` (first run: the matrix Default effort is proposed), or `outside-map` (no role uses the family, so no effort can persist for it; on a Claude Code parent, Sol is outside the first-run map by the 2026-09-17 decision, and on a Codex parent it is the default of the four authoring rows and `converge raiz`).
 
 The script stops on inconsistent state: an unknown or duplicate role row, a bare host-native slug, an unregistered Claude model, a provider/model pair outside the matrix, or an effort outside the family's Selectable efforts. Show the error verbatim and resolve it with the operator before going on. Do not probe or write while any inconsistency is unresolved.
 
@@ -54,7 +54,7 @@ When the operator chose "Change roles" without typing lanes, ask which roles in 
 
 A panel role (a list) gets one question instead of two: the current lanes as the "(keep)" option, the parent's matrix default panel when it differs, and "Other" for a typed list of descriptors, one per lane, in the order they should run. Explain that one lane runs per entry and that the list length is the fan-out count.
 
-Each lane keeps the effort written in its descriptor, so `bug-fix: codex:gpt-6-sol@xhigh` next to `hillclimb: codex:gpt-6-sol@high` is a valid map; there is no per-family effort question. A role that brings a family into the map carries that family's effort in its answer. Why and Reflect roles need the parent's live MCP surface, so recommend `inherit-parent` or `auto` for them in the question. `pr owner` and `pr verifier` take one lane, `cursor:grok-4.7@high` or `cursor:grok-4.7@xhigh`: Converge's `start.ts` reads them as effort floors for the Cloud owner and its verifier, and `plan` refuses any other family, effort, or panel there. An alias on those rows sets no floor. The three pre-pr rows (`pre-pr reviewer`, `pre-pr fixer`, `pre-pr certifier`) take one lane each, `grok:grok-4.7@high` or `grok:grok-4.7@xhigh`; `plan` refuses any other family, effort, alias, or panel there. When an authoring row (`feature, refactoring`, `bug-fix`, `perf-issue`, `hillclimb`, `hardest tasks`) has a lane from the same provider as `pre-pr reviewer`, `plan` and `write` print a warning on stderr and the plan JSON carries it in `warnings`. A warning never stops `plan` or `write`, but pre-pr certification refuses until the two differ in family.
+Each lane keeps the effort written in its descriptor, so `bug-fix: codex:gpt-6-sol@xhigh` next to `hillclimb: codex:gpt-6-sol@high` is a valid map; there is no per-family effort question. A role that brings a family into the map carries that family's effort in its answer. Why and Reflect roles need the parent's live MCP surface, so recommend `inherit-parent` or `auto` for them in the question. `pr owner` and `pr verifier` take one lane, `cursor:grok-4.7@high` or `cursor:grok-4.7@xhigh`: Converge's `start.ts` reads them as effort floors for the Cloud owner and its verifier, and `plan` refuses any other family, effort, or panel there. An alias on those rows sets no floor. `pre-pr reviewer` takes one lane of any family the external runner launches from this parent: codex or grok on Claude Code, claude or grok on Codex. It takes any effort the family selects and no alias, because its receipt is admitted into the Certificado; the runner refuses the parent's native provider, and a native subagent writes no receipt, so `plan` refuses that provider there. `pre-pr fixer` takes one lane of any CLI family (claude, codex or grok), or `inherit-parent` or `auto`; a family native to the parent and both aliases run it as a native subagent in its own worktree. Only its round count enters the Certificado. `pre-pr certifier` takes one lane of a family whose provider has `unsandboxed: true` in the matrix, only Grok in this version. `converge raiz` takes one lane of the parent's native provider (claude on Claude Code, codex on Codex), any model of it, any effort, and no alias: the local converge daemon launches it as a session of the parent. `plan` refuses a panel on all four. When an authoring row (`feature, refactoring`, `bug-fix`, `perf-issue`, `hillclimb`, `hardest tasks`) has a lane from the same provider as `pre-pr reviewer`, `plan` and `write` print a warning on stderr and the plan JSON carries it in `warnings`. A warning never stops `plan` or `write`, but pre-pr certification refuses until they differ in family.
 
 ### 4. Collect the changes
 
@@ -118,7 +118,7 @@ Report the sheet path, the ledger path, the parent route table, the families pro
 
 ## First-run role maps
 
-The maps below are rendered from `model-matrix.json` by `scripts/render-model-matrix.ts`, one per parent because the frontier solo roles take the parent's native frontier family and the four authoring rows take its native code family. They only seed the plan on a first run; selected efforts and explicit role changes always replace their values before writing. Never paste one as the result.
+The maps below are rendered from `model-matrix.json` by `scripts/render-model-matrix.ts`, one per parent because the frontier solo roles take the parent's native frontier family and the four authoring rows and `converge raiz` take its native code family. They only seed the plan on a first run; selected efforts and explicit role changes always replace their values before writing. Never paste one as the result.
 
 <!-- role-sheet:begin -->
 
@@ -149,6 +149,7 @@ interrogate reviewers: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xh
 pre-pr reviewer: grok:grok-4.7@xhigh
 pre-pr fixer: grok:grok-4.7@xhigh
 pre-pr certifier: grok:grok-4.7@high
+converge raiz: claude:claude-opus-5-5@xhigh
 pr owner: cursor:grok-4.7@high
 pr verifier: cursor:grok-4.7@high
 ```
@@ -180,6 +181,7 @@ interrogate reviewers: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xh
 pre-pr reviewer: grok:grok-4.7@xhigh
 pre-pr fixer: grok:grok-4.7@xhigh
 pre-pr certifier: grok:grok-4.7@high
+converge raiz: codex:gpt-6-sol@xhigh
 pr owner: cursor:grok-4.7@high
 pr verifier: cursor:grok-4.7@high
 ```

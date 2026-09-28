@@ -118,17 +118,49 @@ test('a pre-pr reviewer lane keeps requiring a read-only receipt', async t => {
   Object.assign(i.receipt, { mode: 'unsandboxed', checkout: { headBefore: head, headAfter: head, statusAfter: [] } }); i.save();
   await assert.rejects(admitLane(join(i.directory, 'manifest.json'), report as never, join(i.directory, 'admitted'), i.round), /Lane receipt does not prove independent completion/);
 });
+test('a reviewer lane keeps the artifacts its risk proofs cite and drops the one nothing cites', async t => {
+  const i = localInput('pre-pr reviewer'); t.after(i.cleanup);
+  const prefix = `artifacts/converge/${i.round.id}/pre-pr-reviewer/`;
+  const proof = Buffer.from('{"operation":"refund","result":"rolled back"}');
+  writeFileSync(join(i.directory, prefix, 'proof.json'), proof);
+  const safe = { source: 'diff', path: 'billing/one.js', line: 1, rule: 'money-path' } as const;
+  const unsafe = { source: 'diff', path: 'billing/two.js', line: 1, rule: 'money-path' } as const;
+  const report: Report = { ...i.report, round: i.round, lanes: ['pre-pr reviewer'], hardList: [{ kind: 'money', ...safe, severity: 'requires-proof' }, { kind: 'money', ...unsafe, severity: 'requires-proof' }] };
+  const output = JSON.parse(readFileSync(join(i.directory, 'output.json'), 'utf8'));
+  output.artifacts.push({ id: 'proof', path: prefix + 'proof.json', bytes: proof.length, sha256: hash(proof), mediaType: 'application/json' });
+  output.coverage = [];
+  output.riskProofs = [{ obligation: safe, result: 'proved-safe', artifactIds: ['proof'] }, { obligation: unsafe, result: 'defect', artifactIds: ['action'] }];
+  writeFileSync(join(i.directory, 'output.json'), JSON.stringify(output));
+  const result = await admitLane(join(i.directory, 'manifest.json'), report, join(i.directory, 'admitted'), i.round);
+  assert.deepEqual(result.risks, [safe]);
+  assert.deepEqual(result.findings, [{ kind: 'money', ...unsafe, severity: 'blocking' }]);
+  assert.deepEqual(output.artifacts.map((a: { id: string }) => a.id), ['screen', 'action', 'proof']);
+  assert.deepEqual(result.artifacts.map(a => a.id), ['action', 'proof']);
+});
 test('a pre-pr role refuses a Cursor receipt and a pr verifier refuses a grok one', async t => {
   const i = localInput('pre-pr reviewer'); t.after(i.cleanup);
   i.receipt.provider = 'cursor'; i.save();
-  await assert.rejects(admitLane(join(i.directory, 'manifest.json'), { ...i.report, round: i.round } as never, join(i.directory, 'admitted'), i.round), /Lane receipt model differs from dispatch|requires grok/);
+  await assert.rejects(admitLane(join(i.directory, 'manifest.json'), { ...i.report, round: i.round } as never, join(i.directory, 'admitted'), i.round), /Lane receipt model differs from dispatch/);
   const c = localInput('pre-pr reviewer'); t.after(c.cleanup);
   patchManifest(c.directory, { descriptor: 'cursor:grok-4.7@high' });
   Object.assign(c.receipt, { parent: 'codex', provider: 'cursor', model: 'grok-4.7', effort: 'high', modelVerified: false, modelEvidence: 'pinned-argv', reportedModel: null, remote: { agentId: 'bc-fixture', runId: 'run-fixture', heads: { kind: 'observed', changedBranches: [] } } }); c.save();
-  await assert.rejects(admitLane(join(c.directory, 'manifest.json'), { ...c.report, round: c.round } as never, join(c.directory, 'admitted'), c.round), /Role pre-pr reviewer requires grok/);
+  await assert.rejects(admitLane(join(c.directory, 'manifest.json'), { ...c.report, round: c.round } as never, join(c.directory, 'admitted'), c.round), /Role pre-pr reviewer runs on a CLI lane, not cursor/);
   const v = input(); t.after(v.cleanup);
-  patchManifest(v.directory, { descriptor: 'grok:grok-4.7@xhigh' });
-  await assert.rejects(admitLane(join(v.directory, 'manifest.json'), v.report, join(v.directory, 'admitted')), /Role pr verifier requires cursor/);
+  Object.assign(v.receipt, { parent: 'claude', provider: 'grok', model: 'grok-4.7', effort: 'high', modelVerified: true, modelEvidence: 'provider-report', reportedModel: 'grok-4.7-build', remote: null, executable: '/usr/local/bin/grok', exitCode: 0, signal: null, checkout: null }); v.save();
+  patchManifest(v.directory, { descriptor: 'grok:grok-4.7@high' });
+  await assert.rejects(admitLane(join(v.directory, 'manifest.json'), v.report, join(v.directory, 'admitted')), /Role pr verifier runs on a cloud lane, not grok/);
+});
+test('a pr verifier is admitted only as cursor grok-4.7 at high or xhigh', async t => {
+  const cases = [['cursor:grok-4.7@xhigh', 'grok-4.7', 'xhigh', true], ['cursor:grok-4.7@medium', 'grok-4.7', 'medium', false], ['cursor:composer-2.5@high', 'composer-2.5', 'high', false], ['cursor:kimi-k3@low', 'kimi-k3', 'low', false]] as const;
+  const remote = input(); t.after(remote.cleanup); mockRemote(t, remote);
+  for (const [descriptor, model, effort, admitted] of cases) {
+    const i = input(); t.after(i.cleanup);
+    Object.assign(i.receipt, { model, effort }); i.save();
+    patchManifest(i.directory, { descriptor });
+    const admission = admitLane(join(i.directory, 'manifest.json'), i.report, join(i.directory, 'admitted'));
+    if (admitted) assert.deepEqual((await admission).coverage, ['login'], descriptor);
+    else await assert.rejects(admission, /^Error: Role pr verifier requires cursor grok-4\.7 at high or xhigh$/, descriptor);
+  }
 });
 test('a pre-pr role refuses a PR-numbered pre-pr round reached through the default round', async t => {
   const i = localInput('pre-pr reviewer', 1); t.after(i.cleanup);

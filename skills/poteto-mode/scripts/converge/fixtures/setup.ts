@@ -62,7 +62,8 @@ export function fixture() {
     cleanup() { rmSync(directory, { recursive: true, force: true }); },
   };
 }
-function lane(run: string, round: Record<string, unknown>, role: 'pre-pr reviewer' | 'pre-pr certifier', steps = 0) {
+/** A certifier lane lists `steps` artifacts that no coverage entry binds, which the certificate drops, and drives `features` more features, each binding the shared screen and its own JSON. */
+function lane(run: string, round: Record<string, unknown>, role: 'pre-pr reviewer' | 'pre-pr certifier', steps = 0, features = 0) {
   const laneId = role.replace(' ', '-');
   const root = join(run, 'lanes', laneId);
   const prefix = `artifacts/converge/${round.id}/${laneId}/`;
@@ -71,15 +72,17 @@ function lane(run: string, round: Record<string, unknown>, role: 'pre-pr reviewe
   const action = Buffer.from('{"entry":"Entrar","result":"Dashboard"}');
   writeFileSync(join(root, prefix, 'screen.png'), png); writeFileSync(join(root, prefix, 'action.json'), action);
   const certifier = role === 'pre-pr certifier';
-  const extra = Array.from({ length: steps }, (_, n) => { const bytes = Buffer.from(JSON.stringify({ step: n })); writeFileSync(join(root, prefix, `step-${n}.json`), bytes); return { id: `step-${n}`, path: prefix + `step-${n}.json`, bytes: bytes.length, sha256: hash(bytes), mediaType: 'application/json' }; });
-  const artifacts = certifier ? [{ id: 'screen', path: prefix + 'screen.png', bytes: png.length, sha256: hash(png), mediaType: 'image/png' }, { id: 'action', path: prefix + 'action.json', bytes: action.length, sha256: hash(action), mediaType: 'application/json' }, ...extra] : [];
-  const coverage = certifier ? [{ featureId: 'login', entryPoint: 'Entrar', result: 'driven', artifactIds: ['screen', 'action'] }] : [];
+  const json = (id: string, value: unknown) => { const bytes = Buffer.from(JSON.stringify(value)); writeFileSync(join(root, prefix, `${id}.json`), bytes); return { id, path: prefix + `${id}.json`, bytes: bytes.length, sha256: hash(bytes), mediaType: 'application/json' }; };
+  const extra = Array.from({ length: steps }, (_, n) => json(`step-${n}`, { step: n }));
+  const driven = Array.from({ length: features }, (_, n) => json(`feature-${n}`, { feature: n }));
+  const artifacts = certifier ? [{ id: 'screen', path: prefix + 'screen.png', bytes: png.length, sha256: hash(png), mediaType: 'image/png' }, { id: 'action', path: prefix + 'action.json', bytes: action.length, sha256: hash(action), mediaType: 'application/json' }, ...extra, ...driven] : [];
+  const coverage = certifier ? [{ featureId: 'login', entryPoint: 'Entrar', result: 'driven', artifactIds: ['screen', 'action'] }, ...driven.map(a => ({ featureId: a.id, entryPoint: 'Entrar', result: 'driven', artifactIds: ['screen', a.id] }))] : [];
   const output = { schemaVersion: 1, round: round.id, laneId, role, observedHead: round.head, observedContract: round.contract, kind: 'complete', findings: [], artifacts, coverage, riskProofs: [] };
   const receipt = { schemaVersion: 1, parent: 'claude', provider: 'grok', model: 'grok-4.7', effort: 'xhigh', ...(certifier ? { mode: 'unsandboxed', checkout: { headBefore: round.head, headAfter: round.head, statusAfter: [] } } : { mode: 'read-only', checkout: null }), status: 'complete', promptPath: join(root, 'prompt.txt'), outputPath: join(root, 'output.json'), startedAt: '2026-09-24T00:00:00.000Z', completedAt: '2026-09-24T00:00:02.000Z', modelVerified: true, modelEvidence: 'provider-report', reportedModel: 'grok-4.7-build', remote: null, executable: '/usr/local/bin/grok', exitCode: 0, signal: null };
   writeFileSync(join(root, 'prompt.txt'), 'read only'); writeFileSync(join(root, 'output.json'), JSON.stringify(output)); writeFileSync(join(root, 'receipt.json'), JSON.stringify(receipt));
   writeFileSync(join(root, 'manifest.json'), JSON.stringify({ round, laneId, role, descriptor: 'grok:grok-4.7@xhigh', prompt: 'prompt.txt', promptDigest: hash('read only'), output: 'output.json', receipt: 'receipt.json', createdAt: Date.parse(receipt.startedAt) }));
 }
-export function certifiedPr(f: ReturnType<typeof fixture>, options: { body?: string; full?: boolean; record?: boolean; steps?: number } = {}) {
+export function certifiedPr(f: ReturnType<typeof fixture>, options: { body?: string; full?: boolean; record?: boolean; steps?: number; features?: number } = {}) {
   const config = JSON.parse(f.state.blobs['.cursor/converge.json']);
   config.prePr = { runs: [{ name: 'suite', command: 'true' }], certifier: options.full === true };
   f.state.blobs['.cursor/converge.json'] = JSON.stringify(config); f.state.body = options.body ?? '## Verification\ncertificate: pre-pr\n';
@@ -99,7 +102,7 @@ export function certifiedPr(f: ReturnType<typeof fixture>, options: { body?: str
   const { round, mode, lanes } = JSON.parse(local.stdout);
   assert.deepEqual([mode, lanes], options.full ? ['full', ['pre-pr reviewer', 'pre-pr certifier']] : ['ci-only', ['pre-pr reviewer']]);
   lane(run, round, 'pre-pr reviewer');
-  if (options.full) lane(run, round, 'pre-pr certifier', options.steps);
+  if (options.full) lane(run, round, 'pre-pr certifier', options.steps, options.features);
   const assembled = f.run('converge-certify', ['assemble', '--directory', run, '--author-provider', 'claude', '--output', join(run, 'certificate.json'), '--adjust-rounds', '1']);
   assert.equal(assembled.status, 0, assembled.stderr);
   return run;

@@ -36,6 +36,8 @@ The allowed effort universe is exactly `low`, `medium`, `high`, `xhigh`, `max`. 
 | Claude Code | native `Agent` | external runner | external runner | external runner |
 | Codex | external runner | native `spawn_agent` | external runner | external runner |
 
+Providers whose CLI the runner can launch in `unsandboxed` mode: `grok`. The pre-pr certifier row admits only their families.
+
 <!-- model-matrix:end -->
 
 `fable` is a Claude Code rolling alias. The Opus family pins `claude-opus-5-5`. A runner receipt keeps the requested model in `model` and the provider-reported revision in `reportedModel`; verification checks each family against its `reportedModel` pattern.
@@ -72,10 +74,11 @@ Skills name roles by the labels below, the same labels `/setup-pstack` writes to
 | `pre-pr reviewer` | Reviews the pushed branch read-only before the PR exists: diff, risk classes and recorded runs; must be a different family from the author. | `grok:grok-4.7@xhigh` | `grok:grok-4.7@xhigh` |
 | `pre-pr fixer` | Fixes the reviewer's findings in its own worktree of the branch; the Raiz reviews the diff and fast-forwards it. | `grok:grok-4.7@xhigh` | `grok:grok-4.7@xhigh` |
 | `pre-pr certifier` | Drives the selected features on a disposable app and records the artifacts the certificate binds; each step under 300 s. | `grok:grok-4.7@high` | `grok:grok-4.7@high` |
+| `converge raiz` | The unattended session the local converge daemon launches to run the catch-up playbook: repairs a red certified PR, re-certifies a stale one, certifies an uncertified one; a session of the parent, so only its native provider. | `claude:claude-opus-5-5@xhigh` | `codex:gpt-6-sol@xhigh` |
 | `pr owner` | Owns an uncertified or red PR in Cursor Cloud through verification, repair and merge; start.ts exits when the head is certified. | `cursor:grok-4.7@high` | `cursor:grok-4.7@high` |
 | `pr verifier` | Independently checks risk, tests and user behavior of the exact PR head in Cursor Cloud without writing code. | `cursor:grok-4.7@high` | `cursor:grok-4.7@high` |
 
-A list is a panel: one lane per entry, in this order. A role whose two columns differ takes a family native to each parent: the frontier family for the frontier solo roles, the code family for the four authoring rows. Aliases run on the parent model through its native subagent primitive.
+A list is a panel: one lane per entry, in this order. A role whose two columns differ takes a family native to each parent: the frontier family for the frontier solo roles, the code family for the four authoring rows and `converge raiz`. Aliases run on the parent model through its native subagent primitive.
 
 <!-- role-defaults:end -->
 

@@ -19,7 +19,7 @@ function prePrFixture(certifier = true, surface = true) {
   return f;
 }
 function certify(f: ReturnType<typeof fixture>, args: string[]) { return f.run('converge-certify', args); }
-function lane(f: ReturnType<typeof fixture>, round: Record<string, unknown>, role: 'pre-pr reviewer' | 'pre-pr certifier', options: { provider?: string; findings?: unknown[]; coverage?: boolean } = {}) {
+function lane(f: ReturnType<typeof fixture>, round: Record<string, unknown>, role: 'pre-pr reviewer' | 'pre-pr certifier', options: { provider?: string; model?: string; reportedModel?: string; findings?: unknown[]; coverage?: boolean; extras?: number } = {}) {
   const laneId = role.replace(' ', '-');
   const root = join(f.directory, 'run', 'lanes', laneId);
   const prefix = `artifacts/converge/${round.id}/${laneId}/`;
@@ -27,11 +27,24 @@ function lane(f: ReturnType<typeof fixture>, round: Record<string, unknown>, rol
   const png = readFileSync(new URL('../../../../assets/logo.png', import.meta.url));
   const action = Buffer.from('{"entry":"Entrar","result":"Dashboard"}');
   writeFileSync(join(root, prefix, 'screen.png'), png); writeFileSync(join(root, prefix, 'action.json'), action);
-  const artifacts = role === 'pre-pr certifier' ? [{ id: 'screen', path: prefix + 'screen.png', bytes: png.length, sha256: hash(png), mediaType: 'image/png' }, { id: 'action', path: prefix + 'action.json', bytes: action.length, sha256: hash(action), mediaType: 'application/json' }] : [];
-  const coverage = role === 'pre-pr certifier' && options.coverage !== false ? [{ featureId: 'login', entryPoint: 'Entrar', result: 'driven', artifactIds: ['screen', 'action'] }] : [];
+  const extras = Array.from({ length: options.extras ?? 0 }, (_, n) => {
+    const image = Buffer.concat([png, Buffer.from([n])]); const text = Buffer.from(JSON.stringify({ extra: n }));
+    writeFileSync(join(root, prefix, `extra-${n}.png`), image); writeFileSync(join(root, prefix, `extra-${n}.json`), text);
+    return [{ id: `extra-${n}-png`, path: prefix + `extra-${n}.png`, bytes: image.length, sha256: hash(image), mediaType: 'image/png' }, { id: `extra-${n}-json`, path: prefix + `extra-${n}.json`, bytes: text.length, sha256: hash(text), mediaType: 'application/json' }];
+  }).flat();
+  const artifacts = role === 'pre-pr certifier' ? [{ id: 'screen', path: prefix + 'screen.png', bytes: png.length, sha256: hash(png), mediaType: 'image/png' }, { id: 'action', path: prefix + 'action.json', bytes: action.length, sha256: hash(action), mediaType: 'application/json' }, ...extras] : [];
+  const coverage = role === 'pre-pr certifier' && options.coverage !== false ? [{ featureId: 'login', entryPoint: 'Entrar', result: 'driven', artifactIds: ['screen', 'action', ...extras.map(a => a.id)] }] : [];
   const output = { schemaVersion: 1, round: round.id, laneId, role, observedHead: round.head, observedContract: round.contract, kind: 'complete', findings: options.findings ?? [], artifacts, coverage, riskProofs: [] };
-  const receipt = { schemaVersion: 1, parent: 'claude', provider: options.provider ?? 'grok', model: 'grok-4.7', effort: 'xhigh', ...(role === 'pre-pr certifier' ? { mode: 'unsandboxed', checkout: { headBefore: round.head, headAfter: round.head, statusAfter: [] } } : { mode: 'read-only', checkout: null }), status: 'complete', promptPath: join(root, 'prompt.txt'), outputPath: join(root, 'output.json'), startedAt: '2026-09-24T00:00:00.000Z', completedAt: '2026-09-24T00:00:02.000Z', modelVerified: true, modelEvidence: 'provider-report', reportedModel: 'grok-4.7-build', remote: null, executable: '/usr/local/bin/grok', exitCode: 0, signal: null };
-  const manifest = { round, laneId, role, descriptor: `${options.provider ?? 'grok'}:grok-4.7@xhigh`, prompt: 'prompt.txt', promptDigest: hash('read only'), output: 'output.json', receipt: 'receipt.json', createdAt: Date.parse(receipt.startedAt) };
+  const receipt = { schemaVersion: 1, parent: 'claude', provider: options.provider ?? 'grok', model: options.model ?? 'grok-4.7', effort: 'xhigh', ...(role === 'pre-pr certifier' ? { mode: 'unsandboxed', checkout: { headBefore: round.head, headAfter: round.head, statusAfter: [] } } : { mode: 'read-only', checkout: null }), status: 'complete', promptPath: join(root, 'prompt.txt'), outputPath: join(root, 'output.json'), startedAt: '2026-09-24T00:00:00.000Z', completedAt: '2026-09-24T00:00:02.000Z', modelVerified: true, modelEvidence: 'provider-report', reportedModel: options.reportedModel ?? 'grok-4.7-build', remote: null, executable: '/usr/local/bin/grok', exitCode: 0, signal: null };
+  const manifest = { round, laneId, role, descriptor: `${options.provider ?? 'grok'}:${options.model ?? 'grok-4.7'}@xhigh`, prompt: 'prompt.txt', promptDigest: hash('read only'), output: 'output.json', receipt: 'receipt.json', createdAt: Date.parse(receipt.startedAt) };
+  writeFileSync(join(root, 'prompt.txt'), 'read only'); writeFileSync(join(root, 'output.json'), JSON.stringify(output)); writeFileSync(join(root, 'receipt.json'), JSON.stringify(receipt)); writeFileSync(join(root, 'manifest.json'), JSON.stringify(manifest));
+}
+function codexLane(f: ReturnType<typeof fixture>, round: Record<string, unknown>) {
+  const root = join(f.directory, 'run', 'lanes', 'pre-pr-reviewer');
+  mkdirSync(root, { recursive: true });
+  const output = { schemaVersion: 1, round: round.id, laneId: 'pre-pr-reviewer', role: 'pre-pr reviewer', observedHead: round.head, observedContract: round.contract, kind: 'complete', findings: [], artifacts: [], coverage: [], riskProofs: [] };
+  const receipt = { schemaVersion: 1, parent: 'claude', provider: 'codex', model: 'gpt-6-sol', effort: 'high', mode: 'read-only', checkout: null, status: 'complete', promptPath: join(root, 'prompt.txt'), outputPath: join(root, 'output.json'), startedAt: '2026-09-24T00:00:00.000Z', completedAt: '2026-09-24T00:00:02.000Z', modelVerified: false, modelEvidence: 'pinned-argv', reportedModel: null, remote: null, executable: '/usr/local/bin/codex', exitCode: 0, signal: null };
+  const manifest = { round, laneId: 'pre-pr-reviewer', role: 'pre-pr reviewer', descriptor: 'codex:gpt-6-sol@high', prompt: 'prompt.txt', promptDigest: hash('read only'), output: 'output.json', receipt: 'receipt.json', createdAt: Date.parse(receipt.startedAt) };
   writeFileSync(join(root, 'prompt.txt'), 'read only'); writeFileSync(join(root, 'output.json'), JSON.stringify(output)); writeFileSync(join(root, 'receipt.json'), JSON.stringify(receipt)); writeFileSync(join(root, 'manifest.json'), JSON.stringify(manifest));
 }
 function record(f: ReturnType<typeof fixture>, run: string, checkout: string, argv = ['echo', 'ok'], name = 'suite') {
@@ -68,7 +81,7 @@ test('assemble writes a VERIFIED certificate from clean runs and admitted lanes'
   const result = certify(f, ['assemble', '--directory', run, '--author-provider', 'claude', '--output', join(run, 'certificate.json'), '--adjust-rounds', '2']);
   assert.equal(result.status, 0, result.stderr);
   const certificate = JSON.parse(result.stdout);
-  assert.equal(certificate.decision.verdict, 'VERIFIED'); assert.deepEqual(certificate.coverage, ['login']); assert.equal(certificate.authorProvider, 'claude');
+  assert.equal(certificate.decision.verdict, 'VERIFIED'); assert.deepEqual(certificate.coverage, ['login']); assert.deepEqual(certificate.authorProviders, ['claude']);
   assert.equal(certificate.toolingRef, 'pstack-vic@' + JSON.parse(readFileSync(new URL('../../../../package.json', import.meta.url), 'utf8')).version);
   assert.deepEqual([certificate.runs[0].command, certificate.runs[0].head, certificate.runs[0].clean], ['echo ok', f.state.head, true]);
   assert.equal(certificate.adjustRounds, 2);
@@ -90,6 +103,18 @@ test('assemble writes a VERIFIED certificate from clean runs and admitted lanes'
     [{ lanes: [{ ...certificate.lanes[0], effort: undefined }] }, /Invalid string/],
   ] as const) assert.throws(() => parseCertificate({ ...certificate, ...edit }), message);
 });
+test('the certificate binds one PNG and one text per driven feature and drops the rest', t => {
+  const f = prePrFixture(); t.after(f.cleanup);
+  const { run, round } = prepared(f);
+  lane(f, round, 'pre-pr reviewer');
+  lane(f, round, 'pre-pr certifier', { extras: 3 });
+  const assembled = certify(f, ['assemble', '--directory', run, '--author-provider', 'claude', '--output', join(run, 'certificate.json'), '--adjust-rounds', '0']);
+  assert.equal(assembled.status, 0, assembled.stderr);
+  const certificate = parseCertificate(JSON.parse(readFileSync(join(run, 'certificate.json'), 'utf8')));
+  assert.deepEqual(certificate.artifacts.map(a => a.id), ['screen', 'action']);
+  assert.deepEqual(certificate.coverage, ['login']);
+  assert.ok(existsSync(join(run, 'lanes', 'pre-pr-certifier', `artifacts/converge/${round.id}/pre-pr-certifier/extra-2.json`)), 'unbound artifacts stay on disk');
+});
 test('a ci-only certificate marks every unrecorded contract run as skipped', t => {
   const f = prePrFixture(true, false); t.after(f.cleanup);
   const run = join(f.directory, 'run');
@@ -105,6 +130,24 @@ test('a ci-only certificate marks every unrecorded contract run as skipped', t =
   assert.deepEqual(certificate.runs, [{ name: 'suite', command: 'echo ok', skip: 'ci-only report' }]);
   assert.deepEqual(certificate.artifacts, []); assert.equal(certificate.adjustRounds, 0);
   assert.deepEqual(parseCertificate(certificate), certificate);
+});
+test('assemble admits a Codex reviewer lane and records its provider from the descriptor', t => {
+  const f = prePrFixture(false, false); t.after(f.cleanup);
+  const { run, round } = prepared(f);
+  codexLane(f, round);
+  const assembled = certify(f, ['assemble', '--directory', run, '--author-provider', 'claude', '--output', join(run, 'certificate.json'), '--adjust-rounds', '0']);
+  assert.equal(assembled.status, 0, assembled.stderr);
+  const certificate = parseCertificate(JSON.parse(readFileSync(join(run, 'certificate.json'), 'utf8')));
+  assert.deepEqual(certificate.lanes.map(l => [l.role, l.provider, l.model, l.effort, l.reportedModel]), [['pre-pr reviewer', 'codex', 'gpt-6-sol', 'high', null]]);
+});
+test('assemble refuses a certifier lane of a provider without an unsandboxed mode', t => {
+  const f = prePrFixture(); t.after(f.cleanup);
+  const { run, round } = prepared(f);
+  lane(f, round, 'pre-pr reviewer');
+  lane(f, round, 'pre-pr certifier', { provider: 'claude', model: 'claude-opus-5-5', reportedModel: 'claude-opus-5-5' });
+  const assembled = certify(f, ['assemble', '--directory', run, '--author-provider', 'codex', '--output', join(run, 'certificate.json'), '--adjust-rounds', '0']);
+  assert.equal(assembled.status, 1);
+  assert.match(assembled.stderr, /Certifier provider claude has no unsandboxed mode/);
 });
 test('assemble refuses a missing or out-of-range adjust round count', t => {
   const f = prePrFixture(); t.after(f.cleanup);
@@ -139,7 +182,7 @@ for (const fault of ['same-family', 'failed-run', 'edited-log', 'missing-run', '
     if (fault === 'artifact-bytes') { const file = join(run, 'lanes', 'pre-pr-certifier', `artifacts/converge/${round.id}/pre-pr-certifier/screen.png`); const png = readFileSync(file); png[png.length - 1] ^= 1; writeFileSync(file, png); }
     const result = certify(f, ['assemble', '--directory', run, '--author-provider', fault === 'same-family' ? 'grok' : 'claude', '--output', join(run, 'certificate.json'), '--adjust-rounds', '0']);
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, { 'same-family': /same family as the author/, 'failed-run': /Run suite exited 1/, 'edited-log': /Run suite log changed/, 'missing-run': /Required run missing: suite/, 'renamed-run': /Run record file name differs from its name/, 'unlisted-run': /Run lint is not in the contract/, 'open-finding': /NOT VERIFIED/, 'unmapped-surface': /lacks a trusted feature recipe/, 'missing-certifier': /Required independent lane unavailable/, 'other-command': /Run suite command differs from the contract/, 'moved-head': /Run suite was not recorded at the certified head/, 'modified-checkout': /Run suite was recorded on a modified checkout/, 'untracked-file': /Run suite was recorded on a modified checkout/, 'artifact-bytes': /Artifact bytes differ from lane report/ }[fault]);
+    assert.match(result.stderr, { 'same-family': /same family as an author/, 'failed-run': /Run suite exited 1/, 'edited-log': /Run suite log changed/, 'missing-run': /Required run missing: suite/, 'renamed-run': /Run record file name differs from its name/, 'unlisted-run': /Run lint is not in the contract/, 'open-finding': /NOT VERIFIED/, 'unmapped-surface': /lacks a trusted feature recipe/, 'missing-certifier': /Required independent lane unavailable/, 'other-command': /Run suite command differs from the contract/, 'moved-head': /Run suite was not recorded at the certified head/, 'modified-checkout': /Run suite was recorded on a modified checkout/, 'untracked-file': /Run suite was recorded on a modified checkout/, 'artifact-bytes': /Artifact bytes differ from lane report/ }[fault]);
   });
 }
 for (const fault of ['failed-run', 'moved-head', 'unlisted-run'] as const) {
@@ -172,11 +215,13 @@ test('assemble refuses a report edited after it was written', t => {
   const result = certify(f, ['assemble', '--directory', run, '--author-provider', 'claude', '--output', join(run, 'certificate.json'), '--adjust-rounds', '0']);
   assert.notEqual(result.status, 0); assert.match(result.stderr, /Reconciliation report changed or is stale/);
 });
-test('assemble refuses an author provider outside the model matrix', t => {
+test('assemble refuses an author family that is outside the model matrix, malformed, repeated or empty', t => {
   const f = prePrFixture(); t.after(f.cleanup);
   const run = join(f.directory, 'run');
-  const result = certify(f, ['assemble', '--directory', run, '--author-provider', 'Grok', '--output', join(run, 'certificate.json'), '--adjust-rounds', '0']);
-  assert.notEqual(result.status, 0); assert.match(result.stderr, /Unknown author provider: Grok/);
+  for (const [value, message] of [['claude,gemini', /Unknown author provider: gemini/], ['Grok', /Invalid author family: Grok$/m], ['claude, claude', /Duplicate author family/], [' , ', /Certificate needs at least one author family/]] as const) {
+    const result = certify(f, ['assemble', '--directory', run, '--author-provider', value, '--output', join(run, 'certificate.json'), '--adjust-rounds', '0']);
+    assert.notEqual(result.status, 0); assert.match(result.stderr, message);
+  }
 });
 test('assemble writes the certificate only in the run directory', t => {
   const f = prePrFixture(); t.after(f.cleanup);
@@ -184,4 +229,24 @@ test('assemble writes the certificate only in the run directory', t => {
   lane(f, round, 'pre-pr reviewer'); lane(f, round, 'pre-pr certifier');
   const result = certify(f, ['assemble', '--directory', run, '--author-provider', 'claude', '--output', join(f.directory, 'certificate.json'), '--adjust-rounds', '0']);
   assert.notEqual(result.status, 0); assert.match(result.stderr, /Certificate must be written in the run directory/);
+});
+test('assemble takes a list of author families and refuses a reviewer from any of them', t => {
+  const f = prePrFixture(false, false); t.after(f.cleanup);
+  const { run, round } = prepared(f);
+  lane(f, round, 'pre-pr reviewer');
+  const refused = certify(f, ['assemble', '--directory', run, '--author-provider', 'claude, grok', '--output', join(run, 'certificate.json'), '--adjust-rounds', '0']);
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /Reviewer lane is the same family as an author \(grok\); change the model sheet/);
+  const assembled = certify(f, ['assemble', '--directory', run, '--author-provider', 'claude,codex', '--output', join(run, 'certificate.json'), '--adjust-rounds', '0']);
+  assert.equal(assembled.status, 0, assembled.stderr);
+  const certificate = JSON.parse(readFileSync(join(run, 'certificate.json'), 'utf8'));
+  assert.equal(certificate.schemaVersion, 2);
+  assert.deepEqual(certificate.authorProviders, ['claude', 'codex']);
+  assert.equal(certificate.authorProvider, undefined);
+});
+test('parseCertificate refuses schema 1, an empty author list and an unknown author', () => {
+  const base = { schemaVersion: 2, authorProviders: ['claude'] };
+  assert.throws(() => parseCertificate({ ...base, schemaVersion: 1 }), /Unknown certificate schema/);
+  assert.throws(() => parseCertificate({ ...base, authorProviders: [] }), /Certificate needs at least one author family/);
+  assert.throws(() => parseCertificate({ ...base, authorProviders: ['Claude'] }), /^Error: Invalid author family: Claude$/);
 });

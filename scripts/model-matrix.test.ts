@@ -196,7 +196,7 @@ describe("model-matrix.json", () => {
 
   it("accepts cli null only for an http provider", () => {
     const cursor = matrix.providers.cursor;
-    assert.deepEqual(cursor, { cli: null, transport: "http", nativeIn: null });
+    assert.deepEqual(cursor, { cli: null, transport: "http", nativeIn: null, unsandboxed: false });
     assert.equal(matrix.providers.grok.transport, "cli");
     for (const parent of Object.keys(matrix.parents)) {
       assert.equal(routeFor(matrix, parent, "cursor"), "runner");
@@ -218,6 +218,21 @@ describe("model-matrix.json", () => {
       () => validateMatrix(withProvider({ cli: null, transport: "ssh", nativeIn: null })),
       /providers\.cursor\.transport must be "cli" or "http"/
     );
+  });
+
+  it("providers declare whether the runner has an unsandboxed mode for them", () => {
+    assert.equal(matrix.providers.grok.unsandboxed, true);
+    assert.equal(matrix.providers.claude.unsandboxed, false);
+    assert.equal(matrix.providers.codex.unsandboxed, false);
+    assert.equal(matrix.providers.cursor.unsandboxed, false);
+  });
+
+  it("an http provider cannot claim an unsandboxed mode", () => {
+    const raw = JSON.parse(JSON.stringify(matrix));
+    raw.providers.cursor.unsandboxed = true;
+    assert.throws(() => validateMatrix(raw), /providers\.cursor\.unsandboxed needs a cli/);
+    raw.providers.cursor.unsandboxed = "yes";
+    assert.throws(() => validateMatrix(raw), /providers\.cursor\.unsandboxed must be a boolean/);
   });
 
   it("rejects a duplicate family name or provider:model pair", () => {
@@ -441,7 +456,7 @@ describe("roles", () => {
     }
   });
 
-  it("pins the 22 roles in matrix order and the two Cloud PR responsibilities", () => {
+  it("pins the 23 roles in matrix order and the two Cloud PR responsibilities", () => {
     assert.deepEqual(
       matrix.roles.map((r) => r.role),
       [
@@ -465,11 +480,12 @@ describe("roles", () => {
         "pre-pr reviewer",
         "pre-pr fixer",
         "pre-pr certifier",
+        "converge raiz",
         "pr owner",
         "pr verifier",
       ]
     );
-    assert.equal(matrix.roles.length, 22);
+    assert.equal(matrix.roles.length, 23);
     const mixedPanel = [
       "claude:fable@max",
       "codex:gpt-6-astra@max",
@@ -497,6 +513,15 @@ describe("roles", () => {
     assert.deepEqual(roleDefault(matrix, "pre-pr reviewer", "claude"), ["grok:grok-4.7@xhigh"]);
     assert.deepEqual(roleDefault(matrix, "pre-pr certifier", "codex"), ["grok:grok-4.7@high"]);
     assert.deepEqual(roleDefault(matrix, "pre-pr fixer", "claude"), ["grok:grok-4.7@xhigh"]);
+  });
+
+  it("converge raiz defaults to the native code family of each parent", () => {
+    assert.deepEqual(roleDefault(matrix, "converge raiz", "claude"), ["claude:claude-opus-5-5@xhigh"]);
+    assert.deepEqual(roleDefault(matrix, "converge raiz", "codex"), ["codex:gpt-6-sol@xhigh"]);
+    assert.equal(
+      matrix.roles.findIndex((r) => r.role === "converge raiz"),
+      matrix.roles.findIndex((r) => r.role === "pre-pr certifier") + 1
+    );
   });
 
   it("reject a role default naming an unknown family, an unselectable effort, or a foreign parent", () => {

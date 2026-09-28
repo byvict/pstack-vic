@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { hash, oneOf, parseReport, relativePath, type Role } from './contract.ts';
+import { CLOUD_VERIFIER, hash, oneOf, parseReport, relativePath, type Role } from './contract.ts';
 import { snapshot } from './github.ts';
 import { loadMatrix, resolveDescriptor } from '../../../../scripts/model-matrix.ts';
 
@@ -11,7 +11,7 @@ export async function prepareLane(options: { reportFile: string; directory: stri
   const laneId = relativePath(options.laneId);
   if (laneId.includes('/')) throw new Error('Lane id must have one segment');
   const selected = resolveDescriptor(loadMatrix(), options.descriptor);
-  if (selected.family.provider !== 'cursor' || selected.family.model !== 'grok-4.7' || !['high', 'xhigh'].includes(selected.descriptor.effort)) throw new Error('Converge verifier requires Cursor Grok 4.7 high or xhigh');
+  if (selected.family.provider !== CLOUD_VERIFIER.provider || selected.family.model !== CLOUD_VERIFIER.model || !CLOUD_VERIFIER.efforts.includes(selected.descriptor.effort)) throw new Error(`Converge verifier requires ${CLOUD_VERIFIER.provider} ${CLOUD_VERIFIER.model} at ${CLOUD_VERIFIER.efforts.join(' or ')}`);
   const r = report.round;
   const current = await snapshot(r.repo, r.pr, r.configPath, r.execution);
   if (current.inputDigest !== r.inputDigest) throw new Error('Round became stale before lane dispatch');

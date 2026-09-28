@@ -1,5 +1,6 @@
 import {
   cliFor,
+  MATRIX,
   transportFor,
   UsageError,
   type AccessMode,
@@ -92,10 +93,10 @@ export function insideCodexSandbox(env: NodeJS.ProcessEnv): boolean {
 /**
  * On macOS no Grok Seatbelt profile lets a lane open a pty or start Chromium,
  * so the certifier that drives the app runs with Grok's sandbox off (CLI-197,
- * measured with Grok CLI 1.0.41). That certifier is a Grok lane, so the mode
- * refuses every other provider. Codex's outer seatbelt denies the pty and
- * Chromium just the same, so the mode refuses a parent that exports
- * CODEX_SANDBOX too.
+ * measured with Grok CLI 1.0.41). The mode refuses every provider that
+ * model-matrix.json does not mark `unsandboxed`. Codex's outer seatbelt
+ * denies the pty and Chromium just the same, so the mode refuses a parent
+ * that exports CODEX_SANDBOX too.
  */
 export function requireSupportedMode(
   provider: Provider,
@@ -103,8 +104,10 @@ export function requireSupportedMode(
   env: NodeJS.ProcessEnv
 ): void {
   if (mode !== "unsandboxed") return;
-  if (cliFor(provider) !== "grok") {
-    throw new UsageError(`mode unsandboxed runs only on grok, not on ${provider}`);
+  const providers = MATRIX.providers;
+  if (!providers[provider]?.unsandboxed) {
+    const allowed = Object.keys(providers).filter((p) => providers[p].unsandboxed);
+    throw new UsageError(`mode unsandboxed runs only on ${allowed.join(", ")}, not on ${provider}`);
   }
   if (insideCodexSandbox(env)) {
     throw new UsageError("unsandboxed needs a parent without a seatbelt");
