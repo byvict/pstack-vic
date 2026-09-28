@@ -41,6 +41,10 @@ else if (args[0] === 'api') {
     } else if (endpoint === `${root}/statuses/${state.head}`) {
       const status = { ...body, id: 200 + state.statuses.length, creator: { id: 7 }, sha: state.head };
       state.statuses.unshift(status); save(); send(status);
+    } else if (endpoint === `${root}/issues/1/labels`) {
+      state.mutations.push(['labels', ...body.labels]);
+      if (body.labels.includes('needs-victor')) state.hold = true;
+      save(); send(body.labels.map(name => ({ name })));
     } else fail();
   } else if (endpoint === 'graphql') {
     const fields = Object.fromEntries(args.flatMap((arg, i) => args[i - 1] === '-f' ? [arg.split(/=(.*)/s).slice(0, 2)] : []));
@@ -57,7 +61,7 @@ else if (args[0] === 'api') {
   else if (endpoint === root) send({ default_branch: 'main' });
   else if (endpoint === `${root}/pulls/1`) {
     later('pulls/1');
-    send({ number: 1, head: { sha: state.head, ref: 'change' }, base: { ref: state.prBase }, state: state.prState, draft: state.prDraft, body: state.body, labels: state.hold ? [{ name: 'needs-victor' }] : [], user: { id: 10, login: 'author', type: 'User' }, auto_merge: state.autoMerge ? {} : null });
+    send({ number: 1, head: { sha: state.head, ref: 'change' }, base: { ref: state.prBase }, state: state.prState, draft: state.prDraft, body: state.body, labels: state.hold ? [{ name: 'needs-victor' }] : [], user: { id: 10, login: 'author', type: 'User' }, auto_merge: state.autoMerge ? {} : null, created_at: state.createdAt ?? '2026-09-21T00:00:00Z' });
   }
   else if (/^repos\/Example\/app\/pulls\/\d+$/.test(endpoint) && state.pulls.some(p => p.number === Number(endpoint.split('/').at(-1)))) send(state.pulls.find(p => p.number === Number(endpoint.split('/').at(-1))));
   else if (endpoint === `${root}/commits/main`) { later('commits/main'); send({ sha: state.trunk }); }
@@ -78,7 +82,7 @@ else if (args[0] === 'api') {
     if (head !== (state.pushedHead ?? state.head)) fail();
     send({ merge_base_commit: { sha: state.base }, files: listed(state.files) });
   }
-  else if (endpoint === `${root}/pulls` && query.get('base') === 'main') send(state.pulls ?? []);
+  else if (endpoint === `${root}/pulls` && (query.get('base') === 'main' || query.get('state') === 'open')) send(state.pulls ?? []);
   else if (endpoint === `${root}/pulls/1/files`) send(listed(state.prFiles ?? state.files));
   else if (endpoint === `${root}/actions/workflows`) send({ workflows: [{ id: state.workflowId, name: 'Tests', path: '.github/workflows/tests.yml', state: 'active' }] });
   else if (endpoint.includes('/check-runs')) {

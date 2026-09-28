@@ -48,14 +48,22 @@ export async function pages(endpoint: string, key?: string, credential: 'writer'
 export interface Pull {
   number: number; head: string; base: string; branch: string; state: string; draft: boolean;
   body: string; labels: string[]; authorId: number; authorLogin: string; authorType: string; autoMerge: boolean;
+  createdAt: string; fork: boolean;
 }
 export async function pull(repo: string, pr: number): Promise<Pull> {
   const p = object(await api(`repos/${repo}/pulls/${pr}`));
   const user = object(p.user);
+  const head = object(p.head);
   if (typeof p.draft !== 'boolean') throw new Error('PR draft state unavailable');
-  return { number: integer(p.number), head: sha(object(p.head).sha), base: string(object(p.base).ref), branch: string(object(p.head).ref),
+  const headRepo = head.repo === null || head.repo === undefined ? null : object(head.repo);
+  return { number: integer(p.number), head: sha(head.sha), base: string(object(p.base).ref), branch: string(head.ref),
     state: string(p.state), draft: p.draft, body: p.body === null ? '' : string(p.body),
-    labels: array(p.labels).map(l => string(object(l).name)), authorId: integer(user.id), authorLogin: string(user.login), authorType: string(user.type), autoMerge: p.auto_merge !== null };
+    labels: array(p.labels).map(l => string(object(l).name)), authorId: integer(user.id), authorLogin: string(user.login), authorType: string(user.type), autoMerge: p.auto_merge !== null,
+    createdAt: string(p.created_at), fork: headRepo !== null && string(headRepo.full_name).toLowerCase() !== repo.toLowerCase() };
+}
+/** Every open PR of the repository, whatever its base, lowest number first. */
+export async function openPulls(repo: string): Promise<number[]> {
+  return (await pages(`repos/${repo}/pulls?state=open`)).map(v => integer(object(v).number)).sort((a, b) => a - b);
 }
 /** Only a `pre-pr` round admits a base other than trunk: a stack child publishes its certificate while its base is the parent branch. Every other execution, and the arm, still require trunk. */
 export function admitPull(pr: Pull, contract: Contract, head: string, execution: Execution = 'converge'): void {
