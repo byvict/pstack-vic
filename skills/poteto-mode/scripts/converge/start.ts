@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { object, repoName, roleProviders, sha, string } from './contract.ts';
+import { object, repoName, sha, string } from './contract.ts';
 import { admitPull, api, principal, pull, trusted } from './github.ts';
 import { verdictGate } from './gate.ts';
 import { selectCursorModel } from '../runner/http-lane.ts';
@@ -16,9 +16,12 @@ interface LaunchReceipt {
 }
 export interface CertifiedHead { schemaVersion: 1; kind: 'certified'; repo: string; pr: number; head: string; verdictUrl: string }
 
+/** The Cloud verifier's pinned lanes, the same ones setup-pstack's CLOUD_LANES names; they go with the cloud removal. */
+const CLOUD_VERIFIER = { provider: 'cursor', model: 'grok-4.7', efforts: ['high', 'xhigh'] } as const;
+
 /** The lanes the pr owner and pr verifier rows accept, the same ones setup-pstack writes: the Cloud verifier's pinned lanes, or an alias that sets no floor. */
 export function sheetLanes(matrix: ModelMatrix): string[] {
-  const { provider, model, efforts } = roleProviders['pr verifier'];
+  const { provider, model, efforts } = CLOUD_VERIFIER;
   return [...efforts.map(effort => formatDescriptor({ provider, model, effort })), ...matrix.aliases];
 }
 

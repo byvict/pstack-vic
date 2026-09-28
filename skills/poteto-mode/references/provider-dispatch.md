@@ -78,7 +78,7 @@ Skills name roles by the labels below, the same labels `/setup-pstack` writes to
 | `pr owner` | Owns an uncertified or red PR in Cursor Cloud through verification, repair and merge; start.ts exits when the head is certified. | `cursor:grok-4.7@high` | `cursor:grok-4.7@high` |
 | `pr verifier` | Independently checks risk, tests and user behavior of the exact PR head in Cursor Cloud without writing code. | `cursor:grok-4.7@high` | `cursor:grok-4.7@high` |
 
-A list is a panel: one lane per entry, in this order. A role whose two columns differ takes a family native to each parent: the frontier family for the frontier solo roles, the code family for the four authoring rows. Aliases run on the parent model through its native subagent primitive.
+A list is a panel: one lane per entry, in this order. A role whose two columns differ takes a family native to each parent: the frontier family for the frontier solo roles, the code family for the four authoring rows and `converge raiz`. Aliases run on the parent model through its native subagent primitive.
 
 <!-- role-defaults:end -->
 

@@ -111,7 +111,7 @@ test('sheet efforts are floors for the owner and the verifier', () => {
 
 test('start.ts accepts exactly the pr owner lanes setup-pstack accepts', () => {
   const matrix = loadMatrix();
-  const accepted = singleLaneRows(matrix).get('pr owner') ?? [];
+  const accepted = singleLaneRows(matrix, 'claude').get('pr owner') ?? [];
   assert.deepEqual(new Set(sheetLanes(matrix)), new Set(accepted));
   for (const lane of accepted) assert.doesNotThrow(() => sheetEfforts(`pr owner: ${lane}\n`), lane);
 });
