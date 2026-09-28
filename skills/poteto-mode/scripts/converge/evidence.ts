@@ -123,11 +123,17 @@ export async function admitLane(manifestFile: string, report: Report, evidenceDi
     artifacts.push({ id, path, digest: expectedDigest, mediaType: string(a.mediaType) });
   }
   function admitted(ids: unknown): boolean { const names = strings(ids); return names.length > 0 && names.every(id => artifacts.some(a => a.id === id)); }
+  /** Every declared artifact was verified above; the lane keeps only the ones its evidence binds, so the certificate stays under GitHub's comment limit (N9). */
+  const bound = new Set<string>();
+  const first = (ids: string[], types: string[]): string | undefined => ids.find(id => artifacts.some(a => a.id === id && types.includes(a.mediaType)));
   const coverage: string[] = [];
   const gaps: string[] = [];
   for (const value of array(output.coverage)) {
     const c = object(value);
-    if (c.result === 'driven' && admitted(c.artifactIds) && strings(c.artifactIds).some(id => artifacts.some(a => a.id === id && a.mediaType === 'image/png')) && strings(c.artifactIds).some(id => artifacts.some(a => a.id === id && ['text/plain', 'application/json'].includes(a.mediaType))) && string(c.entryPoint).length > 0) coverage.push(relativePath(c.featureId));
+    const ids = c.result === 'driven' && admitted(c.artifactIds) ? strings(c.artifactIds) : [];
+    const png = first(ids, ['image/png']);
+    const text = first(ids, ['text/plain', 'application/json']);
+    if (png !== undefined && text !== undefined && string(c.entryPoint).length > 0) { coverage.push(relativePath(c.featureId)); bound.add(png); bound.add(text); }
     else gaps.push('Live user path was not driven with evidence');
   }
   const risks: RiskObligation[] = [];
@@ -137,9 +143,9 @@ export async function admitLane(manifestFile: string, report: Report, evidenceDi
     const obligation = parseObligation(risk.obligation);
     const original = report.hardList.find(f => f.severity === 'requires-proof' && sameObligation(riskObligation(f), obligation));
     if (!original) throw new Error('Reviewer proof does not identify a requested obligation');
-    if (risk.result === 'proved-safe' && admitted(risk.artifactIds)) risks.push(obligation);
-    else if (risk.result === 'defect' && admitted(risk.artifactIds)) findings.push({ ...original, severity: 'blocking' });
+    if (risk.result === 'proved-safe' && admitted(risk.artifactIds)) { risks.push(obligation); for (const id of strings(risk.artifactIds)) bound.add(id); }
+    else if (risk.result === 'defect' && admitted(risk.artifactIds)) { findings.push({ ...original, severity: 'blocking' }); for (const id of strings(risk.artifactIds)) bound.add(id); }
     else gaps.push('Reviewer risk proof unavailable');
   }
-  return { role, coverage, risks, findings, gaps, artifacts, receiptDigest: hash(receiptBytes) };
+  return { role, coverage, risks, findings, gaps, artifacts: artifacts.filter(a => bound.has(a.id)), receiptDigest: hash(receiptBytes) };
 }

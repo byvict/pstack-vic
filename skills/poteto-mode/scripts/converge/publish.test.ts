@@ -123,7 +123,7 @@ test('a ci-only certificate publishes its skipped run and the arm accepts it', t
 });
 test('a verdict comment over GitHub\'s size limit is refused before any write', t => {
   const f = fixture(); t.after(f.cleanup);
-  const run = certifiedPr(f, { full: true, body: '## Verification\nfeature: login\n', steps: 200 });
+  const run = certifiedPr(f, { full: true, body: '## Verification\nfeature: login\n', features: 200 });
   const published = f.run('publish.ts', ['--report', prReport(f), '--certificate', join(run, 'certificate.json'), '--evidence', join(f.directory, 'evidence')]);
   assert.notEqual(published.status, 0);
   const size = Number(published.stderr.match(/^Verdict comment exceeds GitHub's 65536-character limit \((\d+)\)$/m)?.[1]);
@@ -140,7 +140,7 @@ function asComment(dossier: Record<string, unknown>) {
 }
 test('the published comment carries the certificate and stays byte-identical on retry', t => {
   const f = fixture(); t.after(f.cleanup);
-  const run = certifiedPr(f, { full: true, body: '## Verification\nfeature: login\n' });
+  const run = certifiedPr(f, { full: true, body: '## Verification\nfeature: login\n', steps: 3 });
   const report = prReport(f);
   const args = ['--report', report, '--certificate', join(run, 'certificate.json'), '--evidence', join(f.directory, 'evidence')];
   const published = f.run('publish.ts', args);
