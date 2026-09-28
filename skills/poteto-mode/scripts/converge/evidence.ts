@@ -124,7 +124,7 @@ export async function admitLane(manifestFile: string, report: Report, evidenceDi
     artifacts.push({ id, path, digest: expectedDigest, mediaType: string(a.mediaType) });
   }
   function admitted(ids: unknown): boolean { const names = strings(ids); return names.length > 0 && names.every(id => artifacts.some(a => a.id === id)); }
-  /** Every declared artifact was verified above; the lane keeps only the ones its evidence binds, so the certificate stays under GitHub's comment limit (N9). */
+  /** Every declared artifact was verified above; the lane keeps only the ones its evidence binds, because the certificate carries only what re-derivation reads (N9). */
   const bound = new Set<string>();
   const first = (ids: string[], types: string[]): string | undefined => ids.find(id => artifacts.some(a => a.id === id && types.includes(a.mediaType)));
   const coverage: string[] = [];

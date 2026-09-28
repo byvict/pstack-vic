@@ -118,6 +118,25 @@ test('a pre-pr reviewer lane keeps requiring a read-only receipt', async t => {
   Object.assign(i.receipt, { mode: 'unsandboxed', checkout: { headBefore: head, headAfter: head, statusAfter: [] } }); i.save();
   await assert.rejects(admitLane(join(i.directory, 'manifest.json'), report as never, join(i.directory, 'admitted'), i.round), /Lane receipt does not prove independent completion/);
 });
+test('a reviewer lane keeps the artifacts its risk proofs cite and drops the one nothing cites', async t => {
+  const i = localInput('pre-pr reviewer'); t.after(i.cleanup);
+  const prefix = `artifacts/converge/${i.round.id}/pre-pr-reviewer/`;
+  const proof = Buffer.from('{"operation":"refund","result":"rolled back"}');
+  writeFileSync(join(i.directory, prefix, 'proof.json'), proof);
+  const safe = { source: 'diff', path: 'billing/one.js', line: 1, rule: 'money-path' } as const;
+  const unsafe = { source: 'diff', path: 'billing/two.js', line: 1, rule: 'money-path' } as const;
+  const report: Report = { ...i.report, round: i.round, lanes: ['pre-pr reviewer'], hardList: [{ kind: 'money', ...safe, severity: 'requires-proof' }, { kind: 'money', ...unsafe, severity: 'requires-proof' }] };
+  const output = JSON.parse(readFileSync(join(i.directory, 'output.json'), 'utf8'));
+  output.artifacts.push({ id: 'proof', path: prefix + 'proof.json', bytes: proof.length, sha256: hash(proof), mediaType: 'application/json' });
+  output.coverage = [];
+  output.riskProofs = [{ obligation: safe, result: 'proved-safe', artifactIds: ['proof'] }, { obligation: unsafe, result: 'defect', artifactIds: ['action'] }];
+  writeFileSync(join(i.directory, 'output.json'), JSON.stringify(output));
+  const result = await admitLane(join(i.directory, 'manifest.json'), report, join(i.directory, 'admitted'), i.round);
+  assert.deepEqual(result.risks, [safe]);
+  assert.deepEqual(result.findings, [{ kind: 'money', ...unsafe, severity: 'blocking' }]);
+  assert.deepEqual(output.artifacts.map((a: { id: string }) => a.id), ['screen', 'action', 'proof']);
+  assert.deepEqual(result.artifacts.map(a => a.id), ['action', 'proof']);
+});
 test('a pre-pr role refuses a Cursor receipt and a pr verifier refuses a grok one', async t => {
   const i = localInput('pre-pr reviewer'); t.after(i.cleanup);
   i.receipt.provider = 'cursor'; i.save();
