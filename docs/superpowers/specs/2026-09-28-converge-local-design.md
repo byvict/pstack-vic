@@ -64,7 +64,7 @@ A cada 10 minutos, uma Raiz por vez. O launchd não sobrepõe duas instâncias d
 
 ### Posse por branch
 
-`converge-local claim --repo OWNER/REPO --branch B [--pid N] [--ttl H]` grava `<estado>/claims/<owner>-<repo>-<branch>.json` com `by`, `startedAt`, `expiresAt` (padrão 3 horas) e `pid` opcional. Uma posse vale enquanto não expirou e, quando tem `pid`, enquanto o processo existe. `converge-local release` apaga. O daemon nunca lança Raiz numa branch com posse válida, e sobrescreve posse expirada ou de pid morto. A Raiz do daemon roda sob a posse do tick, com o pid do tick e TTL de 3 horas.
+`converge-local lease --repo OWNER/REPO --branch B [--pid N] [--ttl H]` grava `<estado>/leases/<owner>-<repo>-<branch>.json` com `by`, `startedAt`, `expiresAt` (padrão 3 horas) e `pid` opcional (ajustado na implementação, 2026-09-28: `lease` e `leases/` no lugar de `claim` e `claims/`). Uma posse vale enquanto não expirou e, quando tem `pid`, enquanto o processo existe. `converge-local release` apaga. O daemon nunca lança Raiz numa branch com posse válida, e sobrescreve posse expirada ou de pid morto. A Raiz do daemon roda sob a posse do tick, com o pid do tick e TTL de 3 horas.
 
 Os playbooks interativos tomam a posse sem pid, só com TTL, porque os processos que o harness lança para cada comando são curtos: o Pré-PR no passo 1, antes do push; babysit e shipping antes de escrever numa branch; e renovam antes de cada lane e de cada push. A posse é um arquivo local porque as duas partes rodam na mesma máquina, e porque um rótulo no GitHub dispararia o `hold` e poluiria o PR.
 
@@ -89,10 +89,10 @@ O prompt é um template fixo: repositório, PR, tipo de trabalho, checkout prim�
 ### Configuração, estado e rastro
 
 - `~/.config/pstack/converge-local.json`: `parent` (`claude` ou `codex`), `repos` (lista de `{ repo, checkout }`), `intervalMinutes` (padrão 10), `pluginDir` opcional, `stateDirectory` opcional.
-- Estado em `~/Library/Application Support/pstack/converge-local/`: `claims/`, `ledger/`, `last-tick.json` por job.
+- Estado em `~/Library/Application Support/pstack/converge-local/`: `leases/` (ajustado na implementação, 2026-09-28), `ledger/`, `last-tick.json` por job.
 - Logs em `~/Library/Logs/pstack-converge-sweep.log` e `pstack-converge-raiz.log`.
 - Diretório de corrida de cada Raiz sob `${TMPDIR:-/tmp}/converge-local/<owner>-<repo>-<pr>-<head8>-<n>/`, como o Pré-PR exige (nota N6).
-- Subcomandos: `install` (escreve e carrega os dois plists), `uninstall`, `tick --job sweep|raiz [--dry-run]`, `status` (configuração, sheet, autenticação de `gh` e do parent, posses e ledger; serve de doctor), `claim`, `release`, `run --repo R --pr N [--kind K]` (o mesmo caminho do daemon, disparado à mão).
+- Subcomandos: `install` (escreve e carrega os dois plists), `uninstall`, `tick --job sweep|raiz [--dry-run]`, `status` (configuração, sheet, autenticação de `gh` e do parent, posses e ledger; serve de doctor), `lease` (ajustado na implementação, 2026-09-28), `release`, `run --repo R --pr N [--kind K]` (o mesmo caminho do daemon, disparado à mão).
 
 ## Raiz de catch-up e playbooks
 
@@ -134,11 +134,11 @@ A Raiz do daemon declara a união das famílias das linhas de autoria do sheet (
 
 | Linha | Lanes admitidas | Alias | Padrão nos dois parents |
 |---|---|---|---|
-| `pre-pr reviewer` | qualquer família do runner externo (claude, codex, grok), em qualquer esforço selecionável da família | não; precisa de recibo | `grok:grok-4.7@xhigh` |
+| `pre-pr reviewer` | só uma família que o runner lança a partir do parent (codex ou grok no Claude Code; claude ou grok no Codex), em qualquer esforço selecionável da família (ajustado na implementação, 2026-09-28) | não; precisa de recibo | `grok:grok-4.7@xhigh` |
 | `pre-pr fixer` | qualquer família, qualquer esforço | sim; `inherit-parent` e `auto` viram subagente nativo num worktree | `grok:grok-4.7@xhigh` |
-| `pre-pr certifier` | família cujo provider tem `unsandboxed` no runner; nesta versão, só `grok:grok-4.7`, em qualquer esforço selecionável do Grok | não | `grok:grok-4.7@high` |
+| `pre-pr certifier` | família cujo provider tem `unsandboxed` no runner; nesta versão, só Grok, qualquer modelo Grok da matriz, em qualquer esforço selecionável do Grok (ajustado na implementação, 2026-09-28) | não | `grok:grok-4.7@high` |
 | `converge raiz` | só o provider nativo do parent: `claude:<modelo>` no Claude Code, `codex:<modelo>` no Codex; qualquer modelo desse provider na matriz, qualquer esforço | não | `claude:claude-opus-5-5@xhigh` no Claude Code; `codex:gpt-6-sol@xhigh` no Codex |
-| `pr owner`, `pr verifier` | removidas no PR de remoção da nuvem | | |
+| `pr owner`, `pr verifier` | `cursor:grok-4.7` em `high` ou `xhigh`, pinadas pela constante `CLOUD_VERIFIER` até o PR de remoção da nuvem, que as remove (ajustado na implementação, 2026-09-28) | | |
 
 O Ajustador pode ser alias porque só a contagem de voltas dele entra no Certificado; o diff passa pela revisão da Raiz e entra por fast-forward. A `converge raiz` é sessão do parent, não lane do runner, por isso só o provider nativo.
 
@@ -146,11 +146,13 @@ A matriz ganha, por provider, o campo `unsandboxed: true|false` (hoje só `grok`
 
 ### Admissão
 
-`roleProviders` sai do `contract.ts`. `admitLane` passa a exigir: recibo igual ao manifesto da lane (já checado); família presente na matriz; modo do papel (`read-only` para o Revisor, `unsandboxed` para o Certificador, que pelo campo da matriz implica Grok nesta versão). A independência deixa de ser "o signatário é Grok" e vira "o Revisor não é de nenhuma família de `authorProviders`", conferida no `assemble` e na re-derivação do gate. Editar o sheet depois não muda um Certificado publicado.
+`roleProviders` sai do `contract.ts`. `admitLane` passa a exigir: recibo igual ao manifesto da lane (já checado); família presente na matriz; modo do papel (`read-only` para o Revisor, `unsandboxed` para o Certificador, que pelo campo da matriz implica Grok nesta versão). A independência deixa de ser "o signatário é Grok" e vira "o Revisor não é de nenhuma família de `authorProviders`", conferida no `assemble` e na re-derivação do gate. Editar o sheet depois não muda um Certificado publicado. A lane `pr verifier` continua presa a `cursor:grok-4.7` em `high` ou `xhigh` pela constante `CLOUD_VERIFIER` até o PR de remoção da nuvem (ajustado na implementação, 2026-09-28).
+
+Só um Revisor Grok grava artefatos de prova de risco numa lane `read-only` nesta versão: o modo plano do Claude e o `read-only` do Codex não escrevem arquivo, e o runner grava o `output.json` a partir da resposta final da lane. Uma rodada com obrigação `requires-proof` e Revisor de outra família sai `INCONCLUSIVE` no `assemble`; é a nota N35 (ajustado na implementação, 2026-09-28).
 
 ### `setup-pstack`
 
-As quatro linhas entram no fluxo genérico de duas perguntas, modelo e esforço. Some o parágrafo dos pisos de `pr owner` e `pr verifier` e a validação especial dessas linhas em `plan`. O aviso de família igual continua e passa a comparar o `pre-pr reviewer` com cada linha de autoria e com a `converge raiz`. Família nova numa dessas linhas passa pelo probe do ledger como hoje; `unsandboxed` não é sondado, porque o probe é somente leitura. `singleLaneRows` deriva as lanes da matriz, não de uma tabela em `contract.ts`.
+As quatro linhas entram no fluxo genérico de duas perguntas, modelo e esforço. O parágrafo dos pisos de `pr owner` e `pr verifier` e a validação especial dessas linhas em `plan` ficam até o PR de remoção da nuvem, presos à constante `CLOUD_VERIFIER` (ajustado na implementação, 2026-09-28). O aviso de família igual continua e compara o `pre-pr reviewer` só com as linhas de autoria; um Revisor da família nativa do parent é recusado, não avisado, e a `converge raiz` é sempre dessa família, então compará-la não avisaria nada (ajustado na implementação, 2026-09-28). Família nova numa dessas linhas passa pelo probe do ledger como hoje; `unsandboxed` não é sondado, porque o probe é somente leitura. `singleLaneRows` deriva as lanes da matriz, não de uma tabela em `contract.ts`.
 
 Migração: sheet sem `converge raiz` ganha o padrão ao materializar, como qualquer papel documentado que falte. No PR de remoção, o normalizador descarta `pr owner` e `pr verifier` com aviso.
 
@@ -208,7 +210,7 @@ Mesmas costuras dos testes existentes.
 
 - **Daemon contra o GitHub falso da fixture.** Classificação: certificado e vermelho vira `repair`; gate recusa pela condição 7 vira `recertify`; sem verdict vira `certify`; draft, hold, fork, verdict de outra conta e verdict `converge` são pulados; PR com menos de 30 minutos espera; posse válida é respeitada; posse expirada ou de pid morto é ignorada. Ledger: duas falhas ou seis horas aplicam hold e comentam; head novo e remoção do rótulo zeram; `deferred` não gasta tentativa; teto de 2 horas mata e registra `timeout`. Uma Raiz por tick, o menor PR primeiro, repositórios na ordem da configuração.
 - **Lançador com CLIs falsas.** A linha `converge raiz` vira o argv certo de `claude -p` ou `codex exec`, com modelo e esforço; provider diferente do parent é recusado; `outcome.json` ausente ou inválido é `failed`.
-- **`setup-pstack`.** Famílias novas aceitas nas linhas abertas; alias recusado onde precisa de recibo; Certificador só onde a matriz diz `unsandboxed`; `converge raiz` só no provider do parent; aviso de família igual com Autor e com Raiz; materialização do padrão; descarte das linhas de nuvem no PR 4.
+- **`setup-pstack`.** Famílias novas aceitas nas linhas abertas; alias recusado onde precisa de recibo; Certificador só onde a matriz diz `unsandboxed`; `converge raiz` só no provider do parent; aviso de família igual com Autor, e recusa de Revisor da família nativa do parent (ajustado na implementação, 2026-09-28); materialização do padrão; descarte das linhas de nuvem no PR 4.
 - **Certificado.** Admissão sem tabela pinada; Revisor de família igual a qualquer Autor da lista recusado no `assemble` e no gate; versão 1 recusada; só dois artefatos por funcionalidade; re-derivação idêntica com o Certificado compacto.
 - **Sem teste automático:** playbooks, prompt da Raiz e plists. A prova é o próximo PR do pstack-vic, depois o do Clinext, e o primeiro Dependabot certificado pelo daemon.
 
