@@ -569,12 +569,19 @@ describe("buildPlan", () => {
 });
 
 describe("pre-pr and converge raiz rows", () => {
-  it("opens the reviewer to every CLI family and refuses an alias or a panel", () => {
+  it("opens the reviewer to every CLI family the runner launches and refuses an alias or a panel", () => {
     const codex = buildPlan({ parent: "claude", home, matrix, roles: { "pre-pr reviewer": ["codex:gpt-6-sol@high"] } });
     assert.deepEqual(lanesOf(codex, "pre-pr reviewer"), ["codex:gpt-6-sol@high"]);
     assert.throws(() => buildPlan({ parent: "claude", home, matrix, roles: { "pre-pr reviewer": ["inherit-parent"] } }), /"pre-pr reviewer" takes one lane/);
     assert.throws(() => buildPlan({ parent: "claude", home, matrix, roles: { "pre-pr reviewer": ["cursor:grok-4.7@high"] } }), /"pre-pr reviewer" takes one lane/);
     assert.throws(() => buildPlan({ parent: "claude", home, matrix, roles: { "pre-pr reviewer": ["grok:grok-4.7@xhigh", "grok:grok-4.7@high"] } }), /"pre-pr reviewer" takes one lane/);
+  });
+
+  it("refuses a reviewer of the parent's native provider, which the runner cannot launch from that parent", () => {
+    assert.throws(() => buildPlan({ parent: "claude", home, matrix, roles: { "pre-pr reviewer": ["claude:claude-opus-5-5@high"] } }), /"pre-pr reviewer" takes one lane, codex:gpt-6-sol@low /);
+    assert.throws(() => buildPlan({ parent: "codex", home, matrix, roles: { "pre-pr reviewer": ["codex:gpt-6-sol@high"] } }), /"pre-pr reviewer" takes one lane, claude:fable@low /);
+    assert.deepEqual(lanesOf(buildPlan({ parent: "claude", home, matrix, roles: { "pre-pr reviewer": ["codex:gpt-6-sol@high"] } }), "pre-pr reviewer"), ["codex:gpt-6-sol@high"]);
+    assert.deepEqual(lanesOf(buildPlan({ parent: "codex", home, matrix, roles: { "pre-pr reviewer": ["claude:claude-opus-5-5@high"] } }), "pre-pr reviewer"), ["claude:claude-opus-5-5@high"]);
   });
 
   it("lets the fixer be an alias and the certifier only an unsandboxed family", () => {
@@ -593,7 +600,7 @@ describe("pre-pr and converge raiz rows", () => {
     assert.throws(() => buildPlan({ parent: "claude", home, matrix, roles: { "converge raiz": ["auto"] } }), /"converge raiz" takes one lane/);
   });
 
-  it("warns when an authoring row or the raiz shares the reviewer family and is silent once they differ", () => {
+  it("warns when an authoring row shares the reviewer family and is silent once they differ", () => {
     const grok = ["grok:grok-4.6@xhigh"];
     const grokAuthors = buildPlan({ parent: "claude", home, matrix, roles: { "feature, refactoring": ["grok:grok-4.7@xhigh"], "bug-fix": grok, "perf-issue": grok, hillclimb: grok } });
     assert.deepEqual(grokAuthors.warnings, [
@@ -602,8 +609,6 @@ describe("pre-pr and converge raiz rows", () => {
       "perf-issue and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
       "hillclimb and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
     ]);
-    const raiz = buildPlan({ parent: "claude", home, matrix, roles: { "pre-pr reviewer": ["claude:claude-opus-5-5@high"] } });
-    assert.ok(raiz.warnings.includes("converge raiz and pre-pr reviewer are both claude; certification will refuse until one of them changes family"));
     for (const parent of ["claude", "codex"]) assert.deepEqual(buildPlan({ parent, home, matrix }).warnings, [], `${parent} first run`);
   });
 
