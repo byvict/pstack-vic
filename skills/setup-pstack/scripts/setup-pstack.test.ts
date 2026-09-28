@@ -91,7 +91,7 @@ function nineteenRowOpusSheet(parent: string): string {
   const volume = new Set(["feature, refactoring", "bug-fix", "perf-issue", "hillclimb"]);
   const lines = renderRoleSheet(matrix, parent)
     .split("\n")
-    .filter((line) => !line.startsWith("pre-pr "))
+    .filter((line) => !line.startsWith("pre-pr ") && !line.startsWith("converge raiz: "))
     .map((line) => {
       const role = line.slice(0, line.indexOf(": "));
       return volume.has(role) ? `${role}: claude:claude-opus-5-5@xhigh` : line;
@@ -514,7 +514,7 @@ describe("buildPlan", () => {
       matrix.roles.slice(0, 17).map((r) => r.role)
     );
     const plan = buildPlan({ parent: "claude", home, matrix });
-    assert.equal(plan.rows.length, 22);
+    assert.equal(plan.rows.length, 23);
     assert.deepEqual(lanesOf(plan, "bug-fix"), ["claude:claude-opus-5-5@xhigh"]);
     assert.deepEqual(lanesOf(plan, "interrogate reviewers"), [
       "claude:fable@max",
@@ -639,7 +639,7 @@ describe("pre-pr rows", () => {
     assert.deepEqual(lanesOf(plan, "pre-pr reviewer"), ["grok:grok-4.7@xhigh"]);
     assert.deepEqual(lanesOf(plan, "pre-pr fixer"), ["grok:grok-4.7@xhigh"]);
     assert.deepEqual(lanesOf(plan, "pre-pr certifier"), ["grok:grok-4.7@high"]);
-    assert.match(plan.sheet, /\ninterrogate reviewers: .*\npre-pr reviewer: grok:grok-4\.7@xhigh\npre-pr fixer: grok:grok-4\.7@xhigh\npre-pr certifier: grok:grok-4\.7@high\npr owner: cursor:grok-4\.7@high\n/);
+    assert.match(plan.sheet, /\ninterrogate reviewers: .*\npre-pr reviewer: grok:grok-4\.7@xhigh\npre-pr fixer: grok:grok-4\.7@xhigh\npre-pr certifier: grok:grok-4\.7@high\nconverge raiz: claude:claude-opus-5-5@xhigh\npr owner: cursor:grok-4\.7@high\n/);
     assert.deepEqual(plan.efforts["grok-4-7"], ["high", "xhigh"]);
     assert.deepEqual(plan.pairs, []);
     assert.deepEqual(plan.verified.map((v) => v.family), ["fable", "opus", "astra", "grok", "grok-4-7", "cursor-grok"]);

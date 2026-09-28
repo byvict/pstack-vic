@@ -149,6 +149,7 @@ interrogate reviewers: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xh
 pre-pr reviewer: grok:grok-4.7@xhigh
 pre-pr fixer: grok:grok-4.7@xhigh
 pre-pr certifier: grok:grok-4.7@high
+converge raiz: claude:claude-opus-5-5@xhigh
 pr owner: cursor:grok-4.7@high
 pr verifier: cursor:grok-4.7@high
 ```
@@ -180,6 +181,7 @@ interrogate reviewers: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xh
 pre-pr reviewer: grok:grok-4.7@xhigh
 pre-pr fixer: grok:grok-4.7@xhigh
 pre-pr certifier: grok:grok-4.7@high
+converge raiz: codex:gpt-6-sol@xhigh
 pr owner: cursor:grok-4.7@high
 pr verifier: cursor:grok-4.7@high
 ```

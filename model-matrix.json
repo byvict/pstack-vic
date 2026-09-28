@@ -19,7 +19,7 @@
     "claude": { "cli": "claude", "nativeIn": "claude" },
     "codex": { "cli": "codex", "nativeIn": "codex" },
     "cursor": { "cli": null, "transport": "http", "nativeIn": null },
-    "grok": { "cli": "grok", "nativeIn": null }
+    "grok": { "cli": "grok", "nativeIn": null, "unsandboxed": true }
   },
   "routes": {
     "claude": { "claude": "native", "codex": "runner", "cursor": "runner", "grok": "runner" },
@@ -60,6 +60,7 @@
     { "role": "pre-pr reviewer", "description": "Reviews the pushed branch read-only before the PR exists: diff, risk classes and recorded runs; must be a different family from the author.", "default": "grok-4-7@xhigh" },
     { "role": "pre-pr fixer", "description": "Fixes the reviewer's findings in its own worktree of the branch; the Raiz reviews the diff and fast-forwards it.", "default": "grok-4-7@xhigh" },
     { "role": "pre-pr certifier", "description": "Drives the selected features on a disposable app and records the artifacts the certificate binds; each step under 300 s.", "default": "grok-4-7@high" },
+    { "role": "converge raiz", "description": "The unattended session the local converge daemon launches to run the catch-up playbook: repairs a red certified PR, re-certifies a stale one, certifies an uncertified one; a session of the parent, so only its native provider.", "default": { "claude": "opus@xhigh", "codex": "sol@xhigh" } },
     { "role": "pr owner", "description": "Owns an uncertified or red PR in Cursor Cloud through verification, repair and merge; start.ts exits when the head is certified.", "default": "cursor-grok@high" },
     { "role": "pr verifier", "description": "Independently checks risk, tests and user behavior of the exact PR head in Cursor Cloud without writing code.", "default": "cursor-grok@high" }
   ]

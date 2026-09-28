@@ -29,6 +29,8 @@ export interface CliProviderSpec {
   readonly cli: string;
   readonly transport: "cli";
   readonly nativeIn: string | null;
+  /** Whether the runner can launch this CLI with its own sandbox off (the pre-pr certifier needs it). */
+  readonly unsandboxed: boolean;
 }
 
 export interface HttpProviderSpec {
@@ -36,6 +38,7 @@ export interface HttpProviderSpec {
   readonly cli: null;
   readonly transport: "http";
   readonly nativeIn: string | null;
+  readonly unsandboxed: false;
 }
 
 /**
@@ -171,14 +174,17 @@ export function validateMatrix(raw: unknown): ModelMatrix {
     if (nativeIn !== null && !(nativeIn in parents)) {
       fail(`providers.${name}.nativeIn names unknown parent ${nativeIn}`);
     }
+    const unsandboxed = spec.unsandboxed ?? false;
+    if (typeof unsandboxed !== "boolean") fail(`providers.${name}.unsandboxed must be a boolean`);
     if (transport === "http") {
       if (cli !== null) fail(`providers.${name}.cli must be null when transport is http`);
-      providers[name] = { cli: null, transport, nativeIn };
+      if (unsandboxed) fail(`providers.${name}.unsandboxed needs a cli`);
+      providers[name] = { cli: null, transport, nativeIn, unsandboxed: false };
     } else {
       if (cli === null || cli.length === 0) {
         fail(`providers.${name}.cli must be a non-empty string when transport is cli`);
       }
-      providers[name] = { cli, transport, nativeIn };
+      providers[name] = { cli, transport, nativeIn, unsandboxed };
     }
   }
   for (const parent of parentNames) {
@@ -575,6 +581,9 @@ export function renderMatrixMarkdown(matrix: ModelMatrix): string {
     );
     lines.push(`| ${spec.name} | ${cells.join(" | ")} |`);
   }
+  lines.push("");
+  const unsandboxed = Object.entries(matrix.providers).filter(([, p]) => p.unsandboxed).map(([name]) => `\`${name}\``);
+  lines.push(`Providers whose CLI the runner can launch in \`unsandboxed\` mode: ${unsandboxed.length ? unsandboxed.join(", ") : "none"}. The pre-pr certifier row admits only their families.`);
   lines.push("");
   lines.push(MATRIX_END);
   return lines.join("\n");
