@@ -264,7 +264,6 @@ test('parseCertificate refuses schema 1, an empty author list and an unknown aut
   assert.throws(() => parseCertificate({ ...base, authorProviders: [] }), /Certificate needs at least one author family/);
   assert.throws(() => parseCertificate({ ...base, authorProviders: ['Claude'] }), /^Error: Invalid author family: Claude$/);
 });
-/** A contract with a certifier and a light class, and a branch that changes only `model-matrix.json`, a light path. */
 function lightFixture(reviewer: 'narrow' | 'none' = 'narrow') {
   const f = prePrFixture(true, false);
   const config = JSON.parse(f.state.blobs['.cursor/converge.json']);

@@ -453,7 +453,6 @@ function withLight(f: ReturnType<typeof fixture>, light: Record<string, unknown>
 function changed(f: ReturnType<typeof fixture>, paths: string[], patch = '@@ -1 +1 @@\n-old\n+new') {
   f.state.files = paths.map(filename => ({ filename, status: 'modified', patch })); f.save();
 }
-/** The real `report` command, in its own process, because `github.ts` caches trees by commit and every fixture shares one head. */
 function branchReport(f: ReturnType<typeof fixture>): Report {
   const r = f.run('converge-certify', ['report', '--repo', 'Example/app', '--head', f.state.head, '--directory', join(f.directory, 'run')]);
   assert.equal(r.status, 0, r.stderr);

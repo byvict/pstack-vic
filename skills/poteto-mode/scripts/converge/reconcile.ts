@@ -87,14 +87,14 @@ export function analyze(s: Snapshot, options: { id: string; configPath: string; 
   const prePr = options.execution === 'pre-pr';
   const light = prePr ? c.prePr?.light : null;
   const eligible = paths.length > 0 && !surfacePaths.length && !riskPaths.length && !hardList.length;
-  /** Under pre-pr a dependency-only change keeps its runs: the run is what caught the jsdom 30.1.1 bump (Clinext #2974). */
-  const mode: Report['mode'] = eligible && (paths.every(ordinaryDoc) || !prePr && s.dependencyOnly) ? 'ci-only'
-    : eligible && light && (paths.every(path => light.paths.some(pattern => matches(path, pattern))) || s.dependencyOnly) ? 'light' : 'full';
+  const ciOnly = eligible && (paths.every(ordinaryDoc) || !prePr && s.dependencyOnly);
+  const lightClass = eligible && !!light && (paths.every(path => light.paths.some(pattern => matches(path, pattern))) || s.dependencyOnly);
+  const mode: Report['mode'] = ciOnly ? 'ci-only' : lightClass ? 'light' : 'full';
   const lanes: Report['lanes'] = prePr
     ? mode === 'full' ? (c.prePr?.certifier ? ['pre-pr reviewer', 'pre-pr certifier'] : ['pre-pr reviewer']) : mode === 'light' && light?.reviewer === 'none' ? [] : ['pre-pr reviewer']
     : mode === 'ci-only' ? [] : ['pr verifier'];
   const ciGap = /Tests workflow|Required check is not successful|Tests logs/;
-  const gaps = options.execution === 'pre-pr' ? s.gaps.filter(g => !ciGap.test(g)) : [...s.gaps];
+  const gaps = prePr ? s.gaps.filter(g => !ciGap.test(g)) : [...s.gaps];
   return { schemaVersion: 1, round: { id: options.id, repo: c.repo, pr: s.pull.number, head: s.pull.head, contract: s.trusted.sha, base: s.base,
     patch_id: s.patchId, verificationDigest: s.verificationDigest, inputDigest: s.inputDigest, configPath: options.configPath, execution: options.execution },
     mode, touchedFeatures, unmappedSurfaces: surfacePaths.filter(p => !s.reachedPaths.includes(p) && !testOnly(p) && !(touchedFeatures.length && (/^client\/(?:src\/)?(?:components|hooks|contexts|lib|utils)\//.test(p) || /^server\/routes\//.test(p) || /^client\/(?:src\/)?App\.[jt]sx?$/.test(p)))),

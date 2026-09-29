@@ -290,9 +290,8 @@ async function compared(repo: string, contract: string, head: string): Promise<{
   if (files.length >= 300) throw new Error('Branch compare truncated');
   return { base: sha(object(c.merge_base_commit).sha), files: fillPatches(files, diff), diff };
 }
-/** npm manifests at the root or in `client/`. */
 const prePrManifests = /^(?:client\/)?package(?:-lock)?\.json$/;
-/** Whether every changed file is a manifest `manifests` names, modified in place, whose blobs at the merge base and at the head differ only by the bumps `dependencies.ts` accepts. Both `pre-pr` rounds call it the same way, with no author check (the daemon's trust list covers who opened the PR), so the branch report and the PR report agree; the `converge` execution keeps its Dependabot-only rule over the root manifests. */
+const convergeManifests = /^package(?:-lock)?\.json$/;
 async function dependencyChange(repo: string, base: string, head: string, files: ChangedFile[], manifests: RegExp): Promise<boolean> {
   if (!files.length || !files.every(f => manifests.test(f.path) && f.previous === null && f.status === 'modified')) return false;
   try { return (await Promise.all(files.map(async f => { const [before, after] = await Promise.all([blob(repo, base, f.path), blob(repo, head, f.path)]); return dependencyOnly(JSON.parse(before), JSON.parse(after), f.path.endsWith('package-lock.json')); }))).every(Boolean); }
@@ -473,7 +472,7 @@ export async function snapshot(repo: string, prNumber: number, configPath: strin
   }
   for (const name of t.config.requiredChecks.filter(c => c !== 'verdict')) if (!observedChecks.some(c => c.context === name && c.state === 'success')) gaps.push('Required check is not successful: ' + name);
   const dependabot = p.authorId === 49699333 && p.authorLogin === 'dependabot[bot]' && p.authorType === 'Bot';
-  const safeDependencyChange = execution === 'pre-pr' ? await dependencyChange(repo, base, p.head, files, prePrManifests) : dependabot && await dependencyChange(repo, base, p.head, files, /^package(?:-lock)?\.json$/);
+  const safeDependencyChange = execution === 'pre-pr' ? await dependencyChange(repo, base, p.head, files, prePrManifests) : dependabot && await dependencyChange(repo, base, p.head, files, convergeManifests);
   const inputFingerprint = jsonHash({ body: p.body, comments: visibleComments.map(c => [c.id, c.body, c.updated_at]) });
   const verificationDigest = jsonHash([...t.files].sort(([a], [b]) => a.localeCompare(b)));
   const inputDigest = jsonHash({ head: p.head, base, contract: t.sha, files, diff, sources, checks: observedChecks, gaps, inputFingerprint, verificationDigest, testEvidence });

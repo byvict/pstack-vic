@@ -82,10 +82,9 @@ function lane(run: string, round: Record<string, unknown>, role: 'pre-pr reviewe
   writeFileSync(join(root, 'prompt.txt'), 'read only'); writeFileSync(join(root, 'output.json'), JSON.stringify(output)); writeFileSync(join(root, 'receipt.json'), JSON.stringify(receipt));
   writeFileSync(join(root, 'manifest.json'), JSON.stringify({ round, laneId, role, descriptor: 'grok:grok-4.7@xhigh', prompt: 'prompt.txt', promptDigest: hash('read only'), output: 'output.json', receipt: 'receipt.json', createdAt: Date.parse(receipt.startedAt) }));
 }
-/** A light certificate comes from a contract that also sets `certifier`, so the light class visibly drops the certifier, over a branch that changes only `model-matrix.json`. */
-export function certifiedPr(f: ReturnType<typeof fixture>, options: { body?: string; full?: boolean; light?: { paths: string[]; reviewer?: 'narrow' | 'none' }; record?: boolean; steps?: number; features?: number } = {}) {
+export function certifiedPr(f: ReturnType<typeof fixture>, options: { body?: string; full?: boolean; certifier?: boolean; light?: { paths: string[]; reviewer?: 'narrow' | 'none' }; record?: boolean; steps?: number; features?: number } = {}) {
   const config = JSON.parse(f.state.blobs['.cursor/converge.json']);
-  config.prePr = { runs: [{ name: 'suite', command: 'true' }], certifier: options.full === true || options.light !== undefined, ...(options.light ? { light: options.light } : {}) };
+  config.prePr = { runs: [{ name: 'suite', command: 'true' }], certifier: options.certifier ?? options.full === true, ...(options.light ? { light: options.light } : {}) };
   f.state.blobs['.cursor/converge.json'] = JSON.stringify(config); f.state.body = options.body ?? '## Verification\ncertificate: pre-pr\n';
   const only = options.full ? 'client/Login.jsx' : options.light ? 'model-matrix.json' : null;
   if (only) {
@@ -132,8 +131,7 @@ export function stackChild(f: ReturnType<typeof fixture>) {
 export function retarget(f: ReturnType<typeof fixture>) {
   const live = f.read(); live.prBase = 'main'; live.prFiles = null; live.prDiff = null; Object.assign(f.state, live); f.save();
 }
-/** Trunk moves to a contract whose light class no longer lists `model-matrix.json`, so the branch of a light certificate is full again and needs the certifier. */
-export function tightenLight(f: ReturnType<typeof fixture>) {
+export function moveTrunkToEmptyLightPaths(f: ReturnType<typeof fixture>) {
   moveTrunk(f);
   const live = f.read();
   const config = JSON.parse(live.blobs['.cursor/converge.json']); config.prePr.light.paths = [];

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { fixture, moveTrunk, publishCertificate, tightenLight } from './fixtures/setup.ts';
+import { fixture, moveTrunk, publishCertificate, moveTrunkToEmptyLightPaths } from './fixtures/setup.ts';
 
 function publish(f: ReturnType<typeof fixture>, proof = false) {
   const report = join(f.directory, 'report.json');
@@ -303,8 +303,8 @@ test('a light certificate arms', t => {
   assert.deepEqual(f.read().mutations, merge(f.state.head));
 });
 test('a light certificate refuses the arm once the trunk contract takes its path out of the light class', t => {
-  const f = fixture(); t.after(f.cleanup); publishCertificate(f, { light: { paths: ['model-matrix.json'] } });
-  tightenLight(f);
+  const f = fixture(); t.after(f.cleanup); publishCertificate(f, { certifier: true, light: { paths: ['model-matrix.json'] } });
+  moveTrunkToEmptyLightPaths(f);
   const result = arm(f, false, ['--pending']); assert.notEqual(result.status, 0);
   assert.match(result.stderr, /^Certificate lacks a lane the policy now requires at trunk tip d{40}$/m);
   assert.deepEqual(f.read().mutations, []);
