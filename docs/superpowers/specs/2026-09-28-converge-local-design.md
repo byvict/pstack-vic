@@ -93,6 +93,7 @@ O prompt é um template fixo: repositório, PR, tipo de trabalho, checkout prim�
 - Logs em `~/Library/Logs/pstack-converge-sweep.log` e `pstack-converge-raiz.log` (ajustado na implementação, 2026-09-29, 0.4.6: e `pstack-converge-watch.log`, só com os ticks do Vigia que acordaram um job ou falharam).
 - Diretório de corrida de cada Raiz sob `${TMPDIR:-/tmp}/converge-local/<owner>-<repo>-<pr>-<head8>-<n>/`, como o Pré-PR exige (nota N6).
 - Subcomandos: `install` (escreve e carrega os dois plists; ajustado na implementação, 2026-09-29, 0.4.6: os três), `uninstall`, `tick --job sweep|raiz [--dry-run]` (ajustado na implementação, 2026-09-29, 0.4.6: e `watch`), `status` (configuração, sheet, autenticação de `gh` e do parent, posses e ledger; serve de doctor), `lease` (ajustado na implementação, 2026-09-28), `release`, `run --repo R --pr N [--kind K]` (o mesmo caminho do daemon, disparado à mão).
+- Pós-merge (2026-09-29, 0.4.8): o Varredor roda o bloco `postMerge` do contrato uma vez por commit novo da `main`; ver [o desenho do pós-merge](2026-09-29-post-merge-design.md).
 
 ## Raiz de catch-up e playbooks
 

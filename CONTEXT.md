@@ -71,12 +71,16 @@ O `converge-local` e seus três jobs launchd: `com.pstack.converge-sweep` e `com
 _Avoid_: automation, cron, scheduler, watcher
 
 **Vigia**:
-O job que, a cada minuto, pergunta ao GitHub só com GET condicional se a lista de PRs abertos, os checks da ponta da `main` ou os checks do head de um PR aberto mudaram, e toca a campainha do Varredor e do job da Raiz; nunca lança modelo nem escreve no GitHub.
+O job que, a cada minuto, pergunta ao GitHub só com GET condicional se a lista de PRs abertos, os checks da ponta da `main` (com ou sem PR aberto) ou os checks do head de um PR aberto mudaram, e toca a campainha do Varredor e do job da Raiz; nunca lança modelo nem escreve no GitHub.
 _Avoid_: watcher, poller, webhook
 
 **Varredor**:
-O job que roda o `converge-sweep` por script e arma o merge de todo PR certificado com base na `main` e sem hold.
+O job que roda o `converge-sweep` por script e arma o merge de todo PR certificado com base na `main` e sem hold; em seguida roda o Pós-merge de cada repositório.
 _Avoid_: sweeper, cron
+
+**Pós-merge**:
+O que o Varredor roda no Mac, sem modelo, uma vez por commit novo da `main`, depois que o CI de push daquele commit ficou verde: os comandos do bloco `postMerge` do contrato, num worktree descartável do commit. No pstack-vic, cria a tag, atualiza o plugin nos dois pais e reinstala os jobs.
+_Avoid_: post-merge hook, release job
 
 **Catch-up**:
 Uma tentativa de uma Raiz sem supervisão sobre um PR que já existe: reparo, recertificação ou certificação, seguida de entrega, com `outcome.json` no fim.

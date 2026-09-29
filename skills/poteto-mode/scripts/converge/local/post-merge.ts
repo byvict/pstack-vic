@@ -260,6 +260,8 @@ export async function postMergeOne(config: LocalConfig, repo: RepoConfig, t: Tru
   await leased(p, async () => { report.commits.push(await attempt(p, commit, readPostMergeLedger(postMergeLedgerFile(config.stateDirectory, repo.repo, commit)))); });
   return report;
 }
+interface Open { commit: string; pr: number | null; outcome: PostMergeOutcome; reason: string; attempts: number; file: string }
+interface Unreadable { file: string; error: string }
 /** For `status`: each repository with a stored tip, that tip, and every commit whose latest attempt is `deferred` or `failed`; a file that does not parse shows up as its error. */
 export function postMergeStatus(stateDirectory: string): unknown[] {
   const directory = join(stateDirectory, 'post-merge');
@@ -269,7 +271,7 @@ export function postMergeStatus(stateDirectory: string): unknown[] {
     let state: PostMergeState | null;
     try { state = readPostMergeState(file); } catch (error) { return { file, error: message(error) }; }
     const ledgers = join(directory, name.slice(0, -'.json'.length));
-    const commits = json(ledgers).flatMap(entry => {
+    const commits = json(ledgers).flatMap((entry): (Open | Unreadable)[] => {
       const ledgerFile = join(ledgers, entry);
       try {
         const ledger = readPostMergeLedger(ledgerFile);

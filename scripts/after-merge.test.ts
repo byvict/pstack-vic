@@ -98,7 +98,7 @@ test('at the trunk tip a release tags the commit, pushes only that tag, moves bo
   assert.equal(existsSync(join(s.home, 'Library', 'Logs', 'pstack-after-merge.log')), true);
 });
 test('run again once everything is in place, it writes nothing and ends the release with 0', async t => {
-  const s = setup(t, (state, { newScript }) => { state.remoteTags = { 'v0.4.8': commit }; Object.assign(state.claude, state.claude.latest); state.codex = { version: '0.4.8', ref: 'v0.4.8' }; for (const job of Object.values(state.jobs)) job.script = newScript; });
+  const s = setup(t, (state, { newScript }) => { state.remoteTags = { 'v0.4.8': commit }; Object.assign(state.claude, state.claude.latest); state.codex = { version: '0.4.8', ref: 'v0.4.8' }; for (const job of Object.values(state.jobs) as { script: string }[]) job.script = newScript; });
   const result = s.run();
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(writes(s.calls()), []);
