@@ -11,7 +11,7 @@ async function trunkHealth(t: Trusted): Promise<void> {
   if (!jobs.some(j => j.name === t.config.tests.job && j.conclusion === 'success' && j.head_sha === tip)) throw new Error('Trunk test job is not successful at the current tip');
 }
 export const unfinished = ['queued', 'in_progress', 'waiting', 'requested', 'pending'];
-/** GitHub counts a required check whose latest run concluded `neutral` or `skipped` as passing (a job an `if` or a path filter skipped still merges), so the arm and the daemon count them the same way. */
+/** GitHub counts a required check whose latest run concluded `neutral` or `skipped` as passing (a job an `if` skipped still merges), so the arm and the daemon count them the same way. */
 export const passing = ['success', 'neutral', 'skipped'];
 export interface RequiredCheck { context: string; appId: number | null }
 /** A trunk that only rulesets protect has no classic protection, so its required checks come from the branch rules alone. */

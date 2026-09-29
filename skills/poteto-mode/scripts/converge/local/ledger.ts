@@ -74,7 +74,7 @@ export function withAttempt(ledger: Ledger, attempt: Omit<Attempt, 'n'>): Ledger
 export function withLaunchFailure(ledger: Ledger, failure: LaunchFailure): Ledger {
   return { ...ledger, launchFailures: [...ledger.launchFailures, failure] };
 }
-/** After MAX_LAUNCH_FAILURES consecutive launch failures on the head, the instant the backoff after the last one ends, while that is still ahead of `now`; otherwise null. */
+/** After MAX_LAUNCH_FAILURES launch failures on the head since the last recorded attempt, the instant the backoff after the last one ends, while that is still ahead of `now`; otherwise null. */
 export function launchBackoffUntil(ledger: Ledger, now: number): string | null {
   const last = ledger.launchFailures.at(-1);
   if (!last || ledger.launchFailures.length < MAX_LAUNCH_FAILURES) return null;

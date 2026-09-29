@@ -290,7 +290,7 @@ export async function viewer(): Promise<Account> {
 export interface Participant { role: 'commenter' | 'reviewer'; login: string }
 /** Everyone whose text a Raiz would read on the PR beside its author: issue comments and review comments (`comments`), then reviews. */
 export async function participants(repo: string, pr: number): Promise<Participant[]> {
-  const login = (value: Record<string, unknown>) => string(object(value.user).login, 'participant login');
+  const login = (value: Record<string, unknown>) => string(object(value.user, 'participant user').login, 'participant login');
   const [all, reviews] = await Promise.all([comments(repo, pr), pages(`repos/${repo}/pulls/${pr}/reviews`)]);
   return [...all.map(c => ({ role: 'commenter' as const, login: login(c) })), ...reviews.map(v => ({ role: 'reviewer' as const, login: login(object(v)) }))];
 }

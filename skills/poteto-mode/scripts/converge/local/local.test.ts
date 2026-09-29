@@ -509,7 +509,7 @@ test('a recorded attempt clears the launch failures of the head', t => {
   const ledger: Ledger = JSON.parse(readFileSync(ledgerFile(state, 'Example/app', 1), 'utf8'));
   assert.deepEqual([ledger.launchFailures, ledger.attempts.length], [[], 1]);
 });
-const stranger = (id: number, body = 'looks good') => ({ id, body, user: { id: 99, login: 'stranger' }, html_url: `https://github.com/Example/app/pull/1#issuecomment-${id}`, updated_at: '2026-09-22T00:00:00Z' });
+const stranger = (id: number, body = 'looks good', user = { id: 99, login: 'stranger' }) => ({ id, body, user, html_url: `https://github.com/Example/app/pull/1#issuecomment-${id}`, updated_at: '2026-09-22T00:00:00Z' });
 test('the authenticated login is always trusted, trustedAuthors adds logins without case, and an untrusted author is skipped before any other read', t => {
   const f = fixture(); t.after(f.cleanup);
   const { file } = configured(f, undefined, { trustedAuthors: undefined });
@@ -526,15 +526,15 @@ test('the authenticated login is always trusted, trustedAuthors adds logins with
   assert.deepEqual(JSON.parse(listed3.stdout).trustedAuthors, ['converge', 'Author', 'Dependabot[bot]']);
   assert.deepEqual(classes(listed3.stdout), [[1, 'skipped', null, 'draft'], [2, 'pending', 'certify', 'Latest verdict status is not trusted VERIFIED']], 'PR 1 is a draft, so the pass reaches the Dependabot PR, trusted by the listed Dependabot[bot] without case');
 });
-for (const [name, place, role] of [['comment', 'comments', 'commenter'], ['review comment', 'reviewComments', 'commenter'], ['review', 'reviews', 'reviewer']] as const) {
+for (const [name, place, role, user] of [['comment', 'comments', 'commenter', undefined], ['review comment', 'reviewComments', 'commenter', undefined], ['review', 'reviews', 'reviewer', undefined], ['bot comment', 'comments', 'commenter', { id: 98, login: 'cursor[bot]' }]] as const) {
   test(`an outsider's ${name} on a pending PR skips it, names the login, and the next PR gets the tick`, t => {
     const f = fixture(); t.after(f.cleanup);
     const { file, state } = configured(f);
-    edit(f, live => { live[place] = [stranger(160)]; });
+    edit(f, live => { live[place] = [stranger(160, undefined, user)]; });
     listed(f, [other(2, {})]); fakeClaude(f, writer(outcome(f, { pr: 2 })));
     const result = tick(f, file);
     assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual(classes(result.stdout), [[1, 'skipped', null, `untrusted ${role}: stranger`], [2, 'pending', 'certify', 'Latest verdict status is not trusted VERIFIED']]);
+    assert.deepEqual(classes(result.stdout), [[1, 'skipped', null, `untrusted ${role}: ${user?.login ?? 'stranger'}`], [2, 'pending', 'certify', 'Latest verdict status is not trusted VERIFIED']]);
     assert.equal(JSON.parse(result.stdout).launched.pr, 2);
     assert.equal(existsSync(ledgerFile(state, 'Example/app', 1)), false);
     assert.equal(existsSync(leaseFile(state, 'Example/app', 'change')), false);
@@ -548,7 +548,7 @@ test('a comment without a user is an error for that PR only', t => {
   const result = tick(f, file);
   assert.equal(result.status, 1);
   const report = JSON.parse(result.stdout);
-  assert.deepEqual(report.errors, ['Example/app#1: Invalid object']);
+  assert.deepEqual(report.errors, ['Example/app#1: Invalid participant user']);
   assert.equal(report.launched.pr, 2);
 });
 test('an outsider injection on a certified PR no longer launches a recertify, and run --kind cannot force it', t => {
@@ -563,6 +563,17 @@ test('an outsider injection on a certified PR no longer launches a recertify, an
   assert.equal(forced.status, 0, forced.stderr);
   assert.deepEqual(classes(forced.stdout), [[1, 'skipped', null, 'untrusted commenter: stranger']]);
   assert.equal(JSON.parse(forced.stdout).launched, null);
+  assert.equal(existsSync(join(f.directory, 'argv.txt')), false);
+  assert.equal(existsSync(join(state, 'ledger')), false);
+});
+test('run --kind cannot force a PR whose author is outside the trusted list', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const { file, state } = configured(f, undefined, { trustedAuthors: [] });
+  listed(f); fakeClaude(f, writer(outcome(f, { kind: 'recertify' })));
+  const result = f.run('converge-local', ['run', '--repo', 'Example/app', '--pr', '1', '--kind', 'recertify', '--config', file, '--now', String(t0)], { FAKE_ARGV: join(f.directory, 'argv.txt'), TMPDIR: join(f.directory, 'tmp') });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(classes(result.stdout), [[1, 'skipped', null, 'untrusted author: author']]);
+  assert.equal(JSON.parse(result.stdout).launched, null);
   assert.equal(existsSync(join(f.directory, 'argv.txt')), false);
   assert.equal(existsSync(join(state, 'ledger')), false);
 });

@@ -13,7 +13,7 @@ const stale = /^Certificate patch or policy differs at trunk tip |^Certificate i
 export interface ClassifyOptions { now: number; leased: (branch: string) => boolean; trusted: string[]; force?: WorkKind }
 /** Logins compare without case, as GitHub does. */
 function trusts(trusted: string[], login: string): boolean { return trusted.some(t => t.toLowerCase() === login.toLowerCase()); }
-/** One PR, one answer, from the same reads the sweep and the arm make. Errors propagate: the caller decides whether one PR's failure stops the tick. An author outside `trusted` is skipped before any read past the PR record; a pending PR (a forced kind included) is skipped when anyone outside `trusted` commented or reviewed, so no third-party text reaches a Raiz. */
+/** One PR, one answer, from the same reads the sweep and the arm make. Errors propagate: the caller decides whether one PR's failure stops the tick. An author outside `trusted` is skipped before any read past the PR record; a pending PR (a forced kind included) is skipped when anyone outside `trusted` commented or reviewed, so no text from an unlisted login reaches a Raiz. */
 export async function classify(t: Trusted, p: Pull, author: number, options: ClassifyOptions): Promise<Classified> {
   const base = { repo: t.repo, pr: p.number, head: p.head };
   const skipped = (reason: string): Skipped => ({ kind: 'skipped', ...base, reason });

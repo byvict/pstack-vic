@@ -195,6 +195,8 @@ test('loadConfig keeps explicit absolute paths and refuses a bad configuration',
     [{ trustedAuthors: [7] }, /Invalid trustedAuthors entry/],
     [{ trustedAuthors: ['a b'] }, /trustedAuthors entry is not a GitHub login: a b/],
     [{ trustedAuthors: ['bot[app]'] }, /trustedAuthors entry is not a GitHub login: bot\[app\]/],
+    [{ trustedAuthors: ['*'] }, /trustedAuthors entry is not a GitHub login: \*/],
+    [{ trustedAuthors: [''] }, /trustedAuthors entry is not a GitHub login: $/],
   ];
   for (const [fields, error] of refused) assert.throws(() => loadConfig(configFile(dir, { ...explicit, ...fields }), '/home'), error, JSON.stringify(fields));
 });

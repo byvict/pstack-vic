@@ -123,6 +123,15 @@ for (const conclusion of ['neutral', 'skipped']) {
     assert.deepEqual(f.read().mutations, merge(f.state.head));
   });
 }
+for (const conclusion of ['failure', 'cancelled', null]) {
+  test(`a strict arm refuses a required check ${conclusion ? `completed as ${conclusion}` : 'that has no run'}`, t => {
+    const f = fixture(); t.after(f.cleanup); publish(f);
+    const live = f.read(); live.checks = [{ id: 11, name: 'Run test suite', status: 'completed', conclusion: 'success', app: { id: 15368 } }, ...(conclusion ? [{ id: 22, name: 'Secrets scan', status: 'completed', conclusion, app: { id: 15368 } }] : []), { id: 10, name: 'hold', status: 'completed', conclusion: 'success', app: { id: 15368 } }]; Object.assign(f.state, live); f.save();
+    const result = arm(f, false);
+    assert.notEqual(result.status, 0); assert.match(result.stderr, /Required protected check is not successful: Secrets scan/);
+    assert.deepEqual(f.read().mutations, []);
+  });
+}
 for (const scenario of ['hold', 'trunk', 'protection', 'verdict', 'foreign', 'elsewhere', 'unlinked', 'author', 'missing', 'body', 'base'] as const) {
   test(`pending arm with no checks yet still stops at ${scenario} without a merge mutation`, t => {
     const f = fixture(); t.after(f.cleanup); publish(f);
