@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { PLUGIN_ROOT } from '../../../../../scripts/model-matrix.ts';
 import { assertDefaultConfig, defaultConfigFile, loadConfig } from './config.ts';
-import { attemptFrom, launchRaiz, raizCommand, raizLane, raizPrompt, raizRow, type RaizInput } from './raiz.ts';
+import { attemptFrom, launchRaiz, raizCommand, raizLane, raizPrompt, raizRow, LAUNCH_FAILURE_MINUTES, type RaizInput } from './raiz.ts';
 import { parseOutcome, type OutcomeFile } from './outcome.ts';
 
 const head = 'b'.repeat(40);
@@ -60,25 +60,37 @@ test('launchRaiz runs the parent CLI in the checkout, feeds the prompt, and read
   assert.match(readFileSync(join(dir, 'run', 'prompt.txt'), 'utf8'), /^RUN=/m);
   assert.deepEqual(attemptFrom(input(dir), launched), { kind: 'certify', startedAt: launched.startedAt, endedAt: launched.endedAt, outcome: 'certified', reason: '', runDirectory: join(dir, 'run') });
 });
-test('a skipped outcome is no attempt; a missing or foreign outcome is a failed one', async t => {
+test('a skipped outcome is no attempt; past the launch-failure threshold, a missing or foreign outcome is a failed one that names its cause', async t => {
   const dir = temp(t);
   const skipped = await launchRaiz(input(dir), { provider: 'claude', model: 'fable', effort: 'max' }, { env: fakeClaude(dir, writer(outcome({ outcome: 'skipped', reason: 'PR head moved', verdictUrl: null, arm: null, adjustRounds: null }))) });
   assert.equal(attemptFrom(input(dir), skipped), null);
   const foreign = await launchRaiz(input(dir, { runDirectory: join(dir, 'run2') }), { provider: 'claude', model: 'fable', effort: 'max' }, { env: fakeClaude(dir, writer(outcome({ pr: 2 }))) });
   assert.equal(foreign.outcome, null);
-  assert.deepEqual(attemptFrom(input(dir, { runDirectory: join(dir, 'run2') }), foreign)?.reason, 'no outcome: raiz exited 0');
+  assert.deepEqual(attemptFrom(input(dir, { runDirectory: join(dir, 'run2') }), foreign, 0)?.reason, 'no outcome: outcome for another pr, raiz exited 0');
   const none = await launchRaiz(input(dir, { runDirectory: join(dir, 'run3') }), { provider: 'claude', model: 'fable', effort: 'max' }, { env: fakeClaude(dir, 'cat > /dev/null; exit 3') });
-  assert.equal(attemptFrom(input(dir, { runDirectory: join(dir, 'run3') }), none)?.reason, 'no outcome: raiz exited 3');
+  assert.equal(attemptFrom(input(dir, { runDirectory: join(dir, 'run3') }), none, 0)?.reason, 'no outcome: raiz exited 3', 'an absent file names no cause');
+  const invalid = await launchRaiz(input(dir, { runDirectory: join(dir, 'run4') }), fable, { env: fakeClaude(dir, writer(outcome({ schemaVersion: 2 }))) });
+  assert.equal(attemptFrom(input(dir, { runDirectory: join(dir, 'run4') }), invalid, 0)?.reason, 'no outcome: Unknown outcome schema, raiz exited 0');
+});
+test('a Raiz that ends without an accepted outcome within the launch-failure threshold is a launch failure, not an attempt', async t => {
+  const dir = temp(t);
+  assert.equal(LAUNCH_FAILURE_MINUTES, 2);
+  const quick = await launchRaiz(input(dir), fable, { env: fakeClaude(dir, 'cat > /dev/null; echo not logged in >&2; exit 1') });
+  assert.throws(() => attemptFrom(input(dir), quick), (error: Error) => error.message === 'raiz launch failed: no outcome: raiz exited 1');
+  assert.deepEqual(attemptFrom(input(dir), quick, 0), { kind: 'certify', startedAt: quick.startedAt, endedAt: quick.endedAt, outcome: 'failed', reason: 'no outcome: raiz exited 1', runDirectory: join(dir, 'run') }, 'with the threshold at 0 the same run is a failed attempt');
+  const foreign = await launchRaiz(input(dir, { runDirectory: join(dir, 'run2') }), fable, { env: fakeClaude(dir, writer(outcome({ kind: 'repair' }))) });
+  assert.throws(() => attemptFrom(input(dir, { runDirectory: join(dir, 'run2') }), foreign), (error: Error) => error.message === 'raiz launch failed: no outcome: outcome for another kind, raiz exited 0');
 });
 test('an outcome counts only for the launched repo, PR, kind and run directory; its head may move', async t => {
   const dir = temp(t);
-  const cases: [string, Record<string, unknown>, boolean][] = [
-    ['another-repo', { repo: 'Example/other' }, false],
-    ['another-kind', { kind: 'repair' }, false],
-    ['another-run-directory', { runDirectory: '/elsewhere' }, false],
-    ['a-moved-head', { head: 'c'.repeat(40) }, true],
+  const cases: [string, Record<string, unknown>, string | null][] = [
+    ['another-repo', { repo: 'Example/other' }, 'repo'],
+    ['another-kind', { kind: 'repair' }, 'kind'],
+    ['another-run-directory', { runDirectory: '/elsewhere' }, 'run'],
+    ['a-moved-head', { head: 'c'.repeat(40) }, null],
   ];
-  for (const [name, fields, accepted] of cases) {
+  for (const [name, fields, rejected] of cases) {
+    const accepted = rejected === null;
     const launch = input(dir, { runDirectory: join(dir, name) });
     const launched = await launchRaiz(launch, fable, { env: fakeClaude(dir, writer(outcome(fields))) });
     assert.equal(launched.exitCode, 0, name);
@@ -87,9 +99,16 @@ test('an outcome counts only for the launched repo, PR, kind and run directory; 
       assert.equal(attemptFrom(launch, launched)?.outcome, 'certified', name);
     } else {
       assert.equal(launched.outcome, null, name);
-      assert.deepEqual(attemptFrom(launch, launched), { kind: 'certify', startedAt: launched.startedAt, endedAt: launched.endedAt, outcome: 'failed', reason: 'no outcome: raiz exited 0', runDirectory: join(dir, name) }, name);
+      assert.deepEqual(attemptFrom(launch, launched, 0), { kind: 'certify', startedAt: launched.startedAt, endedAt: launched.endedAt, outcome: 'failed', reason: `no outcome: outcome for another ${rejected}, raiz exited 0`, runDirectory: join(dir, name) }, name);
     }
   }
+});
+test('an outcome whose run directory is a symlinked spelling of RUN counts', async t => {
+  const dir = temp(t);
+  symlinkSync(join(dir, 'run'), join(dir, 'alias'));
+  const launched = await launchRaiz(input(dir), fable, { env: fakeClaude(dir, writer(outcome({ runDirectory: join(dir, 'alias') }))) });
+  assert.equal(launched.outcome?.runDirectory, join(dir, 'alias'));
+  assert.equal(attemptFrom(input(dir), launched)?.outcome, 'certified');
 });
 test('an outcome left in a reused run directory does not stand in for the new launch', async t => {
   const dir = temp(t);
@@ -97,25 +116,25 @@ test('an outcome left in a reused run directory does not stand in for the new la
   writeFileSync(join(dir, 'run', 'outcome.json'), outcome({ outcome: 'skipped', reason: 'PR head moved', verdictUrl: null, arm: null, adjustRounds: null, runDirectory: join(dir, 'run') }));
   const launched = await launchRaiz(input(dir), fable, { env: fakeClaude(dir, 'cat > /dev/null') });
   assert.equal(launched.outcome, null);
-  assert.equal(attemptFrom(input(dir), launched)?.reason, 'no outcome: raiz exited 0');
+  assert.equal(attemptFrom(input(dir), launched, 0)?.reason, 'no outcome: raiz exited 0');
 });
 test('launchRaiz kills a Raiz past the cap and reports timeout', async t => {
   const dir = temp(t);
   const launched = await launchRaiz(input(dir), { provider: 'claude', model: 'fable', effort: 'max' }, { env: fakeClaude(dir, 'cat > /dev/null; exec sleep 30'), capMs: 300 });
   assert.equal(launched.timedOut, true);
-  assert.deepEqual(attemptFrom(input(dir), launched)?.reason, 'timeout');
+  assert.deepEqual(attemptFrom(input(dir), launched)?.reason, 'timeout', 'a timeout is an attempt, however soon the cap');
 });
-test('a parent CLI that cannot start is a failed attempt', async t => {
+test('a parent CLI that cannot start is a launch failure, whatever the threshold', async t => {
   const dir = temp(t);
   const launched = await launchRaiz(input(dir), fable, { env: { PATH: join(dir, 'empty') } });
   assert.equal(launched.exitCode, null); assert.equal(launched.timedOut, false); assert.equal(launched.outcome, null);
-  assert.equal(attemptFrom(input(dir), launched)?.reason, 'no outcome: raiz did not start');
+  for (const threshold of [undefined, 0]) assert.throws(() => attemptFrom(input(dir), launched, threshold), (error: Error) => error.message === 'raiz launch failed: no outcome: raiz did not start');
 });
 test('a Raiz killed by a signal reports the shell exit status, and its output lands in the log', async t => {
   const dir = temp(t);
   const launched = await launchRaiz(input(dir), fable, { env: fakeClaude(dir, 'cat > /dev/null; pwd -P; echo partial work >&2; kill -KILL $$') });
   assert.equal(launched.exitCode, 137); assert.equal(launched.timedOut, false);
-  assert.equal(attemptFrom(input(dir), launched)?.reason, 'no outcome: raiz exited 137');
+  assert.equal(attemptFrom(input(dir), launched, 0)?.reason, 'no outcome: raiz exited 137');
   assert.equal(launched.logPath, join(dir, 'run', 'raiz.log'));
   assert.deepEqual(readFileSync(launched.logPath, 'utf8').split('\n'), [realpathSync(dir), 'partial work', '']);
 });

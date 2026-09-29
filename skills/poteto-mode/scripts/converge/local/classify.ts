@@ -42,3 +42,12 @@ export async function classify(t: Trusted, p: Pull, author: number, options: { n
   }
   return { kind: 'idle', ...base, reason: 'certified; checks green or pending' };
 }
+/** Catch-up step 1's PR conditions, the only causes a Raiz may give for `skipped`: the first that holds on the live PR, or null when none does. */
+export function skipCause(t: Trusted, p: Pull, launchedHead: string): string | null {
+  if (p.state !== 'open') return 'PR is not open';
+  if (p.draft) return 'draft';
+  if (p.labels.some(label => t.config.holdLabels.includes(label))) return 'hold label';
+  if (p.head !== launchedHead) return 'head moved';
+  if (p.branch === t.config.trunk) return 'head branch is trunk';
+  return null;
+}

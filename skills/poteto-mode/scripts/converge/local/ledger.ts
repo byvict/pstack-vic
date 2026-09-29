@@ -3,6 +3,9 @@ import { dirname, join } from 'node:path';
 import { array, instant, integer, object, oneOf, repoName, sha, string } from '../contract.ts';
 
 export const MAX_FAILED_ATTEMPTS = 2;
+/** `deferred` does not count as failed, so a cause that persists (a Dependabot PR that no longer rebases, a stack child waiting on its parent) would relaunch every tick without these two bounds. */
+export const MAX_DEFERRED_ATTEMPTS = 3;
+export const DEFERRED_BACKOFF_MINUTES = 30;
 export const HEAD_WINDOW_HOURS = 6;
 export const ATTEMPT_CAP_HOURS = 2;
 export const workKinds = ['repair', 'recertify', 'certify'] as const;
@@ -46,8 +49,16 @@ export function currentLedger(existing: Ledger | null, repo: string, pr: number,
 }
 export function exhausted(ledger: Ledger, now: number): string | null {
   if (ledger.attempts.filter(a => a.outcome === 'failed').length >= MAX_FAILED_ATTEMPTS) return `${MAX_FAILED_ATTEMPTS} failed attempts on head ${ledger.head}`;
+  if (ledger.attempts.filter(a => a.outcome === 'deferred').length >= MAX_DEFERRED_ATTEMPTS) return `${MAX_DEFERRED_ATTEMPTS} deferred attempts on head ${ledger.head}`;
   if (ledger.firstAttemptAt !== null && !ledger.attempts.some(a => a.outcome === 'certified') && now - Date.parse(ledger.firstAttemptAt) >= HEAD_WINDOW_HOURS * 3_600_000) return `${HEAD_WINDOW_HOURS} hours since the first attempt on head ${ledger.head}`;
   return null;
+}
+/** When the latest attempt on the head is `deferred`, the instant its backoff ends, while that is still ahead of `now`; otherwise null. */
+export function deferredBackoffUntil(ledger: Ledger, now: number): string | null {
+  const last = ledger.attempts.at(-1);
+  if (last?.outcome !== 'deferred') return null;
+  const until = Date.parse(last.endedAt) + DEFERRED_BACKOFF_MINUTES * 60_000;
+  return now < until ? new Date(until).toISOString() : null;
 }
 export function withAttempt(ledger: Ledger, attempt: Omit<Attempt, 'n'>): Ledger {
   return { ...ledger, firstAttemptAt: ledger.firstAttemptAt ?? attempt.startedAt, attempts: [...ledger.attempts, { ...attempt, n: ledger.attempts.length + 1 }] };

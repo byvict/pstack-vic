@@ -1,12 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { fixture, moveTrunk, publishCertificate } from '../fixtures/setup.ts';
-import { ledgerFile, writeLedger, HEAD_WINDOW_HOURS, MAX_FAILED_ATTEMPTS, type Ledger } from './ledger.ts';
+import { defaultStateDirectory, loadConfig } from './config.ts';
+import { ledgerFile, writeLedger, DEFERRED_BACKOFF_MINUTES, HEAD_WINDOW_HOURS, MAX_DEFERRED_ATTEMPTS, MAX_FAILED_ATTEMPTS, type Attempt, type Ledger } from './ledger.ts';
 import { leaseFile, takeLease } from './lease.ts';
-import { missingCommands, plist } from './launchd.ts';
+import { assertRaizRow, missingCommands, plist } from './launchd.ts';
+import { tickRaiz } from './local.ts';
 
 const t0 = Date.parse('2026-09-28T12:00:00Z');
 const minutes = (n: number) => new Date(t0 - n * 60_000).toISOString();
@@ -25,6 +27,9 @@ function fakeClaude(f: ReturnType<typeof fixture>, body: string) {
 }
 const outcome = (f: ReturnType<typeof fixture>, fields: Record<string, unknown>) => JSON.stringify({ schemaVersion: 1, repo: 'Example/app', pr: 1, head: f.state.head, kind: 'certify', outcome: 'certified', reason: '', verdictUrl: null, arm: 'armed', adjustRounds: 0, runDirectory: '__RUN__', ...fields });
 const writer = (json: string) => `printf '%s\\n' "$@" > "$FAKE_ARGV"; prompt=$(cat); run=$(printf '%s\\n' "$prompt" | sed -n 's/^RUN=//p'); printf '%s' '${json}' | sed "s|__RUN__|$run|" > "$run/outcome.json"`;
+/** A fake Raiz step that changes the fake GitHub while the attempt runs. */
+const mutate = (change: string) => `"${process.execPath}" -e 'const fs = require("fs"), f = process.env.CONVERGE_FIXTURE, s = JSON.parse(fs.readFileSync(f, "utf8")); ${change}; fs.writeFileSync(f, JSON.stringify(s))'; `;
+const skippedOutcome = (f: ReturnType<typeof fixture>, reason: string) => outcome(f, { outcome: 'skipped', reason, verdictUrl: null, arm: null, adjustRounds: null });
 // Runs before publishCertificate or prepare: f.checkout() commits a new head each time, and the config only keeps the path.
 function configured(f: ReturnType<typeof fixture>, sheet = 'converge raiz: claude:claude-opus-5-5@xhigh\n') {
   const checkout = existsSync(join(f.directory, 'checkout')) ? join(f.directory, 'checkout') : f.checkout();
@@ -47,8 +52,16 @@ function published(f: ReturnType<typeof fixture>) {
 function edit(f: ReturnType<typeof fixture>, change: (live: ReturnType<ReturnType<typeof fixture>['read']>) => void) {
   const live = f.read(); change(live); Object.assign(f.state, live); f.save();
 }
-const seeded = (f: ReturnType<typeof fixture>, failed: number): Ledger => ({ schemaVersion: 1, repo: 'Example/app', pr: 1, head: f.state.head, firstAttemptAt: new Date(t0 - 3_600_000).toISOString(), heldAt: null,
-  attempts: Array.from({ length: failed }, (_, i) => ({ n: i + 1, kind: 'certify' as const, startedAt: new Date(t0 - 3_600_000).toISOString(), endedAt: new Date(t0 - 3_000_000).toISOString(), outcome: 'failed' as const, reason: 'run suite exited 1', runDirectory: `/tmp/run-${i + 1}` })) });
+const seeded = (f: ReturnType<typeof fixture>, count: number, outcome: Attempt['outcome'] = 'failed', endedAt = t0 - 3_000_000): Ledger => ({ schemaVersion: 1, repo: 'Example/app', pr: 1, head: f.state.head, firstAttemptAt: new Date(t0 - 3_600_000).toISOString(), heldAt: null,
+  attempts: Array.from({ length: count }, (_, i) => ({ n: i + 1, kind: 'certify' as const, startedAt: new Date(t0 - 3_600_000).toISOString(), endedAt: new Date(endedAt).toISOString(), outcome, reason: outcome === 'failed' ? 'run suite exited 1' : 'CI rerun pending', runDirectory: `/tmp/run-${i + 1}` })) });
+/** tickRaiz in this process, for the options the command does not take. gh, the fake claude and the temp root come from the environment, so the fixture's are set for the call and restored after. */
+async function inProcess<T>(f: ReturnType<typeof fixture>, run: () => Promise<T>): Promise<T> {
+  const keys = ['PATH', 'CONVERGE_FIXTURE', 'TMPDIR', 'FAKE_ARGV'] as const;
+  const saved = keys.map(key => process.env[key]);
+  Object.assign(process.env, { PATH: f.directory + ':' + process.env.PATH, CONVERGE_FIXTURE: f.statePath, TMPDIR: join(f.directory, 'tmp'), FAKE_ARGV: join(f.directory, 'argv.txt') });
+  try { return await run(); }
+  finally { keys.forEach((key, i) => { if (saved[i] === undefined) delete process.env[key]; else process.env[key] = saved[i]; }); }
+}
 
 test('dry run classifies: certified and green is idle; draft, hold, fork, trunk, foreign verdict and a young PR are skipped', t => {
   const f = fixture(); t.after(f.cleanup);
@@ -102,6 +115,7 @@ test('a read that fails for one PR, or an unparseable creation time, is an error
   const report = JSON.parse(result.stdout);
   assert.deepEqual(classes(result.stdout), [[1, 'skipped', null, 'draft'], [4, 'pending', 'certify', 'Latest verdict status is not trusted VERIFIED']]);
   assert.deepEqual(report.errors, ['Example/app#2: gh request failed', 'Example/app#3: Invalid PR createdAt: yesterday']);
+  assert.equal(result.stderr, 'Example/app#2: gh request failed\nExample/app#3: Invalid PR createdAt: yesterday\n', 'every error also goes to stderr, one line each');
   assert.equal(report.launched.pr, 4);
 });
 test('the tick launches the Raiz on the pending PR, records the attempt and releases the lease', t => {
@@ -125,14 +139,85 @@ test('the tick launches the Raiz on the pending PR, records the attempt and rele
   assert.match(prompt, /^KIND=certify$/m);
   assert.match(prompt, /^LEASE_BY=daemon:\d+$/m);
 });
-test('a skipped outcome records no attempt', t => {
+for (const [name, change, recorded] of [
+  ['a hold label applied during the attempt', 's.hold = true', null],
+  ['a head moved during the attempt', 's.head = "c".repeat(40)', null],
+  ['a PR the attempt left as it was', '', 'skipped without cause: lease renewal refused'],
+] as [string, string, string | null][]) {
+  test(`a skipped outcome after ${name} ${recorded ? 'is a failed attempt' : 'records no attempt'}`, t => {
+    const f = fixture(); t.after(f.cleanup);
+    const { file, state } = configured(f);
+    listed(f); fakeClaude(f, (change ? mutate(change) : '') + writer(skippedOutcome(f, 'lease renewal refused')));
+    const result = tick(f, file);
+    assert.equal(result.status, 0, result.stderr);
+    const report = JSON.parse(result.stdout);
+    assert.equal(report.launched.attempt?.reason ?? null, recorded);
+    if (recorded) assert.deepEqual(JSON.parse(readFileSync(ledgerFile(state, 'Example/app', 1), 'utf8')).attempts.map((a: Attempt) => [a.outcome, a.reason]), [['failed', recorded]]);
+    else assert.equal(existsSync(ledgerFile(state, 'Example/app', 1)), false);
+    assert.equal(existsSync(leaseFile(state, 'Example/app', 'change')), false);
+  });
+}
+test('a PR that cannot be re-read after a skipped outcome is an error for that PR: no attempt, the lease released, exit 1', t => {
   const f = fixture(); t.after(f.cleanup);
   const { file, state } = configured(f);
-  listed(f); fakeClaude(f, writer(outcome(f, { outcome: 'skipped', reason: 'PR head moved', arm: null, adjustRounds: null })));
+  listed(f); fakeClaude(f, mutate('s.failEndpoint = "pulls/1"') + writer(skippedOutcome(f, 'PR head moved')));
   const result = tick(f, file);
-  assert.equal(result.status, 0, result.stderr);
-  assert.equal(JSON.parse(result.stdout).launched.attempt, null);
+  assert.equal(result.status, 1);
+  assert.deepEqual(JSON.parse(result.stdout).errors, ['Example/app#1: gh request failed']);
   assert.equal(existsSync(ledgerFile(state, 'Example/app', 1)), false);
+  assert.equal(existsSync(leaseFile(state, 'Example/app', 'change')), false);
+});
+test('a Raiz that fails within the launch-failure threshold records no attempt: the tick releases the lease, reports the error on stdout and stderr, and exits 1', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const { file, state } = configured(f);
+  listed(f); fakeClaude(f, 'cat > /dev/null; echo "Not logged in" >&2; exit 1');
+  const result = tick(f, file);
+  assert.equal(result.status, 1);
+  const report = JSON.parse(result.stdout);
+  assert.deepEqual(report.errors, ['Example/app#1: raiz launch failed: no outcome: raiz exited 1']);
+  assert.equal(result.stderr, 'Example/app#1: raiz launch failed: no outcome: raiz exited 1\n');
+  assert.equal(report.launched.pr, 1); assert.equal(report.launched.attempt, null);
+  assert.equal(existsSync(ledgerFile(state, 'Example/app', 1)), false);
+  assert.equal(existsSync(leaseFile(state, 'Example/app', 'change')), false);
+  assert.deepEqual(f.read().mutations, [], 'no label, no comment');
+});
+test('with the launch-failure threshold at 0, the same run records a failed attempt', async t => {
+  const f = fixture(); t.after(f.cleanup);
+  const { file, state } = configured(f);
+  listed(f); fakeClaude(f, 'cat > /dev/null; exit 1');
+  const report = await inProcess(f, () => tickRaiz(loadConfig(file), { dryRun: false, now: t0, launchFailureMs: 0 }));
+  assert.deepEqual(report.errors, []);
+  assert.equal(report.launched?.attempt?.reason, 'no outcome: raiz exited 1');
+  assert.deepEqual(JSON.parse(readFileSync(ledgerFile(state, 'Example/app', 1), 'utf8')).attempts.map((a: Attempt) => [a.outcome, a.reason]), [['failed', 'no outcome: raiz exited 1']]);
+  assert.equal(existsSync(leaseFile(state, 'Example/app', 'change')), false);
+});
+test('a pending PR whose latest attempt was deferred waits out the backoff, then launches', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const { file, state } = configured(f);
+  listed(f); fakeClaude(f, writer(outcome(f, {})));
+  const ended = t0 - 10 * 60_000;
+  writeLedger(ledgerFile(state, 'Example/app', 1), seeded(f, 1, 'deferred', ended));
+  const until = new Date(ended + DEFERRED_BACKOFF_MINUTES * 60_000).toISOString();
+  const waiting = tick(f, file);
+  assert.equal(waiting.status, 0, waiting.stderr);
+  assert.deepEqual(classes(waiting.stdout), [[1, 'skipped', null, `deferred backoff until ${until} (${DEFERRED_BACKOFF_MINUTES} minutes after the last deferred attempt)`]]);
+  assert.equal(JSON.parse(waiting.stdout).launched, null);
+  assert.equal(existsSync(join(f.directory, 'argv.txt')), false);
+  const later = tick(f, file, ['--now', String(Date.parse(until))]);
+  assert.equal(later.status, 0, later.stderr);
+  assert.equal(JSON.parse(later.stdout).launched.attempt.outcome, 'certified');
+});
+test('a third deferred attempt on a head holds it', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const { file, state } = configured(f);
+  listed(f); fakeClaude(f, writer(outcome(f, { outcome: 'deferred', reason: 'CI rerun pending', arm: null })));
+  // The attempt ends on the real clock, so the ledger starts an hour before it: the six-hour window stays open, and only the deferred cap can hold.
+  const now = Date.now();
+  writeLedger(ledgerFile(state, 'Example/app', 1), { ...seeded(f, MAX_DEFERRED_ATTEMPTS - 1, 'deferred', now - 3_000_000), firstAttemptAt: new Date(now - 3_600_000).toISOString() });
+  const result = tick(f, file, ['--now', String(now)]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout).held, [{ repo: 'Example/app', pr: 1, reason: `${MAX_DEFERRED_ATTEMPTS} deferred attempts on head ${f.state.head}` }]);
+  assert.deepEqual(f.read().mutations, [['labels', 'needs-victor']]);
 });
 test('a second failed attempt applies the hold label with a comment, and the next tick skips the held PR', t => {
   const f = fixture(); t.after(f.cleanup);
@@ -281,6 +366,46 @@ test('lease and release are scoped to their holder', t => {
   assert.equal(released.status, 0, released.stderr);
   assert.equal(existsSync(leaseFile(state, 'Example/app', 'change')), false);
 });
+test('lease and release need no daemon configuration: without the file they use the default state directory', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const home = join(f.directory, 'home');
+  const missing = join(f.directory, 'missing.json');
+  const run = (args: string[]) => f.run('converge-local', [...args, '--repo', 'Example/app', '--branch', 'change', '--config', missing], { HOME: home });
+  const file = leaseFile(defaultStateDirectory(home), 'Example/app', 'change');
+  const taken = run(['lease']);
+  assert.equal(taken.status, 0, taken.stderr);
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).by, 'interactive');
+  const released = run(['release']);
+  assert.equal(released.status, 0, released.stderr);
+  assert.equal(existsSync(file), false);
+  const status = f.run('converge-local', ['status', '--config', missing], { HOME: home });
+  assert.equal(status.status, 1);
+  assert.match(status.stderr, /^No configuration at .*missing\.json/, 'every other subcommand still needs the configuration');
+});
+test('a real tick records how it ended in last-tick-JOB.json, a dry run does not, and status prints both', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const { file, state } = configured(f);
+  listed(f); edit(f, live => { live.failEndpoint = 'pulls'; });
+  assert.equal(tick(f, file, ['--dry-run']).status, 1);
+  assert.deepEqual(readdirSync(state), [], 'a dry run writes nothing');
+  const before = new Date().toISOString();
+  const raiz = tick(f, file);
+  const sweep = f.run('converge-local', ['tick', '--job', 'sweep', '--config', file]);
+  const after = new Date().toISOString();
+  assert.equal(raiz.status, 1); assert.equal(sweep.status, 1);
+  assert.equal(sweep.stderr, 'Example/app: gh request failed\n', 'the sweep tick also writes each error to stderr');
+  assert.deepEqual(readdirSync(state).sort(), ['last-tick-raiz.json', 'last-tick-sweep.json'], 'no temporary file is left');
+  const status = f.run('converge-local', ['status', '--config', file]);
+  assert.equal(status.status, 0, status.stderr);
+  const { lastTick } = JSON.parse(status.stdout);
+  assert.deepEqual(Object.keys(lastTick), ['sweep', 'raiz']);
+  for (const [job, errors] of [['raiz', ['Example/app: gh request failed']], ['sweep', ['Example/app: gh request failed']]] as [string, string[]][]) {
+    const record = lastTick[job];
+    assert.deepEqual(Object.keys(record), ['job', 'startedAt', 'endedAt', 'exitCode', 'errors'], job);
+    assert.deepEqual([record.job, record.exitCode, record.errors], [job, 1, errors], job);
+    assert.ok(before <= record.startedAt && record.startedAt <= record.endedAt && record.endedAt <= after, job);
+  }
+});
 test('status reports the sheet row, the probes, the valid leases and the ledgers, and survives a corrupt ledger', t => {
   const f = fixture(); t.after(f.cleanup);
   const { file, state } = configured(f);
@@ -296,14 +421,15 @@ test('status reports the sheet row, the probes, the valid leases and the ledgers
   assert.equal(report.parent, 'ok');
   assert.deepEqual(report.leases.map((l: { by: string }) => l.by), ['interactive']);
   assert.deepEqual(report.ledgers.map((l: { pr?: number; error?: string }) => l.pr ?? l.error?.replace(/ .*/, '')), [1, 'Invalid']);
+  assert.deepEqual(report.lastTick, { sweep: null, raiz: null }, 'no tick has run');
 });
 const nvm = '/Users/v/.nvm/versions/node/v24.21.0/bin';
-test('the plist runs the tick through a login shell every interval, with the install PATH and the absolute node, and logs to one file per job', () => {
+test('the plist runs the tick through a non-login zsh every interval, with the install PATH and the absolute node, and logs to one file per job', () => {
   const text = plist('sweep', { pluginDir: '/Users/v/Dev/pstack-vic', configFile: '/Users/v/.config/pstack/converge-local.json', intervalMinutes: 10, logDirectory: '/Users/v/Library/Logs', path: `${nvm}:/opt/homebrew/bin:/usr/bin:/bin`, nodePath: `${nvm}/node` });
   assert.match(text, /<key>Label<\/key><string>com\.pstack\.converge-sweep<\/string>/);
-  assert.match(text, /<string>\/bin\/zsh<\/string><string>-lc<\/string>/);
+  assert.match(text, /<string>\/bin\/zsh<\/string><string>-c<\/string>/, 'zsh reads ~/.zshenv without -l, and no /etc/zprofile reorders the recorded PATH');
   assert.match(text, /exec "\/Users\/v\/\.nvm\/versions\/node\/v24\.21\.0\/bin\/node" "\/Users\/v\/Dev\/pstack-vic\/skills\/poteto-mode\/scripts\/converge\/converge-local" tick --job sweep --config "\/Users\/v\/\.config\/pstack\/converge-local\.json"/);
-  assert.doesNotMatch(text, /exec node /, 'a login shell that never reads ~/.zshrc has no nvm node on its PATH');
+  assert.doesNotMatch(text, /exec node /, 'a non-interactive shell never reads ~/.zshrc, so it has no nvm node on its PATH');
   assert.ok(text.includes(`<key>EnvironmentVariables</key><dict><key>PATH</key><string>${nvm}:/opt/homebrew/bin:/usr/bin:/bin</string></dict>`), text);
   assert.match(text, /<key>StartInterval<\/key><integer>600<\/integer>/);
   assert.match(text, /<key>StandardOutPath<\/key><string>\/Users\/v\/Library\/Logs\/pstack-converge-sweep\.log<\/string>/);
@@ -328,4 +454,15 @@ test('missingCommands names what no absolute PATH directory holds as an executab
   writeFileSync(join(b, 'claude'), '#!/bin/sh\n', { mode: 0o755 });
   assert.deepEqual(missingCommands(path, ['claude']), [], 'a later PATH directory still counts');
   assert.deepEqual(missingCommands('', ['gh']), ['gh']);
+});
+test('install refuses a sheet without a valid converge raiz row, names the cause and says to run /setup-pstack', () => {
+  assert.doesNotThrow(() => assertRaizRow('/s/pstack-models.md', 'converge raiz: claude:claude-opus-5-5@xhigh\n', 'claude'));
+  const refused: [string | Error, RegExp][] = [
+    ['bug-fix: claude:claude-opus-5-5@xhigh\n', /The model sheet has no converge raiz row/],
+    ['converge raiz: codex:gpt-6-sol@xhigh\n', /converge raiz must be native to the claude parent, not codex/],
+    [new Error("ENOENT: no such file or directory, open '/s/pstack-models.md'"), /ENOENT/],
+  ];
+  for (const [sheet, cause] of refused) {
+    assert.throws(() => assertRaizRow('/s/pstack-models.md', sheet, 'claude'), (error: Error) => error.message.startsWith('install needs a valid converge raiz row in /s/pstack-models.md (') && cause.test(error.message) && error.message.endsWith('); run /setup-pstack, then install again'), String(sheet));
+  }
 });

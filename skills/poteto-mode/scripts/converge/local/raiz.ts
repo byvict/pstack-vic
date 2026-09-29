@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { closeSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { constants } from 'node:os';
 import { join } from 'node:path';
 import { loadMatrix, resolveDescriptor, type ModelMatrix } from '../../../../../scripts/model-matrix.ts';
@@ -41,12 +41,21 @@ export function raizPrompt(input: RaizInput): string {
 }
 /** How long a Raiz past the cap has between SIGTERM and SIGKILL. */
 const KILL_GRACE_MS = 10_000;
-export interface Launched { outcome: OutcomeFile | null; exitCode: number | null; timedOut: boolean; startedAt: string; endedAt: string; logPath: string }
+/** A Raiz that did not start, or that ended without an accepted outcome (not by the cap) sooner than this after its start, never ran the playbook: a login, a quota or a moved CLI looks like this. */
+export const LAUNCH_FAILURE_MINUTES = 2;
+/** `rejected` is why an outcome file that exists did not count; null when it counted or is absent. */
+export interface Launched { outcome: OutcomeFile | null; rejected: string | null; exitCode: number | null; timedOut: boolean; startedAt: string; endedAt: string; logPath: string }
+/** The Raiz may spell RUN another way (a canonical `/private/var` for the `/var` it was given); RUN exists by then, so both sides resolve. */
+function samePath(a: string, b: string): boolean {
+  try { return realpathSync(a) === realpathSync(b); } catch { return a === b; }
+}
 /** The outcome only counts for the work launched. Its head is not compared: catch-up writes the head after its own pushes. */
-function launchedOutcome(input: RaizInput): OutcomeFile | null {
+function launchedOutcome(input: RaizInput): Pick<Launched, 'outcome' | 'rejected'> {
   let outcome: OutcomeFile;
-  try { outcome = parseOutcome(JSON.parse(readFileSync(join(input.runDirectory, 'outcome.json'), 'utf8'))); } catch { return null; }
-  return outcome.repo === input.repo && outcome.pr === input.pr && outcome.kind === input.kind && outcome.runDirectory === input.runDirectory ? outcome : null;
+  try { outcome = parseOutcome(JSON.parse(readFileSync(join(input.runDirectory, 'outcome.json'), 'utf8'))); }
+  catch (error) { return { outcome: null, rejected: (error as NodeJS.ErrnoException).code === 'ENOENT' ? null : (error as Error).message }; }
+  const other = outcome.repo !== input.repo ? 'repo' : outcome.pr !== input.pr ? 'pr' : outcome.kind !== input.kind ? 'kind' : !samePath(outcome.runDirectory, input.runDirectory) ? 'run' : null;
+  return other ? { outcome: null, rejected: `outcome for another ${other}` } : { outcome, rejected: null };
 }
 /** A signal death reports the shell's 128 + signal number, as the runner does; null means the CLI never started. */
 function exitStatus(code: number | null, signal: NodeJS.Signals | null): number {
@@ -57,7 +66,7 @@ export async function launchRaiz(input: RaizInput, lane: RaizLane, options: { ca
   const { command, args } = raizCommand(lane, { checkout: input.checkout, pluginDir: input.pluginDir });
   mkdirSync(input.runDirectory, { recursive: true, mode: 0o700 });
   writeFileSync(join(input.runDirectory, 'prompt.txt'), prompt, { mode: 0o600 });
-  // A run directory is reused after a skipped attempt; an outcome left from it must not stand in for this launch's.
+  // RUN is unique per launch, so this is defensive: an outcome already there must not stand in for this launch's.
   rmSync(join(input.runDirectory, 'outcome.json'), { force: true });
   const logPath = join(input.runDirectory, 'raiz.log');
   const cap = options.capMs ?? ATTEMPT_CAP_HOURS * 3_600_000;
@@ -81,7 +90,7 @@ export async function launchRaiz(input: RaizInput, lane: RaizLane, options: { ca
       done = true;
       clearTimeout(timer);
       clearTimeout(escalation);
-      resolvePromise({ outcome: timedOut ? null : launchedOutcome(input), exitCode, timedOut, startedAt, endedAt: new Date().toISOString(), logPath });
+      resolvePromise({ ...(timedOut ? { outcome: null, rejected: null } : launchedOutcome(input)), exitCode, timedOut, startedAt, endedAt: new Date().toISOString(), logPath });
     };
     child.on('error', () => { if (child.pid === undefined) finish(null); });
     child.on('exit', (code, signal) => finish(exitStatus(code, signal)));
@@ -89,11 +98,15 @@ export async function launchRaiz(input: RaizInput, lane: RaizLane, options: { ca
     child.stdin?.end(prompt);
   });
 }
-/** What the ledger records: nothing for a skipped attempt, a failed one for a timeout or a missing outcome, otherwise the outcome as written. */
-export function attemptFrom(input: RaizInput, launched: Launched): Omit<Attempt, 'n'> | null {
+/** What the ledger records: nothing for a skipped attempt, a failed one for a timeout or a missing outcome, otherwise the outcome as written. A launch failure (see `LAUNCH_FAILURE_MINUTES`) is no attempt: it throws `raiz launch failed: REASON`, with the reason a failed attempt would carry. */
+export function attemptFrom(input: RaizInput, launched: Launched, launchFailureMs = LAUNCH_FAILURE_MINUTES * 60_000): Omit<Attempt, 'n'> | null {
   const base = { kind: input.kind, startedAt: launched.startedAt, endedAt: launched.endedAt, runDirectory: input.runDirectory };
   if (launched.timedOut) return { ...base, outcome: 'failed', reason: 'timeout' };
-  if (!launched.outcome) return { ...base, outcome: 'failed', reason: launched.exitCode === null ? 'no outcome: raiz did not start' : `no outcome: raiz exited ${launched.exitCode}` };
+  if (!launched.outcome) {
+    const reason = launched.exitCode === null ? 'no outcome: raiz did not start' : `no outcome: ${launched.rejected ? `${launched.rejected}, ` : ''}raiz exited ${launched.exitCode}`;
+    if (launched.exitCode === null || Date.parse(launched.endedAt) - Date.parse(launched.startedAt) < launchFailureMs) throw new Error(`raiz launch failed: ${reason}`);
+    return { ...base, outcome: 'failed', reason };
+  }
   if (launched.outcome.outcome === 'skipped') return null;
   return { ...base, outcome: launched.outcome.outcome, reason: launched.outcome.reason };
 }

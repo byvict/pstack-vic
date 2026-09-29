@@ -6,7 +6,11 @@ import { PLUGIN_ROOT } from '../../../../../scripts/model-matrix.ts';
 
 export interface RepoConfig { repo: string; checkout: string }
 export interface LocalConfig { file: string; parent: 'claude' | 'codex'; repos: RepoConfig[]; intervalMinutes: number; pluginDir: string; stateDirectory: string; sheetPath: string; logDirectory: string }
+/** The tick interval when the configuration names none; a configuration may set 1 to 60 minutes. */
+export const DEFAULT_INTERVAL_MINUTES = 10;
 export function defaultConfigFile(home = homedir()): string { return join(home, '.config', 'pstack', 'converge-local.json'); }
+/** Where leases and ledgers live when the configuration names no `stateDirectory`, or when there is no configuration: an interactive lease needs no daemon. */
+export function defaultStateDirectory(home = homedir()): string { return join(home, 'Library', 'Application Support', 'pstack', 'converge-local'); }
 /** The playbooks' `converge-local lease` commands name no `--config`, so a daemon installed from another file would keep its leases where they never look. */
 export function assertDefaultConfig(file: string, home = homedir()): void {
   const expected = defaultConfigFile(home);
@@ -32,11 +36,11 @@ export function loadConfig(file: string, home = homedir()): LocalConfig {
     return { repo, checkout };
   });
   if (!repos.length) throw new Error('Configuration lists no repository');
-  const interval = v.intervalMinutes === undefined ? 10 : v.intervalMinutes;
+  const interval = v.intervalMinutes === undefined ? DEFAULT_INTERVAL_MINUTES : v.intervalMinutes;
   if (typeof interval !== 'number' || !Number.isInteger(interval) || interval < 1 || interval > 60) throw new Error('intervalMinutes must be an integer from 1 to 60');
   return { file, parent, repos, intervalMinutes: interval,
     pluginDir: optionalPath(v.pluginDir, 'pluginDir', PLUGIN_ROOT),
-    stateDirectory: optionalPath(v.stateDirectory, 'stateDirectory', join(home, 'Library', 'Application Support', 'pstack', 'converge-local')),
+    stateDirectory: optionalPath(v.stateDirectory, 'stateDirectory', defaultStateDirectory(home)),
     sheetPath: optionalPath(v.sheetPath, 'sheetPath', join(home, parent === 'claude' ? '.claude' : '.codex', 'pstack-models.md')),
     logDirectory: optionalPath(v.logDirectory, 'logDirectory', join(home, 'Library', 'Logs')) };
 }

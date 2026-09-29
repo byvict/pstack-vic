@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { currentLedger, exhausted, ledgerFile, markHeld, readLedger, withAttempt, writeLedger, HEAD_WINDOW_HOURS, MAX_FAILED_ATTEMPTS, type Attempt } from './ledger.ts';
+import { currentLedger, deferredBackoffUntil, exhausted, ledgerFile, markHeld, readLedger, withAttempt, writeLedger, DEFERRED_BACKOFF_MINUTES, HEAD_WINDOW_HOURS, MAX_DEFERRED_ATTEMPTS, MAX_FAILED_ATTEMPTS, type Attempt } from './ledger.ts';
 
 const head = 'b'.repeat(40), other = 'c'.repeat(40);
 const t0 = Date.parse('2026-09-28T12:00:00Z');
@@ -34,6 +34,25 @@ test('two failed attempts or six hours exhaust a head; deferred attempts do not 
   assert.equal(exhausted(slow, t0 + 6 * 3_600_000), `${HEAD_WINDOW_HOURS} hours since the first attempt on head ${head}`);
   slow = withAttempt(slow, attempt(2, 'certified', t0 + 3_600_000));
   assert.equal(exhausted(slow, t0 + 7 * 3_600_000), null, 'a certified attempt closes the window');
+});
+test('three deferred attempts exhaust a head, even after a certified one', () => {
+  let ledger = withAttempt(currentLedger(null, 'Example/app', 1, head, false), attempt(1, 'certified'));
+  for (let n = 2; n <= MAX_DEFERRED_ATTEMPTS; n++) ledger = withAttempt(ledger, attempt(n, 'deferred', t0 + n * 60_000));
+  assert.equal(exhausted(ledger, t0 + 3_600_000), null, 'two deferred attempts do not');
+  ledger = withAttempt(ledger, attempt(4, 'deferred', t0 + 5 * 60_000));
+  assert.equal(MAX_DEFERRED_ATTEMPTS, 3);
+  assert.equal(exhausted(ledger, t0 + 3_600_000), `${MAX_DEFERRED_ATTEMPTS} deferred attempts on head ${head}`);
+});
+test('a deferred latest attempt holds the next launch back until the backoff after its end', () => {
+  const fresh = currentLedger(null, 'Example/app', 1, head, false);
+  assert.equal(deferredBackoffUntil(fresh, t0), null, 'no attempt, no backoff');
+  const deferred = withAttempt(fresh, attempt(1, 'deferred'));
+  const ended = t0 + 60_000;
+  assert.equal(DEFERRED_BACKOFF_MINUTES, 30);
+  assert.equal(deferredBackoffUntil(deferred, ended), new Date(ended + 30 * 60_000).toISOString());
+  assert.equal(deferredBackoffUntil(deferred, ended + 30 * 60_000 - 1), new Date(ended + 30 * 60_000).toISOString());
+  assert.equal(deferredBackoffUntil(deferred, ended + 30 * 60_000), null, 'the backoff ends at its end');
+  assert.equal(deferredBackoffUntil(withAttempt(deferred, attempt(2, 'failed', t0 + 120_000)), ended), null, 'only the latest attempt counts');
 });
 test('the ledger round-trips through its file, held or not, and leaves no temporary file', t => {
   const file = ledgerFile(state(t), 'Example/app', 7);
