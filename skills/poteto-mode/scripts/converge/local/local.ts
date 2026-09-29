@@ -30,7 +30,7 @@ async function hold(t: Trusted, file: string, ledger: Ledger, reason: string, no
   try { await api(`repos/${t.repo}/issues/${ledger.pr}/comments`, { body: holdComment(held, reason) }); }
   catch (error) { report.errors.push(`${t.repo}#${ledger.pr}: hold comment failed: ${message(error)}`); }
 }
-/** Unique per launch: a skipped attempt records nothing, so the attempt number repeats, and the launch time keeps the next RUN fresh. */
+/** Unique per launch: a skipped attempt that the re-read PR explains records nothing, so the attempt number repeats, and the launch time keeps the next RUN fresh. */
 function runDirectory(repo: string, pr: number, head: string, n: number): string {
   return join(tmpdir(), 'converge-local', `${repo.replace('/', '-')}-${pr}-${head.slice(0, 8)}-${n}-${Math.floor(Date.now() / 1000)}`);
 }
