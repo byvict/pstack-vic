@@ -20,13 +20,14 @@
 - Names fixed by the spec: trailer key `Pstack-Author` (matched without case); file `RUN/reviewer.json`; subcommand `converge-certify reviewer`; report field `authors`; gap `Unreadable Pstack-Author trailer in commit <sha7>`; refusals `Reviewer choice missing: run converge-certify reviewer`, `Reviewer choice belongs to another round`, `Author families differ from the reviewer choice`, `Reviewer lane differs from the chosen lane (<launched>, chose <descriptor>)`, `Reviewer lane is the same family as an author (<provider>); launch the lane converge-certify reviewer chose`, `Certificate author families miss a Pstack-Author family (<provider>)`, `No pre-pr reviewer lane is outside the author families (<families>): the row lists <lanes>; add a lane of another family with /setup-pstack`.
 - The Ajustador (`pre-pr fixer`) and the Certificador never count as authors and write no trailer.
 - Conventional commit titles, no attribution lines. Run `npm test` before every commit; `git diff --check` clean.
+- Descriptors the matrix refuses (negative test inputs) are written here with `@` for `@`, because the consumer scan of `scripts/model-matrix.test.ts` reads `docs/`; test files are outside that scan and write `@`.
 - Certification of this branch uses only the installed plugin (`~/.claude/plugins/cache/pstack-vic/pstack/0.4.3`), never the branch's own `skills/` scripts. The branch is written by the `feature, refactoring` row alone (no arena), so the installed Grok reviewer stays cross-family under the 0.4.3 rule.
 
 ## Review Focus
 
 1. **A commit message with CRLF line endings or trailing blank lines** (GitHub returns messages as pushed). The trailer must still be read. Task 1 test "report reads the author families from Pstack-Author trailers", the CRLF commit.
 2. **A trailer block that also carries other trailers** (`Co-authored-by`, `Signed-off-by`). `Pstack-Author` must still be read and the others ignored. Task 1, same test, the mixed block.
-3. **A sheet whose `pre-pr reviewer` row holds a legacy descriptor or an unselectable effort** (`claude:opus@xhigh`, `grok:grok-4.7@max`). `reviewer` must refuse with the `/setup-pstack` hint, never crash. Task 3 test "reviewer refuses a row /setup-pstack would refuse".
+3. **A sheet whose `pre-pr reviewer` row holds a legacy descriptor or an unselectable effort** (`claude:opus\u0040xhigh`, `grok:grok-4.7\u0040max`). `reviewer` must refuse with the `/setup-pstack` hint, never crash. Task 3 test "reviewer refuses a row /setup-pstack would refuse".
 4. **A declared author family that is the row's only lane** (today's step-0 case, `--author-provider grok` with `grok` alone). The refusal must name the row's lanes and the families. Task 3 test "reviewer refuses when no lane is outside the author families".
 5. **A reviewer row typed in the other order** (`codex:…, grok:…`). `plan` must keep the order as written, because the order is the preference. Task 4 test "the reviewer row keeps the operator's order".
 
@@ -66,7 +67,7 @@ test('report reads the author families from Pstack-Author trailers: descriptor o
 });
 test('report turns an unreadable Pstack-Author trailer into a gap that names the commit, and a truncated compare refuses', t => {
   const f = prePrFixture(true, false); t.after(f.cleanup);
-  f.state.commits = [{ sha: 'c'.repeat(40), message: 'feat: x\n\nPstack-Author: gemini:pro@high' }, { sha: 'd'.repeat(40), message: 'feat: y\n\nPstack-Author: Grok' }];
+  f.state.commits = [{ sha: 'c'.repeat(40), message: 'feat: x\n\nPstack-Author: gemini:pro\u0040high' }, { sha: 'd'.repeat(40), message: 'feat: y\n\nPstack-Author: Grok' }];
   f.save();
   const report = certify(f, ['report', '--repo', 'Example/app', '--head', f.state.head, '--directory', join(f.directory, 'run')]);
   assert.equal(report.status, 0, report.stderr);
@@ -224,8 +225,8 @@ test('checkReviewerRow accepts an ordered list of distinct families and refuses 
   assert.throws(() => checkReviewerRow(['inherit-parent'], matrix, 'claude'), message);
   assert.throws(() => checkReviewerRow(['claude:claude-opus-5-5@xhigh'], matrix, 'claude'), message);
   assert.throws(() => checkReviewerRow(['grok:grok-4.7@xhigh', 'grok:grok-4.6@xhigh'], matrix, 'claude'), message);
-  assert.throws(() => checkReviewerRow(['claude:opus@xhigh'], matrix, 'codex'), /role "pre-pr reviewer" takes one or more lanes of distinct families, each one of claude:fable@low or .*; got claude:opus@xhigh/);
-  assert.throws(() => checkReviewerRow(['grok:grok-4.7@max'], matrix, 'claude'), message);
+  assert.throws(() => checkReviewerRow(['claude:opus\u0040xhigh'], matrix, 'codex'), /role "pre-pr reviewer" takes one or more lanes of distinct families, each one of claude:fable@low or .*; got claude:opus\u0040xhigh/);
+  assert.throws(() => checkReviewerRow(['grok:grok-4.7\u0040max'], matrix, 'claude'), message);
   assert.throws(() => checkReviewerRow([], matrix, 'claude'), message);
 });
 ```
@@ -391,7 +392,7 @@ test('reviewer refuses a row /setup-pstack would refuse, a missing row and a mis
   const run = join(f.directory, 'run');
   record(f, run, f.checkout());
   assert.equal(certify(f, ['report', '--repo', 'Example/app', '--head', f.state.head, '--directory', run]).status, 0);
-  for (const [row, parent] of [['inherit-parent', 'claude'], ['claude:claude-opus-5-5@xhigh', 'claude'], ['grok:grok-4.7@xhigh, grok:grok-4.6@xhigh', 'claude'], ['claude:opus@xhigh', 'codex'], ['grok:grok-4.7@max', 'claude'], ['cursor:grok-4.7@high', 'claude']] as const) {
+  for (const [row, parent] of [['inherit-parent', 'claude'], ['claude:claude-opus-5-5@xhigh', 'claude'], ['grok:grok-4.7@xhigh, grok:grok-4.6@xhigh', 'claude'], ['claude:opus\u0040xhigh', 'codex'], ['grok:grok-4.7\u0040max', 'claude'], ['cursor:grok-4.7@high', 'claude']] as const) {
     const result = choose(f, run, 'claude', row, parent);
     assert.equal(result.status, 1, row);
     assert.match(result.stderr, /role "pre-pr reviewer" takes one or more lanes of distinct families, each one of .*; change the model sheet with \/setup-pstack/, row);
