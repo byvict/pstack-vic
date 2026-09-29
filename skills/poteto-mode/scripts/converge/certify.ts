@@ -67,7 +67,7 @@ function parseReviewerChoice(value: unknown): ReviewerChoice {
   return { schemaVersion: 1, round: parseExecutionId(v.round), descriptor: string(v.descriptor), provider: family.provider, model: family.model, effort: descriptor.effort, authorProviders: authorProviders(v.authorProviders),
     skipped: array(v.skipped).map(raw => { const s = object(raw, 'skipped lane'); return { descriptor: string(s.descriptor), provider: providerName(s.provider) }; }) };
 }
-/** Reads the round's report and the sheet's `pre-pr reviewer` row, unions the declared author families with the trailers' and writes the first lane outside that set to RUN/reviewer.json, once per run directory. */
+/** Reads the round's report and the sheet's `pre-pr reviewer` row, unions the declared author families with the trailers' and writes the first lane outside that set to RUN/reviewer.json, once per run directory. A report whose lanes lack the reviewer (a light class with `reviewer: none`) takes no choice. */
 export function chooseReviewer(options: { directory: string; parent: string; sheetPath?: string; authorProviders: string[] }): ReviewerChoice {
   if (options.parent !== 'claude' && options.parent !== 'codex') throw new Error(`Unknown parent ${JSON.stringify(options.parent)}: --parent takes claude or codex, the harness of this session`);
   const parent = options.parent;
@@ -77,6 +77,7 @@ export function chooseReviewer(options: { directory: string; parent: string; she
   if (existsSync(file)) throw new Error('Reviewer choice already made: a new head is a new run directory');
   const report = parseReport(JSON.parse(readFileSync(join(options.directory, 'report.json'), 'utf8')));
   if (report.round.execution !== 'pre-pr' || report.round.pr !== 0) throw new Error('Report is not a local pre-pr report');
+  if (!report.lanes.includes('pre-pr reviewer')) throw new Error('Report requires no pre-pr reviewer lane: skip the reviewer choice');
   const lanes = sheetRow(readSheet(options.sheetPath ?? defaultSheetPath(parent)), 'pre-pr reviewer');
   try { checkReviewerRow(lanes, matrix, parent); } catch (error) { throw new Error(`${(error as Error).message}; change the model sheet with /setup-pstack`); }
   const authors = authorUnion(options.authorProviders, report);
@@ -204,6 +205,15 @@ function laneEntries(directory: string, manifest: string, lane: AdmittedLane): {
     artifacts: lane.artifacts.map(a => ({ lane: id, id: a.id, path: a.path, bytes: unchanged(join(root, a.path), a.digest, 'Artifact bytes changed after admission').length, sha256: a.digest, mediaType: a.mediaType })),
   };
 }
+/** The round's reviewer choice, made against the same author families: required only when the report requires the reviewer lane. */
+function reviewerChoice(directory: string, round: string, authors: string[]): ReviewerChoice {
+  let choice: ReviewerChoice;
+  try { choice = parseReviewerChoice(JSON.parse(readFileSync(join(directory, REVIEWER_FILE), 'utf8'))); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new Error('Reviewer choice missing: run converge-certify reviewer'); throw error; }
+  if (choice.round !== round) throw new Error('Reviewer choice belongs to another round');
+  if (jsonHash(choice.authorProviders) !== jsonHash(authors)) throw new Error(`Author families differ from the reviewer choice (${authors.join(', ')}; chose against ${choice.authorProviders.join(', ')})`);
+  return choice;
+}
 /** Re-runs the branch analysis before trusting report.json, so a stale or edited report, or a trunk contract that moved, cannot certify. */
 export async function assemble(options: { directory: string; authorProviders: string[]; output: string; adjustRounds: number }): Promise<Certificate> {
   adjustRounds(options.adjustRounds);
@@ -216,11 +226,7 @@ export async function assemble(options: { directory: string; authorProviders: st
   const snapshot = await branchSnapshot(r.repo, r.head, r.configPath);
   if (jsonHash(report) !== jsonHash(analyze(snapshot, { id: r.id, configPath: r.configPath, execution: 'pre-pr' }))) throw new Error('Reconciliation report changed or is stale');
   const authors = authorUnion(options.authorProviders, report);
-  let choice: ReviewerChoice;
-  try { choice = parseReviewerChoice(JSON.parse(readFileSync(join(options.directory, REVIEWER_FILE), 'utf8'))); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new Error('Reviewer choice missing: run converge-certify reviewer'); throw error; }
-  if (choice.round !== r.id) throw new Error('Reviewer choice belongs to another round');
-  if (jsonHash(choice.authorProviders) !== jsonHash(authors)) throw new Error(`Author families differ from the reviewer choice (${authors.join(', ')}; chose against ${choice.authorProviders.join(', ')})`);
+  const choice = report.lanes.includes('pre-pr reviewer') ? reviewerChoice(options.directory, r.id, authors) : null;
   const runs = checkRuns(report, readRuns(options.directory), snapshot.trusted.config);
   const lanesDirectory = join(options.directory, 'lanes');
   const ids = existsSync(lanesDirectory) ? readdirSync(lanesDirectory).sort().filter(id => existsSync(join(lanesDirectory, id, 'manifest.json'))) : [];
@@ -234,7 +240,7 @@ export async function assemble(options: { directory: string; authorProviders: st
     const provider = entries.lane.provider;
     if (lane.role === 'pre-pr reviewer') {
       const launched = `${entries.lane.provider}:${entries.lane.model}@${entries.lane.effort}`;
-      if (launched !== choice.descriptor) throw new Error(`Reviewer lane differs from the chosen lane (${launched}, chose ${choice.descriptor})`);
+      if (choice && launched !== choice.descriptor) throw new Error(`Reviewer lane differs from the chosen lane (${launched}, chose ${choice.descriptor})`);
       if (authors.includes(provider)) throw new Error(`Reviewer lane is the same family as an author (${provider}); launch the lane converge-certify reviewer chose`);
     }
     admitted.push(lane);

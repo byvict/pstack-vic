@@ -62,9 +62,11 @@ function prepared(f: ReturnType<typeof fixture>, options: { authors?: string; ro
   record(f, run, checkout);
   const report = certify(f, ['report', '--repo', 'Example/app', '--head', f.state.head, '--directory', run]);
   assert.equal(report.status, 0, report.stderr);
-  const round = JSON.parse(report.stdout).round;
-  const chosen = choose(f, run, options.authors, options.row);
-  assert.equal(chosen.status, 0, chosen.stderr);
+  const { round, lanes } = JSON.parse(report.stdout);
+  if (lanes.includes('pre-pr reviewer')) {
+    const chosen = choose(f, run, options.authors, options.row);
+    assert.equal(chosen.status, 0, chosen.stderr);
+  }
   return { run, round, checkout };
 }
 test('run records command, exit code and log digest and propagates the exit code', t => {
@@ -306,6 +308,40 @@ test('a light certificate without a reviewer holds no lane', t => {
   const certificate = JSON.parse(result.stdout);
   assert.deepEqual([certificate.decision.displayResult, certificate.lanes, certificate.authorProviders], ['Light', [], ['claude']]);
   assert.deepEqual(parseCertificate(certificate), certificate);
+});
+test('a light round with the narrow reviewer chooses the lane outside the author families and assembles only with it, as a full round does', t => {
+  const f = lightFixture(); t.after(f.cleanup);
+  f.state.commits = [{ message: 'feat: arena base\n\nPstack-Author: grok:grok-4.7@xhigh' }]; f.save();
+  const { run, round } = prepared(f, { row: 'grok:grok-4.7@xhigh, codex:gpt-6-sol@high' });
+  const file = join(run, 'reviewer.json');
+  const choice = JSON.parse(readFileSync(file, 'utf8'));
+  assert.deepEqual([choice.descriptor, choice.authorProviders, choice.skipped], ['codex:gpt-6-sol@high', ['claude', 'grok'], [{ descriptor: 'grok:grok-4.7@xhigh', provider: 'grok' }]]);
+  lane(f, round, 'pre-pr reviewer');
+  const wrongLane = assemble(f, run);
+  assert.equal(wrongLane.status, 1); assert.match(wrongLane.stderr, /Reviewer lane differs from the chosen lane \(grok:grok-4\.7@xhigh, chose codex:gpt-6-sol@high\)/);
+  rmSync(join(run, 'lanes', 'pre-pr-reviewer'), { recursive: true });
+  codexLane(f, round);
+  rmSync(file);
+  const missing = assemble(f, run);
+  assert.equal(missing.status, 1); assert.match(missing.stderr, /Reviewer choice missing: run converge-certify reviewer/);
+  writeFileSync(file, JSON.stringify(choice, null, 2) + '\n');
+  const result = assemble(f, run);
+  assert.equal(result.status, 0, result.stderr);
+  const certificate = JSON.parse(result.stdout);
+  assert.deepEqual([certificate.decision.displayResult, certificate.authorProviders, certificate.lanes.map((l: { role: string; provider: string }) => [l.role, l.provider])], ['Light', ['claude', 'grok'], [['pre-pr reviewer', 'codex']]]);
+});
+test('a light round without a reviewer takes no reviewer choice: reviewer refuses and writes nothing, and assemble records the author union without reviewer.json', t => {
+  const f = lightFixture('none'); t.after(f.cleanup);
+  f.state.commits = [{ message: 'feat: arena base\n\nPstack-Author: grok:grok-4.7@xhigh' }]; f.save();
+  const { run } = prepared(f);
+  assert.deepEqual(JSON.parse(readFileSync(join(run, 'report.json'), 'utf8')).lanes, []);
+  const refused = choose(f, run);
+  assert.equal(refused.status, 1); assert.match(refused.stderr, /^Report requires no pre-pr reviewer lane: skip the reviewer choice$/m);
+  assert.equal(existsSync(join(run, 'reviewer.json')), false);
+  const result = assemble(f, run);
+  assert.equal(result.status, 0, result.stderr);
+  const certificate = JSON.parse(result.stdout);
+  assert.deepEqual([certificate.decision.displayResult, certificate.lanes, certificate.authorProviders], ['Light', [], ['claude', 'grok']]);
 });
 test('a light report refuses a certifier lane', t => {
   const f = lightFixture(); t.after(f.cleanup);

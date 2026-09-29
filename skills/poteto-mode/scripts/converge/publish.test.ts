@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { decide, dossierFromComment } from './publish.ts';
@@ -94,10 +94,11 @@ test('a certificate for another head is refused before any publication', t => {
   assert.notEqual(published.status, 0); assert.match(published.stderr, /PR head differs from certificate/);
   assert.deepEqual(f.read().statuses, []); assert.deepEqual(f.read().comments, []);
 });
-test('publication refuses a certificate whose author families miss a Pstack-Author family of the PR commits', t => {
+for (const light of [undefined, { paths: ['model-matrix.json'], reviewer: 'none' as const }]) test(`publication refuses a ${light ? 'light certificate without a reviewer' : 'certificate'} whose author families miss a Pstack-Author family of the PR commits`, t => {
   const f = fixture(); t.after(f.cleanup);
   f.state.commits = [{ message: 'feat: delegated\n\nPstack-Author: codex:gpt-6-sol@xhigh' }]; f.save();
-  const run = certifiedPr(f);
+  const run = certifiedPr(f, { light });
+  assert.equal(existsSync(join(run, 'reviewer.json')), !light, 'a round without the reviewer lane takes no reviewer choice');
   const file = join(run, 'certificate.json');
   const certificate = JSON.parse(readFileSync(file, 'utf8'));
   assert.deepEqual(certificate.authorProviders, ['claude', 'codex'], 'assembly unions the declared family with the trailer');
