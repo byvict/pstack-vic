@@ -290,6 +290,13 @@ async function compared(repo: string, contract: string, head: string): Promise<{
   if (files.length >= 300) throw new Error('Branch compare truncated');
   return { base: sha(object(c.merge_base_commit).sha), files: fillPatches(files, diff), diff };
 }
+const prePrManifests = /^(?:client\/)?package(?:-lock)?\.json$/;
+const convergeManifests = /^package(?:-lock)?\.json$/;
+async function dependencyChange(repo: string, base: string, head: string, files: ChangedFile[], manifests: RegExp): Promise<boolean> {
+  if (!files.length || !files.every(f => manifests.test(f.path) && f.previous === null && f.status === 'modified')) return false;
+  try { return (await Promise.all(files.map(async f => { const [before, after] = await Promise.all([blob(repo, base, f.path), blob(repo, head, f.path)]); return dependencyOnly(JSON.parse(before), JSON.parse(after), f.path.endsWith('package-lock.json')); }))).every(Boolean); }
+  catch { return false; }
+}
 export interface Snapshot {
   trusted: Trusted; pull: Pull; base: string; patchId: string; diff: string; files: ChangedFile[];
   features: Feature[]; reachedPaths: string[]; checks: Check[]; sources: TextSource[]; gaps: string[]; inputDigest: string; inputFingerprint: string; verificationDigest: string; dependencyOnly: boolean; testEvidence: TestEvidence;
@@ -464,11 +471,8 @@ export async function snapshot(repo: string, prNumber: number, configPath: strin
     } else gaps.push('Tests logs unavailable');
   }
   for (const name of t.config.requiredChecks.filter(c => c !== 'verdict')) if (!observedChecks.some(c => c.context === name && c.state === 'success')) gaps.push('Required check is not successful: ' + name);
-  let safeDependencyChange = false;
-  if (p.authorId === 49699333 && p.authorLogin === 'dependabot[bot]' && p.authorType === 'Bot' && files.length > 0 && files.every(f => ['package.json', 'package-lock.json'].includes(f.path) && f.previous === null && f.status === 'modified')) {
-    try { safeDependencyChange = (await Promise.all(files.map(async f => { const [before, after] = await Promise.all([blob(repo, base, f.path), blob(repo, p.head, f.path)]); return dependencyOnly(JSON.parse(before), JSON.parse(after), f.path === 'package-lock.json'); }))).every(Boolean); }
-    catch { safeDependencyChange = false; }
-  }
+  const dependabot = p.authorId === 49699333 && p.authorLogin === 'dependabot[bot]' && p.authorType === 'Bot';
+  const safeDependencyChange = execution === 'pre-pr' ? await dependencyChange(repo, base, p.head, files, prePrManifests) : dependabot && await dependencyChange(repo, base, p.head, files, convergeManifests);
   const inputFingerprint = jsonHash({ body: p.body, comments: visibleComments.map(c => [c.id, c.body, c.updated_at]) });
   const verificationDigest = jsonHash([...t.files].sort(([a], [b]) => a.localeCompare(b)));
   const inputDigest = jsonHash({ head: p.head, base, contract: t.sha, files, diff, sources, checks: observedChecks, gaps, inputFingerprint, verificationDigest, testEvidence });
@@ -491,5 +495,5 @@ export async function branchSnapshot(repo: string, head: string, configPath: str
   const verificationDigest = jsonHash([...t.files].sort(([a], [b]) => a.localeCompare(b)));
   const inputFingerprint = jsonHash({ body: '', comments: [] });
   const inputDigest = jsonHash({ head: target, base, contract: t.sha, files, diff, sources: [], checks: [], gaps, inputFingerprint, verificationDigest, testEvidence: { kind: 'unavailable' } });
-  return { trusted: t, pull, base, patchId: sha(patch), diff, files, features: selection.features, reachedPaths: selection.reachedPaths, checks: [], sources: [], gaps, inputDigest, inputFingerprint, verificationDigest, dependencyOnly: false, testEvidence: { kind: 'unavailable' } };
+  return { trusted: t, pull, base, patchId: sha(patch), diff, files, features: selection.features, reachedPaths: selection.reachedPaths, checks: [], sources: [], gaps, inputDigest, inputFingerprint, verificationDigest, dependencyOnly: await dependencyChange(repo, base, target, files, prePrManifests), testEvidence: { kind: 'unavailable' } };
 }

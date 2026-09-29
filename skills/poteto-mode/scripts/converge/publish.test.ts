@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { decide, dossierFromComment } from './publish.ts';
 import { parseReport, riskObligation } from './contract.ts';
-import { certifiedPr, fixture, prReport, stackChild } from './fixtures/setup.ts';
+import { certifiedPr, fixture, prReport, publishCertificate, stackChild } from './fixtures/setup.ts';
 
 for (const proveBoth of [false, true]) {
   test(`one independent verifier ${proveBoth ? 'proves both money paths' : 'cannot clear a second money path with one proof'}`, t => {
@@ -245,3 +245,13 @@ test('a byte-identical publication retry succeeds while auto-merge is pending, b
   assert.equal(JSON.parse(retry.stdout).statusId, JSON.parse(first.stdout).statusId);
   assert.equal(f.read().comments.length, 1); assert.equal(f.read().statuses.length, 1);
 });
+for (const reviewer of ['narrow', 'none'] as const) {
+  test(`a light certificate ${reviewer === 'none' ? 'without a reviewer' : 'with the reviewer'} publishes a VERIFIED verdict that displays Light`, t => {
+    const f = fixture(); t.after(f.cleanup);
+    publishCertificate(f, { light: { paths: ['model-matrix.json'], reviewer } });
+    const dossier = dossierFromComment(f.read().comments[0]);
+    assert.deepEqual([dossier.decision.verdict, dossier.decision.displayResult, dossier.certificate?.decision.displayResult], ['VERIFIED', 'Light', 'Light']);
+    assert.equal(dossier.certificate?.lanes.length, reviewer === 'none' ? 0 : 1);
+    assert.deepEqual(f.read().statuses.map((s: { state: string; description: string }) => [s.state, s.description]), [['success', 'VERIFIED by converge']]);
+  });
+}

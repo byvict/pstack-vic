@@ -12,8 +12,29 @@ test('a contract without app fields parses with null verification and default Te
 });
 test('a prePr block names runs and whether the app is driven', () => {
   const c = parseContract({ ...base, verifySkill: null, featureMap: null, evidenceRoot: null, prePr: { runs: [{ name: 'suite', command: 'npm test' }], certifier: false }, tests: { workflow: 'CI', job: 'test' } });
-  assert.deepEqual(c.prePr, { runs: [{ name: 'suite', command: 'npm test' }], certifier: false });
+  assert.deepEqual(c.prePr, { runs: [{ name: 'suite', command: 'npm test' }], certifier: false, light: null });
   assert.equal(c.tests.workflow, 'CI');
+});
+const withLight = (light: unknown) => parseContract({ ...base, verifySkill: null, featureMap: null, evidenceRoot: null, prePr: { runs: [{ name: 'suite', command: 'npm test' }], certifier: false, light } });
+test('a light class lists path patterns and a narrow reviewer by default', () => {
+  assert.deepEqual(withLight({ paths: ['docs/**', '**/*.test.ts', 'package.json'] }).prePr?.light, { paths: ['docs/**', '**/*.test.ts', 'package.json'], reviewer: 'narrow' });
+});
+test('a light class may name no reviewer', () => {
+  assert.equal(withLight({ paths: ['docs/**'], reviewer: 'none' }).prePr?.light?.reviewer, 'none');
+});
+test('a light class with no paths leaves only a dependency-only change light', () => {
+  assert.deepEqual(withLight({ paths: [] }).prePr?.light, { paths: [], reviewer: 'narrow' });
+});
+test('light paths are validated as surfaces are', () => {
+  for (const pattern of ['', '/docs/**', '../docs/**', 'docs//x.md', 'docs/?.md']) assert.throws(() => withLight({ paths: [pattern] }), /Unsafe relative path/, JSON.stringify(pattern));
+  assert.throws(() => withLight({ reviewer: 'narrow' }), /Invalid array/);
+});
+test('a light reviewer outside narrow and none is refused', () => {
+  assert.throws(() => withLight({ paths: [], reviewer: 'full' }), /Invalid enum value/);
+});
+test('a light class outside the prePr block is refused', () => {
+  assert.throws(() => parseContract({ ...base, verifySkill: null, featureMap: null, evidenceRoot: null, light: { paths: [] } }), /A light class belongs in the prePr block/);
+  assert.throws(() => parseContract({ ...base, verifySkill: null, featureMap: null, evidenceRoot: null, prePr: null, light: { paths: [] } }), /A light class belongs in the prePr block/);
 });
 test('a prePr run name is a safe file stem', () => {
   assert.throws(() => parseContract({ ...base, verifySkill: null, featureMap: null, evidenceRoot: null, prePr: { runs: [{ name: '../x', command: 'npm test' }], certifier: false } }), /Unsafe run name/);

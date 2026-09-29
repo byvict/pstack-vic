@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
-import { fixture, moveTrunk, publishCertificate } from '../fixtures/setup.ts';
+import { fixture, moveTrunk, publishCertificate, moveTrunkToEmptyLightPaths } from '../fixtures/setup.ts';
 import { defaultConfigFile, defaultStateDirectory, loadConfig } from './config.ts';
 import { ledgerFile, writeLedger, DEFERRED_BACKOFF_MINUTES, HEAD_WINDOW_HOURS, LAUNCH_FAILURE_BACKOFF_MINUTES, MAX_DEFERRED_ATTEMPTS, MAX_FAILED_ATTEMPTS, MAX_LAUNCH_FAILURES, type Attempt, type Ledger } from './ledger.ts';
 import { leaseFile, takeLease } from './lease.ts';
@@ -105,6 +105,7 @@ for (const [name, prepare, kind, work, reason] of [
   ['a certified PR whose required check concluded neutral', f => { publishCertificate(f); edit(f, live => { live.checks[1].conclusion = 'neutral'; }); }, 'idle', null, 'certified; checks green or pending'],
   ['a certified PR with failed hold and verdict check runs', f => { publishCertificate(f); edit(f, live => { live.checks[2].conclusion = 'failure'; live.checks.push({ id: 13, name: 'verdict', status: 'completed', conclusion: 'failure', app: { id: 15368 } }); }); }, 'idle', null, 'certified; checks green or pending'],
   ['a certificate the trunk policy invalidated', f => { publishCertificate(f); moveTrunk(f); edit(f, live => { live.blobs['verify/SKILL.md'] = 'Drive the app another way.'; }); }, 'pending', 'recertify', `Certificate patch or policy differs at trunk tip ${'d'.repeat(40)}`],
+  ['a light certificate whose path left the light class', f => { publishCertificate(f, { certifier: true, light: { paths: ['model-matrix.json'] } }); moveTrunkToEmptyLightPaths(f); }, 'pending', 'recertify', `Certificate lacks a lane the policy now requires at trunk tip ${'d'.repeat(40)}`],
   ['a certificate no longer VERIFIED over the current PR text', f => { publishCertificate(f); edit(f, live => { live.comments.push(injection); }); }, 'pending', 'recertify', `Certificate is no longer VERIFIED at trunk tip ${'a'.repeat(40)}: NOT VERIFIED`],
   ['a certificate a newer round supersedes', f => { publishCertificate(f); edit(f, live => { live.comments.push(newerRound); }); }, 'skipped', null, 'A newer converge round supersedes this verdict'],
   ['a verdict from the retired converge execution', f => published(f), 'skipped', null, 'verdict from the retired cloud execution'],

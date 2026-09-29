@@ -6,6 +6,7 @@ import { fixture, omittedPatch, stackChild } from './fixtures/setup.ts';
 import { dependencyOnly } from './dependencies.ts';
 import { branchSnapshot } from './github.ts';
 import { analyze } from './reconcile.ts';
+import type { Report } from './contract.ts';
 
 function runReconcile(f: ReturnType<typeof fixture>, name = 'report.json') {
   return f.run('converge-reconcile', ['--repo', 'Example/app', '--pr', '1', '--output', join(f.directory, name)]);
@@ -441,4 +442,94 @@ test('a pre-pr PR snapshot refuses a trunk compare at the branch snapshot limit'
   const reconcileAs = (execution: string) => f.run('converge-reconcile', ['--repo', 'Example/app', '--pr', '1', '--output', join(f.directory, execution + '.json'), '--execution', execution]);
   const converge = reconcileAs('converge'); assert.equal(converge.status, 0, converge.stderr);
   const prePr = reconcileAs('pre-pr'); assert.notEqual(prePr.status, 0); assert.match(prePr.stderr, /^Branch compare truncated$/m);
+});
+
+const lightPaths = ['README.md', 'CHANGES.md', 'docs/**', 'package.json', 'package-lock.json', 'model-matrix.json', 'skills/poteto-mode/references/provider-dispatch.md', '**/*.test.ts', 'server/domain/**', 'client/**'];
+function withLight(f: ReturnType<typeof fixture>, light: Record<string, unknown> = { paths: lightPaths }, certifier = false) {
+  const config = JSON.parse(f.state.blobs['.cursor/converge.json']);
+  config.prePr = { runs: [{ name: 'suite', command: 'npm test' }], certifier, light };
+  f.state.blobs['.cursor/converge.json'] = JSON.stringify(config); f.save();
+}
+function changed(f: ReturnType<typeof fixture>, paths: string[], patch = '@@ -1 +1 @@\n-old\n+new') {
+  f.state.files = paths.map(filename => ({ filename, status: 'modified', patch })); f.save();
+}
+function branchReport(f: ReturnType<typeof fixture>): Report {
+  const r = f.run('converge-certify', ['report', '--repo', 'Example/app', '--head', f.state.head, '--directory', join(f.directory, 'run')]);
+  assert.equal(r.status, 0, r.stderr);
+  return JSON.parse(r.stdout);
+}
+test('a branch whose every path matches the light paths is light with the reviewer alone', async t => {
+  const f = fixture(); t.after(f.cleanup); withLight(f); changed(f, ['model-matrix.json', 'scripts/render.test.ts', 'CHANGES.md']);
+  const report = branchReport(f);
+  assert.equal(report.mode, 'light'); assert.deepEqual(report.lanes, ['pre-pr reviewer']);
+});
+test('a path outside the light paths keeps the branch full', async t => {
+  const f = fixture(); t.after(f.cleanup); withLight(f); changed(f, ['model-matrix.json', 'scripts/render.ts']);
+  assert.equal(branchReport(f).mode, 'full');
+});
+test('a light path that is also a surface keeps the branch full', async t => {
+  const f = fixture(); t.after(f.cleanup); withLight(f); changed(f, ['client/Login.jsx']);
+  assert.equal(branchReport(f).mode, 'full');
+});
+test('a light path that is also a risk class keeps the branch full', async t => {
+  const f = fixture(); t.after(f.cleanup); withLight(f); changed(f, ['server/domain/ledger.test.ts']);
+  assert.equal(branchReport(f).mode, 'full');
+});
+test('a hard-list hit on a light path keeps the branch full', async t => {
+  const f = fixture(); t.after(f.cleanup); withLight(f); changed(f, ['model-matrix.json'], '@@ -1 +1 @@\n-old\n+"ghp_' + 'a'.repeat(30) + '"');
+  const report = branchReport(f);
+  assert.equal(report.mode, 'full'); assert.deepEqual(report.hardList.map(h => h.kind), ['secret']);
+});
+test('a docs-only branch stays ci-only when the contract has a light class', async t => {
+  const f = fixture(); t.after(f.cleanup); withLight(f);
+  assert.equal(branchReport(f).mode, 'ci-only');
+});
+test('a light reviewer of none leaves a light branch without lanes', async t => {
+  const f = fixture(); t.after(f.cleanup); withLight(f, { paths: lightPaths, reviewer: 'none' }); changed(f, ['model-matrix.json']);
+  const report = branchReport(f);
+  assert.equal(report.mode, 'light'); assert.deepEqual(report.lanes, []);
+});
+test('a light branch never takes the certifier the contract sets', async t => {
+  const f = fixture(); t.after(f.cleanup); withLight(f, { paths: lightPaths }, true); changed(f, ['model-matrix.json']);
+  assert.deepEqual(branchReport(f).lanes, ['pre-pr reviewer']);
+});
+function dependencyBump(f: ReturnType<typeof fixture>, after: string, path = 'package.json') {
+  f.state.blobs[path] = JSON.stringify({ dependencies: { jsdom: '^30.1.0' } }); f.state.headBlobs[path] = JSON.stringify({ dependencies: { jsdom: after } });
+  changed(f, [path]);
+}
+test('a branch that only bumps a dependency is light under a light class with no paths', async t => {
+  const f = fixture(); t.after(f.cleanup); withLight(f, { paths: [] }); dependencyBump(f, '^30.1.1');
+  const report = branchReport(f);
+  assert.equal(report.mode, 'light'); assert.deepEqual(report.lanes, ['pre-pr reviewer']);
+});
+test('a branch that only bumps a dependency of client is light', async t => {
+  const f = fixture(); t.after(f.cleanup); withLight(f, { paths: [] });
+  const config = JSON.parse(f.state.blobs['.cursor/converge.json']); config.surfaces = ['client/src/**']; f.state.blobs['.cursor/converge.json'] = JSON.stringify(config);
+  dependencyBump(f, '^30.1.1', 'client/package.json');
+  assert.equal(branchReport(f).mode, 'light');
+});
+test('a branch that bumps a dependency past its major is full', async t => {
+  const f = fixture(); t.after(f.cleanup); withLight(f, { paths: [] }); dependencyBump(f, '^31.0.0');
+  assert.equal(branchReport(f).mode, 'full');
+});
+test('a branch that only bumps a dependency is full without a light class', async t => {
+  const f = fixture(); t.after(f.cleanup); withPrePr(f); dependencyBump(f, '^30.1.1');
+  assert.equal(branchReport(f).mode, 'full');
+});
+test('a Dependabot bump is ci-only outside pre-pr and light under it', t => {
+  const f = fixture(); t.after(f.cleanup); withLight(f, { paths: [] }); dependencyBump(f, '^30.1.1');
+  f.state.prUser = { id: 49699333, login: 'dependabot[bot]', type: 'Bot' }; f.save();
+  const reconcileAs = (execution: string) => {
+    const r = f.run('converge-reconcile', ['--repo', 'Example/app', '--pr', '1', '--output', join(f.directory, execution + '.json'), '--execution', execution]);
+    assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout);
+  };
+  assert.equal(reconcileAs('converge').mode, 'ci-only');
+  assert.equal(reconcileAs('pre-pr').mode, 'light');
+});
+test('a pre-pr PR round agrees with its branch round on a dependency bump by a person', async t => {
+  const f = fixture(); t.after(f.cleanup); withLight(f, { paths: [] }); dependencyBump(f, '^30.1.1');
+  const r = f.run('converge-reconcile', ['--repo', 'Example/app', '--pr', '1', '--output', join(f.directory, 'pr.json'), '--execution', 'pre-pr']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(JSON.parse(r.stdout).mode, 'light');
+  assert.equal(branchReport(f).mode, 'light');
 });

@@ -50,7 +50,7 @@ export function parseCertificate(value: unknown): Certificate {
   if (round.execution !== 'pre-pr') throw new Error('Certificate execution must be pre-pr');
   const d = object(v.decision);
   if (d.verdict !== 'VERIFIED') throw new Error('Certificate is not VERIFIED');
-  const displayResult = oneOf(d.displayResult, ['VERIFIED', 'CI-only']);
+  const displayResult = oneOf(d.displayResult, ['VERIFIED', 'Light', 'CI-only']);
   const runs = array(v.runs).map((raw): Run | SkippedRun => {
     const r = object(raw, 'run');
     if (r.skip === undefined) return parseRun(r);
@@ -121,7 +121,7 @@ function readRuns(directory: string): Run[] {
     return run;
   });
 }
-/** Assembly and publication share this policy, so a hand-edited certificate cannot publish a run list that assembly would refuse. Every recorded run must pass in both modes, because the certificate lists it; only a ci-only report may leave a contract run unrecorded, and lists it as skipped. */
+/** Assembly and publication share this policy, so a hand-edited certificate cannot publish a run list that assembly would refuse. Every recorded run must pass in every mode, because the certificate lists it; only a ci-only report may leave a contract run unrecorded, and lists it as skipped. */
 function checkRuns(report: Report, runs: Run[], contract: Contract): (Run | SkippedRun)[] {
   if (!contract.prePr) throw new Error('Repository does not accept local certification');
   const listed = contract.prePr.runs;
@@ -135,7 +135,7 @@ function checkRuns(report: Report, runs: Run[], contract: Contract): (Run | Skip
   }
   const unrecorded = listed.filter(c => !runs.some(r => r.name === c.name));
   const missing = unrecorded[0];
-  if (report.mode === 'full' && missing) throw new Error('Required run missing: ' + missing.name);
+  if (report.mode !== 'ci-only' && missing) throw new Error('Required run missing: ' + missing.name);
   return [...runs, ...unrecorded.map(c => ({ name: c.name, command: c.command, skip: 'ci-only report' }))];
 }
 function unchanged(file: string, expected: string, message: string): Buffer {

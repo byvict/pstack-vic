@@ -82,13 +82,14 @@ function lane(run: string, round: Record<string, unknown>, role: 'pre-pr reviewe
   writeFileSync(join(root, 'prompt.txt'), 'read only'); writeFileSync(join(root, 'output.json'), JSON.stringify(output)); writeFileSync(join(root, 'receipt.json'), JSON.stringify(receipt));
   writeFileSync(join(root, 'manifest.json'), JSON.stringify({ round, laneId, role, descriptor: 'grok:grok-4.7@xhigh', prompt: 'prompt.txt', promptDigest: hash('read only'), output: 'output.json', receipt: 'receipt.json', createdAt: Date.parse(receipt.startedAt) }));
 }
-export function certifiedPr(f: ReturnType<typeof fixture>, options: { body?: string; full?: boolean; record?: boolean; steps?: number; features?: number } = {}) {
+export function certifiedPr(f: ReturnType<typeof fixture>, options: { body?: string; full?: boolean; certifier?: boolean; light?: { paths: string[]; reviewer?: 'narrow' | 'none' }; record?: boolean; steps?: number; features?: number } = {}) {
   const config = JSON.parse(f.state.blobs['.cursor/converge.json']);
-  config.prePr = { runs: [{ name: 'suite', command: 'true' }], certifier: options.full === true };
+  config.prePr = { runs: [{ name: 'suite', command: 'true' }], certifier: options.certifier ?? options.full === true, ...(options.light ? { light: options.light } : {}) };
   f.state.blobs['.cursor/converge.json'] = JSON.stringify(config); f.state.body = options.body ?? '## Verification\ncertificate: pre-pr\n';
-  if (options.full) {
-    f.state.files = [{ filename: 'client/Login.jsx', status: 'modified', patch: '@@ -1 +1 @@\n-old\n+new' }];
-    f.state.diff = 'diff --git a/client/Login.jsx b/client/Login.jsx\nindex 1111111..2222222 100644\n--- a/client/Login.jsx\n+++ b/client/Login.jsx\n@@ -1 +1 @@\n-old\n+new\n';
+  const only = options.full ? 'client/Login.jsx' : options.light ? 'model-matrix.json' : null;
+  if (only) {
+    f.state.files = [{ filename: only, status: 'modified', patch: '@@ -1 +1 @@\n-old\n+new' }];
+    f.state.diff = `diff --git a/${only} b/${only}\nindex 1111111..2222222 100644\n--- a/${only}\n+++ b/${only}\n@@ -1 +1 @@\n-old\n+new\n`;
   }
   f.save();
   const checkout = f.checkout();
@@ -100,9 +101,9 @@ export function certifiedPr(f: ReturnType<typeof fixture>, options: { body?: str
   const local = f.run('converge-certify', ['report', '--repo', 'Example/app', '--head', f.state.head, '--directory', run]);
   assert.equal(local.status, 0, local.stderr);
   const { round, mode, lanes } = JSON.parse(local.stdout);
-  assert.deepEqual([mode, lanes], options.full ? ['full', ['pre-pr reviewer', 'pre-pr certifier']] : ['ci-only', ['pre-pr reviewer']]);
-  lane(run, round, 'pre-pr reviewer');
-  if (options.full) lane(run, round, 'pre-pr certifier', options.steps, options.features);
+  assert.deepEqual([mode, lanes], options.full ? ['full', ['pre-pr reviewer', 'pre-pr certifier']] : options.light ? ['light', options.light.reviewer === 'none' ? [] : ['pre-pr reviewer']] : ['ci-only', ['pre-pr reviewer']]);
+  if (lanes.includes('pre-pr reviewer')) lane(run, round, 'pre-pr reviewer');
+  if (lanes.includes('pre-pr certifier')) lane(run, round, 'pre-pr certifier', options.steps, options.features);
   const assembled = f.run('converge-certify', ['assemble', '--directory', run, '--author-provider', 'claude', '--output', join(run, 'certificate.json'), '--adjust-rounds', '1']);
   assert.equal(assembled.status, 0, assembled.stderr);
   return run;
@@ -129,6 +130,12 @@ export function stackChild(f: ReturnType<typeof fixture>) {
 /** GitHub retargets the child to trunk after its parent merges. Its merge base with trunk stays where it was, so its PR diff and file list now hold the parent's change too, as the compare does. */
 export function retarget(f: ReturnType<typeof fixture>) {
   const live = f.read(); live.prBase = 'main'; live.prFiles = null; live.prDiff = null; Object.assign(f.state, live); f.save();
+}
+export function moveTrunkToEmptyLightPaths(f: ReturnType<typeof fixture>) {
+  moveTrunk(f);
+  const live = f.read();
+  const config = JSON.parse(live.blobs['.cursor/converge.json']); config.prePr.light.paths = [];
+  live.blobs['.cursor/converge.json'] = JSON.stringify(config); Object.assign(f.state, live); f.save();
 }
 export function moveTrunk(f: ReturnType<typeof fixture>, tip = 'd'.repeat(40)) {
   const live = f.read(); live.trunk = tip; live.jobs[0].head_sha = tip; Object.assign(f.state, live); f.save();

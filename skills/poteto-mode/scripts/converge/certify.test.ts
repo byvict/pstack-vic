@@ -264,3 +264,52 @@ test('parseCertificate refuses schema 1, an empty author list and an unknown aut
   assert.throws(() => parseCertificate({ ...base, authorProviders: [] }), /Certificate needs at least one author family/);
   assert.throws(() => parseCertificate({ ...base, authorProviders: ['Claude'] }), /^Error: Invalid author family: Claude$/);
 });
+function lightFixture(reviewer: 'narrow' | 'none' = 'narrow') {
+  const f = prePrFixture(true, false);
+  const config = JSON.parse(f.state.blobs['.cursor/converge.json']);
+  config.prePr.light = { paths: ['model-matrix.json'], reviewer };
+  f.state.blobs['.cursor/converge.json'] = JSON.stringify(config);
+  f.state.files = [{ filename: 'model-matrix.json', status: 'modified', patch: '@@ -1 +1 @@\n-old\n+new' }];
+  f.state.diff = 'diff --git a/model-matrix.json b/model-matrix.json\nindex 1111111..2222222 100644\n--- a/model-matrix.json\n+++ b/model-matrix.json\n@@ -1 +1 @@\n-old\n+new\n';
+  f.save();
+  return f;
+}
+function assemble(f: ReturnType<typeof fixture>, run: string) {
+  return certify(f, ['assemble', '--directory', run, '--author-provider', 'claude', '--output', join(run, 'certificate.json'), '--adjust-rounds', '0']);
+}
+test('a light certificate holds the reviewer lane and displays Light', t => {
+  const f = lightFixture(); t.after(f.cleanup);
+  const { run, round } = prepared(f);
+  assert.deepEqual(JSON.parse(readFileSync(join(run, 'report.json'), 'utf8')).lanes, ['pre-pr reviewer']);
+  lane(f, round, 'pre-pr reviewer');
+  const result = assemble(f, run);
+  assert.equal(result.status, 0, result.stderr);
+  const certificate = JSON.parse(result.stdout);
+  assert.equal(certificate.decision.displayResult, 'Light');
+  assert.deepEqual(certificate.lanes.map((l: { role: string }) => l.role), ['pre-pr reviewer']);
+  assert.deepEqual(parseCertificate(certificate), certificate);
+});
+test('a light certificate without a reviewer holds no lane', t => {
+  const f = lightFixture('none'); t.after(f.cleanup);
+  const { run } = prepared(f);
+  const result = assemble(f, run);
+  assert.equal(result.status, 0, result.stderr);
+  const certificate = JSON.parse(result.stdout);
+  assert.deepEqual([certificate.decision.displayResult, certificate.lanes, certificate.authorProviders], ['Light', [], ['claude']]);
+  assert.deepEqual(parseCertificate(certificate), certificate);
+});
+test('a light report refuses a certifier lane', t => {
+  const f = lightFixture(); t.after(f.cleanup);
+  const { run, round } = prepared(f);
+  lane(f, round, 'pre-pr reviewer'); lane(f, round, 'pre-pr certifier');
+  const result = assemble(f, run);
+  assert.equal(result.status, 1); assert.match(result.stderr, /Unexpected independent lane/);
+});
+test('a light report refuses a missing run as a full one does', t => {
+  const f = lightFixture(); t.after(f.cleanup);
+  const { run, round } = prepared(f);
+  lane(f, round, 'pre-pr reviewer');
+  rmSync(join(run, 'runs', 'suite.json')); rmSync(join(run, 'runs', 'suite.log'));
+  const result = assemble(f, run);
+  assert.equal(result.status, 1); assert.match(result.stderr, /Required run missing: suite/);
+});

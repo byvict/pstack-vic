@@ -12,6 +12,8 @@ async function rederivePrePr(t: Trusted, pr: number, dossier: Dossier, url: stri
   if (current.trusted.sha !== t.sha) throw new Error('Trunk moved during re-derivation');
   if (current.inputFingerprint !== fingerprint) throw new Error('PR text changed during re-derivation');
   const report = analyze(current, { id: r.id, configPath: r.configPath, execution: 'pre-pr' });
+  const certified = (dossier.certificate?.lanes ?? []).map(lane => lane.role);
+  if (report.lanes.some(role => !certified.includes(role))) return 'Certificate lacks a lane the policy now requires at trunk tip ' + t.sha;
   if (report.round.head !== r.head || report.round.patch_id !== r.patch_id || report.round.verificationDigest !== r.verificationDigest) return 'Certificate patch or policy differs at trunk tip ' + t.sha;
   const decision = decide(report, retainedLanes(report.lanes, dossier, url));
   return decision.verdict === 'VERIFIED' ? null : `Certificate is no longer VERIFIED at trunk tip ${t.sha}: ${decision.verdict}`;

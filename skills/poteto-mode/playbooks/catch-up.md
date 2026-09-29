@@ -20,6 +20,7 @@
 - Lease: the renewal of **Input**, with `--by LEASE_BY`, not `--by interactive`.
 - Branch: `RUN/branch` is detached at the PR head, and the Raiz never creates or moves a local branch ref. A push is `git -C RUN/branch push origin HEAD:BRANCH`, with `--force-with-lease` after a rebase as in step 3. The fixer worktree is `git -C RUN/branch worktree add --detach RUN/fix-<k> HEAD` (`k` counts fixer rounds across the attempt), and the fixer runs with `--cwd RUN/fix-<k>`. An accepted fix is `git -C RUN/branch merge --ff-only <fix head>`.
 - Relaunch: each lane gets one relaunch in each `RUN/pre-pr-<n>` (Pré-PR steps 3, 5 and 6). A second receipt of that lane that is not `complete`, or a certifier refused again after its relaunch, ends the attempt `failed`.
+- Re-read: before each lane launch, relaunch included, run step 1's `gh pr view` again. When one of step 1's PR conditions now holds (the PR is not open, is a draft, carries a hold label, its head is neither `HEAD` nor the last head this attempt pushed, or its head branch is `<trunk>`), launch nothing more: write `outcome: "skipped"` with that condition as `reason`, clean up as step 6 says, and stop. The tick reads the PR again and records no attempt when that condition explains the skip. A PR merged while a lane ran is the common case: step 1 alone would let the attempt work on for minutes.
 
 Surface without a Receita: write it in `RUN/branch`, commit, push, restart at Pré-PR step 1 with the next `RUN/pre-pr-<n>`.
 
