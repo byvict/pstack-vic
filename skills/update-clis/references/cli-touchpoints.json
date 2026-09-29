@@ -17,6 +17,15 @@
       "measuredOn": "0.155.1"
     },
     {
+      "id": "codex.raiz-argv",
+      "cli": "codex",
+      "kind": "lane",
+      "contract": "`codex exec --model <model> --config model_reasoning_effort=\"<effort>\" --sandbox danger-full-access --cd <checkout> --skip-git-repo-check -` (prompt on stdin) is how the local converge daemon launches its Raiz with full access",
+      "pointers": [{ "file": "skills/poteto-mode/scripts/converge/local/raiz.ts", "anchor": "export function raizCommand" }],
+      "coveredBy": [],
+      "measuredOn": "0.158.0"
+    },
+    {
       "id": "codex.events",
       "cli": "codex",
       "kind": "lane",
@@ -259,6 +268,15 @@
       "pointers": [{ "file": "skills/poteto-mode/scripts/runner/commands.ts", "anchor": "\"--no-session-persistence\"," }],
       "coveredBy": ["read", "write", "seatbelt"],
       "measuredOn": "2.1.281"
+    },
+    {
+      "id": "claude.raiz-argv",
+      "cli": "claude",
+      "kind": "lane",
+      "contract": "`claude -p --model <model> --effort <effort> --permission-mode bypassPermissions --plugin-dir <dir> --output-format json` (prompt on stdin) is how the local converge daemon launches its Raiz; the plugin directory must load the plugin's skills and playbooks",
+      "pointers": [{ "file": "skills/poteto-mode/scripts/converge/local/raiz.ts", "anchor": "export function raizCommand" }],
+      "coveredBy": [],
+      "measuredOn": "2.1.283"
     },
     {
       "id": "claude.result-json",

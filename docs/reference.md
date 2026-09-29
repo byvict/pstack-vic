@@ -24,7 +24,7 @@ No shell, `claude plugin marketplace add byvict/pstack-vic` e `claude plugin ins
 ### Codex
 
 ```shell
-codex plugin marketplace add byvict/pstack-vic --ref v0.3.2
+codex plugin marketplace add byvict/pstack-vic --ref v0.4.0
 codex plugin add pstack@pstack-vic
 ```
 
@@ -152,7 +152,29 @@ Faça a execução semanal da skill `pstack:update-clis` (plugin pstack instalad
 
 ## Converge
 
-A Raiz certifica o head antes de o PR existir, pelo [playbook Pré-PR](../skills/poteto-mode/playbooks/pre-pr.md): Corridas, Revisor pré-PR de uma Família fora da lista de Autores, voltas do Ajustador e, quando o contrato pede, o Certificador. A metade **Entregar** do mesmo playbook abre o PR, publica o Certificado e arma o auto-merge com `--pending`; quem mergeia é o GitHub, quando os checks obrigatórios passam. O que a Raiz não vê depois de encerrar fica com o Daemon, o `converge-local`, que chega na 0.4.0: o Varredor arma o que está certificado, e o job da Raiz lança uma Raiz sem supervisão que roda o [playbook Catch-up](../skills/poteto-mode/playbooks/catch-up.md) para reparar, recertificar ou certificar um PR aberto. O [playbook Converge](../skills/poteto-mode/playbooks/converge.md) descreve os dois jobs, o [contrato Converge](../skills/poteto-mode/references/converge-contract.md) define Certificado, gate, publicação e varredura, e o [ADR 0003](adr/0003-converge-sem-nuvem.md) registra a saída da nuvem. O owner do Cursor na nuvem, o `start.ts` e as Automations estão aposentados; a 0.5.0 remove o código.
+A Raiz certifica o head antes de o PR existir, pelo [playbook Pré-PR](../skills/poteto-mode/playbooks/pre-pr.md): Corridas, Revisor pré-PR de uma Família fora da lista de Autores, voltas do Ajustador e, quando o contrato pede, o Certificador. A metade **Entregar** do mesmo playbook abre o PR, publica o Certificado e arma o auto-merge com `--pending`; quem mergeia é o GitHub, quando os checks obrigatórios passam. O que a Raiz não vê depois de encerrar fica com o Daemon, o `converge-local`, desde a 0.4.0: o Varredor arma o que está certificado, e o job da Raiz lança uma Raiz sem supervisão que roda o [playbook Catch-up](../skills/poteto-mode/playbooks/catch-up.md) para reparar, recertificar ou certificar um PR aberto. O [playbook Converge](../skills/poteto-mode/playbooks/converge.md) descreve os dois jobs, o [contrato Converge](../skills/poteto-mode/references/converge-contract.md) define Certificado, gate, publicação e varredura, e o [ADR 0003](adr/0003-converge-sem-nuvem.md) registra a saída da nuvem. O owner do Cursor na nuvem, o `start.ts` e as Automations estão aposentados; a 0.5.0 remove o código.
+
+Configuração em `~/.config/pstack/converge-local.json`:
+
+```json
+{
+  "parent": "claude",
+  "repos": [
+    { "repo": "byvict/pstack-vic", "checkout": "/Users/victorbaccega/Dev/Skills/pstack-vic" }
+  ],
+  "intervalMinutes": 10
+}
+```
+
+```shell
+node skills/poteto-mode/scripts/converge/converge-local install
+node skills/poteto-mode/scripts/converge/converge-local status
+node skills/poteto-mode/scripts/converge/converge-local tick --job raiz --dry-run
+node skills/poteto-mode/scripts/converge/converge-local run --repo byvict/pstack-vic --pr <n> --dry-run
+node skills/poteto-mode/scripts/converge/converge-local uninstall
+```
+
+`install` grava e carrega `com.pstack.converge-sweep` e `com.pstack.converge-raiz` em `~/Library/LaunchAgents`, a cada `intervalMinutes`, rodando o `converge-local` do `pluginDir` da configuração (por padrão, o plugin de onde você rodou o `install`; nos comandos acima, o checkout). Ele só instala a partir do arquivo padrão acima e recusa outro `--config`, porque os comandos `converge-local lease` dos playbooks leem a configuração padrão. Todo caminho da configuração é absoluto: o JSON não expande `~`, e um caminho relativo é recusado. O Varredor roda o `converge-sweep` por script. O job da Raiz classifica os PRs abertos e lança uma Raiz por tick pela linha `converge raiz` do sheet do `parent`, com permissão total, para rodar o playbook Catch-up. Dois tetos seguram um head com o Hold e um comentário: duas tentativas falhas no head, ou seis horas desde a primeira tentativa sem nenhuma certificada; tirar o rótulo deixa o Daemon tentar de novo. Logs em `~/Library/Logs/pstack-converge-*.log`; posses e ledgers em `~/Library/Application Support/pstack/converge-local/`; diretório de corrida de cada tentativa sob `$TMPDIR/converge-local/`. `converge-local tick --job raiz --dry-run` mostra a classificação até o primeiro PR com trabalho, sem gravar nem lançar nada. Os comandos `converge-certify`, `converge-reconcile`, `publish.ts`, `converge-arm --pending` e `converge-sweep` continuam como o contrato descreve.
 
 ## Skills
 
