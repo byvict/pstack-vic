@@ -18,6 +18,7 @@
     "upstream:digest": "node scripts/upstream-digest.ts",
     "runner": "node skills/poteto-mode/scripts/runner/pstack-runner",
     "setup-pstack": "node skills/setup-pstack/scripts/setup-pstack.ts",
-    "update-clis": "node skills/update-clis/scripts/update-clis.ts"
+    "update-clis": "node skills/update-clis/scripts/update-clis.ts",
+    "after-merge": "node scripts/after-merge.ts"
   }
 }
