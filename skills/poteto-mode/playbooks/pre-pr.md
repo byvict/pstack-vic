@@ -12,7 +12,7 @@ Two halves. **Certify a pushed head** produces `certificate.json` for one exact 
 
 Read `report.json`. `unmappedSurfaces` non-empty: write the missing Receita (feature recipe) on this branch, commit, push, choose a new `RUN`, and start step 1 again.
 
-Read `authors` of `report.json`: the families the branch's `Pstack-Author` trailers record ([Authorship trailer](../references/provider-dispatch.md#authorship-trailer)). It must name every family that wrote code in this branch, yours included; a family you know wrote and the list lacks is a commit without its trailer: reword it, push again with `--force-with-lease`, choose a new `RUN` and start step 1 again. Then choose the reviewer:
+Read `authors` of `report.json`: the families the branch's `Pstack-Author` trailers record ([Authorship trailer](../references/provider-dispatch.md#authorship-trailer)). It must name every family that wrote code in this branch, yours included; a family you know wrote and the list lacks is a commit without its trailer: reword it, push again with `--force-with-lease`, choose a new `RUN` and start step 1 again. A gap `Unreadable Pstack-Author trailer in commit SHA7` in `report.json` is that commit's trailer malformed, naming no matrix provider, or outside its message's last paragraph; it would refuse the certificate at step 6, so before any lane runs, reword that commit with its `Pstack-Author` lines in the last paragraph, push again with `--force-with-lease`, choose a new `RUN` and start step 1 again. Then choose the reviewer:
 
     node <plugin>/skills/poteto-mode/scripts/converge/converge-certify reviewer --directory $RUN --parent <claude|codex> --author-provider AUTHORS
 
