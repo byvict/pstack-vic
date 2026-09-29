@@ -82,7 +82,7 @@ Os playbooks interativos tomam a posse sem pid, só com TTL, porque os processos
 O daemon lê a linha `converge raiz` do sheet do parent configurado, `~/.claude/pstack-models.md` ou `~/.codex/pstack-models.md`. O provider da lane tem de ser o do parent; qualquer outra coisa faz o tick falhar com erro claro e não lançar nada.
 
 - `claude:<modelo>@<esforço>` vira `claude -p --model <modelo> --effort <esforço> --permission-mode bypassPermissions --output-format json`, com o plugin instalado do parent (ou `--plugin-dir` da configuração, para desenvolvimento), diretório de trabalho no checkout primário do repositório.
-- `codex:<modelo>@<esforço>` vira `codex exec --model <modelo> -c model_reasoning_effort="<esforço>" --sandbox danger-full-access --ask-for-approval never -C <checkout>`.
+- `codex:<modelo>@<esforço>` vira `codex exec --model <modelo> -c model_reasoning_effort="<esforço>" --sandbox danger-full-access -C <checkout>` (ajustado na implementação, 2026-09-28: o `codex exec` 0.158.0 recusa `--ask-for-approval`, que só o comando `codex` de topo aceita, e já roda sem pedir aprovação).
 
 O prompt é um template fixo: repositório, PR, tipo de trabalho, checkout primário, diretório de corrida sob `TMPDIR`, e a instrução de ler e seguir `skills/poteto-mode/playbooks/catch-up.md` do plugin instalado. A Raiz grava `outcome.json` no diretório de corrida; o daemon lê. Saída sem `outcome.json` válido é `failed` com razão `no outcome`.
 
@@ -98,7 +98,7 @@ O prompt é um template fixo: repositório, PR, tipo de trabalho, checkout prim�
 
 ### `pre-pr.md` em duas metades
 
-O playbook Pré-PR, ainda por escrever (Parte 4 do plano), nasce dividido:
+O playbook Pré-PR, escrito na Parte 2 do plano, no PR 2 (ajustado na implementação, 2026-09-28), nasce dividido:
 
 - **Certificar um head empurrado**: passos 1 a 6 de hoje: push e relatório, Corridas, Revisor pré-PR, Ajustador em voltas, Certificador, `assemble`.
 - **Entregar**: cria o PR só quando ele não existe, reconcilia, publica e arma com `--pending`. Filho de stack publica com a base no pai e não arma.
@@ -170,11 +170,11 @@ O Certificado grava só os artefatos que a cobertura e as provas de risco refere
 ### Quatro PRs no pstack-vic, nesta ordem, cada um certificado pelo próprio Pré-PR
 
 1. **Papéis.** `converge raiz` nasce; Revisor e Ajustador abrem; `roleProviders` sai; campo `unsandboxed` na matriz; `assemble` com lista de Autores e Certificado versão 2; Certificado compacto; `setup-pstack` genérico para as quatro linhas. Primeiro porque o daemon precisa da linha da Raiz.
-2. **Playbooks e decisão.** `pre-pr.md` em duas metades, `catch-up.md`, parágrafo de entrega do `opening-a-pr.md`, reescrita de `docs/pre-pr.md`, glossário do `CONTEXT.md` (Converge, Reparo e Varredor viram locais; entram Daemon, Posse e Catch-up), ADR 0003 superando o 0001, `converge-contract.md` com daemon, posse, lista de Autores e Certificado compacto. Só documentação: passa só pelo Revisor.
+2. **Playbooks e decisão.** `pre-pr.md` em duas metades, `catch-up.md`, parágrafo de entrega do `opening-a-pr.md`, reescrita de `docs/pre-pr.md`, glossário do `CONTEXT.md` (Converge, Reparo e Varredor viram locais; entram Daemon, Posse e Catch-up), ADR 0003 superando o 0001, `converge-contract.md` com daemon, posse, lista de Autores e Certificado compacto. Só documentação, mas o diff toca `skills/` e os manifestos: passa pelas três Corridas do contrato e pelo Revisor, sem Certificador (ajustado na implementação, 2026-09-28).
 3. **Daemon.** `converge-local` com os dois jobs, posse, ledger, tetos, lançador e `install`. No merge, Victor instala para o pstack-vic (sem Certificador). O próximo PR real do plugin é a primeira prova: nasce certificado, o daemon varre, e se ficar vermelho o daemon repara.
 4. **Remoção da nuvem.** Só depois da prova no Clinext. Abaixo.
 
-Versões sugeridas: 0.3.0, 0.3.1, 0.4.0, 0.5.0; o plano confirma. As decisões da tabela acima entram como sub-issue de CLI-192 no PR 2.
+Versões sugeridas: 0.3.0, 0.3.2, 0.4.0, 0.5.0 (ajustado na implementação, 2026-09-28: a 0.3.1 foi o hotfix N39); o plano confirma. As decisões da tabela acima entram como sub-issue de CLI-192 no PR 2.
 
 ### A virada no Clinext
 

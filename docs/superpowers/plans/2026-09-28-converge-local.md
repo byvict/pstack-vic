@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Node 24, no runtime dependencies, erasable TypeScript only (no enums, no parameter properties), explicit `.ts` import specifiers. Tests run with `node --test` through `npm test`; `npm run test:bun` covers `watch-pr` and `orch` only.
-- Plugin version lives in four files that `npm test` forces to agree: `package.json`, `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, `.claude-plugin/marketplace.json` (`version` and `ref: vX.Y.Z`), plus the `--ref vX.Y.Z` lines of `README.md` and `docs/reference.md`. Versions in this plan: 0.3.0 (Part 1), 0.3.1 (Part 2), 0.4.0 (Part 3), 0.5.0 (Part 5). Part 4 changes only Clinext.
+- Plugin version lives in four files that `npm test` forces to agree: `package.json`, `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, `.claude-plugin/marketplace.json` (`version` and `ref: vX.Y.Z`), plus the `--ref vX.Y.Z` lines of `README.md` and `docs/reference.md`. Versions in this plan: 0.3.0 (Part 1), 0.3.2 (Part 2; 0.3.1 is the tooling hotfix of note N39), 0.4.0 (Part 3), 0.5.0 (Part 5). Part 4 changes only Clinext.
 - Before every commit that touches `model-matrix.json`, run `npm run matrix:render`; `npm run matrix:check` and `npm run agents:check` must pass.
 - Every PR of this plan is certified by the Pré-PR playbook before `gh pr create`: docs-only PRs run only the reviewer lane. `main` of pstack-vic requires `test`, `verdict` and `hold`. PR bodies follow `skills/poteto-mode/playbooks/opening-a-pr.md` (Why, Scope, Tradeoffs, Blast Radius, Verification). Conventional commit titles, no attribution lines.
 - Code and playbooks in English; `docs/*.md`, `CONTEXT.md`, ADRs and `CHANGES.md` in Portuguese, with the vocabulary of `CONTEXT.md` (Raiz, Lane, Autor, Revisor pré-PR, Certificador, Ajustador, Certificado, Corrida, Achado, Receita, Família, Hold).
@@ -40,7 +40,7 @@ Failure modes the spec implies and no existing test exercises. Each line names t
 | Part | PR | Branch | Title | Version |
 |---|---|---|---|---|
 | 1 | pstack-vic PR 1 | `claude/converge-roles` | `feat(converge): configurable pre-pr roles, author list and compact certificate (0.3.0)` | 0.3.0 |
-| 2 | pstack-vic PR 2 | `claude/converge-playbooks` | `docs(converge): pre-pr in two halves, catch-up playbook, ADR 0003 (0.3.1)` | 0.3.1 |
+| 2 | pstack-vic PR 2 | `claude/converge-playbooks` | `docs(converge): pre-pr in two halves, catch-up playbook, ADR 0003 (0.3.2)` | 0.3.2 |
 | 3 | pstack-vic PR 3 | `claude/converge-local` | `feat(converge): local daemon replaces the cloud automations (0.4.0)` | 0.4.0 |
 | 4 | Clinext PR | `claude/pre-pr-flow` | `docs(agents): pre-pr certification before the PR, local converge` | none |
 | 5 | pstack-vic PR 4 | `claude/converge-remove-cloud` | `refactor(converge): remove the Cursor cloud half (0.5.0)` | 0.5.0 |
@@ -581,7 +581,9 @@ Run the Pré-PR playbook as it exists in the installed plugin (0.2.5) on this br
 
 # Part 2 (PR 2): Playbooks, glossary, ADR 0003
 
-Docs only. Branch from `main` after PR 1 merged, then `git merge claude/converge-local` to bring the spec and this plan in (or cherry-pick their commits). Pré-PR certifies it with the reviewer lane only (`mode: ci-only`, no runs, no certifier).
+The playbook texts embedded in this part are the plan's argument; where they differ from the shipped files under `skills/poteto-mode/`, the shipped files are the source, because rulings R11, R13, R18 to R21 and R23 to R31 changed them during execution.
+
+Docs only. Branch from `main` after PR 1 merged, then `git merge claude/converge-local` to bring the spec and this plan in (or cherry-pick their commits). Pré-PR certifies it with the three contract runs and the reviewer lane, and no certifier (`certifier: false`): the report is `mode: full`, because the diff touches `skills/`, `package.json` and the manifests, which `ordinaryDoc` in `reconcile.ts` does not count as docs.
 
 ## File structure
 
@@ -594,7 +596,7 @@ Docs only. Branch from `main` after PR 1 merged, then `git merge claude/converge
 - `skills/poteto-mode/SKILL.md` — the Converge routing line and two playbook index lines.
 - `docs/pre-pr.md`, `CONTEXT.md`, `docs/adr/0001-...md` (status), `docs/adr/0003-converge-sem-nuvem.md` — create/modify.
 - `docs/superpowers/plans/2026-09-24-pre-pr.md` — banner; `2026-09-24-pre-pr-notes.md` — re-home the open notes.
-- `CHANGES.md`, version files (0.3.1).
+- `CHANGES.md`, version files (0.3.2).
 
 ### Task 2.1: `pre-pr.md`
 
@@ -762,7 +764,7 @@ There is none. The Raiz ends at the arm receipt of Pré-PR step 8. A session tha
 - [ ] **Step 2: `opening-a-pr.md`.** Replace the **Converge handoff** paragraph with:
 
 ```md
-**Pré-PR and arm.** In a repository whose `.cursor/converge.json` has a `prePr` block, run [Pré-PR](pre-pr.md) before `gh pr create`; its **Deliver** half creates the PR, publishes the Certificado and arms auto-merge with `--pending`. Never launch a cloud owner. A repository without `prePr` opens the PR and ends; the local converge daemon certifies it on its next tick after 30 minutes.
+**Pré-PR and arm.** In a repository whose `.cursor/converge.json` has a `prePr` block, run [Pré-PR](pre-pr.md) before `gh pr create`; its **Deliver** half creates the PR, publishes the Certificado and arms auto-merge with `--pending`. Arriving from Pré-PR step 7, create the PR and return to its step 8; Pré-PR is not run again. Never launch a cloud owner. A repository without `prePr` opens the PR and ends; nothing certifies it locally. In a `prePr` repository, the local converge daemon certifies a PR that arrives without a Certificado (Dependabot, a manual PR) on its next tick after 30 minutes.
 ```
 
 - [ ] **Step 3: Lease sentences.** In `babysit.md` step 1, after the first sentence, add: `Before writing to any branch, take its lease when the installed plugin has \`converge-local\`: \`node <plugin>/skills/poteto-mode/scripts/converge/converge-local lease --repo OWNER/REPO --branch <branch> --by interactive --ttl 3\`; a refusal names the local converge daemon or another session, and the branch is theirs until the lease expires.` In `shipping.md` step 4, before "Fetch current trunk.", add the same sentence. In `session-pickup.md` step 2, add: `When the installed plugin has \`converge-local\`, run \`converge-local status\` too: a lease or a ledger on the branch you are picking up means the local converge daemon is on it or gave up on it, and the ledger's reason is part of the trail.`
@@ -853,9 +855,9 @@ Até 2026-09-28 o desenho deixava três Automations do Cursor para depois que a 
 - [ ] **Step 6: Changelog and version.** Append to `CHANGES.md`:
 
 ```md
-# 0.3.1 — Playbooks do Converge local e ADR 0003 (2026-09-28)
+# 0.3.2 — Playbooks do Converge local e ADR 0003 (2026-09-28)
 
-Parte 2 do plano [`docs/superpowers/plans/2026-09-28-converge-local.md`](docs/superpowers/plans/2026-09-28-converge-local.md). Só documentação; o Pré-PR passou por este PR com a lane do Revisor.
+Parte 2 do plano [`docs/superpowers/plans/2026-09-28-converge-local.md`](docs/superpowers/plans/2026-09-28-converge-local.md). Só documentação; o Pré-PR rodou as três Corridas do contrato e a lane do Revisor (modo `full`, porque o diff toca `skills/` e os manifestos).
 
 ## Desenho
 
@@ -866,9 +868,9 @@ Parte 2 do plano [`docs/superpowers/plans/2026-09-28-converge-local.md`](docs/su
 - **Docs.** `docs/pre-pr.md` reescrito na metade "depois do PR", `CONTEXT.md` com Daemon, Catch-up e Posse, ADR 0003 superando o 0001 na parte da nuvem, banner no plano de 24/09 e notas re-alojadas.
 ```
 
-Version `0.3.0` → `0.3.1` with the same `grep | xargs sed` as Task 1.6 step 3. Run `npm test && npm run collision:check && git diff --check`.
+Version `0.3.0` → `0.3.2` with the same `grep | xargs sed` as Task 1.6 step 3. Run `npm test && npm run collision:check && git diff --check`.
 
-- [ ] **Step 7: Commit, certify, open PR 2** with the Parts-table title; Pré-PR runs the reviewer lane only. After merge: tag `v0.3.1`, update the plugin in both parents.
+- [ ] **Step 7: Commit, certify, open PR 2** with the Parts-table title; Pré-PR runs the three contract runs and the reviewer lane, no certifier. After merge: tag `v0.3.2`, update the plugin in both parents.
 
 ---
 
@@ -1904,7 +1906,7 @@ and, next to the codex entries:
 
 `node --test skills/update-clis/scripts/update-clis.test.ts` checks every pointer anchor exists in its file.
 
-- [ ] **Step 4: Changelog** (`# 0.4.0 — Daemon local do Converge (2026-09-28)`): a **Desenho** list with one bullet per module (`lease.ts`, `ledger.ts`, `classify.ts`, `raiz.ts`, `launchd.ts`, `local.ts`, and the `github.ts`/`arm.ts` helpers), the caps and the exit codes as the contract section above states them, and a **Verificação** list with the test counts and the checks of Task 1.6 step 4. Version `0.3.1` → `0.4.0` with the `grep | xargs sed` of Task 1.6.
+- [ ] **Step 4: Changelog** (`# 0.4.0 — Daemon local do Converge (2026-09-28)`): a **Desenho** list with one bullet per module (`lease.ts`, `ledger.ts`, `classify.ts`, `raiz.ts`, `launchd.ts`, `local.ts`, and the `github.ts`/`arm.ts` helpers), the caps and the exit codes as the contract section above states them, and a **Verificação** list with the test counts and the checks of Task 1.6 step 4. Version `0.3.2` → `0.4.0` with the `grep | xargs sed` of Task 1.6.
 
 - [ ] **Step 5: Run** `npm test && npm run test:bun && npm run matrix:check && npm run agents:check && npm run collision:check && claude plugin validate . && git diff --check`. **Commit** `git commit -am "chore(release): 0.4.0, local converge daemon"`, certify through Pré-PR (runs: `npm test`, `npm run test:bun`, `npm run matrix:check`; reviewer lane), open PR 3. After merge: tag `v0.4.0`, update the plugin in both parents.
 
