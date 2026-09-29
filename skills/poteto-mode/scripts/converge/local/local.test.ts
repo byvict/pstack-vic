@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, relative } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { fixture, moveTrunk, publishCertificate } from '../fixtures/setup.ts';
 import { defaultStateDirectory, loadConfig } from './config.ts';
 import { ledgerFile, writeLedger, DEFERRED_BACKOFF_MINUTES, HEAD_WINDOW_HOURS, LAUNCH_FAILURE_BACKOFF_MINUTES, MAX_DEFERRED_ATTEMPTS, MAX_FAILED_ATTEMPTS, MAX_LAUNCH_FAILURES, type Attempt, type Ledger } from './ledger.ts';
@@ -43,6 +43,12 @@ function tick(f: ReturnType<typeof fixture>, file: string, extra: string[] = [])
   return f.run('converge-local', ['tick', '--job', 'raiz', '--config', file, '--now', String(t0), ...extra], { FAKE_ARGV: join(f.directory, 'argv.txt'), TMPDIR: join(f.directory, 'tmp') });
 }
 const classes = (stdout: string) => JSON.parse(stdout).classified.map((c: { pr: number; kind: string; work?: string; reason: string }) => [c.pr, c.kind, c.work ?? null, c.reason]);
+/** The wake files of a job, sorted; null when the job's wake directory does not exist. */
+const wakeFiles = (state: string, job: string) => existsSync(join(state, 'wake', job)) ? readdirSync(join(state, 'wake', job)).sort() : null;
+function wake(state: string, job: string, ...names: string[]) {
+  mkdirSync(join(state, 'wake', job), { recursive: true });
+  for (const name of names) writeFileSync(join(state, 'wake', job, name), '');
+}
 /** A converge verdict, the retired cloud execution: reconciled and published without a certificate. */
 function published(f: ReturnType<typeof fixture>) {
   const report = join(f.directory, 'report.json');
@@ -63,7 +69,10 @@ async function inProcess<T>(f: ReturnType<typeof fixture>, run: () => Promise<T>
   finally { keys.forEach((key, i) => { if (saved[i] === undefined) delete process.env[key]; else process.env[key] = saved[i]; }); }
 }
 
-test('dry run classifies: certified and green is idle; draft, hold, fork, trunk, foreign verdict and a young PR are skipped', t => {
+/** An uncertified head without a lease waits only until its tests check completes, or until the PR is 30 minutes old; the `other()` heads carry no check run. */
+const unsettled = 'Run test suite has not completed on the head and the PR is younger than 30 minutes';
+const running = (f: ReturnType<typeof fixture>, age: number) => edit(f, live => { live.createdAt = minutes(age); live.checks[0] = { ...live.checks[0], status: 'in_progress', conclusion: null }; });
+test('dry run classifies: certified and green is idle; draft, hold, fork, trunk, foreign verdict and a young unsettled PR are skipped', t => {
   const f = fixture(); t.after(f.cleanup);
   const { file } = configured(f); publishCertificate(f);
   const foreign = 'f'.repeat(40);
@@ -73,8 +82,8 @@ test('dry run classifies: certified and green is idle; draft, hold, fork, trunk,
     other(9, { head: { sha: 'e'.repeat(40), ref: 'other-9', repo: { full_name: 'example/APP' } }, created_at: minutes(29) })]);
   const result = tick(f, file, ['--dry-run']);
   assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(classes(result.stdout), [[1, 'idle', null, 'certified; checks green or pending'], [2, 'skipped', null, 'draft'], [3, 'skipped', null, 'hold label'], [4, 'skipped', null, 'head is in a fork'], [5, 'skipped', null, 'younger than 30 minutes'],
-    [6, 'skipped', null, 'head is in a fork'], [7, 'skipped', null, 'head branch is trunk'], [8, 'skipped', null, 'VERIFIED verdict status was posted by another account: other-bot'], [9, 'skipped', null, 'younger than 30 minutes']]);
+  assert.deepEqual(classes(result.stdout), [[1, 'idle', null, 'certified; checks green or pending'], [2, 'skipped', null, 'draft'], [3, 'skipped', null, 'hold label'], [4, 'skipped', null, 'head is in a fork'], [5, 'skipped', null, unsettled],
+    [6, 'skipped', null, 'head is in a fork'], [7, 'skipped', null, 'head branch is trunk'], [8, 'skipped', null, 'VERIFIED verdict status was posted by another account: other-bot'], [9, 'skipped', null, unsettled]]);
   assert.equal(JSON.parse(result.stdout).launched, null);
   assert.deepEqual(f.calls().filter(call => call[0] === 'api' && /\/pulls\/\d+\/reviews/.test(String(call[1]))), [], 'an idle or skipped PR pays for no participant read');
 });
@@ -83,7 +92,10 @@ const newerRound = { id: 101, body: '<!-- converge:v1 00000000-0000-4000-8000-00
 for (const [name, prepare, kind, work, reason] of [
   ['an uncertified PR older than the grace', () => {}, 'pending', 'certify', 'Latest verdict status is not trusted VERIFIED'],
   ['an uncertified PR 31 minutes old', f => edit(f, live => { live.createdAt = minutes(31); }), 'pending', 'certify', 'Latest verdict status is not trusted VERIFIED'],
-  ['an uncertified PR 29 minutes old', f => edit(f, live => { live.createdAt = minutes(29); }), 'skipped', null, 'younger than 30 minutes'],
+  ['an uncertified PR 29 minutes old whose tests check completed', f => edit(f, live => { live.createdAt = minutes(29); }), 'pending', 'certify', 'Latest verdict status is not trusted VERIFIED'],
+  ['an uncertified PR 29 minutes old whose tests check is still running', f => running(f, 29), 'skipped', null, unsettled],
+  ['an uncertified PR 29 minutes old with no check run on its head yet', f => edit(f, live => { live.createdAt = minutes(29); live.checks = []; }), 'skipped', null, unsettled],
+  ['an uncertified PR 31 minutes old whose tests check is still running', f => running(f, 31), 'pending', 'certify', 'Latest verdict status is not trusted VERIFIED'],
   ['a certified PR with a red required check', f => { publishCertificate(f); edit(f, live => { live.checks[1].conclusion = 'failure'; }); }, 'pending', 'repair', 'Required protected check failed: Secrets scan'],
   ['a certified PR whose required check was cancelled', f => { publishCertificate(f); edit(f, live => { live.checks[1].conclusion = 'cancelled'; }); }, 'pending', 'repair', 'Required protected check failed: Secrets scan'],
   ['a certified PR whose required check timed out', f => { publishCertificate(f); edit(f, live => { live.checks[1].conclusion = 'timed_out'; }); }, 'pending', 'repair', 'Required protected check failed: Secrets scan'],
@@ -345,6 +357,7 @@ test('run --repo --pr --kind forces one PR through the same path', t => {
   assert.equal(result.status, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).launched.work, 'recertify');
   assert.deepEqual(JSON.parse(readFileSync(ledgerFile(state, 'Example/app', 1), 'utf8')).attempts.map((a: { kind: string }) => a.kind), ['recertify']);
+  assert.deepEqual([wakeFiles(state, 'raiz')?.length, wakeFiles(state, 'sweep')?.length], [1, 1], 'a launch by hand wakes both jobs too');
   const unknown = f.run('converge-local', ['run', '--repo', 'Example/other', '--pr', '1', '--config', file]);
   assert.equal(unknown.status, 1);
   assert.match(unknown.stderr, /Example\/other is not in the configuration/);
@@ -407,8 +420,8 @@ test('a real tick records how it ended in last-tick-JOB.json, a dry run does not
   assert.deepEqual(Object.keys(lastTick), ['sweep', 'raiz']);
   for (const [job, errors] of [['raiz', ['Example/app: gh request failed']], ['sweep', ['Example/app: gh request failed']]] as [string, string[]][]) {
     const record = lastTick[job];
-    assert.deepEqual(Object.keys(record), ['job', 'startedAt', 'endedAt', 'exitCode', 'errors'], job);
-    assert.deepEqual([record.job, record.exitCode, record.errors], [job, 1, errors], job);
+    assert.deepEqual(Object.keys(record), ['job', 'startedAt', 'endedAt', 'exitCode', 'errors', 'wakes'], job);
+    assert.deepEqual([record.job, record.exitCode, record.errors, record.wakes], [job, 1, errors, 0], job);
     assert.ok(before <= record.startedAt && record.startedAt <= record.endedAt && record.endedAt <= after, job);
   }
 });
@@ -430,8 +443,9 @@ test('status reports the sheet row, the probes, the valid leases and the ledgers
   assert.deepEqual(report.lastTick, { sweep: null, raiz: null }, 'no tick has run');
 });
 const nvm = '/Users/v/.nvm/versions/node/v24.21.0/bin';
-test('the plist runs the tick through a non-login zsh every interval, with the install PATH and the absolute node, and logs to one file per job', () => {
-  const text = plist('sweep', { pluginDir: '/Users/v/Dev/pstack-vic', configFile: '/Users/v/.config/pstack/converge-local.json', intervalMinutes: 10, logDirectory: '/Users/v/Library/Logs', path: `${nvm}:/opt/homebrew/bin:/usr/bin:/bin`, nodePath: `${nvm}/node` });
+test('the plist runs the tick through a non-login zsh every interval and whenever its wake directory holds a file, with the install PATH and the absolute node, and logs to one file per job', () => {
+  const text = plist('sweep', { pluginDir: '/Users/v/Dev/pstack-vic', configFile: '/Users/v/.config/pstack/converge-local.json', intervalMinutes: 10, logDirectory: '/Users/v/Library/Logs', stateDirectory: '/Users/v/Library/Application Support/pstack/converge-local', path: `${nvm}:/opt/homebrew/bin:/usr/bin:/bin`, nodePath: `${nvm}/node` });
+  assert.match(text, /<key>QueueDirectories<\/key><array><string>\/Users\/v\/Library\/Application Support\/pstack\/converge-local\/wake\/sweep<\/string><\/array>/, 'launchd starts the job while the directory is not empty, and once more after a file lands during a run');
   assert.match(text, /<key>Label<\/key><string>com\.pstack\.converge-sweep<\/string>/);
   assert.match(text, /<string>\/bin\/zsh<\/string><string>-c<\/string>/, 'zsh reads ~/.zshenv without -l, and no /etc/zprofile reorders the recorded PATH');
   assert.match(text, /exec "\/Users\/v\/\.nvm\/versions\/node\/v24\.21\.0\/bin\/node" "\/Users\/v\/Dev\/pstack-vic\/skills\/poteto-mode\/scripts\/converge\/converge-local" tick --job sweep --config "\/Users\/v\/\.config\/pstack\/converge-local\.json"/);
@@ -441,7 +455,8 @@ test('the plist runs the tick through a non-login zsh every interval, with the i
   assert.match(text, /<key>StandardOutPath<\/key><string>\/Users\/v\/Library\/Logs\/pstack-converge-sweep\.log<\/string>/);
 });
 test('the plist quotes a path for zsh and escapes it for XML', () => {
-  const text = plist('raiz', { pluginDir: '/Users/v/A & B/$HOME`x`', configFile: '/Users/v/"c".json', intervalMinutes: 1, logDirectory: '/Users/v/<logs>', path: '/Users/v/A & B/bin:/usr/bin', nodePath: '/Users/v/n$de/"node"' });
+  const text = plist('raiz', { pluginDir: '/Users/v/A & B/$HOME`x`', configFile: '/Users/v/"c".json', intervalMinutes: 1, logDirectory: '/Users/v/<logs>', stateDirectory: '/Users/v/<state> & more', path: '/Users/v/A & B/bin:/usr/bin', nodePath: '/Users/v/n$de/"node"' });
+  assert.match(text, /<key>QueueDirectories<\/key><array><string>\/Users\/v\/&lt;state&gt; &amp; more\/wake\/raiz<\/string><\/array>/);
   assert.match(text, /exec "\/Users\/v\/n\\\$de\/\\"node\\"" "\/Users\/v\/A &amp; B\/\\\$HOME\\`x\\`\/skills\/poteto-mode\/scripts\/converge\/converge-local" tick --job raiz --config "\/Users\/v\/\\"c\\"\.json"/);
   assert.ok(text.includes('<key>PATH</key><string>/Users/v/A &amp; B/bin:/usr/bin</string>'), text);
   assert.match(text, /<key>StartInterval<\/key><integer>60<\/integer>/);
@@ -629,4 +644,60 @@ test('a listed bot may author a PR and comment on it', t => {
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(classes(result.stdout), [[1, 'pending', 'certify', 'Latest verdict status is not trusted VERIFIED']]);
   assert.equal(JSON.parse(result.stdout).launched.attempt.outcome, 'certified');
+});
+test('nudge leaves one wake file per job, or only for the named job, and prints them', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const { file, state } = configured(f);
+  const both = f.run('converge-local', ['nudge', '--config', file]);
+  assert.equal(both.status, 0, both.stderr);
+  const printed = JSON.parse(both.stdout);
+  assert.deepEqual(Object.keys(printed), ['woken']);
+  assert.deepEqual(printed.woken.map((w: { job: string }) => w.job), ['sweep', 'raiz']);
+  for (const w of printed.woken) { assert.equal(dirname(w.file), join(state, 'wake', w.job)); assert.ok(existsSync(w.file), w.file); }
+  assert.deepEqual([wakeFiles(state, 'sweep')?.length, wakeFiles(state, 'raiz')?.length], [1, 1]);
+  const one = f.run('converge-local', ['nudge', '--job', 'sweep', '--config', file]);
+  assert.equal(one.status, 0, one.stderr);
+  assert.deepEqual(JSON.parse(one.stdout).woken.map((w: { job: string }) => w.job), ['sweep']);
+  assert.deepEqual([wakeFiles(state, 'sweep')?.length, wakeFiles(state, 'raiz')?.length], [2, 1]);
+  const bad = f.run('converge-local', ['nudge', '--job', 'both', '--config', file]);
+  assert.equal(bad.status, 1); assert.match(bad.stderr, /^Usage: converge-local/);
+});
+test('nudge needs no daemon configuration: without the file it wakes the default state directory', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const home = join(f.directory, 'home');
+  const result = f.run('converge-local', ['nudge', '--config', join(f.directory, 'missing.json')], { HOME: home });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual([wakeFiles(defaultStateDirectory(home), 'sweep')?.length, wakeFiles(defaultStateDirectory(home), 'raiz')?.length], [1, 1]);
+});
+test('a tick consumes its own wake files before reading the sheet, records the count, and leaves the other job\'s', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const { file, state } = configured(f, 'converge raiz: codex:gpt-6-sol@xhigh\n');
+  wake(state, 'raiz', 'a', 'b'); wake(state, 'sweep', 'c');
+  const result = tick(f, file);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /converge raiz must be native to the claude parent/);
+  assert.deepEqual([wakeFiles(state, 'raiz'), wakeFiles(state, 'sweep')], [[], ['c']]);
+  assert.equal(JSON.parse(readFileSync(join(state, 'last-tick-raiz.json'), 'utf8')).wakes, 2);
+  listed(f);
+  const sweep = f.run('converge-local', ['tick', '--job', 'sweep', '--config', file]);
+  assert.equal(sweep.status, 0, sweep.stderr);
+  assert.deepEqual([wakeFiles(state, 'raiz'), wakeFiles(state, 'sweep')], [[], []]);
+  assert.equal(JSON.parse(readFileSync(join(state, 'last-tick-sweep.json'), 'utf8')).wakes, 1);
+});
+test('a tick that launched a Raiz leaves a wake for both jobs; a dry run consumes nothing and wakes nothing', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const { file, state } = configured(f);
+  listed(f); fakeClaude(f, writer(outcome(f, {})));
+  wake(state, 'raiz', 'pending');
+  const dry = tick(f, file, ['--dry-run']);
+  assert.equal(dry.status, 0, dry.stderr);
+  assert.equal(JSON.parse(dry.stdout).launched.pr, 1);
+  assert.deepEqual([wakeFiles(state, 'raiz'), wakeFiles(state, 'sweep')], [['pending'], null]);
+  const real = tick(f, file);
+  assert.equal(real.status, 0, real.stderr);
+  assert.equal(JSON.parse(real.stdout).launched.attempt.outcome, 'certified');
+  assert.equal(wakeFiles(state, 'raiz')?.length, 1, 'the pending wake was consumed and the launch left a new one, so launchd runs the tick again for the next PR');
+  assert.notDeepEqual(wakeFiles(state, 'raiz'), ['pending']);
+  assert.equal(wakeFiles(state, 'sweep')?.length, 1, 'the sweep arms what the attempt certified');
+  assert.equal(JSON.parse(readFileSync(join(state, 'last-tick-raiz.json'), 'utf8')).wakes, 1);
 });

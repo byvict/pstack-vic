@@ -51,14 +51,14 @@ A cada 10 minutos (`StartInterval` 600), sem modelo. Roda o `converge-sweep` exi
 
 ### Job 2: `com.pstack.converge-raiz`
 
-A cada 10 minutos, uma Raiz por vez. O launchd não sobrepõe duas instâncias do mesmo label; a serialização vem daí. Cada tick:
+A cada 10 minutos, uma Raiz por vez. O launchd não sobrepõe duas instâncias do mesmo label; a serialização vem daí (ajustado na implementação, 2026-09-29, 0.4.5: os dois jobs também acordam quando `<estado>/wake/<job>/` recebe um arquivo, por `QueueDirectories`; `converge-local nudge`, os playbooks depois de liberar a posse e o próprio tick depois de lançar uma Raiz deixam esse arquivo, e o tick apaga os do seu job antes de ler qualquer coisa). Cada tick:
 
 1. **Lista** os PRs abertos de cada repositório, qualquer base, do menor número para o maior.
 2. **Pula**: draft; PR com rótulo de hold; PR cujo head está em fork; branch com posse viva (abaixo); PR cujo verdict no head foi publicado por outra conta (registra e não toca); PR cujo verdict é da execução `converge`, da nuvem antiga, até o PR de remoção (ajustado na implementação, 2026-09-29: pula também PR de autor fora de `trustedAuthors` mais a conta autenticada e, quando haveria trabalho, PR com comentário, comentário de review ou review de alguém fora dessa lista, R63).
 3. **Classifica** o que sobrou, com as mesmas funções que o sweep e o arm usam (`verdictStatus`, `verdictGate`, `checks`, proteção efetiva):
    - `repair`: verdict confiável no head, gate certifica, e o último run de um check obrigatório, exceto `hold`, terminou com conclusão diferente de `success` (ajustado na implementação, 2026-09-29: diferente de `success`, `neutral` e `skipped`, que o GitHub conta como aprovados, R65).
    - `recertify`: verdict confiável no head e gate recusa pela condição 7 do contrato, patch ou política diferentes na ponta da `main`, ou decisão re-derivada que não é VERIFIED.
-   - `certify`: sem verdict confiável no head, e o PR foi criado há mais de 30 minutos. Um PR mais novo espera, para a sessão que acabou de abri-lo publicar o Certificado em paz.
+   - `certify`: sem verdict confiável no head, e o PR foi criado há mais de 30 minutos. Um PR mais novo espera, para a sessão que acabou de abri-lo publicar o Certificado em paz (ajustado na implementação, 2026-09-29, 0.4.5: a posse, que o Pré-PR toma antes do push e solta depois do arm, é o que protege a sessão autora; um PR mais novo só espera até o check de testes do head terminar, com qualquer conclusão, e os 30 minutos ficam como teto para repositório cujo PR não recebe check).
    - Nada a fazer: verdict confiável e checks verdes ou pendentes (o arm já está armado, ou o sweep arma), ou gate recusado por `PR head moved` e outras razões que o próximo tick reavalia.
 4. **Lança** uma Raiz para o primeiro PR com trabalho, espera, grava o resultado no ledger e encerra o tick.
 
@@ -190,7 +190,7 @@ Prova: o próximo PR real do Clinext pelo fluxo inteiro, e o primeiro PR do Depe
 
 ### Pendências antigas que a virada resolve ou absorve
 
-- **N16**, corrida entre a Automation e a Raiz: some com a Automation; a carência de 30 minutos cobre o daemon.
+- **N16**, corrida entre a Automation e a Raiz: some com a Automation; a carência de 30 minutos cobre o daemon (ajustado na implementação, 2026-09-29, 0.4.5: a posse cobre o daemon, e a carência virou a espera pelo check de testes do head, com teto de 30 minutos).
 - **N9**, Certificado maior que o comentário: resolvido pelo Certificado compacto.
 - **N18**, política muda e invalida Certificados: deixa de travar; o daemon classifica `recertify` e refaz. Estreitar o digest de política fica como otimização futura.
 - **N21**, token da Automation: sem objeto; o `gh` local é byvict.

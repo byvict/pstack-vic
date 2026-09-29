@@ -3,6 +3,7 @@ import { verdictGate } from '../gate.ts';
 import { passing, requiredChecks, unfinished } from '../arm.ts';
 import type { WorkKind } from './ledger.ts';
 
+/** An uncertified head without a lease is certified once its tests check completed, whatever the conclusion: the head stopped moving for as long as CI took. Until then the PR waits at most this long, the fallback for a repository whose PRs get no check run. */
 export const GRACE_MINUTES = 30;
 export interface Pending { kind: 'pending'; work: WorkKind; repo: string; pr: number; head: string; branch: string; reason: string }
 export interface Skipped { kind: 'skipped'; repo: string; pr: number; head: string; reason: string }
@@ -31,7 +32,11 @@ export async function classify(t: Trusted, p: Pull, author: number, options: Cla
     if (status.kind === 'none') {
       const created = Date.parse(p.createdAt);
       if (Number.isNaN(created)) throw new Error(`Invalid PR createdAt: ${p.createdAt}`);
-      if (options.now - created < GRACE_MINUTES * 60_000) return skipped(`younger than ${GRACE_MINUTES} minutes`);
+      if (options.now - created < GRACE_MINUTES * 60_000) {
+        const job = t.config.tests.job;
+        const tests = (await checks(t.repo, p.head)).find(c => c.context === job);
+        if (!tests || unfinished.includes(tests.state)) return skipped(`${job} has not completed on the head and the PR is younger than ${GRACE_MINUTES} minutes`);
+      }
       return pending('certify', status.reason);
     }
     const gate = await verdictGate(t, p.number, p.head, author);

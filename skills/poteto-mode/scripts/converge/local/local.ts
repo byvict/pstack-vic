@@ -8,6 +8,7 @@ import { sweep, type Swept } from '../sweep.ts';
 import { classify, skipCause, type Classified } from './classify.ts';
 import { defaultConfigFile, defaultStateDirectory, loadConfig, type LocalConfig, type RepoConfig } from './config.ts';
 import { install, uninstall, JOBS, type Job } from './launchd.ts';
+import { consumeWakes, nudge } from './wake.ts';
 import { currentLedger, deferredBackoffUntil, exhausted, launchBackoffUntil, ledgerFile, markHeld, readLedger, withAttempt, withLaunchFailure, workKinds, writeLedger, DEFERRED_BACKOFF_MINUTES, LAUNCH_FAILURE_BACKOFF_MINUTES, type Attempt, type Ledger, type WorkKind } from './ledger.ts';
 import { LEASE_TTL_HOURS, leaseFile, readLease, releaseLease, takeLease, type Lease } from './lease.ts';
 import { attemptFrom, launchRaiz, raizLane, LaunchFailure, type RaizInput } from './raiz.ts';
@@ -117,7 +118,10 @@ export async function tickRaiz(config: LocalConfig, options: RaizTickOptions): P
     for (const number of numbers) {
       try { await visit(repo, t, account.id, trusted, number); }
       catch (error) { report.errors.push(`${repo.repo}#${number}: ${message(error)}`); }
-      if (report.launched) return report;
+      if (!report.launched) continue;
+      // The next pending PR must not wait for the interval, and the sweep arms what the attempt certified: both jobs get a wake, which launchd serves once this tick exits.
+      if (!options.dryRun) nudge(config.stateDirectory, JOBS);
+      return report;
     }
   }
   return report;
@@ -136,7 +140,7 @@ function sweepErrors(report: SweepReport): string[] {
   return report.repos.flatMap(r => [...(r.failure ? [`${r.repo}: ${r.failure}`] : []), ...r.swept.filter(s => s.outcome === 'refused').map(s => `${r.repo}#${s.pr}: refused: ${s.reason}`)]);
 }
 interface Unreadable { file: string; error: string }
-export interface LastTick { job: Job; startedAt: string; endedAt: string; exitCode: number; errors: string[] }
+export interface LastTick { job: Job; startedAt: string; endedAt: string; exitCode: number; errors: string[]; wakes: number }
 function lastTickFile(stateDirectory: string, job: Job): string { return join(stateDirectory, `last-tick-${job}.json`); }
 function writeLastTick(stateDirectory: string, record: LastTick): void {
   const file = lastTickFile(stateDirectory, record.job);
@@ -158,6 +162,8 @@ function printErrors(errors: string[]): void { for (const error of errors) proce
 /** A real tick records how it ended in `last-tick-<job>.json`, so `status` shows how the last launchd run went; a dry run records nothing. A tick that throws (a bad sheet row) ends with that one error. */
 async function tick(config: LocalConfig, job: Job, dryRun: boolean, now: number | undefined): Promise<number> {
   const startedAt = new Date().toISOString();
+  // Before the sheet and before GitHub: a wake file left behind would make launchd start the tick again every ThrottleInterval, a bad sheet row included.
+  const wakes = dryRun ? 0 : consumeWakes(config.stateDirectory, job);
   let errors: string[];
   try {
     if (job === 'sweep') { const report = await tickSweep(config, { dryRun }); print(report); errors = sweepErrors(report); }
@@ -165,7 +171,7 @@ async function tick(config: LocalConfig, job: Job, dryRun: boolean, now: number 
   } catch (error) { errors = [message(error)]; }
   printErrors(errors);
   const exitCode = errors.length ? 1 : 0;
-  if (!dryRun) writeLastTick(config.stateDirectory, { job, startedAt, endedAt: new Date().toISOString(), exitCode, errors });
+  if (!dryRun) writeLastTick(config.stateDirectory, { job, startedAt, endedAt: new Date().toISOString(), exitCode, errors, wakes });
   return exitCode;
 }
 function probe(binary: string, args: string[]): string {
@@ -192,7 +198,7 @@ export function status(config: LocalConfig, now = Date.now()): Record<string, un
   const lastTick = Object.fromEntries(JOBS.map(job => [job, readLastTick(config.stateDirectory, job)]));
   return { config, raiz, gh: probe('gh', ['auth', 'status']), parent: config.parent === 'claude' ? probe('claude', ['auth', 'status', '--json']) : probe('codex', ['login', 'status']), leases, ledgers, lastTick };
 }
-const USAGE = 'Usage: converge-local <install|uninstall|status|tick --job sweep|raiz [--dry-run]|lease --repo R --branch B [--by NAME] [--ttl H] [--pid N]|release --repo R --branch B [--by NAME]|run --repo R --pr N [--kind K] [--dry-run]> [--config FILE]';
+const USAGE = 'Usage: converge-local <install|uninstall|status|tick --job sweep|raiz [--dry-run]|nudge [--job sweep|raiz]|lease --repo R --branch B [--by NAME] [--ttl H] [--pid N]|release --repo R --branch B [--by NAME]|run --repo R --pr N [--kind K] [--dry-run]> [--config FILE]';
 export async function main(args: string[]): Promise<number> {
   const [subcommand, ...rest] = args;
   try {
@@ -204,7 +210,13 @@ export async function main(args: string[]): Promise<number> {
     const now = values.now === undefined ? undefined : Number(values.now);
     if (now !== undefined && !Number.isFinite(now)) throw new Error('--now takes milliseconds since the epoch');
     switch (subcommand) {
-      case 'install': { const c = config(); print(install({ pluginDir: c.pluginDir, configFile: c.file, intervalMinutes: c.intervalMinutes, logDirectory: c.logDirectory, path: process.env.PATH ?? '', nodePath: process.execPath, parent: c.parent, sheetPath: c.sheetPath })); return 0; }
+      case 'install': { const c = config(); print(install({ pluginDir: c.pluginDir, configFile: c.file, intervalMinutes: c.intervalMinutes, logDirectory: c.logDirectory, stateDirectory: c.stateDirectory, path: process.env.PATH ?? '', nodePath: process.execPath, parent: c.parent, sheetPath: c.sheetPath })); return 0; }
+      case 'nudge': {
+        // Like lease: a session wakes the daemon whether or not it is configured, and a file that exists names where the jobs watch.
+        const jobs = values.job === undefined ? JOBS : JOBS.filter(name => name === values.job);
+        if (!jobs.length) throw new Error(USAGE);
+        print({ woken: nudge(stateDirectory(), jobs) }); return 0;
+      }
       case 'uninstall': print({ removed: uninstall() }); return 0;
       case 'status': print(status(config(), now)); return 0;
       case 'tick': {
