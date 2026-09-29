@@ -1,5 +1,5 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { closeSync, mkdirSync, openSync, readFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { trunkTests } from '../arm.ts';
@@ -247,4 +247,36 @@ export async function postMergePass(config: LocalConfig, repo: RepoConfig, t: Tr
     });
   } catch (error) { report.errors.push(message(error)); }
   return report;
+}
+/** `converge-local post-merge`: one attempt on a trunk commit, whatever its ledger says, after the same readiness check. The stored tip never moves here; the next tick reads the ledger, and a `done` releases the queue. */
+export async function postMergeOne(config: LocalConfig, repo: RepoConfig, t: Trusted, commit: string, options: PostMergeOptions): Promise<PostMergeReport> {
+  const postMerge = t.config.postMerge;
+  if (!postMerge) throw new Error(`${repo.repo} has no postMerge block in its trunk contract`);
+  if (commit !== t.sha && object(await api(`repos/${t.repo}/compare/${commit}...${t.sha}`), 'compare').status !== 'ahead') throw new Error(`${commit} is not a trunk commit: the tip ${t.sha} does not descend from it`);
+  const holder = options.dryRun ? null : otherHolder(config.stateDirectory, repo.repo, options.leaseBy);
+  if (holder) throw new Error(holder);
+  const report: PostMergeReport = { tip: t.sha, handled: readPostMergeState(postMergeStateFile(config.stateDirectory, repo.repo))?.tip ?? null, note: null, commits: [], errors: [] };
+  const p: Pass = { config, repo, t, postMerge, options, errors: report.errors };
+  await leased(p, async () => { report.commits.push(await attempt(p, commit, readPostMergeLedger(postMergeLedgerFile(config.stateDirectory, repo.repo, commit)))); });
+  return report;
+}
+/** For `status`: each repository with a stored tip, that tip, and every commit whose latest attempt is `deferred` or `failed`; a file that does not parse shows up as its error. */
+export function postMergeStatus(stateDirectory: string): unknown[] {
+  const directory = join(stateDirectory, 'post-merge');
+  const json = (path: string) => existsSync(path) ? readdirSync(path).filter(name => name.endsWith('.json')).sort() : [];
+  return json(directory).map(name => {
+    const file = join(directory, name);
+    let state: PostMergeState | null;
+    try { state = readPostMergeState(file); } catch (error) { return { file, error: message(error) }; }
+    const ledgers = join(directory, name.slice(0, -'.json'.length));
+    const commits = json(ledgers).flatMap(entry => {
+      const ledgerFile = join(ledgers, entry);
+      try {
+        const ledger = readPostMergeLedger(ledgerFile);
+        const last = ledger?.attempts[ledger.attempts.length - 1];
+        return ledger && last && last.outcome !== 'done' ? [{ commit: ledger.commit, pr: ledger.pr, outcome: last.outcome, reason: last.reason, attempts: ledger.attempts.length, file: ledgerFile }] : [];
+      } catch (error) { return [{ file: ledgerFile, error: message(error) }]; }
+    });
+    return { repo: state?.repo ?? name, tip: state?.tip ?? null, commits };
+  });
 }
