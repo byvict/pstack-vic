@@ -609,7 +609,7 @@ export function renderRoleDefaultsMarkdown(matrix: ModelMatrix): string {
   }
   lines.push("");
   lines.push(
-    "A list is a panel: one lane per entry, in this order. A role whose two columns differ takes a family native to each parent: the frontier family for the frontier solo roles, the code family for the four authoring rows and `converge raiz`. Aliases run on the parent model through its native subagent primitive."
+    "A list is a panel: one lane per entry, in this order. The `pre-pr reviewer` list is not a panel: it is an order of preference, and one lane runs per round, the first whose family wrote none of the branch. A role whose two columns differ takes a family native to each parent: the frontier family for the frontier solo roles, the code family for the four authoring rows and `converge raiz`, and the other parent's code family as the reviewer reserve. Aliases run on the parent model through its native subagent primitive."
   );
   lines.push("");
   lines.push(ROLES_END);

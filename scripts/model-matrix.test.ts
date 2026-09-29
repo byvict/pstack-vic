@@ -522,10 +522,13 @@ describe("roles", () => {
     );
   });
 
-  it("pre-pr roles default to Grok 4.7 lanes on both parents", () => {
-    assert.deepEqual(roleDefault(matrix, "pre-pr reviewer", "claude"), ["grok:grok-4.7@xhigh"]);
+  it("pre-pr reviewer defaults to Grok 4.7 first and the other parent's code family as the reserve; fixer and certifier stay on Grok 4.7", () => {
+    assert.deepEqual(roleDefault(matrix, "pre-pr reviewer", "claude"), ["grok:grok-4.7@xhigh", "codex:gpt-6-sol@xhigh"]);
+    assert.deepEqual(roleDefault(matrix, "pre-pr reviewer", "codex"), ["grok:grok-4.7@xhigh", "claude:claude-opus-5-5@xhigh"]);
     assert.deepEqual(roleDefault(matrix, "pre-pr certifier", "codex"), ["grok:grok-4.7@high"]);
     assert.deepEqual(roleDefault(matrix, "pre-pr fixer", "claude"), ["grok:grok-4.7@xhigh"]);
+    assert.match(roleNamed(matrix, "pre-pr reviewer")?.description ?? "", /Lanes in order of preference; Pré-PR runs the first whose family wrote none of the branch\.$/);
+    assert.match(renderRoleDefaultsMarkdown(matrix), /The `pre-pr reviewer` list is not a panel: it is an order of preference, and one lane runs per round, the first whose family wrote none of the branch\./);
   });
 
   it("converge raiz defaults to the native code family of each parent", () => {
