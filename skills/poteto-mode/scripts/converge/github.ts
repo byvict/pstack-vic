@@ -59,7 +59,7 @@ export async function pull(repo: string, pr: number): Promise<Pull> {
   return { number: integer(p.number), head: sha(head.sha), base: string(object(p.base).ref), branch: string(head.ref),
     state: string(p.state), draft: p.draft, body: p.body === null ? '' : string(p.body),
     labels: array(p.labels).map(l => string(object(l).name)), authorId: integer(user.id), authorLogin: string(user.login), authorType: string(user.type), autoMerge: p.auto_merge !== null,
-    createdAt: string(p.created_at), fork: headRepo !== null && string(headRepo.full_name).toLowerCase() !== repo.toLowerCase() };
+    createdAt: string(p.created_at), fork: headRepo === null || string(headRepo.full_name).toLowerCase() !== repo.toLowerCase() };
 }
 /** Every open PR of the repository, whatever its base, lowest number first. */
 export async function openPulls(repo: string): Promise<number[]> {
@@ -455,7 +455,7 @@ export async function branchSnapshot(repo: string, head: string, configPath: str
   if (!patch) throw new Error('Empty branch diff');
   const selection = await features(t, target, files);
   const gaps = files.filter(f => f.patch === null && ![f.path, f.previous ?? f.path].every(path => /(?:^|\/)__screenshots__\/.+\.png$/.test(path))).map(() => 'Changed file has no readable patch');
-  const pull: Pull = { number: 0, head: target, base: t.config.trunk, branch: '', state: 'open', draft: false, body: '', labels: [], authorId: 0, authorLogin: '', authorType: 'User', autoMerge: false };
+  const pull: Pull = { number: 0, head: target, base: t.config.trunk, branch: '', state: 'open', draft: false, body: '', labels: [], authorId: 0, authorLogin: '', authorType: 'User', autoMerge: false, createdAt: '', fork: false };
   const verificationDigest = jsonHash([...t.files].sort(([a], [b]) => a.localeCompare(b)));
   const inputFingerprint = jsonHash({ body: '', comments: [] });
   const inputDigest = jsonHash({ head: target, base, contract: t.sha, files, diff, sources: [], checks: [], gaps, inputFingerprint, verificationDigest, testEvidence: { kind: 'unavailable' } });
