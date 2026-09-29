@@ -37,7 +37,7 @@ const PULLS = 'pulls?state=open&per_page=100';
 const checkRuns = (ref: string) => `commits/${encodeURIComponent(ref)}/check-runs?filter=all&per_page=100`;
 interface Read { path: string; etag: string; seen: 'first' | 'unchanged' | 'changed'; body: string }
 interface Pass { watched: Watched; wake: Wakeable[]; next: WatchState | null }
-/** One repository. The open PR list moves on a PR opened, closed or reopened, a head push, a label, a draft flip, and whatever else the list shows (a comment moves `updated_at`, a push to any branch moves the repository's `pushed_at`): both jobs care. The trunk tip's check runs move when trunk moves or one of its checks changes: the sweep arms only on a green trunk. An open head's check runs move when a check on it starts or ends: the raiz job certifies an uncertified head once its tests check completed, and repairs a certified one whose required check failed. The trunk name comes from the PR list, so a repository without an open PR costs one read: nothing there to arm. A resource read without a stored ETag, the first time or for a new head, is stored, not counted as a change. A failed read fails the whole repository: nothing is stored or woken for it, so the next tick reads the same change again. */
+/** One repository. The open PR list moves on a PR opened, closed or reopened, a head push, a label, a draft flip, and whatever else the list shows (a comment moves `updated_at`, a push to any branch moves the repository's `pushed_at`): both jobs care. The trunk tip's check runs move when trunk moves or one of its checks changes: the sweep arms only on a green trunk. An open head's check runs move when a check on it starts or ends: the raiz job certifies an uncertified head once its tests check completed, and repairs a certified one whose required check failed. The trunk name comes from the PR list, or, before any PR listed it, from one read of the repository, and is kept when the list empties: the trunk check runs are read every minute, so the sweep wakes within a minute of trunk's push CI finishing after a merge, which the post-merge pass waits for. A repository without an open PR costs two reads. A resource read without a stored ETag, the first time or for a new head, is stored, not counted as a change. A failed read fails the whole repository: nothing is stored or woken for it, so the next tick reads the same change again. */
 async function pass(stateDirectory: string, repo: string): Promise<Pass> {
   const watched: Watched = { repo, reads: 0, changed: [], failure: null };
   const failures: string[] = [];
@@ -51,6 +51,15 @@ async function pass(stateDirectory: string, repo: string): Promise<Pass> {
       const answer = await conditional(`repos/${repo}/${path}`, stored);
       return answer.modified ? { path, etag: answer.etag, seen: stored === null ? 'first' : 'changed', body: answer.body } : { path, etag: answer.etag, seen: 'unchanged', body: '' };
     } catch (error) { throw new Error(`${path}: ${message(error)}`); }
+  }
+  /** The trunk name when no PR has listed it yet: one read of the repository, stored from then on. */
+  async function defaultBranch(): Promise<string> {
+    watched.reads++;
+    try {
+      const answer = await conditional(`repos/${repo}`, null);
+      if (!answer.modified) throw new Error('answered 304 without an ETag sent');
+      return string(object(JSON.parse(answer.body), 'repository').default_branch, 'default branch');
+    } catch (error) { throw new Error(`repository: ${message(error)}`); }
   }
   /** In parallel; once all have settled, the first failure in path order fails the pass. */
   async function readAll(paths: string[]): Promise<Read[]> {
@@ -68,16 +77,16 @@ async function pass(stateDirectory: string, repo: string): Promise<Pass> {
     if (pulls.seen !== 'unchanged') {
       const listed = array(JSON.parse(pulls.body)).map(value => object(value, 'pull'));
       heads = [...new Set(listed.map(p => sha(object(p.head, 'pull head').sha)))];
-      trunk = listed.length ? string(object(object(listed[0]?.base, 'pull base').repo, 'base repository').default_branch, 'default branch') : null;
+      const first = listed[0];
+      if (first) trunk = string(object(object(first.base, 'pull base').repo, 'base repository').default_branch, 'default branch');
     }
-    const checks = await readAll([...(trunk === null ? [] : [checkRuns(trunk)]), ...heads.map(checkRuns)]);
-    const trunkReads = checks.slice(0, trunk === null ? 0 : 1);
-    const headReads = checks.slice(trunkReads.length);
+    if (trunk === null) trunk = await defaultBranch();
+    const checks = await readAll([checkRuns(trunk), ...heads.map(checkRuns)]);
     const all = [pulls, ...checks];
     watched.changed = all.filter(r => r.seen === 'changed').map(r => `repos/${repo}/${r.path}`);
     const changed = (r: Read) => r.seen === 'changed';
-    const sweep = changed(pulls) || trunkReads.some(changed);
-    const raiz = changed(pulls) || headReads.some(changed);
+    const sweep = changed(pulls) || checks.slice(0, 1).some(changed);
+    const raiz = changed(pulls) || checks.slice(1).some(changed);
     watched.failure = failures.length ? failures.join('; ') : null;
     return { watched, wake: WAKEABLE.filter(job => job === 'sweep' ? sweep : raiz), next: { schemaVersion: 1, repo, trunk, heads, etags: Object.fromEntries(all.map(r => [`repos/${repo}/${r.path}`, r.etag])) } };
   } catch (error) {
