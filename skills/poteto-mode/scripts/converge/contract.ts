@@ -78,14 +78,30 @@ export const roles = ['pr verifier', 'pre-pr reviewer', 'pre-pr certifier'] as c
 /** The Cloud verifier's pinned lane, the one family and efforts that admission, lane preparation, start.ts and setup-pstack's Cursor cloud rows (`pr owner`, `pr verifier`) accept. It exists only for those rows and is deleted with them in 0.5.0; the pre-PR roles stay unpinned. */
 export const CLOUD_VERIFIER: { readonly provider: string; readonly model: string; readonly efforts: readonly string[] } = { provider: 'cursor', model: 'grok-4.7', efforts: ['high', 'xhigh'] };
 export interface Light { paths: string[]; reviewer: 'narrow' | 'none' }
-export interface PrePr { runs: { name: string; command: string }[]; certifier: boolean; light: Light | null }
+export interface Run { name: string; command: string }
+export interface PrePr { runs: Run[]; certifier: boolean; light: Light | null }
+/** What the local daemon's sweep runs on each new trunk commit, in a detached worktree of it. `after: 'tests'` waits until the contract's push Tests run and test job succeeded on the commit. */
+export interface PostMerge { runs: Run[]; after: 'tests' | 'none' }
 export interface Contract {
   repo: string; trunk: string; requiredChecks: string[]; holdLabels: string[];
   surfaces: string[]; riskClasses: { irreversible: string[]; contained: string[] };
   verifySkill: string | null; featureMap: string | null; evidenceRoot: string | null; deployWindow: string; bugbot: 'never';
-  prePr: PrePr | null; tests: { workflow: string; job: string };
+  prePr: PrePr | null; postMerge: PostMerge | null; tests: { workflow: string; job: string };
 }
 function nullableRelativePath(value: unknown): string | null { return value === null || value === undefined ? null : relativePath(value); }
+/** The run grammar `prePr` and `postMerge` share: a name that is a safe file stem, a command that is argv joined by single spaces with no shell metacharacter, and no name twice. */
+function runs(value: unknown): Run[] {
+  const result = array(value).map(raw => {
+    const r = object(raw, 'run');
+    const name = string(r.name);
+    if (!/^[a-z][a-z0-9-]{0,39}$/.test(name)) throw new Error('Unsafe run name');
+    const command = string(r.command);
+    if (!/^[^ ]+(?: [^ ]+)*$/.test(command) || /['"`$|&;<>(){}*?[\]~#!\\\x00-\x1f\x7f]/.test(command)) throw new Error('Unsafe run command');
+    return { name, command };
+  });
+  if (new Set(result.map(r => r.name)).size !== result.length) throw new Error('Duplicate run name');
+  return result;
+}
 export function parseContract(value: unknown): Contract {
   const v = object(value, 'contract');
   const risk = object(v.riskClasses);
@@ -95,21 +111,18 @@ export function parseContract(value: unknown): Contract {
   if (v.prePr !== undefined && v.prePr !== null) {
     const p = object(v.prePr, 'prePr');
     const light = p.light === undefined || p.light === null ? null : object(p.light, 'light');
-    prePr = { certifier: boolean(p.certifier), light: light && { paths: strings(light.paths), reviewer: light.reviewer === undefined ? 'narrow' : oneOf(light.reviewer, ['narrow', 'none']) }, runs: array(p.runs).map(raw => {
-      const r = object(raw, 'run');
-      const name = string(r.name);
-      if (!/^[a-z][a-z0-9-]{0,39}$/.test(name)) throw new Error('Unsafe run name');
-      const command = string(r.command);
-      if (!/^[^ ]+(?: [^ ]+)*$/.test(command) || /['"`$|&;<>(){}*?[\]~#!\\\x00-\x1f\x7f]/.test(command)) throw new Error('Unsafe run command');
-      return { name, command };
-    }) };
-    if (new Set(prePr.runs.map(r => r.name)).size !== prePr.runs.length) throw new Error('Duplicate run name');
+    prePr = { certifier: boolean(p.certifier), light: light && { paths: strings(light.paths), reviewer: light.reviewer === undefined ? 'narrow' : oneOf(light.reviewer, ['narrow', 'none']) }, runs: runs(p.runs) };
+  }
+  let postMerge: PostMerge | null = null;
+  if (v.postMerge !== undefined && v.postMerge !== null) {
+    const p = object(v.postMerge, 'postMerge');
+    postMerge = { runs: runs(p.runs), after: p.after === undefined ? 'tests' : oneOf(p.after, ['tests', 'none']) };
   }
   const result: Contract = {
     repo: repoName(v.repo), trunk: relativePath(v.trunk), requiredChecks: strings(v.requiredChecks), holdLabels: strings(v.holdLabels),
     surfaces: strings(v.surfaces), riskClasses: { irreversible: strings(risk.irreversible), contained: strings(risk.contained) },
     verifySkill: nullableRelativePath(v.verifySkill), featureMap: nullableRelativePath(v.featureMap), evidenceRoot: nullableRelativePath(v.evidenceRoot),
-    deployWindow: string(v.deployWindow), bugbot: oneOf(v.bugbot, ['never']), prePr,
+    deployWindow: string(v.deployWindow), bugbot: oneOf(v.bugbot, ['never']), prePr, postMerge,
     tests: { workflow: tests.workflow === undefined ? 'Tests' : string(tests.workflow), job: tests.job === undefined ? 'Run test suite' : string(tests.job) },
   };
   if (!result.requiredChecks.includes('verdict') || !result.holdLabels.length || !/^\d\d:\d\d [A-Za-z_]+\/[A-Za-z_]+$/.test(result.deployWindow)) throw new Error('Incomplete converge contract');

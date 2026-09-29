@@ -48,3 +48,17 @@ test('round pr 0 is valid only for pre-pr', () => {
   assert.equal(parseRound({ ...round, pr: 0, execution: 'pre-pr' }).pr, 0);
   assert.throws(() => parseRound({ ...round, pr: 0, execution: 'converge' }), /Invalid PR/);
 });
+const bare = { ...base, verifySkill: null, featureMap: null, evidenceRoot: null };
+test('a postMerge block names runs with the prePr grammar and waits for trunk Tests unless it says none', () => {
+  assert.equal(parseContract(bare).postMerge, null);
+  assert.deepEqual(parseContract({ ...bare, postMerge: { runs: [{ name: 'release', command: 'npm run after-merge' }] } }).postMerge, { runs: [{ name: 'release', command: 'npm run after-merge' }], after: 'tests' });
+  assert.equal(parseContract({ ...bare, postMerge: { runs: [], after: 'none' } }).postMerge?.after, 'none');
+});
+test('a postMerge block refuses what prePr refuses, and an after other than tests or none', () => {
+  const postMerge = (block: unknown) => parseContract({ ...bare, postMerge: block });
+  assert.throws(() => postMerge({ runs: [{ name: '../x', command: 'npm test' }] }), /Unsafe run name/);
+  assert.throws(() => postMerge({ runs: [{ name: 'release', command: 'npm test; rm -rf x' }] }), /Unsafe run command/);
+  assert.throws(() => postMerge({ runs: [{ name: 'a', command: 'x' }, { name: 'a', command: 'y' }] }), /Duplicate run name/);
+  assert.throws(() => postMerge({ runs: [], after: 'merge' }), /Invalid enum value/);
+  assert.throws(() => postMerge({ after: 'tests' }), /Invalid array/);
+});
