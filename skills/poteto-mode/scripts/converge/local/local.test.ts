@@ -1,11 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, relative } from 'node:path';
 import { fixture, moveTrunk, publishCertificate } from '../fixtures/setup.ts';
 import { ledgerFile, writeLedger, HEAD_WINDOW_HOURS, MAX_FAILED_ATTEMPTS, type Ledger } from './ledger.ts';
 import { leaseFile, takeLease } from './lease.ts';
-import { plist } from './launchd.ts';
+import { missingCommands, plist } from './launchd.ts';
 
 const t0 = Date.parse('2026-09-28T12:00:00Z');
 const minutes = (n: number) => new Date(t0 - n * 60_000).toISOString();
@@ -296,17 +297,35 @@ test('status reports the sheet row, the probes, the valid leases and the ledgers
   assert.deepEqual(report.leases.map((l: { by: string }) => l.by), ['interactive']);
   assert.deepEqual(report.ledgers.map((l: { pr?: number; error?: string }) => l.pr ?? l.error?.replace(/ .*/, '')), [1, 'Invalid']);
 });
-test('the plist runs the tick through a login shell every interval and logs to one file per job', () => {
-  const text = plist('sweep', { pluginDir: '/Users/v/Dev/pstack-vic', configFile: '/Users/v/.config/pstack/converge-local.json', intervalMinutes: 10, logDirectory: '/Users/v/Library/Logs' });
+const nvm = '/Users/v/.nvm/versions/node/v24.21.0/bin';
+test('the plist runs the tick through a login shell every interval, with the install PATH and the absolute node, and logs to one file per job', () => {
+  const text = plist('sweep', { pluginDir: '/Users/v/Dev/pstack-vic', configFile: '/Users/v/.config/pstack/converge-local.json', intervalMinutes: 10, logDirectory: '/Users/v/Library/Logs', path: `${nvm}:/opt/homebrew/bin:/usr/bin:/bin`, nodePath: `${nvm}/node` });
   assert.match(text, /<key>Label<\/key><string>com\.pstack\.converge-sweep<\/string>/);
   assert.match(text, /<string>\/bin\/zsh<\/string><string>-lc<\/string>/);
-  assert.match(text, /exec node "\/Users\/v\/Dev\/pstack-vic\/skills\/poteto-mode\/scripts\/converge\/converge-local" tick --job sweep --config "\/Users\/v\/\.config\/pstack\/converge-local\.json"/);
+  assert.match(text, /exec "\/Users\/v\/\.nvm\/versions\/node\/v24\.21\.0\/bin\/node" "\/Users\/v\/Dev\/pstack-vic\/skills\/poteto-mode\/scripts\/converge\/converge-local" tick --job sweep --config "\/Users\/v\/\.config\/pstack\/converge-local\.json"/);
+  assert.doesNotMatch(text, /exec node /, 'a login shell that never reads ~/.zshrc has no nvm node on its PATH');
+  assert.ok(text.includes(`<key>EnvironmentVariables</key><dict><key>PATH</key><string>${nvm}:/opt/homebrew/bin:/usr/bin:/bin</string></dict>`), text);
   assert.match(text, /<key>StartInterval<\/key><integer>600<\/integer>/);
   assert.match(text, /<key>StandardOutPath<\/key><string>\/Users\/v\/Library\/Logs\/pstack-converge-sweep\.log<\/string>/);
 });
 test('the plist quotes a path for zsh and escapes it for XML', () => {
-  const text = plist('raiz', { pluginDir: '/Users/v/A & B/$HOME`x`', configFile: '/Users/v/"c".json', intervalMinutes: 1, logDirectory: '/Users/v/<logs>' });
-  assert.match(text, /exec node "\/Users\/v\/A &amp; B\/\\\$HOME\\`x\\`\/skills\/poteto-mode\/scripts\/converge\/converge-local" tick --job raiz --config "\/Users\/v\/\\"c\\"\.json"/);
+  const text = plist('raiz', { pluginDir: '/Users/v/A & B/$HOME`x`', configFile: '/Users/v/"c".json', intervalMinutes: 1, logDirectory: '/Users/v/<logs>', path: '/Users/v/A & B/bin:/usr/bin', nodePath: '/Users/v/n$de/"node"' });
+  assert.match(text, /exec "\/Users\/v\/n\\\$de\/\\"node\\"" "\/Users\/v\/A &amp; B\/\\\$HOME\\`x\\`\/skills\/poteto-mode\/scripts\/converge\/converge-local" tick --job raiz --config "\/Users\/v\/\\"c\\"\.json"/);
+  assert.ok(text.includes('<key>PATH</key><string>/Users/v/A &amp; B/bin:/usr/bin</string>'), text);
   assert.match(text, /<key>StartInterval<\/key><integer>60<\/integer>/);
   assert.match(text, /<string>\/Users\/v\/&lt;logs&gt;\/pstack-converge-raiz\.log<\/string>/);
+});
+test('missingCommands names what no absolute PATH directory holds as an executable file', t => {
+  const root = mkdtempSync(join(tmpdir(), 'path-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const [a, b, c] = ['a', 'b', 'c'].map(name => { const d = join(root, name); mkdirSync(d); return d; });
+  writeFileSync(join(a, 'gh'), '#!/bin/sh\n', { mode: 0o755 });
+  writeFileSync(join(a, 'claude'), '#!/bin/sh\n', { mode: 0o644 });
+  mkdirSync(join(a, 'codex'));
+  symlinkSync(join(a, 'gh'), join(b, 'node'));
+  writeFileSync(join(c, 'grok'), '#!/bin/sh\n', { mode: 0o755 });
+  const path = [a, '', b, relative(process.cwd(), c)].join(':');
+  assert.deepEqual(missingCommands(path, ['gh', 'node', 'claude', 'codex', 'grok']), ['claude', 'codex', 'grok'], 'a non-executable file, a directory and a relative PATH entry do not count; a symlink to an executable does');
+  writeFileSync(join(b, 'claude'), '#!/bin/sh\n', { mode: 0o755 });
+  assert.deepEqual(missingCommands(path, ['claude']), [], 'a later PATH directory still counts');
+  assert.deepEqual(missingCommands('', ['gh']), ['gh']);
 });

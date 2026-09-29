@@ -131,7 +131,7 @@ export async function main(args: string[]): Promise<number> {
     if (now !== undefined && !Number.isFinite(now)) throw new Error('--now takes milliseconds since the epoch');
     const print = (value: unknown) => process.stdout.write(JSON.stringify(value, null, 2) + '\n');
     switch (subcommand) {
-      case 'install': { const c = config(); print(install({ pluginDir: c.pluginDir, configFile: c.file, intervalMinutes: c.intervalMinutes, logDirectory: c.logDirectory })); return 0; }
+      case 'install': { const c = config(); print(install({ pluginDir: c.pluginDir, configFile: c.file, intervalMinutes: c.intervalMinutes, logDirectory: c.logDirectory, path: process.env.PATH ?? '', nodePath: process.execPath, parent: c.parent })); return 0; }
       case 'uninstall': print({ removed: uninstall() }); return 0;
       case 'status': print(status(config(), now)); return 0;
       case 'tick': {

@@ -1,28 +1,43 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, isAbsolute, join } from 'node:path';
 import { assertDefaultConfig } from './config.ts';
 
 export const JOBS = ['sweep', 'raiz'] as const;
 export type Job = typeof JOBS[number];
-export interface JobOptions { pluginDir: string; configFile: string; intervalMinutes: number; logDirectory: string }
+/** `path` and `nodePath` are the install process's `PATH` and `process.execPath`, passed in so the plist stays a pure function of its options. */
+export interface JobOptions { pluginDir: string; configFile: string; intervalMinutes: number; logDirectory: string; path: string; nodePath: string }
+export interface InstallOptions extends JobOptions { parent: 'claude' | 'codex' }
 export function label(job: Job): string { return `com.pstack.converge-${job}`; }
 function xml(text: string): string { return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 /** A zsh double-quoted word: only these four characters stay special inside the quotes. */
 function quoted(text: string): string { return `"${text.replace(/[\\"$`]/g, '\\$&')}"`; }
-/** A login shell, so nvm's node, gh and the parent CLI resolve as in Victor's terminal, and ~/.zshenv exports the parent's credential. */
+/** launchd starts a job with a bare system PATH, and a non-interactive login zsh never reads ~/.zshrc, where nvm puts node and claude. So the job carries the install shell's PATH and runs the absolute node; the login shell still reads ~/.zshenv, which exports the parent's credential. */
 export function plist(job: Job, options: JobOptions): string {
-  const script = `exec node ${quoted(join(options.pluginDir, 'skills/poteto-mode/scripts/converge/converge-local'))} tick --job ${job} --config ${quoted(options.configFile)}`;
+  const script = `exec ${quoted(options.nodePath)} ${quoted(join(options.pluginDir, 'skills/poteto-mode/scripts/converge/converge-local'))} tick --job ${job} --config ${quoted(options.configFile)}`;
   const log = join(options.logDirectory, `pstack-converge-${job}.log`);
   return ['<?xml version="1.0" encoding="UTF-8"?>', '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">', '<plist version="1.0">', '<dict>',
     `  <key>Label</key><string>${label(job)}</string>`,
     `  <key>ProgramArguments</key><array><string>/bin/zsh</string><string>-lc</string><string>${xml(script)}</string></array>`,
+    `  <key>EnvironmentVariables</key><dict><key>PATH</key><string>${xml(options.path)}</string></dict>`,
     `  <key>StartInterval</key><integer>${options.intervalMinutes * 60}</integer>`,
     '  <key>RunAtLoad</key><true/>',
     `  <key>StandardOutPath</key><string>${xml(log)}</string>`,
     `  <key>StandardErrorPath</key><string>${xml(log)}</string>`,
     '</dict>', '</plist>', ''].join('\n');
+}
+function executable(file: string): boolean {
+  try {
+    if (!statSync(file).isFile()) return false;
+    accessSync(file, constants.X_OK);
+    return true;
+  } catch { return false; }
+}
+/** The names that no absolute directory of `path` holds as an executable file. A relative entry would resolve against launchd's `/`, so it does not count. */
+export function missingCommands(path: string, names: string[]): string[] {
+  const directories = path.split(delimiter).filter(directory => isAbsolute(directory));
+  return names.filter(name => !directories.some(directory => executable(join(directory, name))));
 }
 export function plistPath(job: Job, home = homedir()): string { return join(home, 'Library', 'LaunchAgents', `${label(job)}.plist`); }
 function launchctl(args: string[]): { status: number | null; output: string } {
@@ -30,9 +45,11 @@ function launchctl(args: string[]): { status: number | null; output: string } {
   return { status: result.status, output: (result.stdout ?? '') + (result.stderr ?? '') };
 }
 function domain(): string { return `gui/${process.getuid ? process.getuid() : 501}`; }
-/** Writes both plists and (re)loads them into the user's launchd domain, only from the default configuration; the log directory must exist for launchd to open the log. */
-export function install(options: JobOptions, home = homedir()): { written: string[]; loaded: string[] } {
+/** Writes both plists and (re)loads them into the user's launchd domain, only from the default configuration and only when gh and the parent CLI are on the PATH the jobs get; the log directory must exist for launchd to open the log. */
+export function install(options: InstallOptions, home = homedir()): { written: string[]; loaded: string[] } {
   assertDefaultConfig(options.configFile, home);
+  const missing = missingCommands(options.path, ['gh', options.parent]);
+  if (missing.length) throw new Error(`install needs gh and ${options.parent} on the PATH it gives launchd; missing: ${missing.join(', ')}. Run install from a shell where they resolve`);
   const written: string[] = [];
   const loaded: string[] = [];
   mkdirSync(join(home, 'Library', 'LaunchAgents'), { recursive: true });
