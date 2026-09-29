@@ -17,6 +17,7 @@ The matrix lives in [`model-matrix.json`](../../../model-matrix.json) at the plu
 | fable | claude | `fable` | max | low medium high xhigh max | claude | `fable` | `claude-fable-5-1-thinking-{effort}` |
 | opus | claude | `claude-opus-5-5` | xhigh | low medium high xhigh max | claude | `opus` | `claude-opus-5-thinking-{effort}` |
 | sol | codex | `gpt-6-sol` | max | low medium high xhigh max | codex | - | `gpt-5.6-sol-{effort}` |
+| sol-6-1 | codex | `gpt-6.1-sol` | max | low medium high xhigh max | codex | - | - |
 | astra | codex | `gpt-6-astra` | max | low medium high xhigh max | codex | - | - |
 | grok | grok | `grok-4.6` | xhigh | low medium high xhigh max | - | - | `grok-4.6-fast-{effort}` |
 | grok-4-7 | grok | `grok-4.7` | xhigh | low medium high xhigh | - | - | - |
@@ -44,7 +45,7 @@ Providers whose CLI the runner can launch in `unsandboxed` mode: `grok`. The pre
 
 Grok Build CLI 1.0.5 reports the served model as `grok-4.6-build` in the result event's `modelUsage` (measured 2026-09-17); the grok family's `reportedModel` pattern accepts that build suffix and nothing else.
 
-`sol` and `astra` share the `codex` CLI, its flags, and its output parser. They differ only in the `--model` argument. Codex also exposes an `ultra` effort that delegates tasks automatically; it is outside the effort universe because a pstack child never delegates.
+`sol`, `sol-6-1` and `astra` share the `codex` CLI, its flags, and its output parser. They differ only in the `--model` argument. Codex also exposes an `ultra` effort that delegates tasks automatically; it is outside the effort universe because a pstack child never delegates.
 
 ## Role defaults
 

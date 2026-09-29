@@ -152,6 +152,19 @@ describe("model-matrix.json", () => {
     }
   });
 
+  it("carries gpt-6.1-sol as its own codex family beside sol", () => {
+    // Codex CLI 0.159.0 lists gpt-6.1-sol (2026-09-29); gpt-6-sol stays in sol.
+    const row = matrix.families.find((f) => f.family === "sol-6-1");
+    assert.ok(row, "sol-6-1 present");
+    assert.equal(row.provider, "codex");
+    assert.equal(row.model, "gpt-6.1-sol");
+    assert.deepEqual(row.efforts, ["low", "medium", "high", "xhigh", "max"]);
+    assert.equal(row.defaultEffort, "max");
+    assert.equal(row.reportedModel, null, "codex pins by argv");
+    assert.equal(routeFor(matrix, "codex", row.provider), "native");
+    assert.equal(routeFor(matrix, "claude", row.provider), "runner");
+  });
+
   it("rejects a family whose provider is unknown", () => {
     assert.throws(
       () =>
