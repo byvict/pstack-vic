@@ -95,7 +95,7 @@ and in `protection()` replace lines 48-49 with:
 
 In `classify.ts`: change the import to `import { passing, requiredChecks, unfinished } from '../arm.ts';`, delete line 11 (`const unfinished = ...`), and in the required-checks loop use `!passing.includes(check.state) && !unfinished.includes(check.state)` in place of `check.state !== 'success' && !unfinished.includes(check.state)`.
 
-- [ ] **Step 5: Run the two files, then the whole suite.** `node --test skills/poteto-mode/scripts/converge/arm.test.ts skills/poteto-mode/scripts/converge/local/local.test.ts` then `npm test`. Expected: all pass (697 + 5 new: 4 arm, 2 rows, minus the 3-case loop that became 1 + 4).
+- [ ] **Step 5: Run the two files, then the whole suite.** `node --test skills/poteto-mode/scripts/converge/arm.test.ts skills/poteto-mode/scripts/converge/local/local.test.ts` then `npm test`. Expected: all pass (701 = 697 + 4: the 3-case arm loop became 1 + 4 tests, a net +2, and 2 dry-run rows).
 
 - [ ] **Step 6: Commit.** `git add skills/poteto-mode/scripts/converge/arm.ts skills/poteto-mode/scripts/converge/arm.test.ts skills/poteto-mode/scripts/converge/local/classify.ts skills/poteto-mode/scripts/converge/local/local.test.ts && git commit -m "fix(converge): count neutral and skipped required checks as passing in the arm and the daemon"`
 

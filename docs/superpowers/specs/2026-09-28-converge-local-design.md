@@ -54,9 +54,9 @@ A cada 10 minutos (`StartInterval` 600), sem modelo. Roda o `converge-sweep` exi
 A cada 10 minutos, uma Raiz por vez. O launchd não sobrepõe duas instâncias do mesmo label; a serialização vem daí. Cada tick:
 
 1. **Lista** os PRs abertos de cada repositório, qualquer base, do menor número para o maior.
-2. **Pula**: draft; PR com rótulo de hold; PR cujo head está em fork; branch com posse viva (abaixo); PR cujo verdict no head foi publicado por outra conta (registra e não toca); PR cujo verdict é da execução `converge`, da nuvem antiga, até o PR de remoção.
+2. **Pula**: draft; PR com rótulo de hold; PR cujo head está em fork; branch com posse viva (abaixo); PR cujo verdict no head foi publicado por outra conta (registra e não toca); PR cujo verdict é da execução `converge`, da nuvem antiga, até o PR de remoção (ajustado na implementação, 2026-09-29: pula também PR de autor fora de `trustedAuthors` mais a conta autenticada e, quando haveria trabalho, PR com comentário, comentário de review ou review de alguém fora dessa lista, R63).
 3. **Classifica** o que sobrou, com as mesmas funções que o sweep e o arm usam (`verdictStatus`, `verdictGate`, `checks`, proteção efetiva):
-   - `repair`: verdict confiável no head, gate certifica, e o último run de um check obrigatório, exceto `hold`, terminou com conclusão diferente de `success`.
+   - `repair`: verdict confiável no head, gate certifica, e o último run de um check obrigatório, exceto `hold`, terminou com conclusão diferente de `success` (ajustado na implementação, 2026-09-29: diferente de `success`, `neutral` e `skipped`, que o GitHub conta como aprovados, R65).
    - `recertify`: verdict confiável no head e gate recusa pela condição 7 do contrato, patch ou política diferentes na ponta da `main`, ou decisão re-derivada que não é VERIFIED.
    - `certify`: sem verdict confiável no head, e o PR foi criado há mais de 30 minutos. Um PR mais novo espera, para a sessão que acabou de abri-lo publicar o Certificado em paz.
    - Nada a fazer: verdict confiável e checks verdes ou pendentes (o arm já está armado, ou o sweep arma), ou gate recusado por `PR head moved` e outras razões que o próximo tick reavalia.
@@ -74,7 +74,7 @@ Os playbooks interativos tomam a posse sem pid, só com TTL, porque os processos
 
 - Duas tentativas com `outcome: failed` no mesmo head, ou seis horas desde `firstAttemptAt` sem `certified`, e o daemon aplica o rótulo de hold do contrato, comenta no PR a causa, as tentativas e os diretórios de rastro, e grava `heldAt`. Um comentário é seguro num verdict `pre-pr`, que re-deriva sobre o texto; o daemon nunca toca PR com verdict `converge`.
 - Head novo zera o ledger do PR. Rótulo de hold ausente depois de `heldAt` também zera: Victor tirou o rótulo, e o daemon tenta de novo.
-- `deferred` não conta como tentativa falha. `skipped` não entra no ledger.
+- `deferred` não conta como tentativa falha. `skipped` não entra no ledger (ajustado na implementação, 2026-09-28: a não ser que o PR relido não explique o pulo, e aí entra como `failed`, R56; 2026-09-29: falha de lançamento não é tentativa e fica à parte no ledger do head; a partir da terceira desde a última tentativa registrada, o daemon espera uma hora depois da última antes de lançar de novo no head, R64).
 - Cada tentativa tem teto de parede de 2 horas; ao estourar, o daemon mata o processo da Raiz e registra `failed` com razão `timeout`.
 
 ### Lançamento da Raiz
@@ -84,7 +84,7 @@ O daemon lê a linha `converge raiz` do sheet do parent configurado, `~/.claude/
 - `claude:<modelo>@<esforço>` vira `claude -p --model <modelo> --effort <esforço> --permission-mode bypassPermissions --output-format json`, com o plugin instalado do parent (ou `--plugin-dir` da configuração, para desenvolvimento), diretório de trabalho no checkout primário do repositório.
 - `codex:<modelo>@<esforço>` vira `codex exec --model <modelo> -c model_reasoning_effort="<esforço>" --sandbox danger-full-access -C <checkout>` (ajustado na implementação, 2026-09-28: o `codex exec` 0.158.0 recusa `--ask-for-approval`, que só o comando `codex` de topo aceita, e já roda sem pedir aprovação).
 
-O prompt é um template fixo: repositório, PR, tipo de trabalho, checkout primário, diretório de corrida sob `TMPDIR`, e a instrução de ler e seguir `skills/poteto-mode/playbooks/catch-up.md` do plugin instalado. A Raiz grava `outcome.json` no diretório de corrida; o daemon lê. Saída sem `outcome.json` válido é `failed` com razão `no outcome`.
+O prompt é um template fixo: repositório, PR, tipo de trabalho, checkout primário, diretório de corrida sob `TMPDIR`, e a instrução de ler e seguir `skills/poteto-mode/playbooks/catch-up.md` do plugin instalado. A Raiz grava `outcome.json` no diretório de corrida; o daemon lê. Saída sem `outcome.json` válido é `failed` com razão `no outcome` (ajustado na implementação, 2026-09-28: uma Raiz que não sobe, ou que sai sem `outcome.json` aceito em menos de dois minutos, é falha de lançamento, não tentativa, R55).
 
 ### Configuração, estado e rastro
 
