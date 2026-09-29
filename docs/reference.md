@@ -24,7 +24,7 @@ No shell, `claude plugin marketplace add byvict/pstack-vic` e `claude plugin ins
 ### Codex
 
 ```shell
-codex plugin marketplace add byvict/pstack-vic --ref v0.3.1
+codex plugin marketplace add byvict/pstack-vic --ref v0.3.2
 codex plugin add pstack@pstack-vic
 ```
 
@@ -152,15 +152,7 @@ Faça a execução semanal da skill `pstack:update-clis` (plugin pstack instalad
 
 ## Converge
 
-O [playbook Converge](../skills/poteto-mode/playbooks/converge.md) conduz um PR pronto até o merge, com veredito independente. Babysit continua até merge-ready e Shipping cuida das stacks. O [contrato Converge](../skills/poteto-mode/references/converge-contract.md) define evidências, prompts, publicação e recuperação.
-
-```shell
-node skills/poteto-mode/scripts/converge/converge-reconcile --repo Clinextapp/clinext --pr <n> --config .cursor/converge.json --output <relatorio-unico.json>
-node skills/poteto-mode/scripts/converge/converge-arm --repo Clinextapp/clinext --pr <n> --head <sha-completo> --verdict VERIFIED --dry-run
-node skills/poteto-mode/scripts/converge/converge-sweep --repo Clinextapp/clinext --dry-run
-```
-
-Os comandos da nuvem usam Node 24, `gh` e `git`, sem checkout local do repositório alvo. O `converge-certify`, que certifica a branch antes de o PR existir, roda na máquina local contra um checkout do head empurrado; veja a seção Certificado do contrato. O reconciliador lê o contrato fixado no trunk e preserva uma identidade nova por execução. O dry-run faz as leituras reais e falha quando falta algum requisito. Com `--pending`, o `converge-arm` arma sem esperar o CI do PR terminar. O `converge-sweep` roda `converge-arm --pending` em cada PR aberto na `main` com `verdict` confiável, sem auto-merge pendente, sem hold e fora de rascunho. Desarma o PR armado que tem hold, que o portão de veredito recusa ou em que o portão falha com erro, e, quando o contrato da `main` não carrega, todo PR armado na branch padrão. Com `--dry-run`, só lê. `prepare-lane.ts` prepara prompts completos e manifests exclusivos; `publish.ts` admite recibos e bytes de artefatos antes de calcular o veredito. Veja os argumentos e formatos no contrato. O modo `verdict-only` publica status de erro mesmo quando a prova passa, sem autorização de merge.
+A Raiz certifica o head antes de o PR existir, pelo [playbook Pré-PR](../skills/poteto-mode/playbooks/pre-pr.md): Corridas, Revisor pré-PR de uma Família fora da lista de Autores, voltas do Ajustador e, quando o contrato pede, o Certificador. A metade **Entregar** do mesmo playbook abre o PR, publica o Certificado e arma o auto-merge com `--pending`; quem mergeia é o GitHub, quando os checks obrigatórios passam. O que a Raiz não vê depois de encerrar fica com o Daemon, o `converge-local`, que chega na 0.4.0: o Varredor arma o que está certificado, e o job da Raiz lança uma Raiz sem supervisão que roda o [playbook Catch-up](../skills/poteto-mode/playbooks/catch-up.md) para reparar, recertificar ou certificar um PR aberto. O [playbook Converge](../skills/poteto-mode/playbooks/converge.md) descreve os dois jobs, o [contrato Converge](../skills/poteto-mode/references/converge-contract.md) define Certificado, gate, publicação e varredura, e o [ADR 0003](adr/0003-converge-sem-nuvem.md) registra a saída da nuvem. O owner do Cursor na nuvem, o `start.ts` e as Automations estão aposentados; a 0.5.0 remove o código.
 
 ## Skills
 

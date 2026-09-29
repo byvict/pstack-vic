@@ -1,25 +1,16 @@
 # Converge
 
-The local agent opens a ready PR and launches one Cursor Cloud PR owner. The owner stays in Cloud through independent verification, repair, a fresh verification, automatic merge and the resulting `main` Tests run. The owner is the only branch writer. The independent verifier is read-only and includes risk review. Both use Grok 4.7: `high` for simple work and `xhigh` for complex work. Read the [contract](../references/converge-contract.md) and [v1 plan](../../../docs/converge-v1.md).
+Converge is what happens to a PR after the Raiz certifies it and ends: on Victor's Mac, not in a cloud. The [Pré-PR](pre-pr.md) playbook publishes the Certificado and arms auto-merge with `--pending`; GitHub merges when the required checks pass. Two launchd jobs cover what the Raiz cannot see after it ends. Read the [contract](../references/converge-contract.md) and [`docs/pre-pr.md`](../../../docs/pre-pr.md). The Cursor cloud owner, its `start.ts` launcher and the three Automations are retired; 0.5.0 removes their code.
+
+## Two jobs
+
+| Job | Every 10 min | Model | Does |
+|---|---|---|---|
+| `com.pstack.converge-sweep` | `converge-local tick --job sweep` | none | Runs `converge-sweep` on every configured repository: arms each certified PR on trunk without a hold, disarms a held or refused one. Covers a stack child retargeted after its parent merged and a PR left unarmed on a red trunk. |
+| `com.pstack.converge-raiz` | `converge-local tick --job raiz` | the `converge raiz` row of the sheet | Lists the open PRs, skips drafts, held PRs, forks and leased branches, classifies the rest (`repair`, `recertify`, `certify`), and launches one Raiz on the lowest PR with work to run [Catch-up](catch-up.md). |
+
+`node <plugin>/skills/poteto-mode/scripts/converge/converge-local status` shows the configuration, the sheet row, `gh` and parent authentication, the leases and the ledgers. `node <plugin>/skills/poteto-mode/scripts/converge/converge-local run --repo OWNER/REPO --pr N` launches one attempt by hand through the same path. Caps: two failed attempts on a head or six hours from the first attempt apply the hold label with a comment; a new head or removing the label resets. Attempts are capped at two hours of wall time.
 
 ## Handoff from the local agent
 
-After opening and checking the ready PR, push the pstack tooling commit used by this flow. Run:
-
-```sh
-node skills/poteto-mode/scripts/converge/start.ts --repo OWNER/REPO --pr NUMBER --tooling-ref FULL_PSTACK_SHA --parent claude|codex
-```
-
-`--parent` names the harness running the handoff; `start.ts` reads the `pr owner` and `pr verifier` rows of that parent's model sheet (`~/.claude/pstack-models.md` or `~/.codex/pstack-models.md`) as effort floors. A missing row or an alias sets no floor (`high`). The sheet accepts only `cursor:grok-4.7@high` or `cursor:grok-4.7@xhigh` there; `/setup-pstack` changes them. Add `--effort xhigh` when the change crosses modules, changes behavior in a risky path, or needs deep investigation; it raises the owner above a `high` floor and never lowers an `xhigh` one. The owner prompt carries the verifier floor: at `xhigh` every verifier runs `xhigh`, at `high` the owner picks per change. `start.ts` uses a fixed local state directory for each repository and PR, checks the PR and Cursor model inventory, saves launch intent before the API request, injects the working Cursor API key as an encrypted run variable, and saves the returned agent/run receipt. A retry returns that receipt. If an intent exists without a receipt, recover that launch; do not create another owner. The local task ends after the receipt confirms launch. A failed or unknown launch is explicit and never authorizes merge.
-
-## Cloud owner loop
-
-The owner uses Node 24, `gh`, the pinned pstack commit, and its run-scoped Cursor key. The Cursor runtime secret `PSTACK_GITHUB_TOKEN` supplies `GH_TOKEN` for GitHub mutations and authenticated pushes; the sandbox's installation credential reads private check-runs because GitHub does not grant that endpoint to the fine-grained personal token. Scope the token to the managed repositories with Contents, Issues, Pull requests and Commit statuses write, plus Actions and Administration read. Do not expose the value in a remote URL or log. Rotate it before expiration. The required `verdict` protection context must accept a commit status from this credential without an app binding. The owner writes state before dispatch or branch mutation. Stop after two code repair attempts or six hours. CI waits and environment recovery do not spend a repair attempt. On an unknown writer outcome, recover the recorded agent/run before another writer. If the cycle cannot advance, post the cause, attempts and evidence, then apply `needs-victor`.
-
-1. Reconcile the current PR head with `converge-reconcile`. It creates a fresh round and selects CI-only or one independent verifier. A held PR stops. Use `--execution verdict-only` only for an authorized held proof; that result cannot merge.
-2. For full verification, prepare one `pr verifier` lane with `cursor:grok-4.7@high` or `cursor:grok-4.7@xhigh`, never below the verifier floor in the owner prompt. Run it read-only through `pstack-runner` with the exact repository and PR. The verifier checks risk, tests and the affected user paths. The owner admits its receipt and artifact bytes through `publish.ts`. CI-only runs need no model lane.
-3. Continue in the same Cloud run after publication. If `NOT VERIFIED`, fix the named defect on the PR branch, push, wait for pertinent CI and start a fresh round. If `INCONCLUSIVE`, recover the missing evidence and verify again without spending a code repair. A changed patch always gets fresh independent evidence. Do not turn an absent artifact into a pass.
-4. On `VERIFIED`, run `converge-arm` at the exact head. It requires the trusted verdict, latest required checks, effective branch protection including `verdict`, a green trunk Tests run and no human hold. Monitor pending auto-merge. Disarm if the head, verdict or hold changes, or when the 30 minute monitor expires.
-5. After merge, watch the push-to-main Tests run at the merged commit. Report the PR, agent runs, requested model and effort, evidence, correction, verdict, merge and main Tests result. A request receipt proves the requested model, not the model actually served.
-
-The owner may start a new Grok 4.7 `xhigh` owner for a complex escalation. It records the handoff and stops only after the new launch is confirmed. There is never more than one branch writer.
+There is none. The Raiz ends at the arm receipt of Pré-PR step 8. A session that must touch a PR branch the daemon may also touch takes the branch lease first (`converge-local lease`), which is what Pré-PR, Babysit and Shipping do.

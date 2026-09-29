@@ -19,15 +19,15 @@ A lane que escreve o código de um PR, sempre de família diferente da do Reviso
 _Avoid_: implementer, delegate
 
 **Revisor pré-PR**:
-A lane Grok somente-leitura que revisa diff, risco e resultado das corridas antes de o PR existir.
+A lane somente-leitura, de qualquer família que o runner lança a partir da Raiz, que revisa diff, risco e resultado das corridas antes de o PR existir.
 _Avoid_: verifier, reviewer local, bugbot
 
 **Certificador**:
-A lane Grok que dirige o aplicativo nas funcionalidades afetadas e grava as evidências do Certificado.
+A lane de uma família com modo `unsandboxed` (hoje só Grok) que dirige o aplicativo nas funcionalidades afetadas e grava as evidências do Certificado.
 _Avoid_: verifier, driver
 
 **Ajustador**:
-A lane Grok com escrita isolada que conserta os achados do Revisor pré-PR em worktree próprio; a Raiz revisa seu diff.
+A lane com escrita isolada, de qualquer família de CLI ou por alias (subagente nativo), que conserta os achados do Revisor pré-PR em worktree próprio; a Raiz revisa seu diff.
 _Avoid_: fixer, repair lane, owner
 
 ### Artefatos e fases
@@ -56,20 +56,32 @@ _Avoid_: feature, recipe, roteiro
 O fornecedor de um modelo (Claude, Codex, Grok); duas lanes são cruzadas quando suas famílias diferem.
 _Avoid_: provider, vendor, modelo
 
-### Nuvem
+### Depois do PR
 
 **Converge**:
-A metade do ciclo que roda no Cursor Cloud depois que o PR existe: verifica PR sem Certificado, repara CI vermelho e arma o merge do que está certificado.
-_Avoid_: pós-PR, cloud loop, owner loop
+O que acontece com um PR certificado depois que a Raiz encerra: dois jobs launchd na máquina de Victor varrem, reparam e certificam o que sobrou.
+_Avoid_: pós-PR, cloud loop, owner loop, nuvem
 
-**Reparo**:
-A corrida de Converge disparada por um workflow vermelho num PR certificado; conserta o head, obtém Certificado novo e arma o merge.
-_Avoid_: fix, retry, hotfix
+**Daemon**:
+O `converge-local` e seus dois jobs launchd, `com.pstack.converge-sweep` e `com.pstack.converge-raiz`, a cada dez minutos.
+_Avoid_: automation, cron, scheduler, watcher
 
 **Varredor**:
-A corrida de Converge disparada por um `Tests` concluído na `main`, que arma o merge de todo PR certificado com base na `main` e sem hold.
-_Avoid_: sweeper, cron, scheduler
+O job que roda o `converge-sweep` por script e arma o merge de todo PR certificado com base na `main` e sem hold.
+_Avoid_: sweeper, cron
+
+**Catch-up**:
+Uma tentativa de uma Raiz sem supervisão sobre um PR que já existe: reparo, recertificação ou certificação, seguida de entrega, com `outcome.json` no fim.
+_Avoid_: repair job, owner run
+
+**Reparo**:
+O catch-up de tipo `repair`: um PR certificado cujo check obrigatório ficou vermelho; conserta o head, obtém Certificado novo e arma.
+_Avoid_: fix, retry, hotfix
+
+**Posse**:
+O arquivo local que diz quem pode escrever numa branch por três horas, com pid opcional; o daemon nunca lança Raiz numa branch com posse viva de outro.
+_Avoid_: lock, claim, mutex
 
 **Hold**:
-O rótulo `needs-victor` que para qualquer merge automático até Victor retirá-lo; o check obrigatório `hold` falha enquanto o rótulo está no PR, e assim segura até um auto-merge já armado.
+O rótulo `needs-victor` que para qualquer merge automático até Victor retirá-lo; o check obrigatório `hold` falha enquanto o rótulo está no PR, e assim segura até um auto-merge já armado. O daemon o aplica quando esgota os tetos de um head.
 _Avoid_: bloqueio humano, pause

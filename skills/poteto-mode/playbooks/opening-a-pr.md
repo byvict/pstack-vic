@@ -28,7 +28,7 @@ After these sections, attach videos or screenshots when they prove a claim. Do n
 
 **Readiness.** Open every PR ready, never as a draft. With Origin, pass `--status open`. With `gh`, omit `--draft`. Cloud-agent PR tools default to draft, so set `draft: false` on every PR creation call. If a PR still opens as a draft, run `origin pr ready <number>` or `gh pr ready <number>` according to the resolved forge. Run `origin pr view <number>` or `gh pr view <number>` before you refer to PR status.
 
-**Converge handoff.** For a ready PR in a repository with `.cursor/converge.json`, launch the Cloud owner using [Converge](converge.md) after the PR URL and head are confirmed. Save the launch receipt. A missing or uncertain receipt is a failed handoff.
+**Pré-PR and arm.** In a repository whose `.cursor/converge.json` has a `prePr` block, run [Pré-PR](pre-pr.md) before `gh pr create`; its **Deliver** half creates the PR, publishes the Certificado and arms auto-merge with `--pending`. Arriving from Pré-PR step 7, create the PR and return to its step 8; Pré-PR is not run again. Never launch a cloud owner. A repository without `prePr` opens the PR and ends; nothing certifies it locally. In a `prePr` repository, the local converge daemon certifies a PR that arrives without a Certificado (Dependabot, a manual PR) on its next tick after 30 minutes.
 
 **Babysit.** Opening a PR does not start a babysit. Post the URL and keep building. Finish the phase or stack first. Run a separate babysit pass only when the user asks for one after the whole stack exists. A babysit for each new PR stalls the build and spends checks on commits that later waves restart. Push back when feedback drifts from intent.
 

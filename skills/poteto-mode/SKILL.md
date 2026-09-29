@@ -29,7 +29,7 @@ Remaining triggers:
 - Before review → the **no-comments** skill (`/no-comments`).
 - Shipping UI / IDE / CLI → the driver skill (`run` for CLIs/TUIs, `verify` for UIs). Both ship as Claude Code built-ins. For bug fixes, reproduce first on the same surface yourself. Hand to the user only under the narrow Bug fix step 1 exception.
 - Any PR-status request → the **Babysit** playbook (`playbooks/babysit.md`), not the standalone **babysit** skill, whose description matches the same words. That includes "babysit this", "get it green", "address the review-bot comments", and the commonest phrasing, "check on PR X" / "anything outstanding on X". Never triggered by merely opening a PR. Declare its mode before polling. The playbook's step 1 owns the request-to-mode mapping. Reaching for `drive` inside a phase agent stops that agent finishing its turn.
-- Asked to converge a PR ("converge PR X", "verify and merge X", "close X") → the **Converge** playbook (`playbooks/converge.md`). Babysit stops at merge-ready and Shipping lands stacks. Converge takes one PR from ready to merged with an independent verdict as a required check.
+- Asked to converge a PR ("converge PR X", "verify and merge X", "close X") → the **Catch-up** playbook (`playbooks/catch-up.md`) for one existing PR, or the **Converge** playbook (`playbooks/converge.md`) to understand what the local daemon does. Babysit stops at merge-ready and Shipping lands stacks.
 - Asked to land or ship a green stack → the **Shipping** playbook (`playbooks/shipping.md`). Green is not safe. Nothing gets armed before an independent per-PR verdict, and only the contiguous verified run from the root lands.
 - An automated PR-review bot or the agentic security review commented → skeptical posture. They catch real bugs and also file non-issues and nitpicks, so assess each on its merits and dismiss noise with a concrete reason instead of churning code. Triage fix / dismiss / ask per `references/bugbot-triage.md`.
 - Broken skill mid-task → fix it in its own PR. Don't block. Don't silently work around it.
@@ -132,7 +132,9 @@ A large or cross-cutting effort (a migration across many call sites, an ambitiou
 - **Authoring or modifying a skill.** Writing or editing a SKILL.md. `playbooks/authoring-a-skill.md`.
 - **Eval.** Testing how a skill, structure, or prompt change affects agent behavior before promoting it. `playbooks/eval.md`.
 - **Babysit.** Driving a PR or a stack to merge-ready: conflicts, review threads, CI. `playbooks/babysit.md`.
-- **Converge.** One ready PR through independent verification, repairs and merge. `playbooks/converge.md`.
+- **Converge.** What happens to a certified PR after the Raiz ends: the local daemon's sweep and catch-up jobs. `playbooks/converge.md`.
+- **Pré-PR.** Certifying a pushed head before the PR exists: runs, cross-family review, adjust rounds, certifier, Certificado. Invoked by Opening a PR. `playbooks/pre-pr.md`.
+- **Catch-up.** One attempt on one existing PR: repair, re-certify or certify, then deliver; what the local converge daemon launches. `playbooks/catch-up.md`.
 - **Shipping.** The half after Babysit. Independently verifying a green stack, then landing the contiguous verified run bottom-up through `gh` by default or Origin when its CLI is available. `playbooks/shipping.md`.
 - **Autonomous run.** A long task to drive to completion without stopping ("run until done", "/loop until X"). `playbooks/autonomous-run.md`.
 - **Orchestrate.** A standing project handed to one coordinator chat: multi-day, many stacked PRs, dozens to hundreds of subagents, minimal human turns ("run this whole project", "own this migration until it lands"). Distinct from Autonomous run, which drives one task to a predicate. Work one agent could finish inside the session's budget routes there, not here, however program-shaped the phrasing sounds. `playbooks/orchestrate.md`.
