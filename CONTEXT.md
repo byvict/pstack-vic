@@ -40,6 +40,10 @@ _Avoid_: certificação local, converge local
 O dossiê preso ao head exato do PR, publicado como status `verdict` e comentário JSON, com corridas, evidências e recibos das lanes.
 _Avoid_: verdict, dossiê, certificação
 
+**Classe leve**:
+A trilha do Pré-PR para uma mudança cujos caminhos estão todos na lista `prePr.light.paths` do contrato, ou que só sobe dependência, sem superfície nem classe de risco: roda as Corridas e o Revisor pré-PR com o prompt estreito, sem Certificador, e sai com Certificado `Light`.
+_Avoid_: fast path, trilha rápida, modo leve
+
 **Corrida**:
 Uma execução registrada de preflight, suíte ou verificação, com comando, código de saída e digest da saída.
 _Avoid_: run, check, job
