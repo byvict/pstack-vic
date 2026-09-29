@@ -76,7 +76,7 @@ export async function tickRaiz(config: LocalConfig, options: RaizTickOptions): P
     takeLease(lease, { by: leaseBy, ttlHours: LEASE_TTL_HOURS, pid: process.pid, now });
     report.launched = launch;
     try {
-      const input: RaizInput = { repo: repo.repo, pr: number, kind: classified.work, head: classified.head, branch: classified.branch, checkout: repo.checkout, runDirectory: launch.runDirectory, pluginDir: config.pluginDir, leaseBy };
+      const input: RaizInput = { repo: repo.repo, pr: number, kind: classified.work, head: classified.head, branch: classified.branch, checkout: repo.checkout, runDirectory: launch.runDirectory, pluginDir: config.pluginDir, sheetPath: config.sheetPath, leaseBy };
       const launched = await launchRaiz(input, lane, { capMs: options.capMs, env: options.env });
       try { launch.attempt = attemptFrom(input, launched, options.launchFailureMs); }
       catch (error) {

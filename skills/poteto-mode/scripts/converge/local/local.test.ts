@@ -156,6 +156,7 @@ test('the tick launches the Raiz on the pending PR, records the attempt and rele
   const prompt = readFileSync(join(report.launched.runDirectory, 'prompt.txt'), 'utf8');
   assert.match(prompt, /^KIND=certify$/m);
   assert.match(prompt, /^LEASE_BY=daemon:\d+$/m);
+  assert.match(prompt, /^SHEET=.*sheet\.md$/m, 'the Raiz reads the sheet the daemon read');
 });
 for (const [name, change, recorded] of [
   ['a hold label applied during the attempt', 's.hold = true', null],
