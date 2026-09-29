@@ -38,6 +38,24 @@ export async function api(endpoint: string, body?: unknown): Promise<unknown> {
   if (body !== undefined) return JSON.parse(command('gh', ['api', endpoint, '--method', 'POST', '--input', '-'], JSON.stringify(body)));
   return JSON.parse(await commandAsync('gh', ['api', endpoint]));
 }
+export type Conditional = { modified: false; etag: string } | { modified: true; etag: string; body: string };
+/** A GET that sends `If-None-Match` when an ETag is known. gh exits 1 on a 304, so the answer is the status line `gh api -i` prints first, not the exit code. GitHub counts no 304 against the rate limit. A 200 without an ETag is refused: its resource could never read as unchanged. */
+export async function conditional(endpoint: string, etag: string | null): Promise<Conditional> {
+  let output: string;
+  try { output = await commandAsync('gh', ['api', endpoint, '-i', ...(etag === null ? [] : ['-H', `If-None-Match: ${etag}`])]); }
+  catch (error) {
+    if (!(error instanceof RequestError)) throw error;
+    output = error.response;
+  }
+  const blank = /\r?\n\r?\n/.exec(output);
+  const head = (blank ? output.slice(0, blank.index) : output).split(/\r?\n/);
+  const status = /^HTTP\/\S+ (\d{3})\b/.exec(head[0] ?? '')?.[1];
+  if (status === '304' && etag !== null) return { modified: false, etag };
+  if (status !== '200') throw new RequestError(status ? `answered ${status}` : 'gh request failed', output);
+  const tag = head.slice(1).find(line => /^etag:/i.test(line))?.replace(/^etag:\s*/i, '').trim();
+  if (!tag) throw new Error('answered 200 without an ETag');
+  return { modified: true, etag: tag, body: blank ? output.slice(blank.index + blank[0].length) : '' };
+}
 export async function apiDiff(endpoint: string): Promise<string> {
   return commandAsync('gh', ['api', endpoint, '-H', 'Accept: application/vnd.github.diff']);
 }

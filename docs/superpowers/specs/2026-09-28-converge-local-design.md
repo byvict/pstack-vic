@@ -43,7 +43,7 @@ A fronteira continua sendo o Certificado: comentário JSON versionado mais statu
 
 ## Daemon `converge-local`
 
-Um comando novo, `skills/poteto-mode/scripts/converge/converge-local`, Node 24 sem dependências, com dois jobs launchd que ele mesmo instala.
+Um comando novo, `skills/poteto-mode/scripts/converge/converge-local`, Node 24 sem dependências, com dois jobs launchd que ele mesmo instala (ajustado na implementação, 2026-09-29, 0.4.6: um terceiro job, `com.pstack.converge-watch`, o Vigia, roda a cada 60 segundos, pergunta ao GitHub só com GET condicional se a lista de PRs abertos, os checks da ponta da `main` ou os checks do head de um PR aberto mudaram, e toca a campainha dos dois jobs abaixo; nunca lança modelo nem escreve no GitHub, e um 304 não gasta o limite de chamadas).
 
 ### Job 1: `com.pstack.converge-sweep`
 
@@ -89,10 +89,10 @@ O prompt é um template fixo: repositório, PR, tipo de trabalho, checkout prim�
 ### Configuração, estado e rastro
 
 - `~/.config/pstack/converge-local.json`: `parent` (`claude` ou `codex`), `repos` (lista de `{ repo, checkout }`), `intervalMinutes` (padrão 10), `pluginDir` opcional, `stateDirectory` opcional.
-- Estado em `~/Library/Application Support/pstack/converge-local/`: `leases/` (ajustado na implementação, 2026-09-28), `ledger/`, `last-tick.json` por job.
-- Logs em `~/Library/Logs/pstack-converge-sweep.log` e `pstack-converge-raiz.log`.
+- Estado em `~/Library/Application Support/pstack/converge-local/`: `leases/` (ajustado na implementação, 2026-09-28), `ledger/`, `last-tick.json` por job (ajustado na implementação, 2026-09-29, 0.4.6: e `watch/<owner>-<repo>.json`, as ETags do Vigia).
+- Logs em `~/Library/Logs/pstack-converge-sweep.log` e `pstack-converge-raiz.log` (ajustado na implementação, 2026-09-29, 0.4.6: e `pstack-converge-watch.log`, só com os ticks do Vigia que acordaram um job ou falharam).
 - Diretório de corrida de cada Raiz sob `${TMPDIR:-/tmp}/converge-local/<owner>-<repo>-<pr>-<head8>-<n>/`, como o Pré-PR exige (nota N6).
-- Subcomandos: `install` (escreve e carrega os dois plists), `uninstall`, `tick --job sweep|raiz [--dry-run]`, `status` (configuração, sheet, autenticação de `gh` e do parent, posses e ledger; serve de doctor), `lease` (ajustado na implementação, 2026-09-28), `release`, `run --repo R --pr N [--kind K]` (o mesmo caminho do daemon, disparado à mão).
+- Subcomandos: `install` (escreve e carrega os dois plists; ajustado na implementação, 2026-09-29, 0.4.6: os três), `uninstall`, `tick --job sweep|raiz [--dry-run]` (ajustado na implementação, 2026-09-29, 0.4.6: e `watch`), `status` (configuração, sheet, autenticação de `gh` e do parent, posses e ledger; serve de doctor), `lease` (ajustado na implementação, 2026-09-28), `release`, `run --repo R --pr N [--kind K]` (o mesmo caminho do daemon, disparado à mão).
 
 ## Raiz de catch-up e playbooks
 
@@ -198,7 +198,7 @@ Prova: o próximo PR real do Clinext pelo fluxo inteiro, e o primeiro PR do Depe
 
 ### Volta atrás
 
-`converge-local uninstall` para os dois jobs. O Pré-PR interativo continua funcionando e o auto-merge do GitHub não depende do daemon.
+`converge-local uninstall` para os dois jobs (ajustado na implementação, 2026-09-29, 0.4.6: os três). O Pré-PR interativo continua funcionando e o auto-merge do GitHub não depende do daemon.
 
 ## Remoção da nuvem (PR 4)
 

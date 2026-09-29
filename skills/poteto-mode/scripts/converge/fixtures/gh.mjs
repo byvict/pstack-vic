@@ -1,12 +1,21 @@
 #!/usr/bin/env node
 import { readFileSync, writeFileSync, appendFileSync, renameSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 const file = process.env.CONVERGE_FIXTURE;
 const state = JSON.parse(readFileSync(file, 'utf8'));
 const args = process.argv.slice(2);
 appendFileSync(file + '.calls', JSON.stringify(args) + '\n');
+/** With `-i`, gh prints the status line and the headers before the body. GitHub's ETag is derived from the body, and a request whose `If-None-Match` names it answers 304 without a body, on which gh exits 1. */
 function send(value) {
   const color = (process.env.FORCE_COLOR && process.env.FORCE_COLOR !== '0') || (process.env.CLICOLOR_FORCE && process.env.CLICOLOR_FORCE !== '0');
   const text = JSON.stringify(args.includes('--slurp') ? [value] : value);
+  if (args.includes('-i')) {
+    const etag = `W/"${createHash('sha256').update(text).digest('hex')}"`;
+    const sent = args.find((arg, i) => args[i - 1] === '-H' && arg.startsWith('If-None-Match: '));
+    if (sent === `If-None-Match: ${etag}`) { process.stdout.write(`HTTP/2.0 304 Not Modified\nEtag: ${etag}\n\n`); process.exit(1); }
+    process.stdout.write(`HTTP/2.0 200 OK\nContent-Type: application/json; charset=utf-8\n${state.omitEtag ? '' : `Etag: ${etag}\n`}\n${text}`);
+    return;
+  }
   process.stdout.write(color ? '\x1b[32m' + text + '\x1b[0m' : text);
 }
 function save() { const next = `${file}.${process.pid}`; writeFileSync(next, JSON.stringify(state)); renameSync(next, file); }
@@ -89,7 +98,9 @@ else if (args[0] === 'api') {
   else if (endpoint === `${root}/actions/workflows`) send({ workflows: [{ id: state.workflowId, name: 'Tests', path: '.github/workflows/tests.yml', state: 'active' }] });
   else if (endpoint.includes('/check-runs')) {
     if (state.requireInstallationChecks && (process.env.GH_TOKEN || process.env.GITHUB_TOKEN)) fail();
-    send({ check_runs: state.checks.map(c => ({ ...c, head_sha: state.head })) });
+    // `state.refChecks` gives one commit, named by sha or branch as the endpoint names it, its own check runs.
+    const ref = endpoint.split('/')[4];
+    send({ check_runs: (state.refChecks?.[ref] ?? state.checks).map(c => ({ ...c, head_sha: state.head })) });
   }
   else if (endpoint === `${root}/actions/workflows/${state.workflowId}/runs`) send({ workflow_runs: [{ id: 8, workflow_id: state.workflowId, head_sha: query.get('head_sha'), event: query.get('event') ?? 'pull_request', head_branch: 'main', run_attempt: 1, status: 'completed', conclusion: state.trunkRed && query.get('event') === 'push' ? 'failure' : 'success', ...(query.get('event') === 'push' ? {} : state.runOverrides) }] });
   else if (endpoint === `${root}/actions/runs/${state.runOverrides.id ?? 8}/attempts/${state.runOverrides.run_attempt ?? 1}/jobs`) send({ jobs: state.jobs });
