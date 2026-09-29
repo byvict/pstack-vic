@@ -87,7 +87,7 @@ A fronteira continua sendo o Certificado. A linha `pre-pr reviewer` continua ace
 
 Chave `Pstack-Author`, comparada sem distinguir maiúsculas, como o git faz com trailers. Valor: `<provider>` ou `<provider>:<model>@<effort>`, com `provider` da matriz e, na forma longa, um descritor que `resolveDescriptor` aceita. Uma linha por lane distinta; repetições contam uma vez. O bloco de trailers é o último parágrafo da mensagem, com todas as linhas na forma `Chave: valor`.
 
-Regra enunciada uma vez, em `provider-dispatch.md` (seção nova, prosa fora dos blocos gerados), e citada de: `opening-a-pr.md` (**Commits**: o rebase preserva os trailers e nenhum commit com código de lane sai sem o seu), `pre-pr.md` (passo 1: `authors` do relatório tem de nomear toda família que a sessão sabe que escreveu a branch, a própria inclusive; falta é commit sem trailer: reword, push de novo com `--force-with-lease`, `RUN` novo), `feature.md`, `refactoring.md`, `bug-fix.md`, `perf-issue.md`, `hillclimb.md` (o brief da lane delegada manda commitar com `--trailer`), `arena/SKILL.md` (Outputs: o commit que grava o artefato leva um trailer por candidata base e enxertada) e `swarm/SKILL.md` (Phase D: um por worker cujo código entrou).
+Regra enunciada uma vez, em `provider-dispatch.md` (seção nova, prosa fora dos blocos gerados), e citada de: `opening-a-pr.md` (**Commits**: o rebase preserva os trailers e nenhum commit com código de lane sai sem o seu), `pre-pr.md` (passo 1: `authors` do relatório tem de nomear toda família que a sessão sabe que escreveu a branch, a própria inclusive; falta é commit sem trailer: reword, push de novo com `--force-with-lease`, `RUN` novo), `feature.md`, `bug-fix.md`, `perf-issue.md`, `hillclimb.md` (o brief da lane delegada manda commitar com `--trailer`; `refactoring.md` não delega por papel e não muda), `arena/SKILL.md` (Outputs: o commit que grava o artefato leva um trailer por candidata base e enxertada) e `swarm/SKILL.md` (Phase D: um por worker cujo código entrou).
 
 Filho de stack: o compare `contract...head` inclui os commits do pai, então os autores do pai entram em `AUTHORS` do filho. É o esperado: o revisor do filho lê o diff do pai também.
 
@@ -126,7 +126,7 @@ O código da linha do sheet mora num módulo novo, `skills/poteto-mode/scripts/c
 
 - `pre-pr.md`: o passo 0 sai. O passo 1 ("Lease, push, report, reviewer") ganha, depois do `report`: a conferência de `authors`; o comando `reviewer` com `--parent` = o pai desta sessão e `--author-provider` = as famílias que a sessão sabe que escreveram a branch, a própria inclusive; a parada quando ele recusa; e a antecipação de N35: quando `hardList` do relatório tem entrada `requires-proof` e a lane escolhida não é Grok, parar aqui (interativo) ou encerrar `failed` com `Reviewer risk proof unavailable` (catch-up), sem lançar nada, porque o head não certifica nesta versão. O passo 3 escreve o `descriptor` de `reviewer.json` no manifesto e lança por ele. O passo 4 diz que o Ajustador commita sem trailer. O passo 6 passa o mesmo `--author-provider`. O parágrafo de N35 no passo 3 deixa de mandar trocar a linha pelo `/setup-pstack`, o que não resolve quando Grok é Autor.
 - `catch-up.md`: `SHEET` no **Input**; passo 4: `--author-provider` = união das linhas de autoria do sheet mais `converge raiz`, `--sheet SHEET`; passo 6: a recusa do `reviewer` é `failed` com o texto em `reason`.
-- `opening-a-pr.md`, `feature.md`, `refactoring.md`, `bug-fix.md`, `perf-issue.md`, `hillclimb.md`, `arena/SKILL.md`, `swarm/SKILL.md`: as frases da seção **Trailer de autoria**.
+- `opening-a-pr.md`, `feature.md`, `bug-fix.md`, `perf-issue.md`, `hillclimb.md`, `arena/SKILL.md`, `swarm/SKILL.md`: as frases da seção **Trailer de autoria**.
 
 ## Daemon
 
@@ -138,8 +138,7 @@ O código da linha do sheet mora num módulo novo, `skills/poteto-mode/scripts/c
 
 ## Testes
 
-- `github.test.ts`: `compared` devolve os commits; `total_commits` maior que a lista recusa.
-- `certify.test.ts`: `report` lê trailer longo e nu, deduplica e ordena; commit sem trailer não contribui; valor inválido vira o gap; execução `converge` tem `authors` vazio.
+- `certify.test.ts`, pelo comando `report`: o compare devolve os commits e `total_commits` maior que a lista recusa; `report` lê trailer longo e nu, deduplica e ordena; commit sem trailer não contribui; valor inválido vira o gap; execução `converge` tem `authors` vazio.
 - `certify.test.ts`: `reviewer` escolhe a primeira elegível; pula família declarada e família de trailer; recusa sem elegível com a mensagem; recusa linha inválida (alias, família nativa do pai, família repetida, família desconhecida, linha ausente); recusa segunda chamada no mesmo `RUN`; `assemble` recusa sem `reviewer.json`, com round diferente, com união diferente, com lane de descritor diferente; grava a união ordenada.
 - `publish.test.ts`: o publisher recusa certificado cujo `authorProviders` não tem uma família de trailer do PR.
 - `setup-pstack.test.ts`: lista aceita; família repetida, alias, família nativa e lista vazia recusadas; aviso só quando todas as lanes colidem; sheets de primeiro uso por pai com a reserva; a reserva gera probe quando falta no ledger.
