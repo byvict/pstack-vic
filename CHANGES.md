@@ -788,5 +788,5 @@ Parte 2 do plano [`docs/superpowers/plans/2026-09-28-converge-local.md`](docs/su
 
 ## Verificação
 
-- `npm test`: 611 testes, 0 falhas, os mesmos da 0.3.0; nenhum teste muda. Os testes de manifesto conferem 0.3.2 nos quatro arquivos de versão e nas linhas `--ref` do `README.md` e do `docs/reference.md`.
+- `npm test`: 626 testes, 0 falhas, os mesmos da 0.3.1; nenhum teste muda. Os testes de manifesto conferem 0.3.2 nos quatro arquivos de versão e nas linhas `--ref` do `README.md` e do `docs/reference.md`.
 - `npm run collision:check`, `npm run matrix:check` e `git diff --check` limpos. Todo link markdown dos arquivos tocados resolve nesta branch.
