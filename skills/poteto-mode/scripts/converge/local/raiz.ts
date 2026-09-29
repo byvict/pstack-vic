@@ -3,14 +3,13 @@ import { closeSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync, wri
 import { constants } from 'node:os';
 import { join } from 'node:path';
 import { loadMatrix, resolveDescriptor, type ModelMatrix } from '../../../../../scripts/model-matrix.ts';
+import { sheetRow } from '../sheet.ts';
 import { ATTEMPT_CAP_HOURS, type Attempt, type WorkKind } from './ledger.ts';
 import { parseOutcome, type OutcomeFile } from './outcome.ts';
 
 export interface RaizLane { provider: string; model: string; effort: string }
 export function raizRow(sheetText: string): string {
-  const rows = sheetText.split('\n').map(line => line.trimEnd()).filter(line => line.startsWith('converge raiz: '));
-  if (rows.length !== 1) throw new Error(rows.length ? 'The model sheet has more than one converge raiz row' : 'The model sheet has no converge raiz row; run /setup-pstack');
-  const lanes = rows[0].slice('converge raiz: '.length).split(',').map(s => s.trim()).filter(Boolean);
+  const lanes = sheetRow(sheetText, 'converge raiz');
   if (lanes.length !== 1) throw new Error('converge raiz takes one lane');
   return lanes[0];
 }
