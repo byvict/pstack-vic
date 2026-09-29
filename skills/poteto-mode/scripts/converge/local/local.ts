@@ -7,8 +7,9 @@ import { api, command, openPulls, pull, trusted as trustedContract, viewer, type
 import { sweep, type Swept } from '../sweep.ts';
 import { classify, skipCause, type Classified } from './classify.ts';
 import { defaultConfigFile, defaultStateDirectory, loadConfig, type LocalConfig, type RepoConfig } from './config.ts';
-import { install, uninstall, JOBS, type Job } from './launchd.ts';
+import { install, uninstall, JOBS, WAKEABLE, type Job, type Wakeable } from './launchd.ts';
 import { consumeWakes, nudge } from './wake.ts';
+import { tickWatch, watchErrors } from './watch.ts';
 import { currentLedger, deferredBackoffUntil, exhausted, launchBackoffUntil, ledgerFile, markHeld, readLedger, withAttempt, withLaunchFailure, workKinds, writeLedger, DEFERRED_BACKOFF_MINUTES, LAUNCH_FAILURE_BACKOFF_MINUTES, type Attempt, type Ledger, type WorkKind } from './ledger.ts';
 import { LEASE_TTL_HOURS, leaseFile, readLease, releaseLease, takeLease, type Lease } from './lease.ts';
 import { attemptFrom, launchRaiz, raizLane, LaunchFailure, type RaizInput } from './raiz.ts';
@@ -120,7 +121,7 @@ export async function tickRaiz(config: LocalConfig, options: RaizTickOptions): P
       catch (error) { report.errors.push(`${repo.repo}#${number}: ${message(error)}`); }
       if (!report.launched) continue;
       // The next pending PR must not wait for the interval, and the sweep arms what the attempt certified: both jobs get a wake, which launchd serves once this tick exits.
-      if (!options.dryRun) nudge(config.stateDirectory, JOBS);
+      if (!options.dryRun) nudge(config.stateDirectory, WAKEABLE);
       return report;
     }
   }
@@ -140,7 +141,9 @@ function sweepErrors(report: SweepReport): string[] {
   return report.repos.flatMap(r => [...(r.failure ? [`${r.repo}: ${r.failure}`] : []), ...r.swept.filter(s => s.outcome === 'refused').map(s => `${r.repo}#${s.pr}: refused: ${s.reason}`)]);
 }
 interface Unreadable { file: string; error: string }
-export interface LastTick { job: Job; startedAt: string; endedAt: string; exitCode: number; errors: string[]; wakes: number }
+/** The watch job has no wake queue, so its `wakes` is 0; it records instead how many reads it made, which resources changed and which jobs it woke. */
+interface WatchSummary { reads: number; changed: string[]; woken: Wakeable[] }
+export interface LastTick extends Partial<WatchSummary> { job: Job; startedAt: string; endedAt: string; exitCode: number; errors: string[]; wakes: number }
 function lastTickFile(stateDirectory: string, job: Job): string { return join(stateDirectory, `last-tick-${job}.json`); }
 function writeLastTick(stateDirectory: string, record: LastTick): void {
   const file = lastTickFile(stateDirectory, record.job);
@@ -163,15 +166,23 @@ function printErrors(errors: string[]): void { for (const error of errors) proce
 async function tick(config: LocalConfig, job: Job, dryRun: boolean, now: number | undefined): Promise<number> {
   const startedAt = new Date().toISOString();
   // Before the sheet and before GitHub: a wake file left behind would make launchd start the tick again every ThrottleInterval, a bad sheet row included.
-  const wakes = dryRun ? 0 : consumeWakes(config.stateDirectory, job);
+  const wakes = dryRun || job === 'watch' ? 0 : consumeWakes(config.stateDirectory, job);
   let errors: string[];
+  let watched: WatchSummary | null = job === 'watch' ? { reads: 0, changed: [], woken: [] } : null;
   try {
     if (job === 'sweep') { const report = await tickSweep(config, { dryRun }); print(report); errors = sweepErrors(report); }
-    else { const report = await tickRaiz(config, { dryRun, now }); print(report); errors = report.errors; }
+    else if (job === 'raiz') { const report = await tickRaiz(config, { dryRun, now }); print(report); errors = report.errors; }
+    else {
+      const report = await tickWatch(config, { dryRun });
+      errors = watchErrors(report);
+      // 1440 ticks a day: a quiet one leaves only last-tick-watch.json, so the log holds the ticks that woke a job or failed.
+      if (dryRun || report.woken.length || errors.length) print(report);
+      watched = { reads: report.repos.reduce((sum, r) => sum + r.reads, 0), changed: report.repos.flatMap(r => r.changed), woken: report.woken };
+    }
   } catch (error) { errors = [message(error)]; }
   printErrors(errors);
   const exitCode = errors.length ? 1 : 0;
-  if (!dryRun) writeLastTick(config.stateDirectory, { job, startedAt, endedAt: new Date().toISOString(), exitCode, errors, wakes });
+  if (!dryRun) writeLastTick(config.stateDirectory, { job, startedAt, endedAt: new Date().toISOString(), exitCode, errors, wakes, ...watched });
   return exitCode;
 }
 function probe(binary: string, args: string[]): string {
@@ -198,7 +209,7 @@ export function status(config: LocalConfig, now = Date.now()): Record<string, un
   const lastTick = Object.fromEntries(JOBS.map(job => [job, readLastTick(config.stateDirectory, job)]));
   return { config, raiz, gh: probe('gh', ['auth', 'status']), parent: config.parent === 'claude' ? probe('claude', ['auth', 'status', '--json']) : probe('codex', ['login', 'status']), leases, ledgers, lastTick };
 }
-const USAGE = 'Usage: converge-local <install|uninstall|status|tick --job sweep|raiz [--dry-run]|nudge [--job sweep|raiz]|lease --repo R --branch B [--by NAME] [--ttl H] [--pid N]|release --repo R --branch B [--by NAME]|run --repo R --pr N [--kind K] [--dry-run]> [--config FILE]';
+const USAGE = 'Usage: converge-local <install|uninstall|status|tick --job sweep|raiz|watch [--dry-run]|nudge [--job sweep|raiz]|lease --repo R --branch B [--by NAME] [--ttl H] [--pid N]|release --repo R --branch B [--by NAME]|run --repo R --pr N [--kind K] [--dry-run]> [--config FILE]';
 export async function main(args: string[]): Promise<number> {
   const [subcommand, ...rest] = args;
   try {
@@ -213,7 +224,7 @@ export async function main(args: string[]): Promise<number> {
       case 'install': { const c = config(); print(install({ pluginDir: c.pluginDir, configFile: c.file, intervalMinutes: c.intervalMinutes, logDirectory: c.logDirectory, stateDirectory: c.stateDirectory, path: process.env.PATH ?? '', nodePath: process.execPath, parent: c.parent, sheetPath: c.sheetPath })); return 0; }
       case 'nudge': {
         // Like lease: a session wakes the daemon whether or not it is configured, and a file that exists names where the jobs watch.
-        const jobs = values.job === undefined ? JOBS : JOBS.filter(name => name === values.job);
+        const jobs = values.job === undefined ? WAKEABLE : WAKEABLE.filter(name => name === values.job);
         if (!jobs.length) throw new Error(USAGE);
         print({ woken: nudge(stateDirectory(), jobs) }); return 0;
       }

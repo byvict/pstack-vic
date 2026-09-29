@@ -59,12 +59,16 @@ _Avoid_: provider, vendor, modelo
 ### Depois do PR
 
 **Converge**:
-O que acontece com um PR certificado depois que a Raiz encerra: dois jobs launchd na máquina de Victor varrem, reparam e certificam o que sobrou.
+O que acontece com um PR certificado depois que a Raiz encerra: jobs launchd na máquina de Victor vigiam o GitHub, varrem, reparam e certificam o que sobrou.
 _Avoid_: pós-PR, cloud loop, owner loop, nuvem
 
 **Daemon**:
-O `converge-local` e seus dois jobs launchd, `com.pstack.converge-sweep` e `com.pstack.converge-raiz`, a cada dez minutos.
+O `converge-local` e seus três jobs launchd: `com.pstack.converge-sweep` e `com.pstack.converge-raiz`, a cada dez minutos e quando alguém toca a campainha, e `com.pstack.converge-watch`, o Vigia, a cada minuto.
 _Avoid_: automation, cron, scheduler, watcher
+
+**Vigia**:
+O job que, a cada minuto, pergunta ao GitHub só com GET condicional se a lista de PRs abertos, os checks da ponta da `main` ou os checks do head de um PR aberto mudaram, e toca a campainha do Varredor e do job da Raiz; nunca lança modelo nem escreve no GitHub.
+_Avoid_: watcher, poller, webhook
 
 **Varredor**:
 O job que roda o `converge-sweep` por script e arma o merge de todo PR certificado com base na `main` e sem hold.

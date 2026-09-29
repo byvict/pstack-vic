@@ -4,10 +4,10 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { fixture, moveTrunk, publishCertificate } from '../fixtures/setup.ts';
-import { defaultStateDirectory, loadConfig } from './config.ts';
+import { defaultConfigFile, defaultStateDirectory, loadConfig } from './config.ts';
 import { ledgerFile, writeLedger, DEFERRED_BACKOFF_MINUTES, HEAD_WINDOW_HOURS, LAUNCH_FAILURE_BACKOFF_MINUTES, MAX_DEFERRED_ATTEMPTS, MAX_FAILED_ATTEMPTS, MAX_LAUNCH_FAILURES, type Attempt, type Ledger } from './ledger.ts';
 import { leaseFile, takeLease } from './lease.ts';
-import { assertRaizRow, missingCommands, plist } from './launchd.ts';
+import { assertRaizRow, install, missingCommands, plist, uninstall } from './launchd.ts';
 import { tickRaiz } from './local.ts';
 
 const t0 = Date.parse('2026-09-28T12:00:00Z');
@@ -417,7 +417,8 @@ test('a real tick records how it ended in last-tick-JOB.json, a dry run does not
   const status = f.run('converge-local', ['status', '--config', file]);
   assert.equal(status.status, 0, status.stderr);
   const { lastTick } = JSON.parse(status.stdout);
-  assert.deepEqual(Object.keys(lastTick), ['sweep', 'raiz']);
+  assert.deepEqual(Object.keys(lastTick), ['sweep', 'raiz', 'watch']);
+  assert.equal(lastTick.watch, null, 'the watch job has not ticked');
   for (const [job, errors] of [['raiz', ['Example/app: gh request failed']], ['sweep', ['Example/app: gh request failed']]] as [string, string[]][]) {
     const record = lastTick[job];
     assert.deepEqual(Object.keys(record), ['job', 'startedAt', 'endedAt', 'exitCode', 'errors', 'wakes'], job);
@@ -440,7 +441,7 @@ test('status reports the sheet row, the probes, the valid leases and the ledgers
   assert.equal(report.parent, 'ok');
   assert.deepEqual(report.leases.map((l: { by: string }) => l.by), ['interactive']);
   assert.deepEqual(report.ledgers.map((l: { pr?: number; error?: string }) => l.pr ?? l.error?.replace(/ .*/, '')), [1, 'Invalid']);
-  assert.deepEqual(report.lastTick, { sweep: null, raiz: null }, 'no tick has run');
+  assert.deepEqual(report.lastTick, { sweep: null, raiz: null, watch: null }, 'no tick has run');
 });
 const nvm = '/Users/v/.nvm/versions/node/v24.21.0/bin';
 test('the plist runs the tick through a non-login zsh every interval and whenever its wake directory holds a file, with the install PATH and the absolute node, and logs to one file per job', () => {
@@ -486,6 +487,32 @@ test('install refuses a sheet without a valid converge raiz row, names the cause
   for (const [sheet, cause] of refused) {
     assert.throws(() => assertRaizRow('/s/pstack-models.md', sheet, 'claude'), (error: Error) => error.message.startsWith('install needs a valid converge raiz row in /s/pstack-models.md (') && cause.test(error.message) && error.message.endsWith('); run /setup-pstack, then install again'), String(sheet));
   }
+});
+test('install writes and loads the sweep, raiz and watch jobs, with a wake directory for the two wakeable ones; uninstall boots out and removes all three', t => {
+  const root = mkdtempSync(join(tmpdir(), 'install-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const [home, bin, shadow, state] = ['home', 'bin', 'shadow', 'state'].map(name => join(root, name));
+  for (const directory of [bin, shadow]) mkdirSync(directory);
+  for (const name of ['gh', 'claude']) writeFileSync(join(bin, name), '#!/bin/sh\n', { mode: 0o755 });
+  // The launchctl seam is the guard; this shadow only catches a regression that bypasses it before it reaches the real jobs.
+  writeFileSync(join(shadow, 'launchctl'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  const sheetPath = join(root, 'sheet.md'); writeFileSync(sheetPath, 'converge raiz: claude:claude-opus-5-5@xhigh\n');
+  const calls: string[][] = [];
+  const run = (args: string[]) => { calls.push(args); return { status: 0, output: '' }; };
+  const labels = ['com.pstack.converge-sweep', 'com.pstack.converge-raiz', 'com.pstack.converge-watch'];
+  const plists = labels.map(l => join(home, 'Library', 'LaunchAgents', `${l}.plist`));
+  const domain = `gui/${process.getuid?.() ?? 501}`;
+  const saved = process.env.PATH;
+  process.env.PATH = `${shadow}:${saved}`;
+  t.after(() => { process.env.PATH = saved; });
+  const installed = install({ pluginDir: root, configFile: defaultConfigFile(home), intervalMinutes: 10, logDirectory: join(root, 'logs'), stateDirectory: state, path: bin, nodePath: process.execPath, parent: 'claude', sheetPath }, home, run);
+  assert.deepEqual(installed, { written: plists, loaded: labels });
+  assert.deepEqual(calls, labels.flatMap((l, i) => [['bootout', `${domain}/${l}`], ['bootstrap', domain, plists[i]]]));
+  assert.match(readFileSync(plists[2], 'utf8'), /<key>StartInterval<\/key><integer>60<\/integer>/);
+  assert.deepEqual(readdirSync(join(state, 'wake')).sort(), ['raiz', 'sweep'], 'launchd watches a wake directory from the bootstrap on; the watch job has none');
+  calls.length = 0;
+  assert.deepEqual(uninstall(home, run), labels);
+  assert.deepEqual(calls, labels.map(l => ['bootout', `${domain}/${l}`]));
+  assert.ok(plists.every(file => !existsSync(file)));
 });
 test('a Raiz that fails to launch is counted on the head: after three failures the PR waits out the backoff, reported as an error, and the next PR gets the tick', t => {
   const f = fixture(); t.after(f.cleanup);
@@ -699,5 +726,6 @@ test('a tick that launched a Raiz leaves a wake for both jobs; a dry run consume
   assert.equal(wakeFiles(state, 'raiz')?.length, 1, 'the pending wake was consumed and the launch left a new one, so launchd runs the tick again for the next PR');
   assert.notDeepEqual(wakeFiles(state, 'raiz'), ['pending']);
   assert.equal(wakeFiles(state, 'sweep')?.length, 1, 'the sweep arms what the attempt certified');
+  assert.equal(wakeFiles(state, 'watch'), null, 'the watch job has no wake queue');
   assert.equal(JSON.parse(readFileSync(join(state, 'last-tick-raiz.json'), 'utf8')).wakes, 1);
 });
