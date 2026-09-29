@@ -132,7 +132,7 @@ A large or cross-cutting effort (a migration across many call sites, an ambitiou
 - **Authoring or modifying a skill.** Writing or editing a SKILL.md. `playbooks/authoring-a-skill.md`.
 - **Eval.** Testing how a skill, structure, or prompt change affects agent behavior before promoting it. `playbooks/eval.md`.
 - **Babysit.** Driving a PR or a stack to merge-ready: conflicts, review threads, CI. `playbooks/babysit.md`.
-- **Converge.** What happens to a certified PR after the Raiz ends: the local daemon's sweep and catch-up jobs. `playbooks/converge.md`.
+- **Converge.** What happens to a certified PR after the Raiz ends: the local daemon's `converge-sweep` and `converge-raiz` jobs. `playbooks/converge.md`.
 - **Pré-PR.** Certifying a pushed head before the PR exists: runs, cross-family review, adjust rounds, certifier, Certificado. Invoked by Opening a PR. `playbooks/pre-pr.md`.
 - **Catch-up.** One attempt on one existing PR: repair, re-certify or certify, then deliver; what the local converge daemon launches. `playbooks/catch-up.md`.
 - **Shipping.** The half after Babysit. Independently verifying a green stack, then landing the contiguous verified run bottom-up through `gh` by default or Origin when its CLI is available. `playbooks/shipping.md`.

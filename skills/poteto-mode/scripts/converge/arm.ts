@@ -11,7 +11,7 @@ async function trunkHealth(t: Trusted): Promise<void> {
   if (!jobs.some(j => j.name === t.config.tests.job && j.conclusion === 'success' && j.head_sha === tip)) throw new Error('Trunk test job is not successful at the current tip');
 }
 const unfinished = ['queued', 'in_progress', 'waiting', 'requested', 'pending'];
-interface RequiredCheck { context: string; appId: number | null }
+export interface RequiredCheck { context: string; appId: number | null }
 /** A trunk that only rulesets protect has no classic protection, so its required checks come from the branch rules alone. */
 async function classicChecks(t: Trusted): Promise<RequiredCheck[]> {
   let protection: Record<string, unknown>;
@@ -22,7 +22,8 @@ async function classicChecks(t: Trusted): Promise<RequiredCheck[]> {
   for (const context of array(statusChecks.contexts).map(v => string(v))) if (!required.some(c => c.context === context)) required.push({ context, appId: null });
   return required;
 }
-async function protection(t: Trusted, head: string, pending: boolean): Promise<void> {
+/** Effective protection: classic protection plus branch rules; every contract context must be there. */
+export async function requiredChecks(t: Trusted): Promise<RequiredCheck[]> {
   const required = await classicChecks(t);
   const rules = array(await api(`repos/${t.repo}/rules/branches/${encodeURIComponent(t.config.trunk)}`)).map(v => object(v));
   for (const rule of rules) if (rule.type === 'required_status_checks') {
@@ -32,6 +33,10 @@ async function protection(t: Trusted, head: string, pending: boolean): Promise<v
     }
   }
   for (const context of t.config.requiredChecks) if (!required.some(c => c.context === context)) throw new Error('Branch protection missing required context: ' + context);
+  return required;
+}
+async function protection(t: Trusted, head: string, pending: boolean): Promise<void> {
+  const required = await requiredChecks(t);
   const observed = await checks(t.repo, head);
   if (!pending) {
     const latestTests = await workflowRun(t, head);

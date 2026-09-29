@@ -9,6 +9,11 @@ export function string(value: unknown, label = 'string'): string {
   if (typeof value !== 'string') throw new Error(`Invalid ${label}`);
   return value;
 }
+export function instant(value: unknown, label = 'instant'): string {
+  const result = string(value, label);
+  if (Number.isNaN(Date.parse(result))) throw new Error(`Invalid ${label}`);
+  return result;
+}
 export function integer(value: unknown, label = 'integer'): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw new Error(`Invalid ${label}`);
   return value;
