@@ -5,7 +5,7 @@ import { array, object, oneOf, repoName, string } from '../contract.ts';
 import { PLUGIN_ROOT } from '../../../../../scripts/model-matrix.ts';
 
 export interface RepoConfig { repo: string; checkout: string }
-export interface LocalConfig { file: string; parent: 'claude' | 'codex'; repos: RepoConfig[]; intervalMinutes: number; pluginDir: string; stateDirectory: string; sheetPath: string; logDirectory: string }
+export interface LocalConfig { file: string; parent: 'claude' | 'codex'; repos: RepoConfig[]; intervalMinutes: number; trustedAuthors: string[]; pluginDir: string; stateDirectory: string; sheetPath: string; logDirectory: string }
 /** The tick interval when the configuration names none; a configuration may set 1 to 60 minutes. */
 export const DEFAULT_INTERVAL_MINUTES = 10;
 export function defaultConfigFile(home = homedir()): string { return join(home, '.config', 'pstack', 'converge-local.json'); }
@@ -23,6 +23,15 @@ function absolutePath(value: unknown, key: string): string {
   return resolve(path);
 }
 function optionalPath(value: unknown, key: string, fallback: string): string { return value === undefined || value === null ? fallback : absolutePath(value, key); }
+/** GitHub logins beside the authenticated account whose PRs, comments and reviews the raiz job may hand to a Raiz. A login is letters, digits and hyphens, with `[bot]` for an app. */
+function logins(value: unknown): string[] {
+  if (value === undefined || value === null) return [];
+  return array(value).map(raw => {
+    const login = string(raw, 'trustedAuthors entry');
+    if (!/^[A-Za-z0-9-]+(?:\[bot\])?$/.test(login)) throw new Error(`trustedAuthors entry is not a GitHub login: ${login}`);
+    return login;
+  });
+}
 /** `sheetPath`, `stateDirectory`, `logDirectory` and `pluginDir` default from the home and the plugin root; the tests set them explicitly. */
 export function loadConfig(file: string, home = homedir()): LocalConfig {
   if (!existsSync(file)) throw new Error(`No configuration at ${file}; write it as docs/reference.md describes`);
@@ -38,7 +47,7 @@ export function loadConfig(file: string, home = homedir()): LocalConfig {
   if (!repos.length) throw new Error('Configuration lists no repository');
   const interval = v.intervalMinutes === undefined ? DEFAULT_INTERVAL_MINUTES : v.intervalMinutes;
   if (typeof interval !== 'number' || !Number.isInteger(interval) || interval < 1 || interval > 60) throw new Error('intervalMinutes must be an integer from 1 to 60');
-  return { file, parent, repos, intervalMinutes: interval,
+  return { file, parent, repos, intervalMinutes: interval, trustedAuthors: logins(v.trustedAuthors),
     pluginDir: optionalPath(v.pluginDir, 'pluginDir', PLUGIN_ROOT),
     stateDirectory: optionalPath(v.stateDirectory, 'stateDirectory', defaultStateDirectory(home)),
     sheetPath: optionalPath(v.sheetPath, 'sheetPath', join(home, parent === 'claude' ? '.claude' : '.codex', 'pstack-models.md')),

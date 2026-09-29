@@ -169,14 +169,14 @@ test('loadConfig fills the defaults from the home, the parent and the plugin roo
   const checkout = gitCheckout(dir);
   assert.equal(defaultConfigFile(home), join(home, '.config', 'pstack', 'converge-local.json'));
   const file = configFile(dir, { parent: 'codex', repos: [{ repo: 'Example/app', checkout }] });
-  assert.deepEqual(loadConfig(file, home), { file, parent: 'codex', repos: [{ repo: 'Example/app', checkout }], intervalMinutes: 10, pluginDir: PLUGIN_ROOT,
+  assert.deepEqual(loadConfig(file, home), { file, parent: 'codex', repos: [{ repo: 'Example/app', checkout }], intervalMinutes: 10, trustedAuthors: [], pluginDir: PLUGIN_ROOT,
     stateDirectory: join(home, 'Library', 'Application Support', 'pstack', 'converge-local'), sheetPath: join(home, '.codex', 'pstack-models.md'), logDirectory: join(home, 'Library', 'Logs') });
   assert.equal(loadConfig(configFile(dir, { parent: 'claude', repos: [{ repo: 'Example/app', checkout }] }), home).sheetPath, join(home, '.claude', 'pstack-models.md'));
 });
 test('loadConfig keeps explicit absolute paths and refuses a bad configuration', t => {
   const dir = temp(t);
   const checkout = gitCheckout(dir);
-  const explicit = { parent: 'claude', repos: [{ repo: 'Example/app', checkout }], intervalMinutes: 5, pluginDir: '/plugin', stateDirectory: '/state', sheetPath: '/sheet.md', logDirectory: '/logs' };
+  const explicit = { parent: 'claude', repos: [{ repo: 'Example/app', checkout }], intervalMinutes: 5, trustedAuthors: ['dependabot[bot]', 'Other-Login'], pluginDir: '/plugin', stateDirectory: '/state', sheetPath: '/sheet.md', logDirectory: '/logs' };
   const file = configFile(dir, explicit);
   assert.deepEqual(loadConfig(file, '/home'), { file, ...explicit });
   assert.throws(() => loadConfig(join(dir, 'missing.json'), '/home'), /No configuration at .*missing\.json/);
@@ -191,6 +191,10 @@ test('loadConfig keeps explicit absolute paths and refuses a bad configuration',
     [{ intervalMinutes: 0 }, /intervalMinutes must be an integer from 1 to 60/],
     [{ intervalMinutes: 61 }, /intervalMinutes must be an integer from 1 to 60/],
     [{ intervalMinutes: 1.5 }, /intervalMinutes must be an integer from 1 to 60/],
+    [{ trustedAuthors: 'byvict' }, /Invalid array/],
+    [{ trustedAuthors: [7] }, /Invalid trustedAuthors entry/],
+    [{ trustedAuthors: ['a b'] }, /trustedAuthors entry is not a GitHub login: a b/],
+    [{ trustedAuthors: ['bot[app]'] }, /trustedAuthors entry is not a GitHub login: bot\[app\]/],
   ];
   for (const [fields, error] of refused) assert.throws(() => loadConfig(configFile(dir, { ...explicit, ...fields }), '/home'), error, JSON.stringify(fields));
 });
