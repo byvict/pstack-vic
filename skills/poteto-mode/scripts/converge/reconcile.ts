@@ -2,7 +2,7 @@ import { writeFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { executionId, executions, matches, testOnly, type Claim, type Execution, type Finding, type Report } from './contract.ts';
 import { snapshot, type BranchCommit, type Snapshot, type TextSource } from './github.ts';
-import { loadMatrix, resolveDescriptor, type ModelMatrix } from '../../../../scripts/model-matrix.ts';
+import { loadMatrix, parseDescriptor, type ModelMatrix } from '../../../../scripts/model-matrix.ts';
 
 const secretRules = [
   /\b(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[A-Z0-9]{16})\b/,
@@ -54,25 +54,28 @@ function ordinaryDoc(path: string): boolean {
     || /^(?:LICENSE|README|CHANGELOG)(?:\.md|\.txt)?$/.test(path);
 }
 const AUTHOR_TRAILER = 'pstack-author';
-/** The trailer block is the message's last paragraph when every line there is `Key: value`, as git reads it; a subject-only message has none. Returns the values of the Pstack-Author lines, the key compared without case. */
-export function authorTrailers(message: string): string[] {
-  const paragraphs = message.replace(/\r\n/g, '\n').replace(/\s+$/, '').split(/\n{2,}/);
-  if (paragraphs.length < 2) return [];
-  const lines = (paragraphs.at(-1) ?? '').split('\n');
-  if (!lines.every(line => /^[A-Za-z][A-Za-z0-9-]*: \S/.test(line))) return [];
-  return lines.filter(line => line.slice(0, line.indexOf(':')).toLowerCase() === AUTHOR_TRAILER).map(line => line.slice(line.indexOf(':') + 1).trim());
+/** One entry per Pstack-Author line of the message, the key compared without case: its value when the trailer block holds the line, null anywhere else, so a misplaced or malformed line fails closed instead of vanishing. The trailer block is the message's last paragraph when every line there is `Key: value`, as git reads it; a subject-only message has none. Linear in the message, which a commit author controls. */
+export function authorTrailers(message: string): (string | null)[] {
+  const paragraphs = message.replace(/\r\n/g, '\n').trimEnd().split(/\n{2,}/);
+  const last = paragraphs.length > 1 ? (paragraphs.at(-1) ?? '').split('\n') : [];
+  const block = last.every(line => /^[A-Za-z][A-Za-z0-9-]*: \S/.test(line)) ? last : [];
+  const outside = (block.length ? paragraphs.slice(0, -1) : paragraphs).flatMap(paragraph => paragraph.split('\n'));
+  return [
+    ...block.filter(line => line.slice(0, line.indexOf(':')).toLowerCase() === AUTHOR_TRAILER).map(line => line.slice(line.indexOf(':') + 1).trim()),
+    ...outside.filter(line => /^pstack-author\s*:/i.test(line)).map(() => null),
+  ];
 }
-/** `Pstack-Author: <provider>` or `Pstack-Author: <provider>:<model>@<effort>`: the provider either way, or null. */
+/** `Pstack-Author: <provider>` or `Pstack-Author: <provider>:<model>@<effort>` with a matrix provider: that provider, or null. The long form needs only the descriptor's grammar, not a family the matrix still lists, because trailers outlive the models and efforts the matrix retires. */
 function trailerProvider(value: string, matrix: ModelMatrix): string | null {
-  if (Object.hasOwn(matrix.providers, value)) return value;
-  try { return resolveDescriptor(matrix, value).family.provider; } catch { return null; }
+  const provider = parseDescriptor(value)?.provider ?? value;
+  return Object.hasOwn(matrix.providers, provider) ? provider : null;
 }
-/** The author families the branch's commits record, once each and sorted, and one gap per trailer no matrix family explains. */
+/** The author families the branch's commits record, once each and sorted, and one gap per Pstack-Author line that names no matrix provider or sits outside its message's trailer block. */
 export function authorFamilies(commits: BranchCommit[], matrix: ModelMatrix = loadMatrix()): { authors: string[]; gaps: string[] } {
   const authors = new Set<string>();
   const gaps: string[] = [];
   for (const commit of commits) for (const value of authorTrailers(commit.message)) {
-    const found = trailerProvider(value, matrix);
+    const found = value === null ? null : trailerProvider(value, matrix);
     if (found === null) gaps.push(`Unreadable Pstack-Author trailer in commit ${commit.sha.slice(0, 7)}`);
     else authors.add(found);
   }

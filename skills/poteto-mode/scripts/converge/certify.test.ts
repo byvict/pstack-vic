@@ -328,14 +328,14 @@ test('report reads the author families from Pstack-Author trailers: descriptor o
     { message: 'feat: arena base\n\nPstack-Author: grok:grok-4.7@xhigh\nPstack-Author: codex:gpt-6-sol@xhigh\n' },
     { message: 'fix: hand edit\r\n\r\nA body paragraph.\r\n\r\nCo-authored-by: Someone <s@example.com>\r\npstack-author: claude\r\n\r\n' },
     { message: 'chore: no trailer' },
-    { message: 'Pstack-Author: cursor:grok-4.7@high' },
+    { sha: 'e'.repeat(40), message: 'Pstack-Author: cursor:grok-4.7@high' },
   ];
   f.save();
   const report = certify(f, ['report', '--repo', 'Example/app', '--head', f.state.head, '--directory', join(f.directory, 'run')]);
   assert.equal(report.status, 0, report.stderr);
   const { authors, gaps } = JSON.parse(report.stdout);
   assert.deepEqual(authors, ['claude', 'codex', 'grok'], 'a subject-only message is no trailer block, so cursor is absent');
-  assert.deepEqual(gaps, []);
+  assert.deepEqual(gaps, ['Unreadable Pstack-Author trailer in commit eeeeeee'], 'and its Pstack-Author line is a gap, not a silent drop');
   assert.deepEqual(parseReport(JSON.parse(readFileSync(prReport(f, 'converge'), 'utf8'))).authors, [], 'only pre-pr rounds read the compare commits');
 });
 test('report turns an unreadable Pstack-Author trailer into a gap that names the commit, and a truncated compare refuses', t => {
@@ -392,6 +392,30 @@ test('reviewer refuses a row /setup-pstack would refuse, a missing row and a mis
   assert.equal(noReport.status, 1);
   const usage = certify(f, ['reviewer', '--directory', run]);
   assert.equal(usage.status, 1); assert.match(usage.stderr, /Usage: converge-certify reviewer --directory RUN --parent <claude\|codex> \[--sheet PATH\] --author-provider PROVIDER\[,PROVIDER\.\.\.\]/);
+});
+test('reviewer refuses a declared author family the matrix does not know, before it writes reviewer.json', t => {
+  const f = prePrFixture(false, false); t.after(f.cleanup);
+  const run = join(f.directory, 'run');
+  record(f, run, f.checkout());
+  assert.equal(certify(f, ['report', '--repo', 'Example/app', '--head', f.state.head, '--directory', run]).status, 0);
+  const refused = choose(f, run, 'claude,grk');
+  assert.equal(refused.status, 1);
+  assert.equal(refused.stderr, 'Unknown author provider: grk\n');
+  assert.equal(existsSync(join(run, 'reviewer.json')), false);
+});
+test('reviewer names the remedy for a parent it does not serve and for a missing model sheet', t => {
+  const f = prePrFixture(false, false); t.after(f.cleanup);
+  const run = join(f.directory, 'run');
+  record(f, run, f.checkout());
+  assert.equal(certify(f, ['report', '--repo', 'Example/app', '--head', f.state.head, '--directory', run]).status, 0);
+  const cursor = choose(f, run, 'claude', 'grok:grok-4.7@xhigh', 'cursor');
+  assert.equal(cursor.status, 1); assert.equal(cursor.stderr, 'Unknown parent "cursor": --parent takes claude or codex, the harness of this session\n');
+  const sheet = join(f.directory, 'missing.md');
+  const named = certify(f, ['reviewer', '--directory', run, '--parent', 'claude', '--sheet', sheet, '--author-provider', 'claude']);
+  assert.equal(named.status, 1); assert.equal(named.stderr, `No model sheet at ${sheet}; run /setup-pstack\n`);
+  const fallback = f.run('converge-certify', ['reviewer', '--directory', run, '--parent', 'codex', '--author-provider', 'claude'], { HOME: f.directory });
+  assert.equal(fallback.status, 1); assert.equal(fallback.stderr, `No model sheet at ${join(f.directory, '.codex', 'pstack-models.md')}; run /setup-pstack\n`);
+  assert.equal(existsSync(join(run, 'reviewer.json')), false);
 });
 test('assemble requires the reviewer choice of its round and the lane it names', t => {
   const f = prePrFixture(false, false); t.after(f.cleanup);

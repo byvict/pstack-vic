@@ -9,7 +9,7 @@ import { analyze } from './reconcile.ts';
 import { admitLane, type AdmittedLane } from './evidence.ts';
 import { decide } from './publish.ts';
 import { checkReviewerRow, sheetRow } from './sheet.ts';
-import { loadMatrix, resolveDescriptor } from '../../../../scripts/model-matrix.ts';
+import { loadMatrix, resolveDescriptor, type ModelMatrix } from '../../../../scripts/model-matrix.ts';
 
 export interface Run { name: string; command: string; exitCode: number; startedAt: string; completedAt: string; logDigest: string; head: string | null; clean: boolean }
 export interface SkippedRun { name: string; command: string; skip: string }
@@ -51,6 +51,15 @@ export function defaultSheetPath(parent: string, home = homedir()): string { ret
 function authorUnion(declared: string[], report: Report): string[] {
   return [...new Set([...authorProviders(declared), ...report.authors])].sort();
 }
+/** A declared family outside the matrix is a typo, refused before a lane is chosen or anything is written. */
+function knownAuthors(declared: string[], matrix: ModelMatrix): void {
+  for (const provider of declared) if (!Object.hasOwn(matrix.providers, provider)) throw new Error(`Unknown author provider: ${provider}`);
+}
+/** A missing sheet names its path and the command that writes it, not a bare ENOENT. */
+function readSheet(path: string): string {
+  try { return readFileSync(path, 'utf8'); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new Error(`No model sheet at ${path}; run /setup-pstack`); throw error; }
+}
 function parseReviewerChoice(value: unknown): ReviewerChoice {
   const v = object(value, 'reviewer choice');
   if (v.schemaVersion !== 1) throw new Error('Unknown reviewer choice schema');
@@ -60,13 +69,15 @@ function parseReviewerChoice(value: unknown): ReviewerChoice {
 }
 /** Reads the round's report and the sheet's `pre-pr reviewer` row, unions the declared author families with the trailers' and writes the first lane outside that set to RUN/reviewer.json, once per run directory. */
 export function chooseReviewer(options: { directory: string; parent: string; sheetPath?: string; authorProviders: string[] }): ReviewerChoice {
-  const parent = oneOf(options.parent, ['claude', 'codex']);
+  if (options.parent !== 'claude' && options.parent !== 'codex') throw new Error(`Unknown parent ${JSON.stringify(options.parent)}: --parent takes claude or codex, the harness of this session`);
+  const parent = options.parent;
   const matrix = loadMatrix();
+  knownAuthors(authorProviders(options.authorProviders), matrix);
   const file = join(options.directory, REVIEWER_FILE);
   if (existsSync(file)) throw new Error('Reviewer choice already made: a new head is a new run directory');
   const report = parseReport(JSON.parse(readFileSync(join(options.directory, 'report.json'), 'utf8')));
   if (report.round.execution !== 'pre-pr' || report.round.pr !== 0) throw new Error('Report is not a local pre-pr report');
-  const lanes = sheetRow(readFileSync(options.sheetPath ?? defaultSheetPath(parent), 'utf8'), 'pre-pr reviewer');
+  const lanes = sheetRow(readSheet(options.sheetPath ?? defaultSheetPath(parent)), 'pre-pr reviewer');
   try { checkReviewerRow(lanes, matrix, parent); } catch (error) { throw new Error(`${(error as Error).message}; change the model sheet with /setup-pstack`); }
   const authors = authorUnion(options.authorProviders, report);
   const resolved = lanes.map(lane => ({ lane, ...resolveDescriptor(matrix, lane) }));
@@ -198,7 +209,7 @@ export async function assemble(options: { directory: string; authorProviders: st
   adjustRounds(options.adjustRounds);
   const declared = authorProviders(options.authorProviders);
   if (dirname(options.output) !== options.directory) throw new Error('Certificate must be written in the run directory');
-  for (const provider of declared) if (!Object.hasOwn(loadMatrix().providers, provider)) throw new Error(`Unknown author provider: ${provider}`);
+  knownAuthors(declared, loadMatrix());
   const report = parseReport(JSON.parse(readFileSync(join(options.directory, 'report.json'), 'utf8')));
   const r = report.round;
   if (r.execution !== 'pre-pr' || r.pr !== 0) throw new Error('Report is not a local pre-pr report');
