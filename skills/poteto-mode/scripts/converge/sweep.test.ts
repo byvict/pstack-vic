@@ -10,11 +10,11 @@ function published(f: ReturnType<typeof fixture>) {
 }
 function listed(f: ReturnType<typeof fixture>, extra: Record<string, unknown>[] = []) {
   const live = f.read();
-  live.pulls = [{ number: 1, head: { sha: live.head, ref: 'change' }, base: { ref: live.prBase }, state: 'open', draft: false, labels: live.hold ? [{ name: 'needs-victor' }] : [], auto_merge: live.autoMerge ? {} : null, user: { id: 10, login: 'author', type: 'User' }, body: live.body, created_at: '2026-09-21T00:00:00Z' }, ...extra];
+  live.pulls = [{ number: 1, head: { sha: live.head, ref: 'change', repo: { full_name: 'Example/app' } }, base: { ref: live.prBase }, state: 'open', draft: false, labels: live.hold ? [{ name: 'needs-victor' }] : [], auto_merge: live.autoMerge ? {} : null, user: { id: 10, login: 'author', type: 'User' }, body: live.body, created_at: '2026-09-21T00:00:00Z' }, ...extra];
   Object.assign(f.state, live); f.save();
 }
 function other(number: number, fields: Record<string, unknown>) {
-  return { number, head: { sha: 'e'.repeat(40), ref: 'other' }, base: { ref: 'main' }, state: 'open', draft: false, labels: [], auto_merge: null, user: { id: 10, login: 'author', type: 'User' }, body: '', created_at: '2026-09-21T00:00:00Z', ...fields };
+  return { number, head: { sha: 'e'.repeat(40), ref: 'other', repo: { full_name: 'Example/app' } }, base: { ref: 'main' }, state: 'open', draft: false, labels: [], auto_merge: null, user: { id: 10, login: 'author', type: 'User' }, body: '', created_at: '2026-09-21T00:00:00Z', ...fields };
 }
 function outcomes(stdout: string) {
   return JSON.parse(stdout).swept.map((s: { pr: number; outcome: string; reason: string }) => [s.pr, s.outcome, s.reason]);

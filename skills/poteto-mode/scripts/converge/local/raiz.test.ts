@@ -101,7 +101,7 @@ test('an outcome left in a reused run directory does not stand in for the new la
 });
 test('launchRaiz kills a Raiz past the cap and reports timeout', async t => {
   const dir = temp(t);
-  const launched = await launchRaiz(input(dir), { provider: 'claude', model: 'fable', effort: 'max' }, { env: fakeClaude(dir, 'cat > /dev/null; sleep 30'), capMs: 300 });
+  const launched = await launchRaiz(input(dir), { provider: 'claude', model: 'fable', effort: 'max' }, { env: fakeClaude(dir, 'cat > /dev/null; exec sleep 30'), capMs: 300 });
   assert.equal(launched.timedOut, true);
   assert.deepEqual(attemptFrom(input(dir), launched)?.reason, 'timeout');
 });

@@ -25,7 +25,9 @@ export async function classify(t: Trusted, p: Pull, author: number, options: { n
   const status = await verdictStatus(t.repo, p.number, p.head, author);
   if (status.kind === 'foreign') return skipped(status.reason);
   if (status.kind === 'none') {
-    if (options.now - Date.parse(p.createdAt) < GRACE_MINUTES * 60_000) return skipped(`younger than ${GRACE_MINUTES} minutes`);
+    const created = Date.parse(p.createdAt);
+    if (Number.isNaN(created)) throw new Error(`Invalid PR createdAt: ${p.createdAt}`);
+    if (options.now - created < GRACE_MINUTES * 60_000) return skipped(`younger than ${GRACE_MINUTES} minutes`);
     return pending('certify', status.reason);
   }
   const gate = await verdictGate(t, p.number, p.head, author);
