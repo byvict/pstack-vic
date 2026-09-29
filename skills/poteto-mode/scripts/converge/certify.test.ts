@@ -343,6 +343,17 @@ test('a light round without a reviewer takes no reviewer choice: reviewer refuse
   const certificate = JSON.parse(result.stdout);
   assert.deepEqual([certificate.decision.displayResult, certificate.lanes, certificate.authorProviders], ['Light', [], ['claude', 'grok']]);
 });
+test('a light round without a reviewer refuses a stray reviewer lane as unexpected, even one of an author family', t => {
+  const f = lightFixture('none'); t.after(f.cleanup);
+  f.state.commits = [{ message: 'feat: arena base\n\nPstack-Author: grok:grok-4.7@xhigh' }]; f.save();
+  const { run, round } = prepared(f);
+  lane(f, round, 'pre-pr reviewer');
+  const result = assemble(f, run);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /^Certificate refused: INCONCLUSIVE: Unexpected independent lane$/m);
+  assert.doesNotMatch(result.stderr, /converge-certify reviewer chose/);
+  assert.equal(existsSync(join(run, 'certificate.json')), false);
+});
 test('a light report refuses a certifier lane', t => {
   const f = lightFixture(); t.after(f.cleanup);
   const { run, round } = prepared(f);

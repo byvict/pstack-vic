@@ -205,7 +205,7 @@ function laneEntries(directory: string, manifest: string, lane: AdmittedLane): {
     artifacts: lane.artifacts.map(a => ({ lane: id, id: a.id, path: a.path, bytes: unchanged(join(root, a.path), a.digest, 'Artifact bytes changed after admission').length, sha256: a.digest, mediaType: a.mediaType })),
   };
 }
-/** The round's reviewer choice, made against the same author families: required only when the report requires the reviewer lane. */
+/** The round's reviewer choice, made against the same author families: required only when the report requires the reviewer lane. A round without one checks no reviewer lane here, because `decide` refuses any reviewer lane there as unexpected. */
 function reviewerChoice(directory: string, round: string, authors: string[]): ReviewerChoice {
   let choice: ReviewerChoice;
   try { choice = parseReviewerChoice(JSON.parse(readFileSync(join(directory, REVIEWER_FILE), 'utf8'))); }
@@ -238,9 +238,9 @@ export async function assemble(options: { directory: string; authorProviders: st
     const lane = await admitLane(join(options.directory, manifest), report, join(options.directory, 'evidence'), r);
     const entries = laneEntries(options.directory, manifest, lane);
     const provider = entries.lane.provider;
-    if (lane.role === 'pre-pr reviewer') {
+    if (lane.role === 'pre-pr reviewer' && choice) {
       const launched = `${entries.lane.provider}:${entries.lane.model}@${entries.lane.effort}`;
-      if (choice && launched !== choice.descriptor) throw new Error(`Reviewer lane differs from the chosen lane (${launched}, chose ${choice.descriptor})`);
+      if (launched !== choice.descriptor) throw new Error(`Reviewer lane differs from the chosen lane (${launched}, chose ${choice.descriptor})`);
       if (authors.includes(provider)) throw new Error(`Reviewer lane is the same family as an author (${provider}); launch the lane converge-certify reviewer chose`);
     }
     admitted.push(lane);
