@@ -25,14 +25,7 @@ export async function classify(t: Trusted, p: Pull, author: number, options: Cla
   if (!trusts(options.trusted, p.authorLogin)) return skipped(`untrusted author: ${p.authorLogin}`);
   if (p.branch === t.config.trunk) return skipped('head branch is trunk');
   if (options.leased(p.branch)) return skipped('branch is leased');
-  const classified = await work();
-  if (classified.kind === 'skipped') return classified;
-  const result = options.force ? pending(options.force, 'forced by run --kind') : classified;
-  if (result.kind !== 'pending') return result;
-  // Only a launch hands the PR's text to a Raiz, so only a pending PR pays for these three reads.
-  const outsider = (await participants(t.repo, p.number)).find(x => !trusts(options.trusted, x.login));
-  return outsider ? skipped(`untrusted ${outsider.role}: ${outsider.login}`) : result;
-  async function work(): Promise<Classified> {
+  const work = async (): Promise<Classified> => {
     const status = await verdictStatus(t.repo, p.number, p.head, author);
     if (status.kind === 'foreign') return skipped(status.reason);
     if (status.kind === 'none') {
@@ -52,7 +45,14 @@ export async function classify(t: Trusted, p: Pull, author: number, options: Cla
       if (failed) return pending('repair', `Required protected check failed: ${c.context}`);
     }
     return { kind: 'idle', ...base, reason: 'certified; checks green or pending' };
-  }
+  };
+  const classified = await work();
+  if (classified.kind === 'skipped') return classified;
+  const result = options.force ? pending(options.force, 'forced by run --kind') : classified;
+  if (result.kind !== 'pending') return result;
+  // Only a launch hands the PR's text to a Raiz, so only a pending PR pays for these three reads.
+  const outsider = (await participants(t.repo, p.number)).find(x => !trusts(options.trusted, x.login));
+  return outsider ? skipped(`untrusted ${outsider.role}: ${outsider.login}`) : result;
 }
 /** Catch-up step 1's PR conditions, the only causes a Raiz may give for `skipped`: the first that holds on the live PR, or null when none does. */
 export function skipCause(t: Trusted, p: Pull, launchedHead: string): string | null {

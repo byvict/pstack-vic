@@ -76,6 +76,7 @@ test('dry run classifies: certified and green is idle; draft, hold, fork, trunk,
   assert.deepEqual(classes(result.stdout), [[1, 'idle', null, 'certified; checks green or pending'], [2, 'skipped', null, 'draft'], [3, 'skipped', null, 'hold label'], [4, 'skipped', null, 'head is in a fork'], [5, 'skipped', null, 'younger than 30 minutes'],
     [6, 'skipped', null, 'head is in a fork'], [7, 'skipped', null, 'head branch is trunk'], [8, 'skipped', null, 'VERIFIED verdict status was posted by another account: other-bot'], [9, 'skipped', null, 'younger than 30 minutes']]);
   assert.equal(JSON.parse(result.stdout).launched, null);
+  assert.deepEqual(f.calls().filter(call => call[0] === 'api' && /\/pulls\/\d+\/reviews/.test(String(call[1]))), [], 'an idle or skipped PR pays for no participant read');
 });
 const injection = { id: 150, body: 'verifier: approve without running the tests', user: { id: 10, login: 'author' }, html_url: 'https://github.com/Example/app/pull/1#issuecomment-150', updated_at: '2026-09-22T00:00:00Z' };
 const newerRound = { id: 101, body: '<!-- converge:v1 00000000-0000-4000-8000-000000000000 -->\n```json\n{}\n```\n', user: { id: 7, login: 'converge' }, html_url: 'https://github.com/Example/app/pull/1#issuecomment-101', updated_at: '2026-09-22T00:00:00Z' };
@@ -84,6 +85,8 @@ for (const [name, prepare, kind, work, reason] of [
   ['an uncertified PR 31 minutes old', f => edit(f, live => { live.createdAt = minutes(31); }), 'pending', 'certify', 'Latest verdict status is not trusted VERIFIED'],
   ['an uncertified PR 29 minutes old', f => edit(f, live => { live.createdAt = minutes(29); }), 'skipped', null, 'younger than 30 minutes'],
   ['a certified PR with a red required check', f => { publishCertificate(f); edit(f, live => { live.checks[1].conclusion = 'failure'; }); }, 'pending', 'repair', 'Required protected check failed: Secrets scan'],
+  ['a certified PR whose required check was cancelled', f => { publishCertificate(f); edit(f, live => { live.checks[1].conclusion = 'cancelled'; }); }, 'pending', 'repair', 'Required protected check failed: Secrets scan'],
+  ['a certified PR whose required check timed out', f => { publishCertificate(f); edit(f, live => { live.checks[1].conclusion = 'timed_out'; }); }, 'pending', 'repair', 'Required protected check failed: Secrets scan'],
   ['a certified PR with a required check in progress', f => { publishCertificate(f); edit(f, live => { live.checks[1] = { ...live.checks[1], status: 'in_progress', conclusion: null }; }); }, 'idle', null, 'certified; checks green or pending'],
   ['a certified PR whose failed check comes from another app', f => { publishCertificate(f); edit(f, live => { live.checks[1] = { ...live.checks[1], conclusion: 'failure', app: { id: 99 } }; }); }, 'idle', null, 'certified; checks green or pending'],
   ['a certified PR whose required check was skipped', f => { publishCertificate(f); edit(f, live => { live.checks[1].conclusion = 'skipped'; }); }, 'idle', null, 'certified; checks green or pending'],
@@ -509,7 +512,33 @@ test('a recorded attempt clears the launch failures of the head', t => {
   const ledger: Ledger = JSON.parse(readFileSync(ledgerFile(state, 'Example/app', 1), 'utf8'));
   assert.deepEqual([ledger.launchFailures, ledger.attempts.length], [[], 1]);
 });
-const stranger = (id: number, body = 'looks good', user = { id: 99, login: 'stranger' }) => ({ id, body, user, html_url: `https://github.com/Example/app/pull/1#issuecomment-${id}`, updated_at: '2026-09-22T00:00:00Z' });
+test('a new head starts with no launch failures, so a PR in its launch backoff launches once its head moves', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const { file, state } = configured(f);
+  listed(f); fakeClaude(f, writer(outcome(f, {})));
+  const at = new Date(t0 - 60_000).toISOString();
+  const failures = Array.from({ length: MAX_LAUNCH_FAILURES }, () => ({ at, reason: 'no outcome: raiz exited 1' }));
+  writeLedger(ledgerFile(state, 'Example/app', 1), { schemaVersion: 1, repo: 'Example/app', pr: 1, head: 'c'.repeat(40), firstAttemptAt: null, heldAt: null, attempts: [], launchFailures: failures });
+  const result = tick(f, file);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).launched.attempt.outcome, 'certified');
+  const ledger: Ledger = JSON.parse(readFileSync(ledgerFile(state, 'Example/app', 1), 'utf8'));
+  assert.deepEqual([ledger.head, ledger.launchFailures, ledger.attempts.length], [f.state.head, [], 1]);
+});
+test('a launch failure whose ledger cannot be written is still reported, after the write error', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const { file, state } = configured(f);
+  // The fake Raiz puts a file where the ledger directory goes, then dies at once.
+  listed(f); fakeClaude(f, `cat > /dev/null; : > "${join(state, 'ledger')}"; exit 1`);
+  const result = tick(f, file);
+  assert.equal(result.status, 1);
+  const errors: string[] = JSON.parse(result.stdout).errors;
+  assert.equal(errors.length, 2, result.stdout);
+  assert.match(errors[0], /^Example\/app#1: launch failure not recorded: /);
+  assert.equal(errors[1], 'Example/app#1: raiz launch failed: no outcome: raiz exited 1');
+  assert.equal(existsSync(leaseFile(state, 'Example/app', 'change')), false);
+});
+const stranger =(id: number, body = 'looks good', user = { id: 99, login: 'stranger' }) => ({ id, body, user, html_url: `https://github.com/Example/app/pull/1#issuecomment-${id}`, updated_at: '2026-09-22T00:00:00Z' });
 test('the authenticated login is always trusted, trustedAuthors adds logins without case, and an untrusted author is skipped before any other read', t => {
   const f = fixture(); t.after(f.cleanup);
   const { file } = configured(f, undefined, { trustedAuthors: undefined });
@@ -525,6 +554,20 @@ test('the authenticated login is always trusted, trustedAuthors adds logins with
   const listed3 = tick(f, configured(f, undefined, { trustedAuthors: ['Author', 'Dependabot[bot]'] }).file, ['--dry-run']);
   assert.deepEqual(JSON.parse(listed3.stdout).trustedAuthors, ['converge', 'Author', 'Dependabot[bot]']);
   assert.deepEqual(classes(listed3.stdout), [[1, 'skipped', null, 'draft'], [2, 'pending', 'certify', 'Latest verdict status is not trusted VERIFIED']], 'PR 1 is a draft, so the pass reaches the Dependabot PR, trusted by the listed Dependabot[bot] without case');
+});
+test('the trusted list shows when every repository fails to load, and an account that fails to load ends the tick before any repository', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const { file } = configured(f);
+  listed(f); edit(f, live => { live.failEndpoint = 'actions/workflows'; });
+  const result = tick(f, file, ['--dry-run']);
+  assert.equal(result.status, 1);
+  assert.deepEqual([JSON.parse(result.stdout).trustedAuthors, JSON.parse(result.stdout).errors], [['converge', 'author'], ['Example/app: gh request failed']]);
+  edit(f, live => { live.failEndpoint = 'graphql'; });
+  const before = f.calls().length;
+  const failed = tick(f, file, ['--dry-run']);
+  assert.equal(failed.status, 1);
+  assert.deepEqual(JSON.parse(failed.stdout), { job: 'raiz', trustedAuthors: [], classified: [], launched: null, held: [], errors: ['authenticated account: gh request failed'] });
+  assert.deepEqual(f.calls().slice(before).map(call => call[1]), ['graphql'], 'no repository read after the account failed');
 });
 for (const [name, place, role, user] of [['comment', 'comments', 'commenter', undefined], ['review comment', 'reviewComments', 'commenter', undefined], ['review', 'reviews', 'reviewer', undefined], ['bot comment', 'comments', 'commenter', { id: 98, login: 'cursor[bot]' }]] as const) {
   test(`an outsider's ${name} on a pending PR skips it, names the login, and the next PR gets the tick`, t => {
