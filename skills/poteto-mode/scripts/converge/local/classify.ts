@@ -9,7 +9,7 @@ export interface Pending { kind: 'pending'; work: WorkKind; repo: string; pr: nu
 export interface Skipped { kind: 'skipped'; repo: string; pr: number; head: string; reason: string }
 export interface Idle { kind: 'idle'; repo: string; pr: number; head: string; reason: string }
 export type Classified = Pending | Skipped | Idle;
-const stale = /^Certificate patch or policy differs at trunk tip |^Certificate is no longer VERIFIED at trunk tip /;
+const stale = /^Certificate patch or policy differs at trunk tip |^Certificate is no longer VERIFIED at trunk tip |^Certificate lacks a lane the policy now requires at trunk tip /;
 
 export interface ClassifyOptions { now: number; leased: (branch: string) => boolean; trusted: string[]; force?: WorkKind }
 /** Logins compare without case, as GitHub does. */

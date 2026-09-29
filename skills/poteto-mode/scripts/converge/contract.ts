@@ -71,7 +71,9 @@ export type Role = 'pr verifier' | 'pre-pr reviewer' | 'pre-pr certifier';
 export const roles = ['pr verifier', 'pre-pr reviewer', 'pre-pr certifier'] as const;
 /** The Cloud verifier's pinned lane, the one family and efforts that admission, lane preparation, start.ts and setup-pstack's Cursor cloud rows (`pr owner`, `pr verifier`) accept. It exists only for those rows and is deleted with them in 0.5.0; the pre-PR roles stay unpinned. */
 export const CLOUD_VERIFIER: { readonly provider: string; readonly model: string; readonly efforts: readonly string[] } = { provider: 'cursor', model: 'grok-4.7', efforts: ['high', 'xhigh'] };
-export interface PrePr { runs: { name: string; command: string }[]; certifier: boolean }
+/** The light class: a change whose every path matches `paths`, or that only bumps dependencies, takes the runs and at most a reviewer with the narrow prompt, never the certifier. `reviewer: 'none'` drops the reviewer too. */
+export interface Light { paths: string[]; reviewer: 'narrow' | 'none' }
+export interface PrePr { runs: { name: string; command: string }[]; certifier: boolean; light: Light | null }
 export interface Contract {
   repo: string; trunk: string; requiredChecks: string[]; holdLabels: string[];
   surfaces: string[]; riskClasses: { irreversible: string[]; contained: string[] };
@@ -84,9 +86,11 @@ export function parseContract(value: unknown): Contract {
   const risk = object(v.riskClasses);
   const tests = v.tests === undefined ? {} : object(v.tests);
   let prePr: PrePr | null = null;
+  if (v.light !== undefined) throw new Error('A light class belongs in the prePr block');
   if (v.prePr !== undefined && v.prePr !== null) {
     const p = object(v.prePr, 'prePr');
-    prePr = { certifier: boolean(p.certifier), runs: array(p.runs).map(raw => {
+    const light = p.light === undefined || p.light === null ? null : object(p.light, 'light');
+    prePr = { certifier: boolean(p.certifier), light: light && { paths: strings(light.paths), reviewer: light.reviewer === undefined ? 'narrow' : oneOf(light.reviewer, ['narrow', 'none']) }, runs: array(p.runs).map(raw => {
       const r = object(raw, 'run');
       const name = string(r.name);
       if (!/^[a-z][a-z0-9-]{0,39}$/.test(name)) throw new Error('Unsafe run name');
@@ -105,7 +109,7 @@ export function parseContract(value: unknown): Contract {
   };
   if (!result.requiredChecks.includes('verdict') || !result.holdLabels.length || !/^\d\d:\d\d [A-Za-z_]+\/[A-Za-z_]+$/.test(result.deployWindow)) throw new Error('Incomplete converge contract');
   if (prePr?.certifier && (!result.featureMap || !result.verifySkill)) throw new Error('A certifier needs a feature map and a verify skill');
-  for (const pattern of [...result.surfaces, ...riskPatterns(result)]) relativePath(pattern);
+  for (const pattern of [...result.surfaces, ...riskPatterns(result), ...prePr?.light?.paths ?? []]) relativePath(pattern);
   return result;
 }
 export function riskPatterns(contract: Contract): string[] { return [...contract.riskClasses.irreversible, ...contract.riskClasses.contained]; }
@@ -166,14 +170,14 @@ export interface Claim {
 }
 export interface Check { context: string; id: number; head: string; appId: number; state: string; runId: number | null; attempt: number | null }
 export interface Report {
-  schemaVersion: 1; round: Round; mode: 'full' | 'ci-only'; touchedFeatures: Feature[]; unmappedSurfaces: string[];
+  schemaVersion: 1; round: Round; mode: 'full' | 'light' | 'ci-only'; touchedFeatures: Feature[]; unmappedSurfaces: string[];
   claims: Claim[]; hardList: Finding[]; injection: Finding[]; findings: Finding[]; checks: Check[];
   lanes: Role[]; gaps: string[]; inputFingerprint: string;
 }
 export function parseReport(value: unknown): Report {
   const v = object(value, 'report');
   if (v.schemaVersion !== 1) throw new Error('Unsupported report schema');
-  return { schemaVersion: 1, round: parseRound(v.round), mode: oneOf(v.mode, ['full', 'ci-only']),
+  return { schemaVersion: 1, round: parseRound(v.round), mode: oneOf(v.mode, ['full', 'light', 'ci-only']),
     touchedFeatures: array(v.touchedFeatures).map(value => { const f = object(value); return { id: relativePath(f.id), page: relativePath(f.page), recipe: relativePath(f.recipe), recipeDigest: digest(f.recipeDigest) }; }),
     unmappedSurfaces: strings(v.unmappedSurfaces).map(relativePath),
     claims: array(v.claims).map(value => { const c = object(value); return { line: integer(c.line), kind: oneOf(c.kind, ['check', 'test', 'feature', 'artifact', 'unsupported']), name: string(c.name), artifactFound: boolean(c.artifactFound), resolution: oneOf(c.resolution, ['supported', 'missing', 'unavailable', 'current-feature']) }; }),
@@ -182,7 +186,7 @@ export function parseReport(value: unknown): Report {
     lanes: array(v.lanes).map(v => oneOf(v, roles)), gaps: strings(v.gaps), inputFingerprint: digest(v.inputFingerprint) };
 }
 export type Decision =
-  | { verdict: 'VERIFIED'; displayResult: 'VERIFIED' | 'CI-only'; findings: []; reasons: [] }
+  | { verdict: 'VERIFIED'; displayResult: 'VERIFIED' | 'Light' | 'CI-only'; findings: []; reasons: [] }
   | { verdict: 'NOT VERIFIED'; displayResult: 'NOT VERIFIED'; findings: [Finding, ...Finding[]]; reasons: string[] }
   | { verdict: 'INCONCLUSIVE'; displayResult: 'INCONCLUSIVE'; findings: Finding[]; reasons: [string, ...string[]] };
 export interface Dossier {

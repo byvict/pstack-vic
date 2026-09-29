@@ -79,7 +79,7 @@ else if (args[0] === 'api') {
   else if (endpoint.startsWith(`${root}/git/trees/`)) send({ truncated: false, tree: Object.keys(state.blobs).map(path => ({ path, mode: '100644' })) });
   else if (endpoint.startsWith(`${root}/contents/`)) {
     const path = endpoint.slice(`${root}/contents/`.length);
-    const content = state.blobs[path];
+    const content = query.get('ref') === state.head && path in state.headBlobs ? state.headBlobs[path] : state.blobs[path];
     if (content === undefined) fail();
     send({ type: 'file', encoding: 'base64', size: Buffer.byteLength(content), content: Buffer.from(content).toString('base64') });
   }

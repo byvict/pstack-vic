@@ -27,7 +27,7 @@ export function decide(report: Report, lanes: AdmittedLane[]): Decision {
   if (firstFinding) return { verdict: 'NOT VERIFIED', displayResult: 'NOT VERIFIED', findings: [firstFinding, ...findings.slice(1)], reasons };
   const firstReason = reasons[0];
   if (firstReason) return { verdict: 'INCONCLUSIVE', displayResult: 'INCONCLUSIVE', findings: [], reasons: [firstReason, ...reasons.slice(1)] };
-  return { verdict: 'VERIFIED', displayResult: report.mode === 'ci-only' ? 'CI-only' : 'VERIFIED', findings: [], reasons: [] };
+  return { verdict: 'VERIFIED', displayResult: report.mode === 'ci-only' ? 'CI-only' : report.mode === 'light' ? 'Light' : 'VERIFIED', findings: [], reasons: [] };
 }
 export function retainedLanes(roles: Role[], dossier: Dossier, commentUrl: string): AdmittedLane[] {
   return roles.map(role => ({ role, coverage: dossier.coverage, risks: dossier.riskAdjudication, findings: [], gaps: [], artifacts: dossier.artifactIds.map(id => ({ id, path: commentUrl, digest: dossier.evidenceDigest, mediaType: 'retained' })), receiptDigest: dossier.evidenceDigest }));
@@ -42,7 +42,7 @@ export function parseDossier(value: unknown): Dossier {
   let decision: Decision;
   if (verdict === 'VERIFIED') {
     if (findings.length || reasons.length) throw new Error('Contradictory successful verdict');
-    decision = { verdict, displayResult: oneOf(d.displayResult, ['VERIFIED', 'CI-only']), findings: [], reasons: [] };
+    decision = { verdict, displayResult: oneOf(d.displayResult, ['VERIFIED', 'Light', 'CI-only']), findings: [], reasons: [] };
   } else if (verdict === 'NOT VERIFIED') {
     const first = findings[0];
     if (!first || d.displayResult !== verdict) throw new Error('Failure without findings');

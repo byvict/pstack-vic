@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { fixture, moveTrunk, publishCertificate } from './fixtures/setup.ts';
+import { fixture, moveTrunk, publishCertificate, tightenLight } from './fixtures/setup.ts';
 
 function publish(f: ReturnType<typeof fixture>, proof = false) {
   const report = join(f.directory, 'report.json');
@@ -296,4 +296,16 @@ test('a pending arm refuses a contract without the hold check, and a strict arm 
   assert.match(pending.stderr, /^Pending arm requires "hold" in requiredChecks$/m);
   assert.deepEqual(f.read().mutations, []);
   const strict = arm(f); assert.equal(strict.status, 0, strict.stderr);
+});
+test('a light certificate arms', t => {
+  const f = fixture(); t.after(f.cleanup); publishCertificate(f, { light: { paths: ['model-matrix.json'] } });
+  const result = arm(f, false, ['--pending']); assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(f.read().mutations, merge(f.state.head));
+});
+test('a light certificate refuses the arm once the trunk contract takes its path out of the light class', t => {
+  const f = fixture(); t.after(f.cleanup); publishCertificate(f, { light: { paths: ['model-matrix.json'] } });
+  tightenLight(f);
+  const result = arm(f, false, ['--pending']); assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /^Certificate lacks a lane the policy now requires at trunk tip d{40}$/m);
+  assert.deepEqual(f.read().mutations, []);
 });

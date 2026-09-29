@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { fixture, moveTrunk, publishCertificate, retarget, stackChild } from './fixtures/setup.ts';
+import { fixture, moveTrunk, publishCertificate, retarget, stackChild, tightenLight } from './fixtures/setup.ts';
 
 function published(f: ReturnType<typeof fixture>) {
   const report = join(f.directory, 'report.json');
@@ -245,5 +245,14 @@ test('sweep treats a contract read that starts failing during the sweep as a con
   const result = f.run('converge-sweep', ['--repo', 'Example/app']);
   assert.equal(result.status, 1);
   assert.deepEqual(outcomes(result.stdout), [[1, 'refused', 'Trunk contract unavailable: gh request failed, auto-merge disarmed']]);
+  assert.deepEqual(f.read().mutations, disabled);
+});
+test('sweep disarms an armed light PR once the trunk contract takes its path out of the light class', t => {
+  const f = fixture(); t.after(f.cleanup); publishCertificate(f, { light: { paths: ['model-matrix.json'] } });
+  const live = f.read(); live.autoMerge = true; Object.assign(f.state, live); f.save();
+  tightenLight(f); listed(f);
+  const result = f.run('converge-sweep', ['--repo', 'Example/app']);
+  assert.equal(result.status, 1, result.stderr);
+  assert.deepEqual(outcomes(result.stdout), [[1, 'refused', `Certificate lacks a lane the policy now requires at trunk tip ${'d'.repeat(40)}, auto-merge disarmed`]]);
   assert.deepEqual(f.read().mutations, disabled);
 });

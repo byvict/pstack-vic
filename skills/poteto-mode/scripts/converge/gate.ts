@@ -5,13 +5,15 @@ import { analyze } from './reconcile.ts';
 
 export type Gate = { kind: 'certified'; dossier: Dossier; url: string; fingerprint: string; rederived: string | null } | { kind: 'refused'; reason: string };
 function refused(reason: string): Gate { return { kind: 'refused', reason }; }
-/** A pre-pr certificate is assembled at one trunk tip, and its publication decided over the PR text of that moment; its lanes never read PR text. So the gate re-derives it every time: the certificate authorizes merge only while the same patch under the same policy re-derives VERIFIED from its retained coverage, over the current text, at the tip the caller read. That binds the trunk tip at gate time, not the tip the merge lands on. */
+/** A pre-pr certificate is assembled at one trunk tip, and its publication decided over the PR text of that moment; its lanes never read PR text. So the gate re-derives it every time: the certificate authorizes merge only while the same patch under the same policy re-derives VERIFIED from its retained coverage, over the current text, at the tip the caller read. That binds the trunk tip at gate time, not the tip the merge lands on. The lane check comes first, because the retained lanes stand in for every lane the current report asks for: a light certificate re-derived where its patch needs the reviewer or the certifier again would pass without them. */
 async function rederivePrePr(t: Trusted, pr: number, dossier: Dossier, url: string, fingerprint: string): Promise<string | null> {
   const r = dossier.round;
   const current = await snapshot(t.repo, pr, r.configPath, 'pre-pr');
   if (current.trusted.sha !== t.sha) throw new Error('Trunk moved during re-derivation');
   if (current.inputFingerprint !== fingerprint) throw new Error('PR text changed during re-derivation');
   const report = analyze(current, { id: r.id, configPath: r.configPath, execution: 'pre-pr' });
+  const certified = (dossier.certificate?.lanes ?? []).map(lane => lane.role);
+  if (report.lanes.some(role => !certified.includes(role))) return 'Certificate lacks a lane the policy now requires at trunk tip ' + t.sha;
   if (report.round.head !== r.head || report.round.patch_id !== r.patch_id || report.round.verificationDigest !== r.verificationDigest) return 'Certificate patch or policy differs at trunk tip ' + t.sha;
   const decision = decide(report, retainedLanes(report.lanes, dossier, url));
   return decision.verdict === 'VERIFIED' ? null : `Certificate is no longer VERIFIED at trunk tip ${t.sha}: ${decision.verdict}`;
