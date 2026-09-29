@@ -14,7 +14,7 @@
 - `recertify`: nothing to fix. When the patch no longer applies on trunk (`git -C RUN/branch rebase origin/<trunk>` conflicts), resolve, disarm, push with `--force-with-lease`.
 - `certify`: nothing to fix.
 
-**4. Certify.** Run the **Certify a pushed head** half of [Pré-PR](pre-pr.md) on `RUN/branch`, from step 1, with `AUTHORS` = the union of the providers of the sheet's authoring rows and of `converge raiz`, and `--sheet SHEET` on `converge-certify reviewer`; the trailers of the branch add whatever an earlier session's lanes wrote. Map its commands as follows:
+**4. Certify.** Run the **Certify a pushed head** half of [Pré-PR](pre-pr.md) on `RUN/branch`, from step 1, with `AUTHORS` = the union of the providers of the sheet's authoring rows and of `converge raiz`, and `--sheet SHEET` on `converge-certify reviewer`; the trailers of the branch add whatever an earlier session's lanes wrote. Skip the `authors` check of Pré-PR step 1: `AUTHORS` here is a floor, not what you know wrote, so never reword or force-push a commit to add a trailer; only your own repair commit carries your trailer (step 3). Map its commands as follows:
 
 - Run directory: a fresh `RUN/pre-pr-<n>` for each certify round, `n` from 1, never `RUN` itself (`RUN` holds `RUN/branch` and `RUN/outcome.json`). Every restart at Pré-PR step 1 takes the next `n`.
 - Lease: the renewal of **Input**, with `--by LEASE_BY`, not `--by interactive`.
