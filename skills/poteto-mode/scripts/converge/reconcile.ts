@@ -1,7 +1,8 @@
 import { writeFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { executionId, executions, matches, testOnly, type Claim, type Execution, type Finding, type Report } from './contract.ts';
-import { snapshot, type Snapshot, type TextSource } from './github.ts';
+import { snapshot, type BranchCommit, type Snapshot, type TextSource } from './github.ts';
+import { loadMatrix, resolveDescriptor, type ModelMatrix } from '../../../../scripts/model-matrix.ts';
 
 const secretRules = [
   /\b(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[A-Z0-9]{16})\b/,
@@ -52,6 +53,31 @@ function ordinaryDoc(path: string): boolean {
   return /(?:\.md|\.txt|\.rst)$/.test(path) && !/(?:^|\/)(?:AGENTS|CLAUDE|SKILL)\.md$/.test(path) && !/^(?:\.cursor|\.github|skills|scripts|tools)\//.test(path)
     || /^(?:LICENSE|README|CHANGELOG)(?:\.md|\.txt)?$/.test(path);
 }
+const AUTHOR_TRAILER = 'pstack-author';
+/** The trailer block is the message's last paragraph when every line there is `Key: value`, as git reads it; a subject-only message has none. Returns the values of the Pstack-Author lines, the key compared without case. */
+export function authorTrailers(message: string): string[] {
+  const paragraphs = message.replace(/\r\n/g, '\n').replace(/\s+$/, '').split(/\n{2,}/);
+  if (paragraphs.length < 2) return [];
+  const lines = (paragraphs.at(-1) ?? '').split('\n');
+  if (!lines.every(line => /^[A-Za-z][A-Za-z0-9-]*: \S/.test(line))) return [];
+  return lines.filter(line => line.slice(0, line.indexOf(':')).toLowerCase() === AUTHOR_TRAILER).map(line => line.slice(line.indexOf(':') + 1).trim());
+}
+/** `Pstack-Author: <provider>` or `Pstack-Author: <provider>:<model>@<effort>`: the provider either way, or null. */
+function trailerProvider(value: string, matrix: ModelMatrix): string | null {
+  if (Object.hasOwn(matrix.providers, value)) return value;
+  try { return resolveDescriptor(matrix, value).family.provider; } catch { return null; }
+}
+/** The author families the branch's commits record, once each and sorted, and one gap per trailer no matrix family explains. */
+export function authorFamilies(commits: BranchCommit[], matrix: ModelMatrix = loadMatrix()): { authors: string[]; gaps: string[] } {
+  const authors = new Set<string>();
+  const gaps: string[] = [];
+  for (const commit of commits) for (const value of authorTrailers(commit.message)) {
+    const found = trailerProvider(value, matrix);
+    if (found === null) gaps.push(`Unreadable Pstack-Author trailer in commit ${commit.sha.slice(0, 7)}`);
+    else authors.add(found);
+  }
+  return { authors: [...authors].sort(), gaps };
+}
 export function analyze(s: Snapshot, options: { id: string; configPath: string; execution: Execution }): Report {
   const paths = [...new Set(s.files.flatMap(f => f.previous ? [f.path, f.previous] : [f.path]))];
   const c = s.trusted.config;
@@ -94,11 +120,12 @@ export function analyze(s: Snapshot, options: { id: string; configPath: string; 
     ? mode === 'full' ? (c.prePr?.certifier ? ['pre-pr reviewer', 'pre-pr certifier'] : ['pre-pr reviewer']) : mode === 'light' && light?.reviewer === 'none' ? [] : ['pre-pr reviewer']
     : mode === 'ci-only' ? [] : ['pr verifier'];
   const ciGap = /Tests workflow|Required check is not successful|Tests logs/;
-  const gaps = prePr ? s.gaps.filter(g => !ciGap.test(g)) : [...s.gaps];
+  const recorded = authorFamilies(s.commits);
+  const gaps = [...(prePr ? s.gaps.filter(g => !ciGap.test(g)) : s.gaps), ...recorded.gaps];
   return { schemaVersion: 1, round: { id: options.id, repo: c.repo, pr: s.pull.number, head: s.pull.head, contract: s.trusted.sha, base: s.base,
     patch_id: s.patchId, verificationDigest: s.verificationDigest, inputDigest: s.inputDigest, configPath: options.configPath, execution: options.execution },
     mode, touchedFeatures, unmappedSurfaces: surfacePaths.filter(p => !s.reachedPaths.includes(p) && !testOnly(p) && !(touchedFeatures.length && (/^client\/(?:src\/)?(?:components|hooks|contexts|lib|utils)\//.test(p) || /^server\/routes\//.test(p) || /^client\/(?:src\/)?App\.[jt]sx?$/.test(p)))),
-    claims: claims(s), hardList, injection, findings, checks: s.checks, lanes, gaps, inputFingerprint: s.inputFingerprint };
+    claims: claims(s), hardList, injection, findings, checks: s.checks, lanes, authors: recorded.authors, gaps, inputFingerprint: s.inputFingerprint };
 }
 export async function reconcile(options: { repo: string; pr: number; configPath?: string; execution?: Execution; output: string }): Promise<Report> {
   const configPath = options.configPath ?? '.cursor/converge.json';

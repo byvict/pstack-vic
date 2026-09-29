@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { commit, fixture, omittedPatch } from './fixtures/setup.ts';
-import { hash } from './contract.ts';
+import { commit, fixture, omittedPatch, prReport } from './fixtures/setup.ts';
+import { hash, parseReport } from './contract.ts';
 import { parseCertificate } from './certify.ts';
 
 function prePrFixture(certifier = true, surface = true) {
@@ -312,4 +312,33 @@ test('a light report refuses a missing run as a full one does', t => {
   rmSync(join(run, 'runs', 'suite.json')); rmSync(join(run, 'runs', 'suite.log'));
   const result = assemble(f, run);
   assert.equal(result.status, 1); assert.match(result.stderr, /Required run missing: suite/);
+});
+test('report reads the author families from Pstack-Author trailers: descriptor or bare provider, once each, sorted', t => {
+  const f = prePrFixture(true, false); t.after(f.cleanup);
+  f.state.commits = [
+    { message: 'feat: arena base\n\nPstack-Author: grok:grok-4.7@xhigh\nPstack-Author: codex:gpt-6-sol@xhigh\n' },
+    { message: 'fix: hand edit\r\n\r\nA body paragraph.\r\n\r\nCo-authored-by: Someone <s@example.com>\r\npstack-author: claude\r\n\r\n' },
+    { message: 'chore: no trailer' },
+    { message: 'Pstack-Author: cursor:grok-4.7@high' },
+  ];
+  f.save();
+  const report = certify(f, ['report', '--repo', 'Example/app', '--head', f.state.head, '--directory', join(f.directory, 'run')]);
+  assert.equal(report.status, 0, report.stderr);
+  const { authors, gaps } = JSON.parse(report.stdout);
+  assert.deepEqual(authors, ['claude', 'codex', 'grok'], 'a subject-only message is no trailer block, so cursor is absent');
+  assert.deepEqual(gaps, []);
+  assert.deepEqual(parseReport(JSON.parse(readFileSync(prReport(f, 'converge'), 'utf8'))).authors, [], 'only pre-pr rounds read the compare commits');
+});
+test('report turns an unreadable Pstack-Author trailer into a gap that names the commit, and a truncated compare refuses', t => {
+  const f = prePrFixture(true, false); t.after(f.cleanup);
+  f.state.commits = [{ sha: 'c'.repeat(40), message: 'feat: x\n\nPstack-Author: gemini:pro@high' }, { sha: 'd'.repeat(40), message: 'feat: y\n\nPstack-Author: Grok' }];
+  f.save();
+  const report = certify(f, ['report', '--repo', 'Example/app', '--head', f.state.head, '--directory', join(f.directory, 'run')]);
+  assert.equal(report.status, 0, report.stderr);
+  const { authors, gaps } = JSON.parse(report.stdout);
+  assert.deepEqual(authors, []);
+  assert.deepEqual(gaps, ['Unreadable Pstack-Author trailer in commit ccccccc', 'Unreadable Pstack-Author trailer in commit ddddddd']);
+  f.state.totalCommits = 251; f.save();
+  const truncated = certify(f, ['report', '--repo', 'Example/app', '--head', f.state.head, '--directory', join(f.directory, 'run2')]);
+  assert.notEqual(truncated.status, 0); assert.match(truncated.stderr, /Branch compare truncated/);
 });

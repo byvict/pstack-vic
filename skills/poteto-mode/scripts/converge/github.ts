@@ -281,14 +281,17 @@ export function fillPatches(files: ChangedFile[], diff: string): ChangedFile[] {
     return { ...f, patch: hunks.join('\n') };
   });
 }
-/** GitHub's compare of the contract commit and a head: the files and diff every `pre-pr` round reads, before and after the PR exists. It lists at most 300 files. */
-async function compared(repo: string, contract: string, head: string): Promise<{ base: string; files: ChangedFile[]; diff: string }> {
+export interface BranchCommit { sha: string; message: string }
+/** GitHub's compare of the contract commit and a head: the files, diff and commits every `pre-pr` round reads, before and after the PR exists. It lists at most 300 files and 250 commits. */
+async function compared(repo: string, contract: string, head: string): Promise<{ base: string; files: ChangedFile[]; diff: string; commits: BranchCommit[] }> {
   const endpoint = `repos/${repo}/compare/${contract}...${head}`;
   const [comparison, diff] = await Promise.all([api(endpoint), apiDiff(endpoint)]);
   const c = object(comparison);
   const files = array(c.files).map(changedFile);
   if (files.length >= 300) throw new Error('Branch compare truncated');
-  return { base: sha(object(c.merge_base_commit).sha), files: fillPatches(files, diff), diff };
+  const commits = array(c.commits).map(value => { const v = object(value, 'commit'); return { sha: sha(v.sha), message: string(object(v.commit, 'commit').message, 'commit message') }; });
+  if (integer(c.total_commits) !== commits.length) throw new Error('Branch compare truncated');
+  return { base: sha(object(c.merge_base_commit).sha), files: fillPatches(files, diff), diff, commits };
 }
 const prePrManifests = /^(?:client\/)?package(?:-lock)?\.json$/;
 const convergeManifests = /^package(?:-lock)?\.json$/;
@@ -298,7 +301,7 @@ async function dependencyChange(repo: string, base: string, head: string, files:
   catch { return false; }
 }
 export interface Snapshot {
-  trusted: Trusted; pull: Pull; base: string; patchId: string; diff: string; files: ChangedFile[];
+  trusted: Trusted; pull: Pull; base: string; patchId: string; diff: string; files: ChangedFile[]; commits: BranchCommit[];
   features: Feature[]; reachedPaths: string[]; checks: Check[]; sources: TextSource[]; gaps: string[]; inputDigest: string; inputFingerprint: string; verificationDigest: string; dependencyOnly: boolean; testEvidence: TestEvidence;
 }
 export async function principal(): Promise<number> {
@@ -408,11 +411,11 @@ export async function snapshot(repo: string, prNumber: number, configPath: strin
   ]).then(([comparisonValue, fileValues, diff]) => {
     const files = fileValues.map(changedFile);
     if (files.length >= 3000) throw new Error('PR files truncated');
-    return { base: sha(object(object(comparisonValue).merge_base_commit).sha), files: fillPatches(files, diff), diff };
+    return { base: sha(object(object(comparisonValue).merge_base_commit).sha), files: fillPatches(files, diff), diff, commits: [] as BranchCommit[] };
   });
   const prepared = await Promise.all([
     changes, principal(), comments(repo, prNumber), ci ? checks(repo, p.head) : Promise.resolve<Check[]>([]), runPromise,
-  ]).then(async ([{ base, files, diff }, author, allComments, observedChecks, run]) => {
+  ]).then(async ([{ base, files, diff, commits }, author, allComments, observedChecks, run]) => {
     const patch = command('git', ['patch-id', '--stable'], diff).trim().split(/\s+/)[0];
     if (!patch) throw new Error('Empty PR diff');
     const testSourcesPromise = runJobsPromise.then(async (jobs): Promise<TestSources> => {
@@ -434,12 +437,12 @@ export async function snapshot(repo: string, prNumber: number, configPath: strin
       await Promise.allSettled([featurePromise, runEvidencePromise, testSourcesPromise]);
       throw error;
     });
-    return { base, files, diff, author, allComments, observedChecks, run, patch, selection, runEvidence, testSources };
+    return { base, files, diff, commits, author, allComments, observedChecks, run, patch, selection, runEvidence, testSources };
   }).catch(async error => {
     await runEvidenceSettlement;
     throw error;
   });
-  const { base, files, diff, author, allComments, observedChecks, run, patch, selection, runEvidence, testSources } = prepared;
+  const { base, files, diff, commits, author, allComments, observedChecks, run, patch, selection, runEvidence, testSources } = prepared;
   const visibleComments = allComments.filter(c => !isPublication(c, author));
   const sources: TextSource[] = [{ source: 'body', id: 'body', text: p.body }, ...visibleComments.map(c => ({ source: 'comment' as const, id: String(integer(c.id)), text: string(c.body) }))];
   const gaps: string[] = files.filter(f => f.patch === null && ![f.path, f.previous ?? f.path].every(path => /(?:^|\/)__screenshots__\/.+\.png$/.test(path))).map(() => 'Changed file has no readable patch');
@@ -479,13 +482,13 @@ export async function snapshot(repo: string, prNumber: number, configPath: strin
   const [final, finalCommit] = await Promise.all([pull(repo, prNumber), api(`repos/${repo}/commits/${encodeURIComponent(t.config.trunk)}`)]);
   admitPull(final, t.config, p.head, execution);
   if (final.body !== p.body || jsonHash(final.labels) !== jsonHash(p.labels) || sha(object(finalCommit).sha) !== t.sha) throw new Error('Snapshot changed during reconciliation');
-  return { trusted: t, pull: p, base, patchId: sha(patch), diff, files, features: selection.features, reachedPaths: selection.reachedPaths, checks: observedChecks, sources, gaps, inputDigest, inputFingerprint, verificationDigest, dependencyOnly: safeDependencyChange, testEvidence };
+  return { trusted: t, pull: p, base, patchId: sha(patch), diff, files, commits, features: selection.features, reachedPaths: selection.reachedPaths, checks: observedChecks, sources, gaps, inputDigest, inputFingerprint, verificationDigest, dependencyOnly: safeDependencyChange, testEvidence };
 }
 /** Certification runs before the PR exists, so GitHub's compare of the contract commit and the pushed head stands in for the PR's files and diff, and the same analysis runs over both. */
 export async function branchSnapshot(repo: string, head: string, configPath: string): Promise<Snapshot> {
   const t = await trusted(repo, configPath);
   const target = sha(head);
-  const { base, files, diff } = await compared(repo, t.sha, target);
+  const { base, files, diff, commits } = await compared(repo, t.sha, target);
   if (!files.length) throw new Error('Branch has no changes against trunk');
   const patch = command('git', ['patch-id', '--stable'], diff).trim().split(/\s+/)[0];
   if (!patch) throw new Error('Empty branch diff');
@@ -495,5 +498,5 @@ export async function branchSnapshot(repo: string, head: string, configPath: str
   const verificationDigest = jsonHash([...t.files].sort(([a], [b]) => a.localeCompare(b)));
   const inputFingerprint = jsonHash({ body: '', comments: [] });
   const inputDigest = jsonHash({ head: target, base, contract: t.sha, files, diff, sources: [], checks: [], gaps, inputFingerprint, verificationDigest, testEvidence: { kind: 'unavailable' } });
-  return { trusted: t, pull, base, patchId: sha(patch), diff, files, features: selection.features, reachedPaths: selection.reachedPaths, checks: [], sources: [], gaps, inputDigest, inputFingerprint, verificationDigest, dependencyOnly: await dependencyChange(repo, base, target, files, prePrManifests), testEvidence: { kind: 'unavailable' } };
+  return { trusted: t, pull, base, patchId: sha(patch), diff, files, commits, features: selection.features, reachedPaths: selection.reachedPaths, checks: [], sources: [], gaps, inputDigest, inputFingerprint, verificationDigest, dependencyOnly: await dependencyChange(repo, base, target, files, prePrManifests), testEvidence: { kind: 'unavailable' } };
 }

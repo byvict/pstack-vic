@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { resolve, join, dirname } from 'node:path';
-import { array, boolean, digest, executionId, hash, integer, jsonHash, object, oneOf, parseReport, parseRound, relativePath, roles, sha, string, strings, type Contract, type Decision, type Report, type Role, type Round } from './contract.ts';
+import { array, boolean, digest, executionId, hash, integer, jsonHash, object, oneOf, parseReport, parseRound, providerName, relativePath, roles, sha, string, strings, type Contract, type Decision, type Report, type Role, type Round } from './contract.ts';
 import { branchSnapshot } from './github.ts';
 import { analyze } from './reconcile.ts';
 import { admitLane, type AdmittedLane } from './evidence.ts';
@@ -34,7 +34,7 @@ function laneId(value: unknown): string {
 function authorProviders(value: unknown): string[] {
   const list = strings(value);
   if (!list.length) throw new Error('Certificate needs at least one author family');
-  for (const provider of list) if (!/^[a-z][a-z0-9-]*$/.test(provider)) throw new Error(`Invalid author family: ${provider}`);
+  for (const name of list) providerName(name);
   if (new Set(list).size !== list.length) throw new Error('Duplicate author family');
   return list;
 }

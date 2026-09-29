@@ -23,6 +23,12 @@ export function array(value: unknown): unknown[] {
   return value;
 }
 export function strings(value: unknown): string[] { return array(value).map(v => string(v)); }
+/** A model-matrix provider name as an author family: the trailer, the certificate and `--author-provider` all carry it. */
+export function providerName(value: unknown): string {
+  const name = string(value);
+  if (!/^[a-z][a-z0-9-]*$/.test(name)) throw new Error(`Invalid author family: ${name}`);
+  return name;
+}
 export function boolean(value: unknown): boolean {
   if (typeof value !== 'boolean') throw new Error('Invalid boolean');
   return value;
@@ -171,7 +177,7 @@ export interface Check { context: string; id: number; head: string; appId: numbe
 export interface Report {
   schemaVersion: 1; round: Round; mode: 'full' | 'light' | 'ci-only'; touchedFeatures: Feature[]; unmappedSurfaces: string[];
   claims: Claim[]; hardList: Finding[]; injection: Finding[]; findings: Finding[]; checks: Check[];
-  lanes: Role[]; gaps: string[]; inputFingerprint: string;
+  lanes: Role[]; authors: string[]; gaps: string[]; inputFingerprint: string;
 }
 export function parseReport(value: unknown): Report {
   const v = object(value, 'report');
@@ -182,7 +188,7 @@ export function parseReport(value: unknown): Report {
     claims: array(v.claims).map(value => { const c = object(value); return { line: integer(c.line), kind: oneOf(c.kind, ['check', 'test', 'feature', 'artifact', 'unsupported']), name: string(c.name), artifactFound: boolean(c.artifactFound), resolution: oneOf(c.resolution, ['supported', 'missing', 'unavailable', 'current-feature']) }; }),
     hardList: array(v.hardList).map(parseFinding), injection: array(v.injection).map(parseFinding), findings: array(v.findings).map(parseFinding),
     checks: array(v.checks).map(value => { const c = object(value); return { context: string(c.context), id: integer(c.id), head: sha(c.head), appId: integer(c.appId), state: string(c.state), runId: c.runId === null ? null : integer(c.runId), attempt: c.attempt === null ? null : integer(c.attempt) }; }),
-    lanes: array(v.lanes).map(v => oneOf(v, roles)), gaps: strings(v.gaps), inputFingerprint: digest(v.inputFingerprint) };
+    lanes: array(v.lanes).map(v => oneOf(v, roles)), authors: strings(v.authors).map(providerName), gaps: strings(v.gaps), inputFingerprint: digest(v.inputFingerprint) };
 }
 export type Decision =
   | { verdict: 'VERIFIED'; displayResult: 'VERIFIED' | 'Light' | 'CI-only'; findings: []; reasons: [] }
