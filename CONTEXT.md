@@ -15,11 +15,11 @@ Uma execução de modelo lançada pela Raiz com papel, modo de acesso e recibo p
 _Avoid_: subagente, worker, child
 
 **Autor**:
-A lane que escreve o código de um PR, sempre de família diferente da do Revisor pré-PR.
+Toda Família que escreveu código de um PR, declarada pela Raiz ou gravada num trailer `Pstack-Author` de commit; sempre diferente da Família do Revisor pré-PR.
 _Avoid_: implementer, delegate
 
 **Revisor pré-PR**:
-A lane somente-leitura, de qualquer família que o runner lança a partir da Raiz, que revisa diff, risco e resultado das corridas antes de o PR existir.
+A lane somente-leitura que revisa diff, risco e resultado das corridas antes de o PR existir: a primeira lane da linha `pre-pr reviewer` cuja Família não é de nenhum Autor da branch, entre as que o runner lança a partir da Raiz.
 _Avoid_: verifier, reviewer local, bugbot
 
 **Certificador**:

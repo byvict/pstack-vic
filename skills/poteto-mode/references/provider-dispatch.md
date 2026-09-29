@@ -186,6 +186,20 @@ With both in place, a control lane in each mode saw 37 variable names and none w
 
 Every concurrent external lane needs distinct prompt, output, and receipt paths. The launcher reserves output and receipt paths exclusively and refuses to overwrite them.
 
+## Authorship trailer
+
+Every commit of a branch that Pré-PR certifies carries, in the trailer block of its message, one `Pstack-Author` line per family that wrote code in it: the descriptor of each lane whose code the commit holds, and the bare provider of the Raiz for what it wrote by hand. The certifier reads the trailers from GitHub's compare into `report.json` (`authors`) and unions them with the families the Raiz declares, so the reviewer is chosen against what the branch records, in an interactive session and in the daemon's catch-up alike.
+
+```text
+Pstack-Author: grok:grok-4.7@xhigh
+Pstack-Author: codex:gpt-6-sol@xhigh
+Pstack-Author: claude
+```
+
+The key is matched without case, as git matches trailers. The value is a matrix descriptor (`<provider>:<model>@<effort>`) or a provider name (`claude`, `codex`, `grok`); anything else is a gap that refuses the certificate until the message is rewritten. The block is the message's last paragraph, every line `Key: value`; other trailers may share it. One line per distinct lane; repetitions count once.
+
+Who writes it: a delegated lane commits with `git commit --trailer 'Pstack-Author: <its descriptor>'`, because its brief says so, and the Raiz checks the trailer when it reviews the diff. The Raiz writes the trailers itself on the commit that lands an arena or architect artifact (one per base candidate and per grafted candidate), a swarm's work (one per worker whose code entered) and its own hand-written changes (its bare provider; an alias lane, `inherit-parent` or `auto`, is the parent's native provider too). The `pre-pr fixer` commits without a trailer: its rounds are recorded as `adjustRounds`, and the Raiz reviews its diff. Human and Dependabot commits carry none and count for no family. The rebase of **Opening a PR** keeps every trailer, and Pré-PR step 1 checks `authors` against what the session knows.
+
 ## Completion and dropouts
 
 Success requires all of these:
