@@ -123,7 +123,7 @@ for (const conclusion of ['neutral', 'skipped']) {
     assert.deepEqual(f.read().mutations, merge(f.state.head));
   });
 }
-for (const conclusion of ['failure', 'cancelled', null]) {
+for (const conclusion of ['failure', 'cancelled', 'timed_out', null]) {
   test(`a strict arm refuses a required check ${conclusion ? `completed as ${conclusion}` : 'that has no run'}`, t => {
     const f = fixture(); t.after(f.cleanup); publish(f);
     const live = f.read(); live.checks = [{ id: 11, name: 'Run test suite', status: 'completed', conclusion: 'success', app: { id: 15368 } }, ...(conclusion ? [{ id: 22, name: 'Secrets scan', status: 'completed', conclusion, app: { id: 15368 } }] : []), { id: 10, name: 'hold', status: 'completed', conclusion: 'success', app: { id: 15368 } }]; Object.assign(f.state, live); f.save();

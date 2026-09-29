@@ -1924,7 +1924,7 @@ node ~/Dev/Skills/pstack-vic/skills/poteto-mode/scripts/converge/converge-local 
 
 - [ ] **Step 2:** `node ~/Dev/Skills/pstack-vic/skills/poteto-mode/scripts/converge/converge-local tick --job raiz --dry-run` and `... --job sweep --dry-run` against the real repository: read the classification, expect `idle` or `skipped` only, no error.
 
-- [ ] **Step 3:** `node ~/Dev/Skills/pstack-vic/skills/poteto-mode/scripts/converge/converge-local install`, then `launchctl list | grep com.pstack` shows both labels, and `tail -f ~/Library/Logs/pstack-converge-raiz.log` shows a tick within ten minutes.
+- [ ] **Step 3:** `node ~/.claude/plugins/cache/pstack-vic/pstack/<version>/skills/poteto-mode/scripts/converge/converge-local install` (from the installed plugin, never from a checkout), then `launchctl list | grep com.pstack` shows both labels, and `tail -f ~/Library/Logs/pstack-converge-raiz.log` shows a tick within ten minutes.
 
 - [ ] **Step 4: Proof.** The next real pstack-vic PR (Part 5 or any earlier one) is opened through Pré-PR as usual. Watch: the sweep log shows the PR `skipped` (`auto-merge already pending`) or `armed`; the raiz log shows it `idle`. Record both log lines and the PR number in the PR body's Verification of Part 5 and on CLI-192. A red CI on that PR is the repair proof; do not manufacture one.
 
@@ -1992,10 +1992,10 @@ JSON
 
 Confirm with `gh api repos/Clinextapp/clinext/branches/main/protection --jq '.required_status_checks.checks'`.
 
-- [ ] **Step 3: Daemon.** Add `{ "repo": "Clinextapp/clinext", "checkout": "/Users/victorbaccega/Dev/clinext" }` to `repos` in `~/.config/pstack/converge-local.json`, then:
+- [ ] **Step 3: Daemon.** Add `{ "repo": "Clinextapp/clinext", "checkout": "/Users/victorbaccega/Dev/clinext" }` to `repos` in `~/.config/pstack/converge-local.json`, then run `install` from the installed plugin, never from a checkout, with `<version>` the installed version (`docs/reference.md`, section Converge), so the jobs and the Raiz's `--plugin-dir` run released code:
 
 ```bash
-node ~/Dev/Skills/pstack-vic/skills/poteto-mode/scripts/converge/converge-local install
+node ~/.claude/plugins/cache/pstack-vic/pstack/<version>/skills/poteto-mode/scripts/converge/converge-local install
 ```
 
 and `converge-local status`, then `tick --job raiz --dry-run`: the merged docs PR is gone, and any open Dependabot PR shows as `pending certify` (older than 30 minutes) or `skipped`.
@@ -2090,4 +2090,4 @@ Callers: `snapshot()` and `publish.ts` pass `policyFor(execution)`; `arm.ts` pas
 
 - [ ] **Step 3: Changelog** `# 0.5.0 — Remoção da metade nuvem do Converge (2026-09-28)`: **Desenho** bullets for the matrix, the runner, the executions (`verdict-only` and `pre-pr` only; `admitPull` with an explicit policy), the setup-pstack rows, and the docs; **Verificação** with the counts, the deleted test files and the grep gate. Version `0.4.0` → `0.5.0`.
 
-- [ ] **Step 4:** `npm test && npm run test:bun && npm run matrix:check && npm run agents:check && npm run collision:check && claude plugin validate . && git diff --check`. Commit `chore(release): 0.5.0, converge without the cloud`, certify through Pré-PR, open PR 4. After merge: tag `v0.5.0`, update the plugin in both parents, `/setup-pstack` once per parent (the two rows disappear with a migration note), and `converge-local install` again so the plists point at the updated checkout.
+- [ ] **Step 4:** `npm test && npm run test:bun && npm run matrix:check && npm run agents:check && npm run collision:check && claude plugin validate . && git diff --check`. Commit `chore(release): 0.5.0, converge without the cloud`, certify through Pré-PR, open PR 4. After merge: tag `v0.5.0`, update the plugin in both parents, `/setup-pstack` once per parent (the two rows disappear with a migration note), and `converge-local install` again from the new version's plugin cache, so the jobs move to it.

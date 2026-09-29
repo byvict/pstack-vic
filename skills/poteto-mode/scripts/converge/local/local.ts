@@ -78,7 +78,11 @@ export async function tickRaiz(config: LocalConfig, options: RaizTickOptions): P
       const launched = await launchRaiz(input, lane, { capMs: options.capMs, env: options.env });
       try { launch.attempt = attemptFrom(input, launched, options.launchFailureMs); }
       catch (error) {
-        if (error instanceof LaunchFailure) writeLedger(file, withLaunchFailure(ledger, { at: launched.endedAt, reason: error.reason }));
+        if (error instanceof LaunchFailure) {
+          // A ledger that cannot be written must not hide the launch failure, so both reach the report.
+          try { writeLedger(file, withLaunchFailure(ledger, { at: launched.endedAt, reason: error.reason })); }
+          catch (writeError) { report.errors.push(`${repo.repo}#${number}: launch failure not recorded: ${message(writeError)}`); }
+        }
         throw error;
       }
       if (!launch.attempt && launched.outcome) {
@@ -99,10 +103,16 @@ export async function tickRaiz(config: LocalConfig, options: RaizTickOptions): P
       catch (error) { report.errors.push(`${repo.repo}#${number}: ${message(error)}`); }
     }
   }
+  // One account for every repository: without it no verdict can be trusted, so the tick visits none.
+  let account: Account;
+  try { account = await viewer(); }
+  catch (error) { report.errors.push(`authenticated account: ${message(error)}`); return report; }
+  const trusted = [account.login, ...config.trustedAuthors];
+  report.trustedAuthors = trusted;
   for (const repo of config.repos) {
     if (only && only.repo !== repo.repo) continue;
-    let t: Trusted, account: Account, trusted: string[], numbers: number[];
-    try { t = await trustedContract(repo.repo, CONTRACT_PATH); account = await viewer(); trusted = [account.login, ...config.trustedAuthors]; report.trustedAuthors = trusted; numbers = only ? [only.pr] : await openPulls(repo.repo); }
+    let t: Trusted, numbers: number[];
+    try { t = await trustedContract(repo.repo, CONTRACT_PATH); numbers = only ? [only.pr] : await openPulls(repo.repo); }
     catch (error) { report.errors.push(`${repo.repo}: ${message(error)}`); continue; }
     for (const number of numbers) {
       try { await visit(repo, t, account.id, trusted, number); }
