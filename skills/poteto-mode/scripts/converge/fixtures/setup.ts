@@ -102,6 +102,10 @@ export function certifiedPr(f: ReturnType<typeof fixture>, options: { body?: str
   assert.equal(local.status, 0, local.stderr);
   const { round, mode, lanes } = JSON.parse(local.stdout);
   assert.deepEqual([mode, lanes], options.full ? ['full', ['pre-pr reviewer', 'pre-pr certifier']] : options.light ? ['light', options.light.reviewer === 'none' ? [] : ['pre-pr reviewer']] : ['ci-only', ['pre-pr reviewer']]);
+  const sheet = join(f.directory, 'reviewer-sheet.md');
+  writeFileSync(sheet, '# pstack model configuration\n\npre-pr reviewer: grok:grok-4.7@xhigh\n');
+  const chosen = f.run('converge-certify', ['reviewer', '--directory', run, '--parent', 'claude', '--sheet', sheet, '--author-provider', 'claude']);
+  assert.equal(chosen.status, 0, chosen.stderr);
   if (lanes.includes('pre-pr reviewer')) lane(run, round, 'pre-pr reviewer');
   if (lanes.includes('pre-pr certifier')) lane(run, round, 'pre-pr certifier', options.steps, options.features);
   const assembled = f.run('converge-certify', ['assemble', '--directory', run, '--author-provider', 'claude', '--output', join(run, 'certificate.json'), '--adjust-rounds', '1']);

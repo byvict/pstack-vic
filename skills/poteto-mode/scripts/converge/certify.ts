@@ -1,12 +1,14 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { parseArgs } from 'node:util';
 import { resolve, join, dirname } from 'node:path';
-import { array, boolean, digest, executionId, hash, integer, jsonHash, object, oneOf, parseReport, parseRound, providerName, relativePath, roles, sha, string, strings, type Contract, type Decision, type Report, type Role, type Round } from './contract.ts';
+import { array, boolean, digest, executionId, hash, integer, jsonHash, object, oneOf, parseExecutionId, parseReport, parseRound, providerName, relativePath, roles, sha, string, strings, type Contract, type Decision, type Report, type Role, type Round } from './contract.ts';
 import { branchSnapshot } from './github.ts';
 import { analyze } from './reconcile.ts';
 import { admitLane, type AdmittedLane } from './evidence.ts';
 import { decide } from './publish.ts';
+import { checkReviewerRow, sheetRow } from './sheet.ts';
 import { loadMatrix, resolveDescriptor } from '../../../../scripts/model-matrix.ts';
 
 export interface Run { name: string; command: string; exitCode: number; startedAt: string; completedAt: string; logDigest: string; head: string | null; clean: boolean }
@@ -41,6 +43,39 @@ function authorProviders(value: unknown): string[] {
 function adjustRounds(value: unknown): number {
   if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 6) throw new Error('Adjust rounds must be an integer from 0 to 6');
   return value;
+}
+export interface ReviewerChoice { schemaVersion: 1; round: string; descriptor: string; provider: string; model: string; effort: string; authorProviders: string[]; skipped: { descriptor: string; provider: string }[] }
+export const REVIEWER_FILE = 'reviewer.json';
+export function defaultSheetPath(parent: string, home = homedir()): string { return join(home, parent === 'claude' ? '.claude' : '.codex', 'pstack-models.md'); }
+/** The declared families and the ones the branch's trailers name, once each, sorted: what the reviewer is chosen against and what the certificate records. */
+function authorUnion(declared: string[], report: Report): string[] {
+  return [...new Set([...authorProviders(declared), ...report.authors])].sort();
+}
+function parseReviewerChoice(value: unknown): ReviewerChoice {
+  const v = object(value, 'reviewer choice');
+  if (v.schemaVersion !== 1) throw new Error('Unknown reviewer choice schema');
+  const { descriptor, family } = resolveDescriptor(loadMatrix(), string(v.descriptor));
+  return { schemaVersion: 1, round: parseExecutionId(v.round), descriptor: string(v.descriptor), provider: family.provider, model: family.model, effort: descriptor.effort, authorProviders: authorProviders(v.authorProviders),
+    skipped: array(v.skipped).map(raw => { const s = object(raw, 'skipped lane'); return { descriptor: string(s.descriptor), provider: providerName(s.provider) }; }) };
+}
+/** Reads the round's report and the sheet's `pre-pr reviewer` row, unions the declared author families with the trailers' and writes the first lane outside that set to RUN/reviewer.json, once per run directory. */
+export function chooseReviewer(options: { directory: string; parent: string; sheetPath?: string; authorProviders: string[] }): ReviewerChoice {
+  const parent = oneOf(options.parent, ['claude', 'codex']);
+  const matrix = loadMatrix();
+  const file = join(options.directory, REVIEWER_FILE);
+  if (existsSync(file)) throw new Error('Reviewer choice already made: a new head is a new run directory');
+  const report = parseReport(JSON.parse(readFileSync(join(options.directory, 'report.json'), 'utf8')));
+  if (report.round.execution !== 'pre-pr' || report.round.pr !== 0) throw new Error('Report is not a local pre-pr report');
+  const lanes = sheetRow(readFileSync(options.sheetPath ?? defaultSheetPath(parent), 'utf8'), 'pre-pr reviewer');
+  try { checkReviewerRow(lanes, matrix, parent); } catch (error) { throw new Error(`${(error as Error).message}; change the model sheet with /setup-pstack`); }
+  const authors = authorUnion(options.authorProviders, report);
+  const resolved = lanes.map(lane => ({ lane, ...resolveDescriptor(matrix, lane) }));
+  const chosen = resolved.find(r => !authors.includes(r.family.provider));
+  if (!chosen) throw new Error(`No pre-pr reviewer lane is outside the author families (${authors.join(', ')}): the row lists ${lanes.join(', ')}; add a lane of another family with /setup-pstack`);
+  const choice: ReviewerChoice = { schemaVersion: 1, round: report.round.id, descriptor: chosen.lane, provider: chosen.family.provider, model: chosen.family.model, effort: chosen.descriptor.effort, authorProviders: authors,
+    skipped: resolved.slice(0, resolved.indexOf(chosen)).map(r => ({ descriptor: r.lane, provider: r.family.provider })) };
+  writeFileSync(file, JSON.stringify(choice, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+  return choice;
 }
 export function parseCertificate(value: unknown): Certificate {
   const v = object(value, 'certificate');
@@ -161,14 +196,20 @@ function laneEntries(directory: string, manifest: string, lane: AdmittedLane): {
 /** Re-runs the branch analysis before trusting report.json, so a stale or edited report, or a trunk contract that moved, cannot certify. */
 export async function assemble(options: { directory: string; authorProviders: string[]; output: string; adjustRounds: number }): Promise<Certificate> {
   adjustRounds(options.adjustRounds);
-  const authors = authorProviders(options.authorProviders);
+  const declared = authorProviders(options.authorProviders);
   if (dirname(options.output) !== options.directory) throw new Error('Certificate must be written in the run directory');
-  for (const provider of authors) if (!Object.hasOwn(loadMatrix().providers, provider)) throw new Error(`Unknown author provider: ${provider}`);
+  for (const provider of declared) if (!Object.hasOwn(loadMatrix().providers, provider)) throw new Error(`Unknown author provider: ${provider}`);
   const report = parseReport(JSON.parse(readFileSync(join(options.directory, 'report.json'), 'utf8')));
   const r = report.round;
   if (r.execution !== 'pre-pr' || r.pr !== 0) throw new Error('Report is not a local pre-pr report');
   const snapshot = await branchSnapshot(r.repo, r.head, r.configPath);
   if (jsonHash(report) !== jsonHash(analyze(snapshot, { id: r.id, configPath: r.configPath, execution: 'pre-pr' }))) throw new Error('Reconciliation report changed or is stale');
+  const authors = authorUnion(options.authorProviders, report);
+  let choice: ReviewerChoice;
+  try { choice = parseReviewerChoice(JSON.parse(readFileSync(join(options.directory, REVIEWER_FILE), 'utf8'))); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new Error('Reviewer choice missing: run converge-certify reviewer'); throw error; }
+  if (choice.round !== r.id) throw new Error('Reviewer choice belongs to another round');
+  if (jsonHash(choice.authorProviders) !== jsonHash(authors)) throw new Error(`Author families differ from the reviewer choice (${authors.join(', ')}; chose against ${choice.authorProviders.join(', ')})`);
   const runs = checkRuns(report, readRuns(options.directory), snapshot.trusted.config);
   const lanesDirectory = join(options.directory, 'lanes');
   const ids = existsSync(lanesDirectory) ? readdirSync(lanesDirectory).sort().filter(id => existsSync(join(lanesDirectory, id, 'manifest.json'))) : [];
@@ -180,7 +221,11 @@ export async function assemble(options: { directory: string; authorProviders: st
     const lane = await admitLane(join(options.directory, manifest), report, join(options.directory, 'evidence'), r);
     const entries = laneEntries(options.directory, manifest, lane);
     const provider = entries.lane.provider;
-    if (lane.role === 'pre-pr reviewer' && authors.includes(provider)) throw new Error(`Reviewer lane is the same family as an author (${provider}); change the model sheet`);
+    if (lane.role === 'pre-pr reviewer') {
+      const launched = `${entries.lane.provider}:${entries.lane.model}@${entries.lane.effort}`;
+      if (launched !== choice.descriptor) throw new Error(`Reviewer lane differs from the chosen lane (${launched}, chose ${choice.descriptor})`);
+      if (authors.includes(provider)) throw new Error(`Reviewer lane is the same family as an author (${provider}); launch the lane converge-certify reviewer chose`);
+    }
     admitted.push(lane);
     lanes.push(entries.lane);
     artifacts.push(...entries.artifacts);
@@ -191,13 +236,14 @@ export async function assemble(options: { directory: string; authorProviders: st
   writeFileSync(options.output, JSON.stringify(certificate, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
   return certificate;
 }
-/** Re-derives every derived field against the PR report and the live contract (head, patch and policy, the run policy, each run, lane and artifact from bytes, the digests, coverage and decision), so a hand-edited certificate cannot publish what its evidence does not yield. adjustRounds, toolingRef and authorProviders are the Raiz's declarations: only their format is checked, and parseCertificate checks that no reviewer lane has an author family. */
+/** Re-derives every derived field against the PR report and the live contract (head, patch and policy, the run policy, each run, lane and artifact from bytes, the digests, coverage and decision), so a hand-edited certificate cannot publish what its evidence does not yield. adjustRounds and toolingRef are the Raiz's declarations, checked only in format. authorProviders is the union the assembly recorded: parseCertificate checks that no reviewer lane has one of its families, and admission that it covers every Pstack-Author family of the PR's commits. */
 export async function admitCertificate(file: string, report: Report, evidenceDirectory: string, contract: Contract): Promise<{ certificate: Certificate; lanes: AdmittedLane[] }> {
   const certificate = parseCertificate(JSON.parse(readFileSync(file, 'utf8')));
   const directory = dirname(resolve(file));
   const c = certificate.round, r = report.round;
   if (c.repo !== r.repo || c.head !== r.head) throw new Error('PR head differs from certificate');
   if (c.patch_id !== r.patch_id || c.contract !== r.contract || c.verificationDigest !== r.verificationDigest || c.configPath !== r.configPath) throw new Error('Certificate patch or policy differs from the PR');
+  for (const family of report.authors) if (!certificate.authorProviders.includes(family)) throw new Error(`Certificate author families miss a Pstack-Author family (${family})`);
   if (r.execution !== 'pre-pr') throw new Error('Certificate publication needs a pre-pr report');
   const branch = parseReport(JSON.parse(readFileSync(join(directory, 'report.json'), 'utf8')));
   if (jsonHash(branch) !== certificate.reconcileDigest || jsonHash(branch.round) !== jsonHash(c)) throw new Error('Certificate report differs from the recorded report');
@@ -235,6 +281,12 @@ export async function main(args: string[]): Promise<number> {
       process.stdout.write(JSON.stringify(await localReport({ repo: values.repo, head: values.head, directory: resolve(values.directory), configPath: values.config }), null, 2) + '\n');
       return 0;
     }
+    if (command === 'reviewer') {
+      const { values } = parseArgs({ args: rest, options: { directory: { type: 'string' }, parent: { type: 'string' }, sheet: { type: 'string' }, 'author-provider': { type: 'string' } } });
+      if (!values.directory || !values.parent || !values['author-provider']) throw new Error('Usage: converge-certify reviewer --directory RUN --parent <claude|codex> [--sheet PATH] --author-provider PROVIDER[,PROVIDER...]');
+      process.stdout.write(JSON.stringify(chooseReviewer({ directory: resolve(values.directory), parent: values.parent, sheetPath: values.sheet === undefined ? undefined : resolve(values.sheet), authorProviders: values['author-provider'].split(',').map(s => s.trim()).filter(Boolean) }), null, 2) + '\n');
+      return 0;
+    }
     if (command === 'assemble') {
       const { values } = parseArgs({ args: rest, options: { directory: { type: 'string' }, 'author-provider': { type: 'string' }, output: { type: 'string' }, 'adjust-rounds': { type: 'string' } } });
       const rounds = values['adjust-rounds'];
@@ -242,6 +294,6 @@ export async function main(args: string[]): Promise<number> {
       process.stdout.write(JSON.stringify(await assemble({ directory: resolve(values.directory), authorProviders: values['author-provider'].split(',').map(s => s.trim()).filter(Boolean), output: resolve(values.output), adjustRounds: /^\d+$/.test(rounds) ? Number(rounds) : NaN }), null, 2) + '\n');
       return 0;
     }
-    throw new Error('Usage: converge-certify <run|report|assemble> ...');
+    throw new Error('Usage: converge-certify <run|report|reviewer|assemble> ...');
   } catch (error) { process.stderr.write((error instanceof SyntaxError ? 'Malformed JSON input' : error instanceof Error ? error.message : 'Certification failed') + '\n'); return 1; }
 }

@@ -51,13 +51,20 @@ function record(f: ReturnType<typeof fixture>, run: string, checkout: string, ar
   const recorded = certify(f, ['run', '--directory', run, '--name', name, '--cwd', checkout, '--', ...argv]);
   assert.equal(recorded.status, 0, recorded.stderr);
 }
-function prepared(f: ReturnType<typeof fixture>) {
+function choose(f: ReturnType<typeof fixture>, run: string, authors = 'claude', row = 'grok:grok-4.7@xhigh', parent = 'claude') {
+  const sheet = join(f.directory, `sheet-${hash(row + authors + parent).slice(0, 8)}.md`);
+  writeFileSync(sheet, `# pstack model configuration\n\npre-pr reviewer: ${row}\n`);
+  return certify(f, ['reviewer', '--directory', run, '--parent', parent, '--sheet', sheet, '--author-provider', authors]);
+}
+function prepared(f: ReturnType<typeof fixture>, options: { authors?: string; row?: string } = {}) {
   const run = join(f.directory, 'run');
   const checkout = f.checkout();
   record(f, run, checkout);
   const report = certify(f, ['report', '--repo', 'Example/app', '--head', f.state.head, '--directory', run]);
   assert.equal(report.status, 0, report.stderr);
   const round = JSON.parse(report.stdout).round;
+  const chosen = choose(f, run, options.authors, options.row);
+  assert.equal(chosen.status, 0, chosen.stderr);
   return { run, round, checkout };
 }
 test('run records command, exit code and log digest and propagates the exit code', t => {
@@ -123,6 +130,7 @@ test('a ci-only certificate marks every unrecorded contract run as skipped', t =
   const { round, mode } = JSON.parse(report.stdout);
   assert.equal(mode, 'ci-only');
   lane(f, round, 'pre-pr reviewer');
+  assert.equal(choose(f, run).status, 0);
   const result = certify(f, ['assemble', '--directory', run, '--author-provider', 'claude', '--output', join(run, 'certificate.json'), '--adjust-rounds', '0']);
   assert.equal(result.status, 0, result.stderr);
   const certificate = JSON.parse(result.stdout);
@@ -133,7 +141,7 @@ test('a ci-only certificate marks every unrecorded contract run as skipped', t =
 });
 test('assemble admits a Codex reviewer lane and records its provider from the descriptor', t => {
   const f = prePrFixture(false, false); t.after(f.cleanup);
-  const { run, round } = prepared(f);
+  const { run, round } = prepared(f, { row: 'codex:gpt-6-sol@high' });
   codexLane(f, round);
   const assembled = certify(f, ['assemble', '--directory', run, '--author-provider', 'claude', '--output', join(run, 'certificate.json'), '--adjust-rounds', '0']);
   assert.equal(assembled.status, 0, assembled.stderr);
@@ -142,7 +150,7 @@ test('assemble admits a Codex reviewer lane and records its provider from the de
 });
 test('assemble refuses a certifier lane of a provider without an unsandboxed mode', t => {
   const f = prePrFixture(); t.after(f.cleanup);
-  const { run, round } = prepared(f);
+  const { run, round } = prepared(f, { authors: 'codex' });
   lane(f, round, 'pre-pr reviewer');
   lane(f, round, 'pre-pr certifier', { provider: 'claude', model: 'claude-opus-5-5', reportedModel: 'claude-opus-5-5' });
   const assembled = certify(f, ['assemble', '--directory', run, '--author-provider', 'codex', '--output', join(run, 'certificate.json'), '--adjust-rounds', '0']);
@@ -167,7 +175,7 @@ for (const fault of ['same-family', 'failed-run', 'edited-log', 'missing-run', '
     const f = prePrFixture(); t.after(f.cleanup);
     if (fault === 'unmapped-surface') { f.state.files = [{ filename: 'client/src/pages/New.jsx', status: 'added', patch: '@@ -0,0 +1 @@\n+new' }]; f.save(); }
     const { run, round, checkout } = prepared(f);
-    lane(f, round, 'pre-pr reviewer', { provider: fault === 'same-family' ? 'grok' : undefined, findings: fault === 'open-finding' ? [{ kind: 'regression', source: 'lane', path: 'client/Login.jsx', line: 1, rule: 'lost-submit', severity: 'blocking' }] : [] });
+    lane(f, round, 'pre-pr reviewer', { findings: fault === 'open-finding' ? [{ kind: 'regression', source: 'lane', path: 'client/Login.jsx', line: 1, rule: 'lost-submit', severity: 'blocking' }] : [] });
     if (fault !== 'missing-certifier') lane(f, round, 'pre-pr certifier');
     if (fault === 'failed-run') writeFileSync(join(run, 'runs', 'suite.json'), JSON.stringify({ ...JSON.parse(readFileSync(join(run, 'runs', 'suite.json'), 'utf8')), exitCode: 1 }));
     if (fault === 'edited-log') writeFileSync(join(run, 'runs', 'suite.log'), 'tampered');
@@ -180,6 +188,7 @@ for (const fault of ['same-family', 'failed-run', 'edited-log', 'missing-run', '
     if (fault === 'other-command' || fault === 'moved-head' || fault === 'modified-checkout' || fault === 'untracked-file') record(f, run, checkout, fault === 'other-command' ? ['echo', 'other'] : undefined);
     if (fault === 'untracked-file') assert.equal(JSON.parse(readFileSync(join(run, 'runs', 'suite.json'), 'utf8')).clean, false);
     if (fault === 'artifact-bytes') { const file = join(run, 'lanes', 'pre-pr-certifier', `artifacts/converge/${round.id}/pre-pr-certifier/screen.png`); const png = readFileSync(file); png[png.length - 1] ^= 1; writeFileSync(file, png); }
+    if (fault === 'same-family') { const file = join(run, 'reviewer.json'); writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, 'utf8')), authorProviders: ['grok'] })); }
     const result = certify(f, ['assemble', '--directory', run, '--author-provider', fault === 'same-family' ? 'grok' : 'claude', '--output', join(run, 'certificate.json'), '--adjust-rounds', '0']);
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, { 'same-family': /same family as an author/, 'failed-run': /Run suite exited 1/, 'edited-log': /Run suite log changed/, 'missing-run': /Required run missing: suite/, 'renamed-run': /Run record file name differs from its name/, 'unlisted-run': /Run lint is not in the contract/, 'open-finding': /NOT VERIFIED/, 'unmapped-surface': /lacks a trusted feature recipe/, 'missing-certifier': /Required independent lane unavailable/, 'other-command': /Run suite command differs from the contract/, 'moved-head': /Run suite was not recorded at the certified head/, 'modified-checkout': /Run suite was recorded on a modified checkout/, 'untracked-file': /Run suite was recorded on a modified checkout/, 'artifact-bytes': /Artifact bytes differ from lane report/ }[fault]);
@@ -246,16 +255,16 @@ test('assemble writes the certificate only in the run directory', t => {
 });
 test('assemble takes a list of author families and refuses a reviewer from any of them', t => {
   const f = prePrFixture(false, false); t.after(f.cleanup);
-  const { run, round } = prepared(f);
+  const { run, round } = prepared(f, { authors: 'claude,codex', row: 'grok:grok-4.7@xhigh, codex:gpt-6-sol@high' });
   lane(f, round, 'pre-pr reviewer');
   const refused = certify(f, ['assemble', '--directory', run, '--author-provider', 'claude, grok', '--output', join(run, 'certificate.json'), '--adjust-rounds', '0']);
   assert.equal(refused.status, 1);
-  assert.match(refused.stderr, /Reviewer lane is the same family as an author \(grok\); change the model sheet/);
-  const assembled = certify(f, ['assemble', '--directory', run, '--author-provider', 'claude,codex', '--output', join(run, 'certificate.json'), '--adjust-rounds', '0']);
+  assert.match(refused.stderr, /Author families differ from the reviewer choice/);
+  const assembled = certify(f, ['assemble', '--directory', run, '--author-provider', 'codex,claude', '--output', join(run, 'certificate.json'), '--adjust-rounds', '0']);
   assert.equal(assembled.status, 0, assembled.stderr);
   const certificate = JSON.parse(readFileSync(join(run, 'certificate.json'), 'utf8'));
   assert.equal(certificate.schemaVersion, 2);
-  assert.deepEqual(certificate.authorProviders, ['claude', 'codex']);
+  assert.deepEqual(certificate.authorProviders, ['claude', 'codex'], 'sorted, whatever the flag order');
   assert.equal(certificate.authorProvider, undefined);
 });
 test('parseCertificate refuses schema 1, an empty author list and an unknown author', () => {
@@ -341,4 +350,71 @@ test('report turns an unreadable Pstack-Author trailer into a gap that names the
   f.state.totalCommits = 251; f.save();
   const truncated = certify(f, ['report', '--repo', 'Example/app', '--head', f.state.head, '--directory', join(f.directory, 'run2')]);
   assert.notEqual(truncated.status, 0); assert.match(truncated.stderr, /Branch compare truncated/);
+});
+test('reviewer picks the first row lane whose family is not an author, declared or from a trailer, and records the choice once', t => {
+  const f = prePrFixture(false, false); t.after(f.cleanup);
+  f.state.commits = [{ message: 'feat: arena base\n\nPstack-Author: grok:grok-4.7@xhigh' }]; f.save();
+  const { run, round } = prepared(f, { row: 'grok:grok-4.7@xhigh, codex:gpt-6-sol@xhigh' });
+  assert.deepEqual(JSON.parse(readFileSync(join(run, 'reviewer.json'), 'utf8')), { schemaVersion: 1, round: round.id, descriptor: 'codex:gpt-6-sol@xhigh', provider: 'codex', model: 'gpt-6-sol', effort: 'xhigh', authorProviders: ['claude', 'grok'], skipped: [{ descriptor: 'grok:grok-4.7@xhigh', provider: 'grok' }] });
+  const again = choose(f, run, 'claude', 'grok:grok-4.7@xhigh, codex:gpt-6-sol@xhigh');
+  assert.equal(again.status, 1); assert.match(again.stderr, /Reviewer choice already made: a new head is a new run directory/);
+  const declared = join(f.directory, 'run-declared');
+  record(f, declared, f.checkout());
+  assert.equal(certify(f, ['report', '--repo', 'Example/app', '--head', f.state.head, '--directory', declared]).status, 0);
+  const chosen = choose(f, declared, 'claude,codex', 'codex:gpt-6-sol@xhigh, grok:grok-4.7@xhigh');
+  assert.equal(chosen.status, 1, 'grok wrote the branch and codex is declared');
+  assert.match(chosen.stderr, /^No pre-pr reviewer lane is outside the author families \(claude, codex, grok\): the row lists codex:gpt-6-sol@xhigh, grok:grok-4\.7@xhigh; add a lane of another family with \/setup-pstack$/m);
+  assert.equal(existsSync(join(declared, 'reviewer.json')), false);
+});
+test('reviewer refuses when no lane is outside the author families', t => {
+  const f = prePrFixture(false, false); t.after(f.cleanup);
+  const run = join(f.directory, 'run');
+  record(f, run, f.checkout());
+  assert.equal(certify(f, ['report', '--repo', 'Example/app', '--head', f.state.head, '--directory', run]).status, 0);
+  const refused = choose(f, run, 'grok');
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /No pre-pr reviewer lane is outside the author families \(grok\): the row lists grok:grok-4\.7@xhigh; add a lane of another family with \/setup-pstack/);
+});
+test('reviewer refuses a row /setup-pstack would refuse, a missing row and a missing report', t => {
+  const f = prePrFixture(false, false); t.after(f.cleanup);
+  const run = join(f.directory, 'run');
+  record(f, run, f.checkout());
+  assert.equal(certify(f, ['report', '--repo', 'Example/app', '--head', f.state.head, '--directory', run]).status, 0);
+  for (const [row, parent] of [['inherit-parent', 'claude'], ['claude:claude-opus-5-5@xhigh', 'claude'], ['grok:grok-4.7@xhigh, grok:grok-4.6@xhigh', 'claude'], ['claude:opus@xhigh', 'codex'], ['grok:grok-4.7@max', 'claude'], ['cursor:grok-4.7@high', 'claude']] as const) {
+    const result = choose(f, run, 'claude', row, parent);
+    assert.equal(result.status, 1, row);
+    assert.match(result.stderr, /role "pre-pr reviewer" takes one or more lanes of distinct families, each one of .*; change the model sheet with \/setup-pstack/, row);
+  }
+  const sheet = join(f.directory, 'no-row.md'); writeFileSync(sheet, 'bug-fix: claude:claude-opus-5-5@xhigh\n');
+  const missing = certify(f, ['reviewer', '--directory', run, '--parent', 'claude', '--sheet', sheet, '--author-provider', 'claude']);
+  assert.equal(missing.status, 1); assert.match(missing.stderr, /no pre-pr reviewer row; run \/setup-pstack/);
+  const noReport = certify(f, ['reviewer', '--directory', join(f.directory, 'nowhere'), '--parent', 'claude', '--sheet', sheet, '--author-provider', 'claude']);
+  assert.equal(noReport.status, 1);
+  const usage = certify(f, ['reviewer', '--directory', run]);
+  assert.equal(usage.status, 1); assert.match(usage.stderr, /Usage: converge-certify reviewer --directory RUN --parent <claude\|codex> \[--sheet PATH\] --author-provider PROVIDER\[,PROVIDER\.\.\.\]/);
+});
+test('assemble requires the reviewer choice of its round and the lane it names', t => {
+  const f = prePrFixture(false, false); t.after(f.cleanup);
+  const { run, round } = prepared(f, { row: 'codex:gpt-6-sol@high, grok:grok-4.7@xhigh' });
+  lane(f, round, 'pre-pr reviewer');
+  const args = ['assemble', '--directory', run, '--author-provider', 'claude', '--output', join(run, 'certificate.json'), '--adjust-rounds', '0'];
+  const wrongLane = certify(f, args);
+  assert.equal(wrongLane.status, 1); assert.match(wrongLane.stderr, /Reviewer lane differs from the chosen lane \(grok:grok-4\.7@xhigh, chose codex:gpt-6-sol@high\)/);
+  const file = join(run, 'reviewer.json');
+  const choice = JSON.parse(readFileSync(file, 'utf8'));
+  writeFileSync(file, JSON.stringify({ ...choice, round: '12345678-1234-1234-1234-123456789abc' }));
+  const otherRound = certify(f, args);
+  assert.equal(otherRound.status, 1); assert.match(otherRound.stderr, /Reviewer choice belongs to another round/);
+  rmSync(file);
+  const missing = certify(f, args);
+  assert.equal(missing.status, 1); assert.match(missing.stderr, /Reviewer choice missing: run converge-certify reviewer/);
+  assert.equal(existsSync(join(run, 'certificate.json')), false);
+});
+test('assemble refuses a round whose commit carries an unreadable Pstack-Author trailer', t => {
+  const f = prePrFixture(false, false); t.after(f.cleanup);
+  f.state.commits = [{ message: 'feat: x\n\nPstack-Author: gemini' }]; f.save();
+  const { run, round } = prepared(f);
+  lane(f, round, 'pre-pr reviewer');
+  const result = certify(f, ['assemble', '--directory', run, '--author-provider', 'claude', '--output', join(run, 'certificate.json'), '--adjust-rounds', '0']);
+  assert.equal(result.status, 1); assert.match(result.stderr, /INCONCLUSIVE: Unreadable Pstack-Author trailer in commit/);
 });
