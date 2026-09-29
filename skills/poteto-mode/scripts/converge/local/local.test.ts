@@ -7,7 +7,7 @@ import { fixture, moveTrunk, publishCertificate, moveTrunkToEmptyLightPaths } fr
 import { defaultConfigFile, defaultStateDirectory, loadConfig } from './config.ts';
 import { ledgerFile, writeLedger, DEFERRED_BACKOFF_MINUTES, HEAD_WINDOW_HOURS, LAUNCH_FAILURE_BACKOFF_MINUTES, MAX_DEFERRED_ATTEMPTS, MAX_FAILED_ATTEMPTS, MAX_LAUNCH_FAILURES, type Attempt, type Ledger } from './ledger.ts';
 import { leaseFile, takeLease } from './lease.ts';
-import { assertRaizRow, install, missingCommands, plist, uninstall } from './launchd.ts';
+import { assertRaizRow, install, installWhenIdle, missingCommands, plist, uninstall } from './launchd.ts';
 import { tickRaiz } from './local.ts';
 
 const t0 = Date.parse('2026-09-28T12:00:00Z');
@@ -731,4 +731,43 @@ test('a tick that launched a Raiz leaves a wake for both jobs; a dry run consume
   assert.equal(wakeFiles(state, 'sweep')?.length, 1, 'the sweep arms what the attempt certified');
   assert.equal(wakeFiles(state, 'watch'), null, 'the watch job has no wake queue');
   assert.equal(JSON.parse(readFileSync(join(state, 'last-tick-raiz.json'), 'utf8')).wakes, 1);
+});
+test('install --when-idle waits until neither the sweep nor the raiz job runs, then installs; it gives up at its cap, refuses beside another waiting installer, and checks install first', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'install-idle-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const [home, bin, shadow, state] = ['home', 'bin', 'shadow', 'state'].map(name => join(root, name));
+  for (const directory of [bin, shadow]) mkdirSync(directory);
+  for (const name of ['gh', 'claude']) writeFileSync(join(bin, name), '#!/bin/sh\n', { mode: 0o755 });
+  writeFileSync(join(shadow, 'launchctl'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  const saved = process.env.PATH;
+  process.env.PATH = `${shadow}:${saved}`;
+  t.after(() => { process.env.PATH = saved; });
+  const sheetPath = join(root, 'sheet.md'); writeFileSync(sheetPath, 'converge raiz: claude:claude-opus-5-5@xhigh\n');
+  const options = { pluginDir: root, configFile: defaultConfigFile(home), intervalMinutes: 10, logDirectory: join(root, 'logs'), stateDirectory: state, path: bin, nodePath: process.execPath, parent: 'claude' as const, sheetPath };
+  const lease = join(state, 'leases', 'install.json');
+  const calls: string[][] = [];
+  /** A launchctl whose `list` shows a PID for the labels `busy` names at that call. */
+  const fake = (busy: (label: string) => boolean) => (args: string[]) => {
+    calls.push(args);
+    if (args[0] !== 'list') return { status: 0, output: '' };
+    return { status: 0, output: `{\n\t"Label" = "${args[1]}";\n${busy(String(args[1])) ? '\t"PID" = 42;\n' : ''}};\n` };
+  };
+  let raizPolls = 0;
+  const installed = await installWhenIdle(options, home, fake(label => label.endsWith('-raiz') && raizPolls++ < 2), { pollMs: 1 });
+  assert.deepEqual(installed.loaded, ['com.pstack.converge-sweep', 'com.pstack.converge-raiz', 'com.pstack.converge-watch']);
+  const firstBootout = calls.findIndex(call => call[0] === 'bootout');
+  assert.deepEqual(calls.slice(0, firstBootout).map(call => call.join(' ')), ['list com.pstack.converge-sweep', 'list com.pstack.converge-raiz', 'list com.pstack.converge-sweep', 'list com.pstack.converge-raiz', 'list com.pstack.converge-sweep', 'list com.pstack.converge-raiz'], 'two busy polls, then the idle one');
+  assert.equal(existsSync(lease), false, 'the install lease is released');
+  calls.length = 0;
+  await assert.rejects(installWhenIdle(options, home, fake(label => label.endsWith('-sweep')), { capMs: 20, pollMs: 1 }), /^Error: install --when-idle gave up: com\.pstack\.converge-sweep still running at the end of the wait$/);
+  assert.equal(calls.some(call => call[0] === 'bootout'), false, 'nothing is booted out');
+  assert.equal(existsSync(lease), false);
+  calls.length = 0;
+  const notLoaded = (args: string[]) => { calls.push(args); return args[0] === 'list' ? { status: 113, output: 'Could not find service' } : { status: 0, output: '' }; };
+  assert.deepEqual((await installWhenIdle(options, home, notLoaded, { pollMs: 1 })).loaded.length, 3, 'a job that is not loaded does not run');
+  takeLease(lease, { by: 'install:other', ttlHours: 1, pid: process.pid });
+  calls.length = 0;
+  await assert.rejects(installWhenIdle(options, home, fake(() => false)), /^Error: another install --when-idle is waiting: install:other until /);
+  rmSync(lease);
+  await assert.rejects(installWhenIdle({ ...options, path: '' }, home, fake(() => false)), /install needs gh and claude on the PATH/);
+  assert.deepEqual(calls, [], 'the refusals read no job');
 });

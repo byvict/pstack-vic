@@ -3,6 +3,7 @@ import { accessSync, constants, mkdirSync, readFileSync, rmSync, statSync, write
 import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join } from 'node:path';
 import { assertDefaultConfig } from './config.ts';
+import { readLease, releaseLease, takeLease } from './lease.ts';
 import { raizLane } from './raiz.ts';
 import { wakeDirectory } from './wake.ts';
 
@@ -59,18 +60,22 @@ function readSheet(file: string): string | Error {
   try { return readFileSync(file, 'utf8'); }
   catch (error) { return error as Error; }
 }
-type Launchctl = (args: string[]) => { status: number | null; output: string };
-function launchctl(args: string[]): { status: number | null; output: string } {
+export type Launchctl = (args: string[]) => { status: number | null; output: string };
+export function launchctl(args: string[]): { status: number | null; output: string } {
   const result = spawnSync('launchctl', args, { encoding: 'utf8' });
   return { status: result.status, output: (result.stdout ?? '') + (result.stderr ?? '') };
 }
 function domain(): string { return `gui/${process.getuid ? process.getuid() : 501}`; }
 /** Writes the three plists and (re)loads them into the user's launchd domain, only from the default configuration, only when gh and the parent CLI are on the PATH the jobs get, and only with a valid `converge raiz` row in the parent's sheet; the log directory must exist for launchd to open the log. `run` replaces launchctl in tests. */
-export function install(options: InstallOptions, home = homedir(), run: Launchctl = launchctl): { written: string[]; loaded: string[] } {
+/** What `install` checks before it writes anything, apart so `install --when-idle` checks it before it waits. */
+export function assertInstallable(options: InstallOptions, home = homedir()): void {
   assertDefaultConfig(options.configFile, home);
   const missing = missingCommands(options.path, ['gh', options.parent]);
   if (missing.length) throw new Error(`install needs gh and ${options.parent} on the PATH it gives launchd; missing: ${missing.join(', ')}. Run install from a shell where they resolve`);
   assertRaizRow(options.sheetPath, readSheet(options.sheetPath), options.parent);
+}
+export function install(options: InstallOptions, home = homedir(), run: Launchctl = launchctl): { written: string[]; loaded: string[] } {
+  assertInstallable(options, home);
   const written: string[] = [];
   const loaded: string[] = [];
   mkdirSync(join(home, 'Library', 'LaunchAgents'), { recursive: true });
@@ -87,6 +92,31 @@ export function install(options: InstallOptions, home = homedir(), run: Launchct
     loaded.push(label(job));
   }
   return { written, loaded };
+}
+/** How long `install --when-idle` waits for the sweep and raiz jobs: a Raiz attempt is capped at two hours. */
+export const WHEN_IDLE_HOURS = 3;
+const WHEN_IDLE_POLL_MS = 2_000;
+/** `launchctl list LABEL` prints `"PID" = N;` only while the job's process runs, and fails for a job that is not loaded. */
+export function jobRunning(job: Job, run: Launchctl = launchctl): boolean {
+  const result = run(['list', label(job)]);
+  return result.status === 0 && /"PID" = \d+;/.test(result.output);
+}
+/** `install` once neither the sweep nor the raiz job runs, so the bootout kills no tick and no Raiz: it checks install's preconditions, holds `<stateDirectory>/leases/install.json` against a second waiting installer, and polls every two seconds for at most WHEN_IDLE_HOURS. A tick that starts between the last poll and the bootout still dies with it. */
+export async function installWhenIdle(options: InstallOptions, home = homedir(), run: Launchctl = launchctl, wait: { capMs?: number; pollMs?: number } = {}): Promise<{ written: string[]; loaded: string[] }> {
+  assertInstallable(options, home);
+  const lease = join(options.stateDirectory, 'leases', 'install.json');
+  const by = `install:${process.pid}`;
+  const holder = readLease(lease);
+  if (holder && holder.by !== by) throw new Error(`another install --when-idle is waiting: ${holder.by} until ${holder.expiresAt}`);
+  takeLease(lease, { by, ttlHours: WHEN_IDLE_HOURS + 1, pid: process.pid });
+  try {
+    const deadline = Date.now() + (wait.capMs ?? WHEN_IDLE_HOURS * 3_600_000);
+    for (let busy = WAKEABLE.filter(job => jobRunning(job, run)); busy.length; busy = WAKEABLE.filter(job => jobRunning(job, run))) {
+      if (Date.now() >= deadline) throw new Error(`install --when-idle gave up: ${busy.map(label).join(', ')} still running at the end of the wait`);
+      await new Promise(resolve => setTimeout(resolve, wait.pollMs ?? WHEN_IDLE_POLL_MS));
+    }
+    return install(options, home, run);
+  } finally { releaseLease(lease, by); }
 }
 export function uninstall(home = homedir(), run: Launchctl = launchctl): string[] {
   const removed: string[] = [];

@@ -7,7 +7,7 @@ import { api, command, openPulls, pull, trusted as trustedContract, viewer, type
 import { sweep, type Swept } from '../sweep.ts';
 import { classify, skipCause, type Classified } from './classify.ts';
 import { defaultConfigFile, defaultStateDirectory, loadConfig, type LocalConfig, type RepoConfig } from './config.ts';
-import { install, uninstall, JOBS, WAKEABLE, type Job, type Wakeable } from './launchd.ts';
+import { install, installWhenIdle, uninstall, JOBS, WAKEABLE, type InstallOptions, type Job, type Wakeable } from './launchd.ts';
 import { consumeWakes, nudge } from './wake.ts';
 import { postMergeOne, postMergePass, postMergeStatus, type PostMergeReport } from './post-merge.ts';
 import { tickWatch, watchErrors } from './watch.ts';
@@ -214,11 +214,11 @@ export function status(config: LocalConfig, now = Date.now()): Record<string, un
   const lastTick = Object.fromEntries(JOBS.map(job => [job, readLastTick(config.stateDirectory, job)]));
   return { config, raiz, gh: probe('gh', ['auth', 'status']), parent: config.parent === 'claude' ? probe('claude', ['auth', 'status', '--json']) : probe('codex', ['login', 'status']), leases, ledgers, postMerge: postMergeStatus(config.stateDirectory), lastTick };
 }
-const USAGE = 'Usage: converge-local <install|uninstall|status|tick --job sweep|raiz|watch [--dry-run]|nudge [--job sweep|raiz]|lease --repo R --branch B [--by NAME] [--ttl H] [--pid N]|release --repo R --branch B [--by NAME]|run --repo R --pr N [--kind K] [--dry-run]|post-merge --repo R --commit SHA [--dry-run]> [--config FILE]';
+const USAGE = 'Usage: converge-local <install [--when-idle]|uninstall|status|tick --job sweep|raiz|watch [--dry-run]|nudge [--job sweep|raiz]|lease --repo R --branch B [--by NAME] [--ttl H] [--pid N]|release --repo R --branch B [--by NAME]|run --repo R --pr N [--kind K] [--dry-run]|post-merge --repo R --commit SHA [--dry-run]> [--config FILE]';
 export async function main(args: string[]): Promise<number> {
   const [subcommand, ...rest] = args;
   try {
-    const { values } = parseArgs({ args: rest, options: { config: { type: 'string' }, job: { type: 'string' }, 'dry-run': { type: 'boolean', default: false }, repo: { type: 'string' }, branch: { type: 'string' }, by: { type: 'string', default: 'interactive' }, ttl: { type: 'string', default: String(LEASE_TTL_HOURS) }, pid: { type: 'string' }, pr: { type: 'string' }, kind: { type: 'string' }, commit: { type: 'string' }, now: { type: 'string' } } });
+    const { values } = parseArgs({ args: rest, options: { config: { type: 'string' }, job: { type: 'string' }, 'dry-run': { type: 'boolean', default: false }, repo: { type: 'string' }, branch: { type: 'string' }, by: { type: 'string', default: 'interactive' }, ttl: { type: 'string', default: String(LEASE_TTL_HOURS) }, pid: { type: 'string' }, pr: { type: 'string' }, kind: { type: 'string' }, commit: { type: 'string' }, 'when-idle': { type: 'boolean', default: false }, now: { type: 'string' } } });
     const configFile = values.config ?? defaultConfigFile();
     const config = () => loadConfig(configFile);
     // An interactive session takes the lease whether or not the daemon is configured; a configuration that exists names where the daemon looks.
@@ -226,7 +226,11 @@ export async function main(args: string[]): Promise<number> {
     const now = values.now === undefined ? undefined : Number(values.now);
     if (now !== undefined && !Number.isFinite(now)) throw new Error('--now takes milliseconds since the epoch');
     switch (subcommand) {
-      case 'install': { const c = config(); print(install({ pluginDir: c.pluginDir, configFile: c.file, intervalMinutes: c.intervalMinutes, logDirectory: c.logDirectory, stateDirectory: c.stateDirectory, path: process.env.PATH ?? '', nodePath: process.execPath, parent: c.parent, sheetPath: c.sheetPath })); return 0; }
+      case 'install': {
+        const c = config();
+        const options: InstallOptions = { pluginDir: c.pluginDir, configFile: c.file, intervalMinutes: c.intervalMinutes, logDirectory: c.logDirectory, stateDirectory: c.stateDirectory, path: process.env.PATH ?? '', nodePath: process.execPath, parent: c.parent, sheetPath: c.sheetPath };
+        print(values['when-idle'] ? await installWhenIdle(options) : install(options)); return 0;
+      }
       case 'nudge': {
         // Like lease: a session wakes the daemon whether or not it is configured, and a file that exists names where the jobs watch.
         const jobs = values.job === undefined ? WAKEABLE : WAKEABLE.filter(name => name === values.job);
