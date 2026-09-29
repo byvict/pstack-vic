@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { fixture, moveTrunk, publishCertificate } from '../fixtures/setup.ts';
 import { defaultStateDirectory, loadConfig } from './config.ts';
-import { ledgerFile, writeLedger, DEFERRED_BACKOFF_MINUTES, HEAD_WINDOW_HOURS, MAX_DEFERRED_ATTEMPTS, MAX_FAILED_ATTEMPTS, type Attempt, type Ledger } from './ledger.ts';
+import { ledgerFile, writeLedger, DEFERRED_BACKOFF_MINUTES, HEAD_WINDOW_HOURS, LAUNCH_FAILURE_BACKOFF_MINUTES, MAX_DEFERRED_ATTEMPTS, MAX_FAILED_ATTEMPTS, MAX_LAUNCH_FAILURES, type Attempt, type Ledger } from './ledger.ts';
 import { leaseFile, takeLease } from './lease.ts';
 import { assertRaizRow, missingCommands, plist } from './launchd.ts';
 import { tickRaiz } from './local.ts';
@@ -53,7 +53,7 @@ function edit(f: ReturnType<typeof fixture>, change: (live: ReturnType<ReturnTyp
   const live = f.read(); change(live); Object.assign(f.state, live); f.save();
 }
 const seeded = (f: ReturnType<typeof fixture>, count: number, outcome: Attempt['outcome'] = 'failed', endedAt = t0 - 3_000_000): Ledger => ({ schemaVersion: 1, repo: 'Example/app', pr: 1, head: f.state.head, firstAttemptAt: new Date(t0 - 3_600_000).toISOString(), heldAt: null,
-  attempts: Array.from({ length: count }, (_, i) => ({ n: i + 1, kind: 'certify' as const, startedAt: new Date(t0 - 3_600_000).toISOString(), endedAt: new Date(endedAt).toISOString(), outcome, reason: outcome === 'failed' ? 'run suite exited 1' : 'CI rerun pending', runDirectory: `/tmp/run-${i + 1}` })) });
+  attempts: Array.from({ length: count }, (_, i) => ({ n: i + 1, kind: 'certify' as const, startedAt: new Date(t0 - 3_600_000).toISOString(), endedAt: new Date(endedAt).toISOString(), outcome, reason: outcome === 'failed' ? 'run suite exited 1' : 'CI rerun pending', runDirectory: `/tmp/run-${i + 1}` })), launchFailures: [] });
 /** tickRaiz in this process, for the options the command does not take. gh, the fake claude and the temp root come from the environment, so the fixture's are set for the call and restored after. */
 async function inProcess<T>(f: ReturnType<typeof fixture>, run: () => Promise<T>): Promise<T> {
   const keys = ['PATH', 'CONVERGE_FIXTURE', 'TMPDIR', 'FAKE_ARGV'] as const;
@@ -179,7 +179,8 @@ test('a Raiz that fails within the launch-failure threshold records no attempt: 
   assert.deepEqual(report.errors, ['Example/app#1: raiz launch failed: no outcome: raiz exited 1']);
   assert.equal(result.stderr, 'Example/app#1: raiz launch failed: no outcome: raiz exited 1\n');
   assert.equal(report.launched.pr, 1); assert.equal(report.launched.attempt, null);
-  assert.equal(existsSync(ledgerFile(state, 'Example/app', 1)), false);
+  const ledger: Ledger = JSON.parse(readFileSync(ledgerFile(state, 'Example/app', 1), 'utf8'));
+  assert.deepEqual([ledger.attempts, ledger.launchFailures.length], [[], 1], 'no attempt; the failure counts on the head');
   assert.equal(existsSync(leaseFile(state, 'Example/app', 'change')), false);
   assert.deepEqual(f.read().mutations, [], 'no label, no comment');
 });
@@ -277,7 +278,7 @@ test('the cap after an attempt reads the attempt end, not the tick start', t => 
   const start = Date.now() - 7 * 3_600_000;
   listed(f); fakeClaude(f, writer(outcome(f, { outcome: 'deferred', reason: 'Dependabot rebase requested', arm: null })));
   const first = new Date(start - 3_600_000).toISOString();
-  writeLedger(ledgerFile(state, 'Example/app', 1), { schemaVersion: 1, repo: 'Example/app', pr: 1, head: f.state.head, firstAttemptAt: first, heldAt: null, attempts: [{ n: 1, kind: 'certify', startedAt: first, endedAt: first, outcome: 'deferred', reason: 'trunk red', runDirectory: '/tmp/run-1' }] });
+  writeLedger(ledgerFile(state, 'Example/app', 1), { schemaVersion: 1, repo: 'Example/app', pr: 1, head: f.state.head, firstAttemptAt: first, heldAt: null, attempts: [{ n: 1, kind: 'certify', startedAt: first, endedAt: first, outcome: 'deferred', reason: 'trunk red', runDirectory: '/tmp/run-1' }], launchFailures: [] });
   const result = tick(f, file, ['--now', String(start)]);
   assert.equal(result.status, 0, result.stderr);
   const report = JSON.parse(result.stdout);
@@ -467,4 +468,44 @@ test('install refuses a sheet without a valid converge raiz row, names the cause
   for (const [sheet, cause] of refused) {
     assert.throws(() => assertRaizRow('/s/pstack-models.md', sheet, 'claude'), (error: Error) => error.message.startsWith('install needs a valid converge raiz row in /s/pstack-models.md (') && cause.test(error.message) && error.message.endsWith('); run /setup-pstack, then install again'), String(sheet));
   }
+});
+test('a Raiz that fails to launch is counted on the head: after three failures the PR waits out the backoff, reported as an error, and the next PR gets the tick', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const { file, state } = configured(f);
+  listed(f, [other(2, {})]); fakeClaude(f, 'cat > /dev/null; echo "Not logged in" >&2; exit 1');
+  const ledger = () => JSON.parse(readFileSync(ledgerFile(state, 'Example/app', 1), 'utf8')) as Ledger;
+  for (let n = 1; n <= MAX_LAUNCH_FAILURES; n++) {
+    const result = tick(f, file);
+    assert.equal(result.status, 1, `tick ${n}`);
+    const report = JSON.parse(result.stdout);
+    assert.equal(report.launched.pr, 1, `tick ${n} launches the lowest pending PR`);
+    assert.deepEqual(report.errors, ['Example/app#1: raiz launch failed: no outcome: raiz exited 1'], `tick ${n}`);
+    assert.deepEqual([ledger().launchFailures.length, ledger().attempts, ledger().firstAttemptAt], [n, [], null], `tick ${n}`);
+    assert.equal(ledger().launchFailures.at(-1)?.reason, 'no outcome: raiz exited 1');
+  }
+  const until = new Date(Date.parse(ledger().launchFailures.at(-1)!.at) + LAUNCH_FAILURE_BACKOFF_MINUTES * 60_000).toISOString();
+  const reason = `${MAX_LAUNCH_FAILURES} launch failures on head ${f.state.head}; next launch after ${until} (${LAUNCH_FAILURE_BACKOFF_MINUTES} minutes after the last)`;
+  const next = tick(f, file);
+  assert.equal(next.status, 1);
+  const report = JSON.parse(next.stdout);
+  assert.deepEqual(classes(next.stdout), [[1, 'skipped', null, reason], [2, 'pending', 'certify', 'Latest verdict status is not trusted VERIFIED']]);
+  assert.equal(report.launched.pr, 2, 'the next PR gets the tick');
+  assert.deepEqual(report.errors, [`Example/app#1: ${reason}`, 'Example/app#2: raiz launch failed: no outcome: raiz exited 1']);
+  assert.equal(ledger().launchFailures.length, MAX_LAUNCH_FAILURES, 'a skipped PR records nothing');
+  assert.deepEqual(f.read().mutations, [], 'no label, no comment');
+  const later = tick(f, file, ['--now', String(Date.parse(until))]);
+  assert.equal(JSON.parse(later.stdout).launched.pr, 1, 'after the backoff the PR launches again');
+  assert.equal(ledger().launchFailures.length, MAX_LAUNCH_FAILURES + 1);
+});
+test('a recorded attempt clears the launch failures of the head', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const { file, state } = configured(f);
+  listed(f); fakeClaude(f, writer(outcome(f, {})));
+  const at = new Date(t0 - 60_000).toISOString();
+  writeLedger(ledgerFile(state, 'Example/app', 1), { schemaVersion: 1, repo: 'Example/app', pr: 1, head: f.state.head, firstAttemptAt: null, heldAt: null, attempts: [], launchFailures: [{ at, reason: 'no outcome: raiz exited 1' }, { at, reason: 'no outcome: raiz exited 1' }] });
+  const result = tick(f, file);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).launched.attempt.outcome, 'certified');
+  const ledger: Ledger = JSON.parse(readFileSync(ledgerFile(state, 'Example/app', 1), 'utf8'));
+  assert.deepEqual([ledger.launchFailures, ledger.attempts.length], [[], 1]);
 });

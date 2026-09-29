@@ -8,9 +8,9 @@ import { sweep, type Swept } from '../sweep.ts';
 import { classify, skipCause, type Classified } from './classify.ts';
 import { defaultConfigFile, defaultStateDirectory, loadConfig, type LocalConfig, type RepoConfig } from './config.ts';
 import { install, uninstall, JOBS, type Job } from './launchd.ts';
-import { currentLedger, deferredBackoffUntil, exhausted, ledgerFile, markHeld, readLedger, withAttempt, workKinds, writeLedger, DEFERRED_BACKOFF_MINUTES, type Attempt, type Ledger, type WorkKind } from './ledger.ts';
+import { currentLedger, deferredBackoffUntil, exhausted, launchBackoffUntil, ledgerFile, markHeld, readLedger, withAttempt, withLaunchFailure, workKinds, writeLedger, DEFERRED_BACKOFF_MINUTES, LAUNCH_FAILURE_BACKOFF_MINUTES, type Attempt, type Ledger, type WorkKind } from './ledger.ts';
 import { LEASE_TTL_HOURS, leaseFile, readLease, releaseLease, takeLease, type Lease } from './lease.ts';
-import { attemptFrom, launchRaiz, raizLane, type RaizInput } from './raiz.ts';
+import { attemptFrom, launchRaiz, raizLane, LaunchFailure, type RaizInput } from './raiz.ts';
 
 const CONTRACT_PATH = '.cursor/converge.json';
 export interface Launch { repo: string; pr: number; work: WorkKind; runDirectory: string; attempt: Omit<Attempt, 'n'> | null }
@@ -34,7 +34,7 @@ async function hold(t: Trusted, file: string, ledger: Ledger, reason: string, no
 function runDirectory(repo: string, pr: number, head: string, n: number): string {
   return join(tmpdir(), 'converge-local', `${repo.replace('/', '-')}-${pr}-${head.slice(0, 8)}-${n}-${Math.floor(Date.now() / 1000)}`);
 }
-/** One pass of the raiz job: classify every open PR of every repository, launch one Raiz on the first with work, record its attempt. The sheet row is read first, so a bad row launches nothing and reads nothing. An error for one PR is reported and the pass goes on, until a Raiz was launched: then the pass ends. A launch failure is such an error, and records no attempt. */
+/** One pass of the raiz job: classify every open PR of every repository, launch one Raiz on the first with work, record its attempt. The sheet row is read first, so a bad row launches nothing and reads nothing. An error for one PR is reported and the pass goes on, until a Raiz was launched: then the pass ends. A launch failure is such an error, records no attempt, and counts on the head's ledger: after MAX_LAUNCH_FAILURES the PR is skipped for LAUNCH_FAILURE_BACKOFF_MINUTES. */
 export async function tickRaiz(config: LocalConfig, options: RaizTickOptions): Promise<TickReport> {
   const now = options.now ?? Date.now();
   const report: TickReport = { job: 'raiz', classified: [], launched: null, held: [], errors: [] };
@@ -56,6 +56,14 @@ export async function tickRaiz(config: LocalConfig, options: RaizTickOptions): P
       else await hold(t, file, ledger, cap, now, report);
       return;
     }
+    const launchUntil = launchBackoffUntil(ledger, now);
+    if (launchUntil) {
+      // The failures were tick errors already; the skip stays one, so a machine problem keeps showing as exit 1 while the other PRs get the ticks.
+      const reason = `${ledger.launchFailures.length} launch failures on head ${classified.head}; next launch after ${launchUntil} (${LAUNCH_FAILURE_BACKOFF_MINUTES} minutes after the last)`;
+      report.classified[entry] = { kind: 'skipped', repo: repo.repo, pr: number, head: classified.head, reason };
+      report.errors.push(`${repo.repo}#${number}: ${reason}`);
+      return;
+    }
     const until = deferredBackoffUntil(ledger, now);
     if (until) {
       report.classified[entry] = { kind: 'skipped', repo: repo.repo, pr: number, head: classified.head, reason: `deferred backoff until ${until} (${DEFERRED_BACKOFF_MINUTES} minutes after the last deferred attempt)` };
@@ -69,7 +77,11 @@ export async function tickRaiz(config: LocalConfig, options: RaizTickOptions): P
     try {
       const input: RaizInput = { repo: repo.repo, pr: number, kind: classified.work, head: classified.head, branch: classified.branch, checkout: repo.checkout, runDirectory: launch.runDirectory, pluginDir: config.pluginDir, leaseBy };
       const launched = await launchRaiz(input, lane, { capMs: options.capMs, env: options.env });
-      launch.attempt = attemptFrom(input, launched, options.launchFailureMs);
+      try { launch.attempt = attemptFrom(input, launched, options.launchFailureMs); }
+      catch (error) {
+        if (error instanceof LaunchFailure) writeLedger(file, withLaunchFailure(ledger, { at: launched.endedAt, reason: error.reason }));
+        throw error;
+      }
       if (!launch.attempt && launched.outcome) {
         // A Raiz may skip only for catch-up step 1's causes. A skip the live PR does not explain counts against the head, so a Raiz that always skips still meets the caps.
         const live = await pull(repo.repo, number);

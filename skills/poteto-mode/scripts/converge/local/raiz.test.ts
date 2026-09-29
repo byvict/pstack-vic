@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { PLUGIN_ROOT } from '../../../../../scripts/model-matrix.ts';
 import { assertDefaultConfig, defaultConfigFile, loadConfig } from './config.ts';
-import { attemptFrom, launchRaiz, raizCommand, raizLane, raizPrompt, raizRow, LAUNCH_FAILURE_MINUTES, type RaizInput } from './raiz.ts';
+import { attemptFrom, launchRaiz, raizCommand, raizLane, raizPrompt, raizRow, LaunchFailure, LAUNCH_FAILURE_MINUTES, type RaizInput } from './raiz.ts';
 import { parseOutcome, type OutcomeFile } from './outcome.ts';
 
 const head = 'b'.repeat(40);
@@ -76,7 +76,7 @@ test('a Raiz that ends without an accepted outcome within the launch-failure thr
   const dir = temp(t);
   assert.equal(LAUNCH_FAILURE_MINUTES, 2);
   const quick = await launchRaiz(input(dir), fable, { env: fakeClaude(dir, 'cat > /dev/null; echo not logged in >&2; exit 1') });
-  assert.throws(() => attemptFrom(input(dir), quick), (error: Error) => error.message === 'raiz launch failed: no outcome: raiz exited 1');
+  assert.throws(() => attemptFrom(input(dir), quick), (error: Error) => error instanceof LaunchFailure && error.reason === 'no outcome: raiz exited 1' && error.message === 'raiz launch failed: no outcome: raiz exited 1');
   assert.deepEqual(attemptFrom(input(dir), quick, 0), { kind: 'certify', startedAt: quick.startedAt, endedAt: quick.endedAt, outcome: 'failed', reason: 'no outcome: raiz exited 1', runDirectory: join(dir, 'run') }, 'with the threshold at 0 the same run is a failed attempt');
   const foreign = await launchRaiz(input(dir, { runDirectory: join(dir, 'run2') }), fable, { env: fakeClaude(dir, writer(outcome({ kind: 'repair' }))) });
   assert.throws(() => attemptFrom(input(dir, { runDirectory: join(dir, 'run2') }), foreign), (error: Error) => error.message === 'raiz launch failed: no outcome: outcome for another kind, raiz exited 0');

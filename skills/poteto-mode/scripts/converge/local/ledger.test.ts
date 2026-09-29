@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { currentLedger, deferredBackoffUntil, exhausted, ledgerFile, markHeld, readLedger, withAttempt, writeLedger, DEFERRED_BACKOFF_MINUTES, HEAD_WINDOW_HOURS, MAX_DEFERRED_ATTEMPTS, MAX_FAILED_ATTEMPTS, type Attempt } from './ledger.ts';
+import { currentLedger, deferredBackoffUntil, exhausted, launchBackoffUntil, ledgerFile, markHeld, readLedger, withAttempt, withLaunchFailure, writeLedger, DEFERRED_BACKOFF_MINUTES, HEAD_WINDOW_HOURS, LAUNCH_FAILURE_BACKOFF_MINUTES, MAX_DEFERRED_ATTEMPTS, MAX_FAILED_ATTEMPTS, MAX_LAUNCH_FAILURES, type Attempt } from './ledger.ts';
 
 const head = 'b'.repeat(40), other = 'c'.repeat(40);
 const t0 = Date.parse('2026-09-28T12:00:00Z');
@@ -12,7 +12,7 @@ function state(t: { after(fn: () => void): void }): string { const d = mkdtempSy
 
 test('a ledger starts fresh on a new head or after the hold label is removed', () => {
   const fresh = currentLedger(null, 'Example/app', 1, head, false);
-  assert.deepEqual(fresh, { schemaVersion: 1, repo: 'Example/app', pr: 1, head, firstAttemptAt: null, heldAt: null, attempts: [] });
+  assert.deepEqual(fresh, { schemaVersion: 1, repo: 'Example/app', pr: 1, head, firstAttemptAt: null, heldAt: null, attempts: [], launchFailures: [] });
   const one = withAttempt(fresh, attempt(1, 'failed'));
   assert.equal(one.firstAttemptAt, attempt(1, 'failed').startedAt);
   assert.equal(withAttempt(fresh, { ...attempt(1, 'failed'), n: 9 } as Omit<Attempt, 'n'>).attempts[0]?.n, 1, 'the ledger numbers its attempts');
@@ -85,4 +85,37 @@ test('a corrupt or invalid ledger file throws an error that names the file', t =
     writeFileSync(file, body);
     assert.throws(() => readLedger(file), (error: Error) => new RegExp(`^Invalid ledger file ${escaped}: `).test(error.message) && cause.test(error.message), body);
   }
+});
+test('three launch failures on a head hold the next launch back for an hour; a recorded attempt or a new head clears them', () => {
+  let ledger = currentLedger(null, 'Example/app', 1, head, false);
+  assert.equal(launchBackoffUntil(ledger, t0), null, 'no failure, no backoff');
+  for (let n = 1; n < MAX_LAUNCH_FAILURES; n++) ledger = withLaunchFailure(ledger, { at: new Date(t0 + n * 60_000).toISOString(), reason: 'no outcome: raiz exited 1' });
+  assert.equal(launchBackoffUntil(ledger, t0 + 3 * 60_000), null, 'two failures do not');
+  const at = t0 + MAX_LAUNCH_FAILURES * 60_000;
+  ledger = withLaunchFailure(ledger, { at: new Date(at).toISOString(), reason: 'no outcome: raiz did not start' });
+  assert.equal(MAX_LAUNCH_FAILURES, 3); assert.equal(LAUNCH_FAILURE_BACKOFF_MINUTES, 60);
+  assert.equal(ledger.firstAttemptAt, null, 'a launch failure never opens the head window');
+  const until = new Date(at + 60 * 60_000).toISOString();
+  assert.equal(launchBackoffUntil(ledger, at), until);
+  assert.equal(launchBackoffUntil(ledger, at + 60 * 60_000 - 1), until);
+  assert.equal(launchBackoffUntil(ledger, at + 60 * 60_000), null, 'the backoff ends at its end');
+  const again = withLaunchFailure(ledger, { at: new Date(at + 61 * 60_000).toISOString(), reason: 'no outcome: raiz exited 1' });
+  assert.equal(launchBackoffUntil(again, at + 62 * 60_000), new Date(at + 121 * 60_000).toISOString(), 'a fourth failure after the backoff starts another one');
+  const recovered = withAttempt(again, attempt(1, 'certified', at + 62 * 60_000));
+  assert.deepEqual(recovered.launchFailures, []);
+  assert.equal(recovered.attempts.length, 1);
+  assert.deepEqual(currentLedger(again, 'Example/app', 1, other, false).launchFailures, [], 'a new head starts clean');
+});
+test('a ledger file without launchFailures reads as none, and a failure with a bad time is refused', t => {
+  const file = ledgerFile(state(t), 'Example/app', 7);
+  mkdirSync(dirname(file), { recursive: true });
+  const valid = withAttempt(currentLedger(null, 'Example/app', 7, head, false), attempt(1, 'failed'));
+  const { launchFailures, ...written } = valid;
+  writeFileSync(file, JSON.stringify(written));
+  assert.deepEqual(readLedger(file), valid, 'a 0.4.0 ledger reads as one with no launch failure');
+  const failed = withLaunchFailure(valid, { at: new Date(t0).toISOString(), reason: 'no outcome: raiz exited 1' });
+  writeLedger(file, failed);
+  assert.deepEqual(readLedger(file), failed);
+  writeFileSync(file, JSON.stringify({ ...failed, launchFailures: [{ at: 'soon', reason: '' }] }));
+  assert.throws(() => readLedger(file), /Invalid launch failure time$/);
 });
