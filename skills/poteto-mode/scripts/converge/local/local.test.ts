@@ -15,7 +15,7 @@ const minutes = (n: number) => new Date(t0 - n * 60_000).toISOString();
 const sameRepo = { full_name: 'Example/app' };
 function listed(f: ReturnType<typeof fixture>, extra: Record<string, unknown>[] = []) {
   const live = f.read();
-  live.pulls = [{ number: 1, head: { sha: live.head, ref: 'change', repo: sameRepo }, base: { ref: live.prBase }, state: 'open', draft: false, labels: live.hold ? [{ name: 'needs-victor' }] : [], auto_merge: live.autoMerge ? {} : null, user: { id: 10, login: 'author', type: 'User' }, body: live.body, created_at: live.createdAt }, ...extra];
+  live.pulls = [{ number: 1, head: { sha: live.head, ref: 'change', repo: sameRepo }, base: { ref: live.prBase }, state: 'open', draft: false, labels: live.hold ? [{ name: 'needs-victor' }] : [], auto_merge: live.autoMerge ? {} : null, user: live.prUser ?? { id: 10, login: 'author', type: 'User' }, body: live.body, created_at: live.createdAt }, ...extra];
   Object.assign(f.state, live); f.save();
 }
 function other(number: number, fields: Record<string, unknown>) {
@@ -513,17 +513,18 @@ const stranger = (id: number, body = 'looks good') => ({ id, body, user: { id: 9
 test('the authenticated login is always trusted, trustedAuthors adds logins without case, and an untrusted author is skipped before any other read', t => {
   const f = fixture(); t.after(f.cleanup);
   const { file } = configured(f, undefined, { trustedAuthors: undefined });
-  listed(f, [other(2, { user: { id: 7, login: 'Converge', type: 'User' } }), other(3, { user: { id: 49699333, login: 'dependabot[bot]', type: 'Bot' } })]);
+  listed(f, [other(2, { user: { id: 49699333, login: 'dependabot[bot]', type: 'Bot' } }), other(3, { user: { id: 7, login: 'Converge', type: 'User' } })]);
   const result = tick(f, file, ['--dry-run']);
   assert.equal(result.status, 0, result.stderr);
   const report = JSON.parse(result.stdout);
   assert.deepEqual(report.trustedAuthors, ['converge']);
-  assert.deepEqual(classes(result.stdout), [[1, 'skipped', null, 'untrusted author: author'], [2, 'pending', 'certify', 'Latest verdict status is not trusted VERIFIED']]);
-  assert.equal(report.launched.pr, 2);
+  assert.deepEqual(classes(result.stdout), [[1, 'skipped', null, 'untrusted author: author'], [2, 'skipped', null, 'untrusted author: dependabot[bot]'], [3, 'pending', 'certify', 'Latest verdict status is not trusted VERIFIED']]);
+  assert.equal(report.launched.pr, 3);
   assert.ok(!f.calls().some(call => call[0] === 'api' && String(call[1]).startsWith(`repos/Example/app/commits/${f.state.head}/statuses`)), 'PR 1 was skipped before its verdict status was read');
+  edit(f, live => { live.prDraft = true; });
   const listed3 = tick(f, configured(f, undefined, { trustedAuthors: ['Author', 'Dependabot[bot]'] }).file, ['--dry-run']);
   assert.deepEqual(JSON.parse(listed3.stdout).trustedAuthors, ['converge', 'Author', 'Dependabot[bot]']);
-  assert.deepEqual(classes(listed3.stdout), [[1, 'pending', 'certify', 'Latest verdict status is not trusted VERIFIED']], 'PR 1 is pending and ends the dry run; the listed Dependabot would be next');
+  assert.deepEqual(classes(listed3.stdout), [[1, 'skipped', null, 'draft'], [2, 'pending', 'certify', 'Latest verdict status is not trusted VERIFIED']], 'PR 1 is a draft, so the pass reaches the Dependabot PR, trusted by the listed Dependabot[bot] without case');
 });
 for (const [name, place, role] of [['comment', 'comments', 'commenter'], ['review comment', 'reviewComments', 'commenter'], ['review', 'reviews', 'reviewer']] as const) {
   test(`an outsider's ${name} on a pending PR skips it, names the login, and the next PR gets the tick`, t => {
@@ -567,9 +568,9 @@ test('an outsider injection on a certified PR no longer launches a recertify, an
 });
 test('a listed bot may author a PR and comment on it', t => {
   const f = fixture(); t.after(f.cleanup);
-  const { file } = configured(f, undefined, { trustedAuthors: ['author', 'dependabot[bot]'] });
-  edit(f, live => { live.comments = [{ ...stranger(160, 'Dependabot will rebase'), user: { id: 49699333, login: 'dependabot[bot]' } }]; });
-  listed(f, [other(2, { user: { id: 49699333, login: 'dependabot[bot]', type: 'Bot' } })]); fakeClaude(f, writer(outcome(f, {})));
+  const { file } = configured(f, undefined, { trustedAuthors: ['dependabot[bot]'] });
+  edit(f, live => { live.prUser = { id: 49699333, login: 'dependabot[bot]', type: 'Bot' }; live.comments = [{ ...stranger(160, 'Dependabot will rebase'), user: { id: 49699333, login: 'dependabot[bot]' } }]; });
+  listed(f); fakeClaude(f, writer(outcome(f, {})));
   const result = tick(f, file);
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(classes(result.stdout), [[1, 'pending', 'certify', 'Latest verdict status is not trusted VERIFIED']]);
