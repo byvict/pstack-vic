@@ -370,6 +370,7 @@ test('the sweep tick runs converge-sweep on every configured repository', t => {
   const result = f.run('converge-local', ['tick', '--job', 'sweep', '--config', file]);
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout).repos[0].swept.map((s: { pr: number; outcome: string }) => [s.pr, s.outcome]), [[1, 'armed']]);
+  assert.equal(JSON.parse(result.stdout).repos[0].postMerge, null, 'a contract without postMerge costs nothing');
 });
 test('lease and release are scoped to their holder', t => {
   const f = fixture(); t.after(f.cleanup);

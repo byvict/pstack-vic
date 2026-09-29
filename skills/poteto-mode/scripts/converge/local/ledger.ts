@@ -42,14 +42,16 @@ export function readLedger(file: string): Ledger | null {
     throw new Error(`Invalid ledger file ${file}: ${(error as Error).message}`);
   }
 }
-export function writeLedger(file: string, ledger: Ledger): void {
+/** Through a temporary file and a rename, mode 0600, in a directory created 0700: a reader never sees half a file. */
+export function writeJsonFile(file: string, value: unknown): void {
   mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
   const temporary = `${file}.${process.pid}.tmp`;
   try {
-    writeFileSync(temporary, JSON.stringify(ledger, null, 2) + '\n', { mode: 0o600 });
+    writeFileSync(temporary, JSON.stringify(value, null, 2) + '\n', { mode: 0o600 });
     renameSync(temporary, file);
   } finally { rmSync(temporary, { force: true }); }
 }
+export function writeLedger(file: string, ledger: Ledger): void { writeJsonFile(file, ledger); }
 /** A new head resets the count, and so does Victor removing the hold label the daemon applied. */
 export function currentLedger(existing: Ledger | null, repo: string, pr: number, head: string, held: boolean): Ledger {
   if (existing && existing.head === head && !(existing.heldAt !== null && !held)) return existing;

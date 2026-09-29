@@ -3,12 +3,19 @@ import { array, integer, jsonHash, object, repoName, sha, string } from './contr
 import { admitPull, api, branchNotProtected, checks, command, pages, principal, pull, trusted, workflowRun, type Trusted } from './github.ts';
 import { verdictGate } from './gate.ts';
 
+/** How the contract's push Tests run and its test job stand at a trunk commit, read the way the arm reads a green trunk: `pending` while the latest run of the commit has not completed, or when there is none yet. */
+export async function trunkTests(t: Trusted, commit: string): Promise<'green' | 'pending' | 'run failed' | 'job failed'> {
+  const run = await workflowRun(t, commit, 'push');
+  if (!run || run.status !== 'completed') return 'pending';
+  if (run.conclusion !== 'success') return 'run failed';
+  const jobs = (await pages(`repos/${t.repo}/actions/runs/${integer(run.id)}/attempts/${integer(run.run_attempt)}/jobs`, 'jobs')).map(v => object(v));
+  return jobs.some(j => j.name === t.config.tests.job && j.conclusion === 'success' && j.head_sha === commit) ? 'green' : 'job failed';
+}
 async function trunkHealth(t: Trusted): Promise<void> {
   const tip = sha(object(await api(`repos/${t.repo}/commits/${encodeURIComponent(t.config.trunk)}`)).sha);
-  const run = await workflowRun(t, tip, 'push');
-  if (!run || run.status !== 'completed' || run.conclusion !== 'success') throw new Error('Trunk Tests is not successful at the current tip');
-  const jobs = (await pages(`repos/${t.repo}/actions/runs/${integer(run.id)}/attempts/${integer(run.run_attempt)}/jobs`, 'jobs')).map(v => object(v));
-  if (!jobs.some(j => j.name === t.config.tests.job && j.conclusion === 'success' && j.head_sha === tip)) throw new Error('Trunk test job is not successful at the current tip');
+  const tests = await trunkTests(t, tip);
+  if (tests === 'job failed') throw new Error('Trunk test job is not successful at the current tip');
+  if (tests !== 'green') throw new Error('Trunk Tests is not successful at the current tip');
 }
 export const unfinished = ['queued', 'in_progress', 'waiting', 'requested', 'pending'];
 /** GitHub counts a required check whose latest run concluded `neutral` or `skipped` as passing (a job an `if` skipped still merges), so the arm and the daemon count them the same way. */

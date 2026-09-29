@@ -9,6 +9,7 @@ import { classify, skipCause, type Classified } from './classify.ts';
 import { defaultConfigFile, defaultStateDirectory, loadConfig, type LocalConfig, type RepoConfig } from './config.ts';
 import { install, uninstall, JOBS, WAKEABLE, type Job, type Wakeable } from './launchd.ts';
 import { consumeWakes, nudge } from './wake.ts';
+import { postMergePass, type PostMergeReport } from './post-merge.ts';
 import { tickWatch, watchErrors } from './watch.ts';
 import { currentLedger, deferredBackoffUntil, exhausted, launchBackoffUntil, ledgerFile, markHeld, readLedger, withAttempt, withLaunchFailure, workKinds, writeLedger, DEFERRED_BACKOFF_MINUTES, LAUNCH_FAILURE_BACKOFF_MINUTES, type Attempt, type Ledger, type WorkKind } from './ledger.ts';
 import { LEASE_TTL_HOURS, leaseFile, readLease, releaseLease, takeLease, type Lease } from './lease.ts';
@@ -127,18 +128,22 @@ export async function tickRaiz(config: LocalConfig, options: RaizTickOptions): P
   }
   return report;
 }
-export interface SweepReport { job: 'sweep'; repos: { repo: string; swept: Swept[]; failure: string | null }[] }
-export async function tickSweep(config: LocalConfig, options: { dryRun: boolean }): Promise<SweepReport> {
-  const repos = [];
+export interface SweepReport { job: 'sweep'; repos: { repo: string; swept: Swept[]; failure: string | null; postMerge: PostMergeReport | null }[] }
+/** After each repository's sweep, the post-merge pass of a trunk contract that has `postMerge`, with the contract the sweep read. `runCapMs` and `env` reach the pass for tests. */
+export async function tickSweep(config: LocalConfig, options: { dryRun: boolean; runCapMs?: number; env?: NodeJS.ProcessEnv }): Promise<SweepReport> {
+  const repos: SweepReport['repos'] = [];
   for (const repo of config.repos) {
-    try { const result = await sweep({ repo: repo.repo, dryRun: options.dryRun }); repos.push({ repo: repo.repo, swept: result.swept, failure: result.failure }); }
-    catch (error) { repos.push({ repo: repo.repo, swept: [], failure: message(error) }); }
+    let result: Awaited<ReturnType<typeof sweep>>;
+    try { result = await sweep({ repo: repo.repo, dryRun: options.dryRun }); }
+    catch (error) { repos.push({ repo: repo.repo, swept: [], failure: message(error), postMerge: null }); continue; }
+    const postMerge = result.trusted?.config.postMerge ?? null;
+    repos.push({ repo: repo.repo, swept: result.swept, failure: result.failure, postMerge: result.trusted && postMerge ? await postMergePass(config, repo, result.trusted, postMerge, { dryRun: options.dryRun, leaseBy: `daemon:${process.pid}`, runCapMs: options.runCapMs, env: options.env }) : null });
   }
   return { job: 'sweep', repos };
 }
-/** The sweep tick's errors: each repository whose sweep failed and each PR it refused. */
+/** The sweep tick's errors: each repository whose sweep failed, each PR it refused, and each post-merge error. */
 function sweepErrors(report: SweepReport): string[] {
-  return report.repos.flatMap(r => [...(r.failure ? [`${r.repo}: ${r.failure}`] : []), ...r.swept.filter(s => s.outcome === 'refused').map(s => `${r.repo}#${s.pr}: refused: ${s.reason}`)]);
+  return report.repos.flatMap(r => [...(r.failure ? [`${r.repo}: ${r.failure}`] : []), ...r.swept.filter(s => s.outcome === 'refused').map(s => `${r.repo}#${s.pr}: refused: ${s.reason}`), ...(r.postMerge?.errors ?? []).map(error => `${r.repo}: post-merge: ${error}`)]);
 }
 interface Unreadable { file: string; error: string }
 /** The watch job has no wake queue, so its `wakes` is 0; it records instead how many reads it made, which resources changed and which jobs it woke. */
