@@ -230,6 +230,31 @@ function changedFile(value: unknown): ChangedFile {
   const f = object(value);
   return { path: relativePath(f.filename), previous: f.previous_filename === undefined ? null : relativePath(f.previous_filename), patch: f.patch === undefined ? null : string(f.patch), status: string(f.status) };
 }
+/** GitHub's compare and PR file list omit the `patch` of a large file, while the full unified diff still holds its hunks. A missing patch becomes the hunks of the file's section, the one headed `diff --git a/PREVIOUS b/PATH`: from its first hunk header to the next section, without the header lines, the shape of GitHub's `patch`. Git does not quote a space, so one header can head two sections (the rename of `w b/a b/w` to `a` and the new file `w b/a`). A section therefore fills a file only when its header occurs once in the diff and its rename lines name that file: `rename from PREVIOUS` and `rename to PATH` for a renamed file, and no rename or copy line otherwise. Any other file keeps `null`, and so does a file without a section, with a quoted header, or whose section has no hunk (a binary, a pure rename or mode change). */
+export function fillPatches(files: ChangedFile[], diff: string): ChangedFile[] {
+  const header = (f: ChangedFile) => `diff --git a/${f.previous ?? f.path} b/${f.path}`;
+  const wanted = new Set(files.filter(f => f.patch === null).map(header));
+  if (!wanted.size) return files;
+  const headers = new Map<string, number>();
+  const sections = new Map<string, string[]>();
+  let section: string[] | null = null;
+  for (const line of diff.split('\n')) {
+    if (!line.startsWith('diff --git ')) { section?.push(line); continue; }
+    headers.set(line, (headers.get(line) ?? 0) + 1);
+    section = wanted.has(line) && !sections.has(line) ? [] : null;
+    if (section) sections.set(line, section);
+  }
+  return files.map(f => {
+    const lines = f.patch === null && headers.get(header(f)) === 1 ? sections.get(header(f)) ?? [] : [];
+    const start = lines.findIndex(line => /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/.test(line));
+    if (start < 0) return f;
+    const renames = lines.slice(0, start).filter(line => /^(?:rename|copy) (?:from|to) /.test(line));
+    if (renames.join('\n') !== (f.previous === null ? '' : `rename from ${f.previous}\nrename to ${f.path}`)) return f;
+    const hunks = lines.slice(start);
+    if (hunks.at(-1) === '') hunks.pop();
+    return { ...f, patch: hunks.join('\n') };
+  });
+}
 /** GitHub's compare of the contract commit and a head: the files and diff every `pre-pr` round reads, before and after the PR exists. It lists at most 300 files. */
 async function compared(repo: string, contract: string, head: string): Promise<{ base: string; files: ChangedFile[]; diff: string }> {
   const endpoint = `repos/${repo}/compare/${contract}...${head}`;
@@ -237,7 +262,7 @@ async function compared(repo: string, contract: string, head: string): Promise<{
   const c = object(comparison);
   const files = array(c.files).map(changedFile);
   if (files.length >= 300) throw new Error('Branch compare truncated');
-  return { base: sha(object(c.merge_base_commit).sha), files, diff };
+  return { base: sha(object(c.merge_base_commit).sha), files: fillPatches(files, diff), diff };
 }
 export interface Snapshot {
   trusted: Trusted; pull: Pull; base: string; patchId: string; diff: string; files: ChangedFile[];
@@ -336,7 +361,7 @@ export async function snapshot(repo: string, prNumber: number, configPath: strin
   ]).then(([comparisonValue, fileValues, diff]) => {
     const files = fileValues.map(changedFile);
     if (files.length >= 3000) throw new Error('PR files truncated');
-    return { base: sha(object(object(comparisonValue).merge_base_commit).sha), files, diff };
+    return { base: sha(object(object(comparisonValue).merge_base_commit).sha), files: fillPatches(files, diff), diff };
   });
   const prepared = await Promise.all([
     changes, principal(), comments(repo, prNumber), ci ? checks(repo, p.head) : Promise.resolve<Check[]>([]), runPromise,

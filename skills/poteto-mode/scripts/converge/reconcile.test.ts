@@ -2,7 +2,7 @@ import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fixture, stackChild } from './fixtures/setup.ts';
+import { fixture, omittedPatch, stackChild } from './fixtures/setup.ts';
 import { dependencyOnly } from './dependencies.ts';
 import { branchSnapshot } from './github.ts';
 import { analyze } from './reconcile.ts';
@@ -201,6 +201,16 @@ for (const [name, file, gaps] of binaries) {
     f.state.files = [f.state.files[0], file]; f.save();
     const r = runReconcile(f); assert.equal(r.status, 0, r.stderr);
     assert.deepEqual(JSON.parse(r.stdout).gaps, gaps);
+  });
+}
+for (const execution of ['converge', 'pre-pr']) {
+  test(`a ${execution} reconciliation fills a patch that GitHub's file list omits from the full diff`, t => {
+    const f = fixture(); t.after(f.cleanup); withPrePr(f); omittedPatch(f);
+    const r = f.run('converge-reconcile', ['--repo', 'Example/app', '--pr', '1', '--output', join(f.directory, 'r.json'), '--execution', execution]);
+    assert.equal(r.status, 0, r.stderr);
+    const report = JSON.parse(r.stdout);
+    assert.deepEqual(report.gaps, []);
+    assert.deepEqual(report.injection.map((finding: { path: string }) => finding.path), ['docs/big.md']);
   });
 }
 test('ordinary reviewer attribution is data while a direct override is blocked', t => {
