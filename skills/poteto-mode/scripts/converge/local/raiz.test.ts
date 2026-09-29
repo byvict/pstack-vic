@@ -2,9 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { PLUGIN_ROOT } from '../../../../../scripts/model-matrix.ts';
-import { defaultConfigFile, loadConfig } from './config.ts';
+import { assertDefaultConfig, defaultConfigFile, loadConfig } from './config.ts';
 import { attemptFrom, launchRaiz, raizCommand, raizLane, raizPrompt, raizRow, type RaizInput } from './raiz.ts';
 import { parseOutcome, type OutcomeFile } from './outcome.ts';
 
@@ -174,4 +174,14 @@ test('loadConfig keeps explicit absolute paths and refuses a bad configuration',
     [{ intervalMinutes: 1.5 }, /intervalMinutes must be an integer from 1 to 60/],
   ];
   for (const [fields, error] of refused) assert.throws(() => loadConfig(configFile(dir, { ...explicit, ...fields }), '/home'), error, JSON.stringify(fields));
+});
+test('assertDefaultConfig admits only the default configuration, however the path is spelled', () => {
+  const home = '/Users/v';
+  const expected = defaultConfigFile(home);
+  assert.doesNotThrow(() => assertDefaultConfig(expected, home));
+  assert.doesNotThrow(() => assertDefaultConfig('/Users/v/.config/pstack/../pstack/converge-local.json', home));
+  assert.doesNotThrow(() => assertDefaultConfig(relative(process.cwd(), expected), home), 'a relative path resolves against the working directory');
+  for (const file of ['/Users/v/other.json', '/Users/w/.config/pstack/converge-local.json', 'converge-local.json']) {
+    assert.throws(() => assertDefaultConfig(file, home), (error: Error) => error.message.includes(expected) && /the playbooks' converge-local lease commands read the default configuration/.test(error.message), file);
+  }
 });

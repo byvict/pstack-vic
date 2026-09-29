@@ -18,7 +18,7 @@ export interface TickReport { job: 'raiz'; classified: Classified[]; launched: L
 export interface RaizTickOptions { dryRun: boolean; now?: number; only?: { repo: string; pr: number; kind?: WorkKind }; capMs?: number; env?: NodeJS.ProcessEnv }
 function message(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 function holdComment(ledger: Ledger, reason: string): string {
-  return [`The local converge daemon stopped on head ${ledger.head}: ${reason}.`, '', 'Attempts:', ...ledger.attempts.map(a => `- ${a.n}. ${a.kind} ${a.outcome}: ${a.reason} (${a.runDirectory})`), '', 'Remove the hold label to let it try again on this head, or push a new head.'].join('\n');
+  return [`The local converge daemon stopped on head ${ledger.head}: ${reason}.`, '', 'Attempts:', ...ledger.attempts.map(a => `- ${a.n}. ${a.kind} ${a.outcome}: ${a.reason} (${a.runDirectory})`), '', 'Remove the hold label to let it try again.'].join('\n');
 }
 /** Label, then ledger, then comment. Once the label is on, classify skips the PR, so a failed write or comment never holds it twice; a failed comment is reported and the hold stands. */
 async function hold(t: Trusted, file: string, ledger: Ledger, reason: string, now: number, report: TickReport): Promise<void> {

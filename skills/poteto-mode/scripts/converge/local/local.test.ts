@@ -146,6 +146,7 @@ test('a second failed attempt applies the hold label with a comment, and the nex
   assert.match(f.read().comments[0].body, /stopped on head .*: 2 failed attempts/);
   assert.match(f.read().comments[0].body, /- 1\. certify failed: run suite exited 1/);
   assert.match(f.read().comments[0].body, /- 2\. certify failed: six fixer rounds/);
+  assert.equal(f.read().comments[0].body.split('\n').at(-1), 'Remove the hold label to let it try again.', 'a new head does not resume a held PR, so the comment does not promise it');
   const ledger: Ledger = JSON.parse(readFileSync(ledgerFile(state, 'Example/app', 1), 'utf8'));
   assert.equal(ledger.attempts.length, 2); assert.notEqual(ledger.heldAt, null);
   listed(f);

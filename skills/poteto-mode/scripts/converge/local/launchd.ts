@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { assertDefaultConfig } from './config.ts';
 
 export const JOBS = ['sweep', 'raiz'] as const;
 export type Job = typeof JOBS[number];
@@ -29,8 +30,9 @@ function launchctl(args: string[]): { status: number | null; output: string } {
   return { status: result.status, output: (result.stdout ?? '') + (result.stderr ?? '') };
 }
 function domain(): string { return `gui/${process.getuid ? process.getuid() : 501}`; }
-/** Writes both plists and (re)loads them into the user's launchd domain; the log directory must exist for launchd to open the log. */
+/** Writes both plists and (re)loads them into the user's launchd domain, only from the default configuration; the log directory must exist for launchd to open the log. */
 export function install(options: JobOptions, home = homedir()): { written: string[]; loaded: string[] } {
+  assertDefaultConfig(options.configFile, home);
   const written: string[] = [];
   const loaded: string[] = [];
   mkdirSync(join(home, 'Library', 'LaunchAgents'), { recursive: true });

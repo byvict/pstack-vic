@@ -7,6 +7,11 @@ import { PLUGIN_ROOT } from '../../../../../scripts/model-matrix.ts';
 export interface RepoConfig { repo: string; checkout: string }
 export interface LocalConfig { file: string; parent: 'claude' | 'codex'; repos: RepoConfig[]; intervalMinutes: number; pluginDir: string; stateDirectory: string; sheetPath: string; logDirectory: string }
 export function defaultConfigFile(home = homedir()): string { return join(home, '.config', 'pstack', 'converge-local.json'); }
+/** The playbooks' `converge-local lease` commands name no `--config`, so a daemon installed from another file would keep its leases where they never look. */
+export function assertDefaultConfig(file: string, home = homedir()): void {
+  const expected = defaultConfigFile(home);
+  if (resolve(file) !== resolve(expected)) throw new Error(`install runs only from the default configuration ${expected}, not ${resolve(file)}: the playbooks' converge-local lease commands read the default configuration`);
+}
 /** launchd starts the daemon in `/`, so a relative path (or `~`, which JSON never expands) would name a different place there than in a terminal. */
 function absolutePath(value: unknown, key: string): string {
   const path = string(value, key);
