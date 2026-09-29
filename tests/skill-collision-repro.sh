@@ -28,8 +28,8 @@ for skill in "$repo"/skills/principle-*/SKILL.md; do
     break
   fi
   front="$(sed -n '2,/^---$/p' "$skill")"
-  printf '%s\n' "$front" | grep -q '^user-invocable: false$' || bad_principle="$bad_principle$skill (missing user-invocable: false)"$'\n'
-  printf '%s\n' "$front" | grep -q '^disable-model-invocation: true$' && bad_principle="$bad_principle$skill (still carries disable-model-invocation)"$'\n'
+  grep -q '^user-invocable: false$' <<<"$front" || bad_principle="$bad_principle$skill (missing user-invocable: false)"$'\n'
+  grep -q '^disable-model-invocation: true$' <<<"$front" && bad_principle="$bad_principle$skill (still carries disable-model-invocation)"$'\n'
 done
 if [ -n "$bad_principle" ]; then
   note "FAIL: principle-* leaves must be user-invocable: false and model-readable:"
@@ -46,7 +46,7 @@ routed_model_bad=""
 for routed_skill in "$repo"/skills/*/SKILL.md; do
   case "$routed_skill" in */skills/principle-*|*/skills/poteto-mode/SKILL.md) continue ;; esac
   front="$(sed -n '2,/^---$/p' "$routed_skill")"
-  if printf '%s\n' "$front" | grep -q '^disable-model-invocation: true$'; then
+  if grep -q '^disable-model-invocation: true$' <<<"$front"; then
     routed_model_bad="${routed_model_bad}${routed_skill}"$'\n'
   fi
 done
@@ -177,10 +177,10 @@ else
   if [ "$skill_dest" != "$bugbot_skill_rel" ]; then
     bugbot_bad="${bugbot_bad}standalone babysit Markdown destination is [$skill_dest], not [$bugbot_skill_rel]"$'\n'
   fi
-  if ! printf '%s\n' "$skill_op" | grep -Fq 'classify as fix, dismiss, or ask'; then
+  if ! grep -Fq 'classify as fix, dismiss, or ask' <<<"$skill_op"; then
     bugbot_bad="${bugbot_bad}standalone babysit lost fix/dismiss/ask classification"$'\n'
   fi
-  if ! printf '%s\n' "$skill_op" | grep -Fq "Follow the rubric's Ask by default categories, including security, data, and high-severity findings."; then
+  if ! grep -Fq "Follow the rubric's Ask by default categories, including security, data, and high-severity findings." <<<"$skill_op"; then
     bugbot_bad="${bugbot_bad}standalone babysit lost ask-by-default escalation"$'\n'
   fi
 fi
@@ -188,7 +188,7 @@ playbook_op="$(grep -E '^8\. \*\*Bugbot is triaged skeptically, always\.\*\*' "$
 playbook_n="$(printf '%s\n' "$playbook_op" | awk 'NF { c++ } END { print c+0 }')"
 if [ "$playbook_n" != "1" ]; then
   bugbot_bad="${bugbot_bad}poteto-mode babysit playbook lost step-8 Bugbot operational line"$'\n'
-elif ! printf '%s\n' "$playbook_op" | grep -Fq "$bugbot_playbook_rel"; then
+elif ! grep -Fq "$bugbot_playbook_rel" <<<"$playbook_op"; then
   bugbot_bad="${bugbot_bad}poteto-mode babysit playbook step 8 lost bugbot-triage binding ($bugbot_playbook_rel)"$'\n'
 fi
 copies="$(find "$repo/skills" "$repo/agents" -name 'bugbot-triage.md' ! -path '*/node_modules/*' -print 2>/dev/null || true)"
@@ -276,7 +276,7 @@ run() {
 }
 
 check() { # $1 label, $2 expected marker, $3 output
-  if printf '%s' "$3" | grep -q "$2"; then
+  if grep -q "$2" <<<"$3"; then
     note "ok: $1 -> $2"
   else
     note "FAIL: $1 expected $2, got: $3"
