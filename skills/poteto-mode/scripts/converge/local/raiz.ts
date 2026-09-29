@@ -98,13 +98,18 @@ export async function launchRaiz(input: RaizInput, lane: RaizLane, options: { ca
     child.stdin?.end(prompt);
   });
 }
+/** What `attemptFrom` throws in place of an attempt for a launch failure; `reason` is what a failed attempt would have carried. */
+export class LaunchFailure extends Error {
+  reason: string;
+  constructor(reason: string) { super(`raiz launch failed: ${reason}`); this.reason = reason; }
+}
 /** What the ledger records: nothing for a skipped attempt, a failed one for a timeout or a missing outcome, otherwise the outcome as written. A launch failure (see `LAUNCH_FAILURE_MINUTES`) is no attempt: it throws `raiz launch failed: REASON`, with the reason a failed attempt would carry. */
 export function attemptFrom(input: RaizInput, launched: Launched, launchFailureMs = LAUNCH_FAILURE_MINUTES * 60_000): Omit<Attempt, 'n'> | null {
   const base = { kind: input.kind, startedAt: launched.startedAt, endedAt: launched.endedAt, runDirectory: input.runDirectory };
   if (launched.timedOut) return { ...base, outcome: 'failed', reason: 'timeout' };
   if (!launched.outcome) {
     const reason = launched.exitCode === null ? 'no outcome: raiz did not start' : `no outcome: ${launched.rejected ? `${launched.rejected}, ` : ''}raiz exited ${launched.exitCode}`;
-    if (launched.exitCode === null || Date.parse(launched.endedAt) - Date.parse(launched.startedAt) < launchFailureMs) throw new Error(`raiz launch failed: ${reason}`);
+    if (launched.exitCode === null || Date.parse(launched.endedAt) - Date.parse(launched.startedAt) < launchFailureMs) throw new LaunchFailure(reason);
     return { ...base, outcome: 'failed', reason };
   }
   if (launched.outcome.outcome === 'skipped') return null;

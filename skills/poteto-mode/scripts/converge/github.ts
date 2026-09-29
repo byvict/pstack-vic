@@ -280,6 +280,20 @@ export async function principal(): Promise<number> {
   const response = object(JSON.parse(await commandAsync('gh', ['api', 'graphql', '-f', 'query=query { viewer { databaseId } }'])));
   return integer(object(object(response.data).viewer).databaseId);
 }
+export interface Account { id: number; login: string }
+/** The authenticated account: the id the gate compares publications against, and the login the daemon always trusts. */
+export async function viewer(): Promise<Account> {
+  const response = object(JSON.parse(await commandAsync('gh', ['api', 'graphql', '-f', 'query=query { viewer { databaseId login } }'])));
+  const v = object(object(response.data).viewer);
+  return { id: integer(v.databaseId), login: string(v.login) };
+}
+export interface Participant { role: 'commenter' | 'reviewer'; login: string }
+/** Everyone whose text a Raiz would read on the PR beside its author: issue comments and review comments (`comments`), then reviews. */
+export async function participants(repo: string, pr: number): Promise<Participant[]> {
+  const login = (value: Record<string, unknown>) => string(object(value.user, 'participant user').login, 'participant login');
+  const [all, reviews] = await Promise.all([comments(repo, pr), pages(`repos/${repo}/pulls/${pr}/reviews`)]);
+  return [...all.map(c => ({ role: 'commenter' as const, login: login(c) })), ...reviews.map(v => ({ role: 'reviewer' as const, login: login(object(v)) }))];
+}
 export async function comments(repo: string, pr: number): Promise<Record<string, unknown>[]> {
   return (await Promise.all([pages(`repos/${repo}/issues/${pr}/comments`), pages(`repos/${repo}/pulls/${pr}/comments`)])).flat().map(v => object(v));
 }

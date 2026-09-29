@@ -32,11 +32,13 @@ else if (args[0] === 'api') {
   const endpoint = raw.split('?')[0];
   const query = new URLSearchParams(raw.split('?')[1] ?? '');
   if (state.failEndpoint && endpoint.includes(state.failEndpoint)) fail();
+  // A write that fails while the read of the same endpoint answers: the daemon reads a PR's comments before it posts the hold comment.
+  if (state.failPost && args.includes('POST') && endpoint.includes(state.failPost)) fail();
   if (args.includes('POST')) {
     const body = JSON.parse(readFileSync(0, 'utf8'));
     if (endpoint === `${root}/issues/1/comments`) {
       const id = 100 + state.comments.length;
-      const comment = { id, body: body.body, user: { id: 7 }, html_url: `https://github.com/${repo}/pull/1#issuecomment-${id}`, updated_at: '2026-09-21T00:00:00Z' };
+      const comment = { id, body: body.body, user: { id: 7, login: 'converge' }, html_url: `https://github.com/${repo}/pull/1#issuecomment-${id}`, updated_at: '2026-09-21T00:00:00Z' };
       state.comments.push(comment); save(); send(comment);
     } else if (endpoint === `${root}/statuses/${state.head}`) {
       const status = { ...body, id: 200 + state.statuses.length, creator: { id: 7 }, sha: state.head };
@@ -48,7 +50,7 @@ else if (args[0] === 'api') {
     } else fail();
   } else if (endpoint === 'graphql') {
     const fields = Object.fromEntries(args.flatMap((arg, i) => args[i - 1] === '-f' ? [arg.split(/=(.*)/s).slice(0, 2)] : []));
-    if (!fields.query.includes('repository(')) send({ data: { viewer: { databaseId: 7 } } });
+    if (!fields.query.includes('repository(')) send({ data: { viewer: { databaseId: 7, login: 'converge' } } });
     else send({ data: { repository: Object.fromEntries(Object.entries(fields).filter(([key]) => /^p\d+$/.test(key)).map(([key, expression]) => {
       const text = expression.startsWith(state.trunk + ':') ? state.blobs[expression.slice(41)] : expression.startsWith(state.head + ':') ? state.headBlobs[expression.slice(41)] : undefined;
       return [key, text === undefined ? null : { byteSize: Buffer.byteLength(text), isBinary: false, isTruncated: false, text }];
@@ -61,7 +63,7 @@ else if (args[0] === 'api') {
   else if (endpoint === root) send({ default_branch: 'main' });
   else if (endpoint === `${root}/pulls/1`) {
     later('pulls/1');
-    send({ number: 1, head: { sha: state.head, ref: 'change', repo: { full_name: repo } }, base: { ref: state.prBase }, state: state.prState, draft: state.prDraft, body: state.body, labels: state.hold ? [{ name: 'needs-victor' }] : [], user: { id: 10, login: 'author', type: 'User' }, auto_merge: state.autoMerge ? {} : null, created_at: state.createdAt ?? '2026-09-21T00:00:00Z' });
+    send({ number: 1, head: { sha: state.head, ref: 'change', repo: { full_name: repo } }, base: { ref: state.prBase }, state: state.prState, draft: state.prDraft, body: state.body, labels: state.hold ? [{ name: 'needs-victor' }] : [], user: state.prUser ?? { id: 10, login: 'author', type: 'User' }, auto_merge: state.autoMerge ? {} : null, created_at: state.createdAt ?? '2026-09-21T00:00:00Z' });
   }
   else if (/^repos\/Example\/app\/pulls\/\d+$/.test(endpoint) && state.pulls.some(p => p.number === Number(endpoint.split('/').at(-1)))) send(state.pulls.find(p => p.number === Number(endpoint.split('/').at(-1))));
   else if (endpoint === `${root}/commits/main`) { later('commits/main'); send({ sha: state.trunk }); }
@@ -91,8 +93,9 @@ else if (args[0] === 'api') {
   }
   else if (endpoint === `${root}/actions/workflows/${state.workflowId}/runs`) send({ workflow_runs: [{ id: 8, workflow_id: state.workflowId, head_sha: query.get('head_sha'), event: query.get('event') ?? 'pull_request', head_branch: 'main', run_attempt: 1, status: 'completed', conclusion: state.trunkRed && query.get('event') === 'push' ? 'failure' : 'success', ...(query.get('event') === 'push' ? {} : state.runOverrides) }] });
   else if (endpoint === `${root}/actions/runs/${state.runOverrides.id ?? 8}/attempts/${state.runOverrides.run_attempt ?? 1}/jobs`) send({ jobs: state.jobs });
-  else if (endpoint === `${root}/issues/1/comments`) send(state.comments);
-  else if (endpoint === `${root}/pulls/1/comments`) send([]);
+  else if (/^repos\/Example\/app\/issues\/\d+\/comments$/.test(endpoint)) send(endpoint === `${root}/issues/1/comments` ? state.comments : []);
+  else if (/^repos\/Example\/app\/pulls\/\d+\/comments$/.test(endpoint)) send(endpoint === `${root}/pulls/1/comments` ? state.reviewComments ?? [] : []);
+  else if (/^repos\/Example\/app\/pulls\/\d+\/reviews$/.test(endpoint)) send(endpoint === `${root}/pulls/1/reviews` ? state.reviews ?? [] : []);
   else if (endpoint.startsWith(`${root}/issues/comments/`)) { const found = state.comments.find(c => c.id === Number(endpoint.split('/').at(-1))); if (!found) fail(); send(found); }
   else if (endpoint.endsWith('/statuses')) send(state.statuses.filter(s => (s.sha ?? state.head) === endpoint.split('/')[4]));
   else if (endpoint === `${root}/branches/main/protection`) {

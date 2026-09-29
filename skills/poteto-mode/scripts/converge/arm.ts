@@ -10,7 +10,9 @@ async function trunkHealth(t: Trusted): Promise<void> {
   const jobs = (await pages(`repos/${t.repo}/actions/runs/${integer(run.id)}/attempts/${integer(run.run_attempt)}/jobs`, 'jobs')).map(v => object(v));
   if (!jobs.some(j => j.name === t.config.tests.job && j.conclusion === 'success' && j.head_sha === tip)) throw new Error('Trunk test job is not successful at the current tip');
 }
-const unfinished = ['queued', 'in_progress', 'waiting', 'requested', 'pending'];
+export const unfinished = ['queued', 'in_progress', 'waiting', 'requested', 'pending'];
+/** GitHub counts a required check whose latest run concluded `neutral` or `skipped` as passing (a job an `if` skipped still merges), so the arm and the daemon count them the same way. */
+export const passing = ['success', 'neutral', 'skipped'];
 export interface RequiredCheck { context: string; appId: number | null }
 /** A trunk that only rulesets protect has no classic protection, so its required checks come from the branch rules alone. */
 async function classicChecks(t: Trusted): Promise<RequiredCheck[]> {
@@ -45,8 +47,8 @@ async function protection(t: Trusted, head: string, pending: boolean): Promise<v
   for (const c of required) {
     if (c.context === 'verdict') { if (c.appId !== null) throw new Error('Verdict context has unsupported app binding'); continue; }
     const match = observed.filter(check => check.context === c.context && check.head === head && (c.appId === null || c.appId === check.appId));
-    if (pending) { if (match.some(check => check.state !== 'success' && !unfinished.includes(check.state))) throw new Error('Required protected check failed: ' + c.context); continue; }
-    if (!match.some(check => check.state === 'success')) throw new Error('Required protected check is not successful: ' + c.context);
+    if (pending) { if (match.some(check => !passing.includes(check.state) && !unfinished.includes(check.state))) throw new Error('Required protected check failed: ' + c.context); continue; }
+    if (!match.some(check => passing.includes(check.state))) throw new Error('Required protected check is not successful: ' + c.context);
   }
 }
 export async function disarm(repo: string, pr: number): Promise<boolean> {
