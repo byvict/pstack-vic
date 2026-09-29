@@ -2,6 +2,8 @@
 
 Desenho fechado com Victor em 2026-09-29, opção B da investigação. Vocabulário em [CONTEXT.md](../../../CONTEXT.md). Parte da 0.4.5 ([#49](https://github.com/byvict/pstack-vic/pull/49)), que já tirou a espera fixa de 30 minutos do daemon: este desenho cuida de quanto trabalho o Pré-PR faz depois que a Raiz acorda, não de quando ela acorda. Complementa o [desenho do Converge local](2026-09-28-converge-local-design.md); a referência de código continua sendo a seção **Certificado** de [`converge-contract.md`](../../../skills/poteto-mode/references/converge-contract.md).
 
+Numeração: o vigia de 60 s saiu como 0.4.6 ([#50](https://github.com/byvict/pstack-vic/pull/50)) antes desta entrega, então as duas releases daqui são 0.4.7 e 0.4.8.
+
 ## Objetivo
 
 Um PR pequeno de configuração, documentação, teste ou versão, como o [#48](https://github.com/byvict/pstack-vic/pull/48) (10 arquivos, +39/-8), deve certificar em minutos, sem abrir mão da regra do [ADR 0001](../../adr/0001-verificacao-pesada-antes-do-pr.md): nada mergeia sem revisão de outra Família. Código que o Converge executa (runner, scripts do Converge, playbooks, referências) continua na trilha cheia.
@@ -14,7 +16,7 @@ Um PR pequeno de configuração, documentação, teste ou versão, como o [#48](
 | Conteúdo da classe leve no pstack-vic | Docs comuns, testes, arquivos de versão, `CHANGES.md`, **`model-matrix.json` e o `provider-dispatch.md` renderizado**. |
 | Esforço do revisor | Sem mudança e sem linha nova no sheet: medido, `high` e `xhigh` diferem 30 s. |
 | Esforço da Raiz | Sem mudança, `xhigh`: o modelo custa 5 a 7 min por tentativa e é onde mora o julgamento (pin do jsdom, rebase com lockfile). |
-| Entrega | Duas releases: **0.4.6** com a classe leve, o prompt estreito, o paralelismo nos playbooks e a releitura do PR; **0.4.7** com o script `converge-certify certify`. |
+| Entrega | Duas releases: **0.4.7** com a classe leve, o prompt estreito, o paralelismo nos playbooks e a releitura do PR; **0.4.8** com o script `converge-certify certify`. |
 
 ## Fatos medidos (2026-09-29)
 
@@ -95,7 +97,7 @@ Hoje `retainedLanes` em `publish.ts` fabrica, na re-derivação, uma lane por pa
 
 `pre-pr-prompts.md` ganha o bloco **Reviewer (light)**: o bloco **Reviewer** com uma frase a mais depois de "Review the diff for defects and risks.": o diff é pequeno, leia o diff e os logs das corridas uma vez, abra um arquivo do repositório só onde uma linha mudada precisa do contexto em volta para ser julgada, e não varra o resto do repositório. Mesmos placeholders, mesmo JSON final. A Raiz usa esse bloco quando `report.mode` não é `full`, ou seja, em `light` e em `ci-only`. O manifesto continua gravando o digest do prompt, e a admissão continua conferindo os bytes.
 
-### Playbooks (0.4.6)
+### Playbooks (0.4.7)
 
 - `pre-pr.md`, passo 1: `mode: ci-only` pula os passos 2 e 5; `mode: light` pula o passo 5 e, com `reviewer: none` no contrato, pula o passo 3, e o passo 6 monta o Certificado sem lane.
 - Passo 2: lançar todas as corridas do contrato de uma vez, cada uma em background, e esperar todas; hoje o texto diz "em background" por corrida e a Raiz as encadeou.
@@ -110,7 +112,7 @@ A lane Grok continua limitada a 300 s por comando e o runner continua uma lane p
 
 `branchSnapshot` em `github.ts` fixa `dependencyOnly: false`, então um PR do Dependabot nunca sai leve numa rodada `pre-pr`. A rodada de branch passa a calcular `dependencyOnly` como a rodada de PR faz, sem a checagem de autor, que o daemon já faz na lista de confiança: só `package.json` e `package-lock.json`, na raiz ou em `client/`, todos `modified`, e `dependencies.ts` aprovando cada par de blobs no commit de contrato e no head. Um bump assim cai em `light` quando nada casa com risco: corridas, revisor estreito, sem Certificador, que no #2974 e no #2971 não teve funcionalidade a dirigir. O contrato do Clinext ganha `light: { "paths": [] }`; a classe leve dele é só esse caso.
 
-## Script `converge-certify certify` (0.4.7)
+## Script `converge-certify certify` (0.4.8)
 
 Um subcomando que executa a metade "Certificar um head empurrado" inteira, de forma determinística:
 
@@ -132,7 +134,7 @@ O que fica com a Raiz: posse e push, o julgamento do Ajustador, o reparo, a meta
 - `publish.test.ts`, `arm.test.ts`, `sweep.test.ts`: o Certificado `light` publica e arma; um contrato que tira um caminho de `light.paths` faz o gate recusar com a mensagem nova e o Varredor desarmar.
 - `local.test.ts`: a recusa nova classifica como `recertify`.
 - Um teste de docs: o bloco **Reviewer (light)** existe, tem os mesmos placeholders do bloco **Reviewer** e o JSON final igual.
-- 0.4.7, `certify.test.ts` com `fixtures/gh.mjs` e um runner falso: corridas em paralelo, lanes em paralelo, relançada única, cada recusa com o passo certo, a posse renovada antes de cada lançamento, e o Certificador recusado quando o worktree não está no head ou não está limpo.
+- 0.4.8, `certify.test.ts` com `fixtures/gh.mjs` e um runner falso: corridas em paralelo, lanes em paralelo, relançada única, cada recusa com o passo certo, a posse renovada antes de cada lançamento, e o Certificador recusado quando o worktree não está no head ou não está limpo.
 
 `test:bun` não muda: o runner não muda. `matrix:check` e `agents:check` não mudam: a matriz não muda.
 
@@ -140,14 +142,14 @@ O que fica com a Raiz: posse e push, o julgamento do Ajustador, o reparo, a meta
 
 Duas releases pelo padrão do repositório: versão em `package.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.codex-plugin/plugin.json` e nas linhas `--ref` de `README.md` e `docs/reference.md`; entrada em `CHANGES.md`; tag; instalação nos dois pais; `converge-local install` de novo em cada uma, porque os jobs launchd apontam para o cache da versão.
 
-- **0.4.6**: contrato, classificação, `Light`, gate e classificador, bloco do revisor, playbooks, `dependencyOnly` na rodada de branch, o contrato do pstack-vic com `light` e o `contained` ampliado, e um ADR 0004 de um parágrafo: trilha leve por caminho, com a regra cruzada mantida e código executado sempre na trilha cheia. O contrato do Clinext ganha `light` numa mudança à parte, feita por Victor no repositório dele. O PR da 0.4.6 muda playbooks e scripts do Converge, então é trilha cheia; ele mesmo prova que o `contained` ampliado funciona. O primeiro PR leve real depois dele é a prova da classe.
-- **0.4.7**: o script `certify` e os playbooks apontando para ele.
+- **0.4.7**: contrato, classificação, `Light`, gate e classificador, bloco do revisor, playbooks, `dependencyOnly` na rodada de branch, o contrato do pstack-vic com `light` e o `contained` ampliado, e um ADR 0004 de um parágrafo: trilha leve por caminho, com a regra cruzada mantida e código executado sempre na trilha cheia. O contrato do Clinext ganha `light` numa mudança à parte, feita por Victor no repositório dele. O PR da 0.4.7 muda playbooks e scripts do Converge, então é trilha cheia; ele mesmo prova que o `contained` ampliado funciona. O primeiro PR leve real depois dele é a prova da classe.
+- **0.4.8**: o script `certify` e os playbooks apontando para ele.
 
-Estimativa de tempo da Raiz, depois da espera, para um PR como o #48: hoje ~12,5 min; 0.4.6 ~10 min; 0.4.7 ~9 min. Para um Dependabot como o #2974, com uma rodada de conserto: hoje 19,3; 0.4.6 ~17; 0.4.7 ~16. Um PR como o #47, que muda `tests/*.sh` e `scripts/*.test.ts`, fica na trilha cheia em qualquer versão.
+Estimativa de tempo da Raiz, depois da espera, para um PR como o #48: hoje ~12,5 min; 0.4.7 ~10 min; 0.4.8 ~9 min. Para um Dependabot como o #2974, com uma rodada de conserto: hoje 19,3; 0.4.7 ~17; 0.4.8 ~16. Um PR como o #47, que muda `tests/*.sh` e `scripts/*.test.ts`, fica na trilha cheia em qualquer versão.
 
 ## Fora de escopo
 
-- Opção C como padrão. O contrato aceita `reviewer: "none"` desde a 0.4.6 e o padrão é `narrow`.
+- Opção C como padrão. O contrato aceita `reviewer: "none"` desde a 0.4.7 e o padrão é `narrow`.
 - Trocar o revisor para `codex:gpt-6.1-sol` no pai Claude: 3,0 min medidos, sem código, via `/setup-pstack`, mas com a nota N35: só lane Grok grava prova de risco em `read-only`, e um PR do Clinext com caminho de dinheiro sairia `INCONCLUSIVE`. Depende de uma mudança do runner para lanes Codex e Claude devolverem artefatos de prova.
 - Esforço da Raiz e do revisor por tamanho de diff: medido, não compensa.
 - Uma Raiz morta por sinal externo conta como tentativa `failed` no ledger; duas seguram o PR. Fica para o daemon.
