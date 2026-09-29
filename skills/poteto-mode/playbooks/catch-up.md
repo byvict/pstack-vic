@@ -23,7 +23,7 @@
 
 Surface without a Receita: write it in `RUN/branch`, commit, push, restart at Pré-PR step 1 with the next `RUN/pre-pr-<n>`.
 
-**5. Deliver.** Run the **Deliver** half with the existing PR number (skip its step 7), with the last `RUN/pre-pr-<n>` as its run directory. Skip the "Release the lease" sentence of its step 8: whoever took the lease releases it, the daemon after the attempt, an interactive session its own.
+**5. Deliver.** Run the **Deliver** half with the existing PR number (skip its step 7), with the last `RUN/pre-pr-<n>` as its run directory. Skip the "Release the lease" and "wake the daemon" sentences of its step 8 when the daemon launched you (`LEASE_BY` starts with `daemon:`): the tick releases its lease and wakes both jobs after the attempt. An interactive run releases its own lease and nudges.
 
 **6. Outcome.** Write `RUN/outcome.json`:
 

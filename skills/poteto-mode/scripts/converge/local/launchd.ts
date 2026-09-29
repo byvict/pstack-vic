@@ -4,17 +4,18 @@ import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join } from 'node:path';
 import { assertDefaultConfig } from './config.ts';
 import { raizLane } from './raiz.ts';
+import { wakeDirectory } from './wake.ts';
 
 export const JOBS = ['sweep', 'raiz'] as const;
 export type Job = typeof JOBS[number];
 /** `path` and `nodePath` are the install process's `PATH` and `process.execPath`, passed in so the plist stays a pure function of its options. */
-export interface JobOptions { pluginDir: string; configFile: string; intervalMinutes: number; logDirectory: string; path: string; nodePath: string }
+export interface JobOptions { pluginDir: string; configFile: string; intervalMinutes: number; logDirectory: string; stateDirectory: string; path: string; nodePath: string }
 export interface InstallOptions extends JobOptions { parent: 'claude' | 'codex'; sheetPath: string }
 export function label(job: Job): string { return `com.pstack.converge-${job}`; }
 function xml(text: string): string { return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 /** A zsh double-quoted word: only these four characters stay special inside the quotes. */
 function quoted(text: string): string { return `"${text.replace(/[\\"$`]/g, '\\$&')}"`; }
-/** launchd starts a job with a bare system PATH, and a non-interactive zsh never reads ~/.zshrc, where nvm puts node and claude. So the job carries the install shell's PATH and runs the absolute node. `zsh -c` still reads ~/.zshenv, which exports the parent's credential, and, not being a login shell, skips /etc/zprofile, whose path_helper would move the system directories ahead of the recorded PATH. */
+/** launchd starts a job with a bare system PATH, and a non-interactive zsh never reads ~/.zshrc, where nvm puts node and claude. So the job carries the install shell's PATH and runs the absolute node. `zsh -c` still reads ~/.zshenv, which exports the parent's credential, and, not being a login shell, skips /etc/zprofile, whose path_helper would move the system directories ahead of the recorded PATH. Besides the interval, `QueueDirectories` starts the job whenever its wake directory holds a file: `WatchPaths` may miss a modification and `launchctl kickstart` is a no-op on a running job, while a file that lands during a run starts the job once more after it exits. */
 export function plist(job: Job, options: JobOptions): string {
   const script = `exec ${quoted(options.nodePath)} ${quoted(join(options.pluginDir, 'skills/poteto-mode/scripts/converge/converge-local'))} tick --job ${job} --config ${quoted(options.configFile)}`;
   const log = join(options.logDirectory, `pstack-converge-${job}.log`);
@@ -23,6 +24,7 @@ export function plist(job: Job, options: JobOptions): string {
     `  <key>ProgramArguments</key><array><string>/bin/zsh</string><string>-c</string><string>${xml(script)}</string></array>`,
     `  <key>EnvironmentVariables</key><dict><key>PATH</key><string>${xml(options.path)}</string></dict>`,
     `  <key>StartInterval</key><integer>${options.intervalMinutes * 60}</integer>`,
+    `  <key>QueueDirectories</key><array><string>${xml(wakeDirectory(options.stateDirectory, job))}</string></array>`,
     '  <key>RunAtLoad</key><true/>',
     `  <key>StandardOutPath</key><string>${xml(log)}</string>`,
     `  <key>StandardErrorPath</key><string>${xml(log)}</string>`,
@@ -67,6 +69,8 @@ export function install(options: InstallOptions, home = homedir()): { written: s
   const loaded: string[] = [];
   mkdirSync(join(home, 'Library', 'LaunchAgents'), { recursive: true });
   mkdirSync(options.logDirectory, { recursive: true });
+  // launchd watches the wake directory from the bootstrap on, so it must exist before the job loads.
+  for (const job of JOBS) mkdirSync(wakeDirectory(options.stateDirectory, job), { recursive: true, mode: 0o700 });
   for (const job of JOBS) {
     const path = plistPath(job, home);
     writeFileSync(path, plist(job, options), { mode: 0o644 });
