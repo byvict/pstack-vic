@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { array, integer, object, oneOf, repoName, sha, string } from '../contract.ts';
+import { array, instant, integer, object, oneOf, repoName, sha, string } from '../contract.ts';
 
 export const MAX_FAILED_ATTEMPTS = 2;
 export const HEAD_WINDOW_HOURS = 6;
@@ -17,19 +17,27 @@ export function ledgerFile(stateDirectory: string, repo: string, pr: number): st
 }
 function parseAttempt(value: unknown): Attempt {
   const v = object(value, 'attempt');
-  return { n: integer(v.n), kind: oneOf(v.kind, workKinds), startedAt: string(v.startedAt), endedAt: string(v.endedAt), outcome: oneOf(v.outcome, ['certified', 'deferred', 'failed']), reason: string(v.reason), runDirectory: string(v.runDirectory) };
+  return { n: integer(v.n), kind: oneOf(v.kind, workKinds), startedAt: instant(v.startedAt, 'attempt start'), endedAt: instant(v.endedAt, 'attempt end'), outcome: oneOf(v.outcome, ['certified', 'deferred', 'failed']), reason: string(v.reason), runDirectory: string(v.runDirectory) };
 }
 export function parseLedger(value: unknown): Ledger {
   const v = object(value, 'ledger');
   if (v.schemaVersion !== 1) throw new Error('Unknown ledger schema');
-  return { schemaVersion: 1, repo: repoName(v.repo), pr: integer(v.pr), head: sha(v.head), firstAttemptAt: v.firstAttemptAt === null ? null : string(v.firstAttemptAt), heldAt: v.heldAt === null ? null : string(v.heldAt), attempts: array(v.attempts).map(parseAttempt) };
+  return { schemaVersion: 1, repo: repoName(v.repo), pr: integer(v.pr), head: sha(v.head), firstAttemptAt: v.firstAttemptAt === null ? null : instant(v.firstAttemptAt, 'ledger first attempt'), heldAt: v.heldAt === null ? null : instant(v.heldAt, 'ledger hold'), attempts: array(v.attempts).map(parseAttempt) };
 }
 export function readLedger(file: string): Ledger | null {
-  return existsSync(file) ? parseLedger(JSON.parse(readFileSync(file, 'utf8'))) : null;
+  try { return parseLedger(JSON.parse(readFileSync(file, 'utf8'))); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw new Error(`Invalid ledger file ${file}: ${(error as Error).message}`);
+  }
 }
 export function writeLedger(file: string, ledger: Ledger): void {
   mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-  writeFileSync(file, JSON.stringify(ledger, null, 2) + '\n', { mode: 0o600 });
+  const temporary = `${file}.${process.pid}.tmp`;
+  try {
+    writeFileSync(temporary, JSON.stringify(ledger, null, 2) + '\n', { mode: 0o600 });
+    renameSync(temporary, file);
+  } finally { rmSync(temporary, { force: true }); }
 }
 /** A new head resets the count, and so does Victor removing the hold label the daemon applied. */
 export function currentLedger(existing: Ledger | null, repo: string, pr: number, head: string, held: boolean): Ledger {
@@ -37,12 +45,12 @@ export function currentLedger(existing: Ledger | null, repo: string, pr: number,
   return { schemaVersion: 1, repo: repoName(repo), pr: integer(pr), head: sha(head), firstAttemptAt: null, heldAt: null, attempts: [] };
 }
 export function exhausted(ledger: Ledger, now: number): string | null {
-  if (ledger.attempts.filter(a => a.outcome === 'failed').length >= MAX_FAILED_ATTEMPTS) return `two failed attempts on head ${ledger.head}`;
-  if (ledger.firstAttemptAt !== null && !ledger.attempts.some(a => a.outcome === 'certified') && now - Date.parse(ledger.firstAttemptAt) >= HEAD_WINDOW_HOURS * 3_600_000) return `six hours since the first attempt on head ${ledger.head}`;
+  if (ledger.attempts.filter(a => a.outcome === 'failed').length >= MAX_FAILED_ATTEMPTS) return `${MAX_FAILED_ATTEMPTS} failed attempts on head ${ledger.head}`;
+  if (ledger.firstAttemptAt !== null && !ledger.attempts.some(a => a.outcome === 'certified') && now - Date.parse(ledger.firstAttemptAt) >= HEAD_WINDOW_HOURS * 3_600_000) return `${HEAD_WINDOW_HOURS} hours since the first attempt on head ${ledger.head}`;
   return null;
 }
 export function withAttempt(ledger: Ledger, attempt: Omit<Attempt, 'n'>): Ledger {
-  return { ...ledger, firstAttemptAt: ledger.firstAttemptAt ?? attempt.startedAt, attempts: [...ledger.attempts, { n: ledger.attempts.length + 1, ...attempt }] };
+  return { ...ledger, firstAttemptAt: ledger.firstAttemptAt ?? attempt.startedAt, attempts: [...ledger.attempts, { ...attempt, n: ledger.attempts.length + 1 }] };
 }
 export function markHeld(ledger: Ledger, now: number): Ledger {
   return { ...ledger, heldAt: new Date(now).toISOString() };

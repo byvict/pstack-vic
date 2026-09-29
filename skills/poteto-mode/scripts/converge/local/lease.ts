@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { integer, object, repoName, string } from '../contract.ts';
+import { instant, integer, object, repoName, string } from '../contract.ts';
 
 export const LEASE_TTL_HOURS = 3;
 export interface Lease { by: string; startedAt: string; expiresAt: string; pid: number | null }
@@ -14,11 +14,6 @@ export function alive(pid: number): boolean {
 function pid(value: unknown): number {
   const result = integer(value, 'lease pid');
   if (result === 0) throw new Error('Invalid lease pid');
-  return result;
-}
-function instant(value: unknown, label: string): string {
-  const result = string(value, label);
-  if (Number.isNaN(Date.parse(result))) throw new Error(`Invalid ${label}`);
   return result;
 }
 /** A lease is valid until it expires and, when it names a pid, while that process exists. */
