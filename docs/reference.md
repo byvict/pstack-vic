@@ -24,7 +24,7 @@ No shell, `claude plugin marketplace add byvict/pstack-vic` e `claude plugin ins
 ### Codex
 
 ```shell
-codex plugin marketplace add byvict/pstack-vic --ref v0.3.0
+codex plugin marketplace add byvict/pstack-vic --ref v0.3.1
 codex plugin add pstack@pstack-vic
 ```
 

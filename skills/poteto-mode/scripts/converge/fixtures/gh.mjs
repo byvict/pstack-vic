@@ -12,6 +12,8 @@ function send(value) {
 function save() { const next = `${file}.${process.pid}`; writeFileSync(next, JSON.stringify(state)); renameSync(next, file); }
 function later(endpoint) { const after = state.after; if (!after || after.endpoint !== endpoint) return; if (after.reads-- <= 0) Object.assign(state, after.set); save(); }
 function fail() { process.exit(1); }
+/** GitHub's compare and PR file list omit the `patch` of a large file while the diff keeps its hunks; `state.omitPatch` names those files. */
+function listed(files) { return files.map(f => (state.omitPatch ?? []).includes(f.filename) ? { ...f, patch: undefined } : f); }
 const repo = 'Example/app';
 const root = `repos/${repo}`;
 if (args[0] === 'pr' && args[1] === 'diff') process.stdout.write(state.prDiff ?? state.diff);
@@ -74,10 +76,10 @@ else if (args[0] === 'api') {
   else if (endpoint.startsWith(`${root}/compare/`)) {
     const [, head] = endpoint.slice(`${root}/compare/`.length).split('...');
     if (head !== (state.pushedHead ?? state.head)) fail();
-    send({ merge_base_commit: { sha: state.base }, files: state.files });
+    send({ merge_base_commit: { sha: state.base }, files: listed(state.files) });
   }
   else if (endpoint === `${root}/pulls` && query.get('base') === 'main') send(state.pulls ?? []);
-  else if (endpoint === `${root}/pulls/1/files`) send(state.prFiles ?? state.files);
+  else if (endpoint === `${root}/pulls/1/files`) send(listed(state.prFiles ?? state.files));
   else if (endpoint === `${root}/actions/workflows`) send({ workflows: [{ id: state.workflowId, name: 'Tests', path: '.github/workflows/tests.yml', state: 'active' }] });
   else if (endpoint.includes('/check-runs')) {
     if (state.requireInstallationChecks && (process.env.GH_TOKEN || process.env.GITHUB_TOKEN)) fail();

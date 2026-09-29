@@ -157,7 +157,7 @@ for (const scenario of ['policy', 'decision', 'converge'] as const) {
     moveTrunk(f);
     const live = f.read();
     if (scenario === 'policy') live.blobs['verify/SKILL.md'] = 'Drive the app another way.';
-    if (scenario === 'decision') delete live.files[0].patch;
+    if (scenario === 'decision') live.files.push({ filename: 'docs/absent.md', status: 'added' });
     Object.assign(f.state, live); f.save();
     const result = arm(f, false, ['--pending']); assert.notEqual(result.status, 0);
     assert.match(result.stderr, { policy: /^Certificate patch or policy differs at trunk tip d{40}$/m, decision: /^Certificate is no longer VERIFIED at trunk tip d{40}: INCONCLUSIVE$/m, converge: /^Verdict identity or execution does not authorize merge$/m }[scenario]);

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { commit, fixture } from './fixtures/setup.ts';
+import { commit, fixture, omittedPatch } from './fixtures/setup.ts';
 import { hash } from './contract.ts';
 import { parseCertificate } from './certify.ts';
 
@@ -200,6 +200,20 @@ for (const fault of ['failed-run', 'moved-head', 'unlisted-run'] as const) {
     assert.equal(existsSync(join(run, 'certificate.json')), false);
   });
 }
+test('report fills a patch that the compare omits from the full diff, so the scans read the file and no gap stays', t => {
+  const f = prePrFixture(true, false); t.after(f.cleanup); omittedPatch(f);
+  const report = certify(f, ['report', '--repo', 'Example/app', '--head', f.state.head, '--directory', join(f.directory, 'run')]);
+  assert.equal(report.status, 0, report.stderr);
+  const { gaps, injection } = JSON.parse(report.stdout);
+  assert.deepEqual(gaps, []);
+  assert.deepEqual(injection, [{ kind: 'injection', source: 'diff', path: 'docs/big.md', line: 2, rule: 'verifier-address', severity: 'blocking' }]);
+});
+test('report keeps the gap for a patchless file that the full diff lacks', t => {
+  const f = prePrFixture(true, false); t.after(f.cleanup); omittedPatch(f, true);
+  const report = certify(f, ['report', '--repo', 'Example/app', '--head', f.state.head, '--directory', join(f.directory, 'run')]);
+  assert.equal(report.status, 0, report.stderr);
+  assert.deepEqual(JSON.parse(report.stdout).gaps, ['Changed file has no readable patch']);
+});
 test('report refuses a repository that does not accept local certification', t => {
   const f = prePrFixture(); t.after(f.cleanup);
   f.state.blobs['.cursor/converge.json'] = JSON.stringify({ ...JSON.parse(f.state.blobs['.cursor/converge.json']), prePr: null }); f.save();
