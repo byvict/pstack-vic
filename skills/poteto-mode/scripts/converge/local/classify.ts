@@ -1,6 +1,6 @@
 import { checks, verdictStatus, type Pull, type Trusted } from '../github.ts';
 import { verdictGate } from '../gate.ts';
-import { requiredChecks } from '../arm.ts';
+import { passing, requiredChecks, unfinished } from '../arm.ts';
 import type { WorkKind } from './ledger.ts';
 
 export const GRACE_MINUTES = 30;
@@ -8,7 +8,6 @@ export interface Pending { kind: 'pending'; work: WorkKind; repo: string; pr: nu
 export interface Skipped { kind: 'skipped'; repo: string; pr: number; head: string; reason: string }
 export interface Idle { kind: 'idle'; repo: string; pr: number; head: string; reason: string }
 export type Classified = Pending | Skipped | Idle;
-const unfinished = ['queued', 'in_progress', 'waiting', 'requested', 'pending'];
 const stale = /^Certificate patch or policy differs at trunk tip |^Certificate is no longer VERIFIED at trunk tip /;
 
 /** One PR, one answer, from the same reads the sweep and the arm make. Errors propagate: the caller decides whether one PR's failure stops the tick. */
@@ -37,7 +36,7 @@ export async function classify(t: Trusted, p: Pull, author: number, options: { n
   const observed = await checks(t.repo, p.head);
   for (const c of required) {
     if (c.context === 'verdict' || c.context === 'hold') continue;
-    const failed = observed.find(check => check.context === c.context && (c.appId === null || c.appId === check.appId) && check.state !== 'success' && !unfinished.includes(check.state));
+    const failed = observed.find(check => check.context === c.context && (c.appId === null || c.appId === check.appId) && !passing.includes(check.state) && !unfinished.includes(check.state));
     if (failed) return pending('repair', `Required protected check failed: ${c.context}`);
   }
   return { kind: 'idle', ...base, reason: 'certified; checks green or pending' };

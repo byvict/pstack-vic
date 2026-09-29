@@ -100,13 +100,27 @@ test('pending arm accepts queued checks and an unfinished exact-head Tests run',
   assert.equal(JSON.parse(result.stdout).steps.at(-1), 'gh pr merge --squash --auto --match-head-commit ' + f.state.head + ' (checks pending)');
   assert.deepEqual(f.read().mutations, merge(f.state.head));
 });
-for (const conclusion of ['failure', 'neutral', 'skipped']) {
-  test(`pending arm refuses a required check completed as ${conclusion}`, t => {
+test('pending arm refuses a required check completed as failure', t => {
+  const f = fixture(); t.after(f.cleanup); publish(f);
+  const live = f.read(); live.checks = [{ id: 21, name: 'Run test suite', status: 'queued', conclusion: null, app: { id: 15368 } }, { id: 22, name: 'Secrets scan', status: 'completed', conclusion: 'failure', app: { id: 15368 } }]; Object.assign(f.state, live); f.save();
+  const result = arm(f, false, ['--pending']);
+  assert.notEqual(result.status, 0); assert.match(result.stderr, /Required protected check failed: Secrets scan/);
+  assert.deepEqual(f.read().mutations, []);
+});
+for (const conclusion of ['neutral', 'skipped']) {
+  test(`pending arm accepts a required check completed as ${conclusion}, as GitHub does`, t => {
     const f = fixture(); t.after(f.cleanup); publish(f);
     const live = f.read(); live.checks = [{ id: 21, name: 'Run test suite', status: 'queued', conclusion: null, app: { id: 15368 } }, { id: 22, name: 'Secrets scan', status: 'completed', conclusion, app: { id: 15368 } }]; Object.assign(f.state, live); f.save();
     const result = arm(f, false, ['--pending']);
-    assert.notEqual(result.status, 0); assert.match(result.stderr, /Required protected check failed: Secrets scan/);
-    assert.deepEqual(f.read().mutations, []);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(f.read().mutations, merge(f.state.head));
+  });
+  test(`a strict arm accepts a required check completed as ${conclusion}`, t => {
+    const f = fixture(); t.after(f.cleanup); publish(f);
+    const live = f.read(); live.checks = [{ id: 11, name: 'Run test suite', status: 'completed', conclusion: 'success', app: { id: 15368 } }, { id: 22, name: 'Secrets scan', status: 'completed', conclusion, app: { id: 15368 } }, { id: 10, name: 'hold', status: 'completed', conclusion: 'success', app: { id: 15368 } }]; Object.assign(f.state, live); f.save();
+    const result = arm(f, false);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(f.read().mutations, merge(f.state.head));
   });
 }
 for (const scenario of ['hold', 'trunk', 'protection', 'verdict', 'foreign', 'elsewhere', 'unlinked', 'author', 'missing', 'body', 'base'] as const) {
