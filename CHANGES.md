@@ -870,3 +870,19 @@ O `tests/skill-collision-repro.sh` roda sob `set -euo pipefail` e conferia o fro
 
 - `npm test`: 726 testes, 0 falhas. Contra a 0.4.2 (723), são os 3 testes novos. Antes da correção, os três falhavam no bash 3.2 do Mac pelo comportamento: o `principle-*` válido saía `missing user-invocable: false`, os dois `disable-model-invocation` passavam (`ok: routed skills stay model-invocable`), e a perna comportamental saía `FAIL: model-initiated Skill-tool invocation expected SKILL-RAN, got: SKILL-RAN`. Por mutação, voltar qualquer uma das quatro buscas ao `printf | grep -q` derruba o teste que a cobre.
 - `npm run test:bun`: 52 testes, 0 falhas, typecheck limpo. `npm run matrix:check`, `npm run agents:check`, `npm run collision:check`, `claude plugin validate .` e `git diff --check` limpos.
+
+# 0.4.4 — Família `sol-6-1` (GPT-6.1-Sol) (2026-09-29)
+
+A Codex CLI 0.159.0 lista `gpt-6.1-sol` como "Latest workhorse model" (cache de modelos de 2026-09-29) e rebaixa o `gpt-6-sol` a "Previous generation". Os dois aceitam low, medium, high, xhigh, max e `ultra`. Uma chamada real `codex exec -m gpt-6.1-sol` respondeu na assinatura.
+
+## Desenho
+
+- Nova família `sol-6-1` (`codex:gpt-6.1-sol`, low a max, default max, `reportedModel: null` como toda família Codex). É nativa no Codex (`spawn_agent`) e vai pelo runner no Claude Code.
+- A família `sol` continua em `gpt-6-sol`, e nenhum default de papel muda. Um sheet só usa `gpt-6.1-sol` quando o `/setup-pstack` aponta um papel para ele. Na primeira vez em cada pai, o `plan` pede o probe, porque `codex:gpt-6.1-sol` não está no ledger.
+- O desenho é o do `grok-4-7` ao lado do `grok` na 0.1.6, não a migração da mesma versão de `gpt-5.6-sol` para `gpt-6-sol`: incluir a família não reescreve lanes existentes.
+
+## Verificação
+
+- `npm test`: 727 testes, 0 falhas. Contra a 0.4.3 (726), é o teste novo de `scripts/model-matrix.test.ts`, que falhou antes da linha na matriz (`sol-6-1 present`).
+- `setup-pstack plan` num home vazio com `--role "bug-fix=codex:gpt-6.1-sol@xhigh"`: no Claude Code, par `sol-6-1@xhigh` pelo runner; no Codex, nativo com `spawn_agent`, `model: gpt-6.1-sol`, `reasoning_effort: xhigh`. `converge raiz=codex:gpt-6.1-sol@xhigh` passa no pai Codex.
+- `npm run test:bun`: 52 testes, 0 falhas. `npm run matrix:check`, `npm run agents:check`, `npm run collision:check`, `claude plugin validate .` e `git diff --check` limpos.
