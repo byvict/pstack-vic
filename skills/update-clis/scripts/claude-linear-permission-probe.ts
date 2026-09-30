@@ -115,4 +115,4 @@ export async function main(args: string[]): Promise<number> {
     return result.ok ? 0 : 1;
   } catch (error) { process.stderr.write((error instanceof Error ? error.message : 'Permission probe failed') + '\n'); return 1; }
 }
-if (process.argv[1] && resolve(process.argv[1]) === import.meta.filename) process.exitCode = await main(process.argv.slice(2));
+if (import.meta.main) process.exitCode = await main(process.argv.slice(2));

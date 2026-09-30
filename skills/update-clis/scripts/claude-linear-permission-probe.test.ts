@@ -1,12 +1,21 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FIXTURE_TOOL, PERMISSION_CASES, permissionCaseFailures, type ProbeObservation } from './claude-linear-permission-probe.ts';
 
 const observed: ProbeObservation = { exitCode: 0, timedOut: false, unexpectedMcp: false, mode: 'dontAsk', session: 'native-session', attempts: 1, dispatches: 0, effects: 0, hookInvocations: 1, hookExit: 1, hookOutcome: 'error' };
+test('the CLI executes main through a symlink pathname and reports missing arguments', t => {
+  const dir = mkdtempSync(join(tmpdir(), 'linear-permission-entry-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const alias = join(dir, 'permission-probe.ts');
+  symlinkSync(join(import.meta.dirname, 'claude-linear-permission-probe.ts'), alias);
+  const run = spawnSync(process.execPath, [alias], { encoding: 'utf8', timeout: 5_000 });
+  assert.equal(run.status, 1, run.stderr);
+  assert.match(run.stderr, /Usage: claude-linear-permission-probe\.ts --directory NEW_PATH --model MODEL --effort EFFORT/);
+  assert.equal(run.stdout, '');
+});
 test('the matrix has positive effects for allowed and effectively loaded rules and zero effects for every isolated hook fault', () => {
   assert.deepEqual(PERMISSION_CASES.map(c => [c.name, c.expectedEffects]), [['allow', 1], ['deny', 0], ['missing', 0], ['exit1', 0], ['timeout', 0], ['local-allow-loaded-exit1', 1], ['local-allow-excluded-exit1', 0], ['inline-allow-exit1-unsafe-control', 1]]);
   assert.deepEqual(permissionCaseFailures(PERMISSION_CASES[3], observed), []);
