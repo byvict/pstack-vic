@@ -9,6 +9,7 @@ import { classify, skipCause, type Classified } from './classify.ts';
 import { defaultConfigFile, defaultStateDirectory, loadConfig, type LocalConfig, type RepoConfig } from './config.ts';
 import { install, installWhenIdle, uninstall, JOBS, WAKEABLE, type InstallOptions, type Job, type Wakeable } from './launchd.ts';
 import { consumeWakes, nudge } from './wake.ts';
+import { notify } from './notify.ts';
 import { forgetPostMerge, postMergeOne, postMergePass, postMergeStatus, type PostMergeReport } from './post-merge.ts';
 import { tickWatch, watchErrors } from './watch.ts';
 import { currentLedger, deferredBackoffUntil, exhausted, launchBackoffUntil, ledgerFile, markHeld, readLedger, withAttempt, withLaunchFailure, workKinds, writeLedger, DEFERRED_BACKOFF_MINUTES, LAUNCH_FAILURE_BACKOFF_MINUTES, type Attempt, type Ledger, type WorkKind } from './ledger.ts';
@@ -24,7 +25,7 @@ function message(error: unknown): string { return error instanceof Error ? error
 function holdComment(ledger: Ledger, reason: string): string {
   return [`The local converge daemon stopped on head ${ledger.head}: ${reason}.`, '', 'Attempts:', ...ledger.attempts.map(a => `- ${a.n}. ${a.kind} ${a.outcome}: ${a.reason} (${a.runDirectory})`), '', 'Remove the hold label to let it try again.'].join('\n');
 }
-/** Label, then ledger, then comment. Once the label is on, classify skips the PR, so a failed write or comment never holds it twice; a failed comment is reported and the hold stands. */
+/** Once the label is on, classify skips the PR, so a failed ledger write, comment or notification never holds it twice; each is reported and the hold stands. */
 async function hold(t: Trusted, file: string, ledger: Ledger, reason: string, now: number, report: TickReport): Promise<void> {
   await api(`repos/${t.repo}/issues/${ledger.pr}/labels`, { labels: [t.config.holdLabels[0]] });
   const held = markHeld(ledger, now);
@@ -32,6 +33,8 @@ async function hold(t: Trusted, file: string, ledger: Ledger, reason: string, no
   report.held.push({ repo: t.repo, pr: ledger.pr, reason });
   try { await api(`repos/${t.repo}/issues/${ledger.pr}/comments`, { body: holdComment(held, reason) }); }
   catch (error) { report.errors.push(`${t.repo}#${ledger.pr}: hold comment failed: ${message(error)}`); }
+  const cause = notify({ title: 'Converge local', subtitle: t.repo, body: `Held ${t.repo}#${ledger.pr}: ${reason}` });
+  if (cause) report.errors.push(`${t.repo}#${ledger.pr}: notification failed: ${cause}`);
 }
 /** Unique per launch: a skipped attempt that the re-read PR explains records nothing, so the attempt number repeats, and the launch time keeps the next RUN fresh. */
 function runDirectory(repo: string, pr: number, head: string, n: number): string {

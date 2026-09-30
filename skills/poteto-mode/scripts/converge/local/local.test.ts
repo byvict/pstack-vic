@@ -1,8 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { fixture, moveTrunk, publishCertificate, moveTrunkToEmptyLightPaths } from '../fixtures/setup.ts';
 import { defaultConfigFile, defaultStateDirectory, loadConfig } from './config.ts';
 import { ledgerFile, writeLedger, DEFERRED_BACKOFF_MINUTES, HEAD_WINDOW_HOURS, LAUNCH_FAILURE_BACKOFF_MINUTES, MAX_DEFERRED_ATTEMPTS, MAX_FAILED_ATTEMPTS, MAX_LAUNCH_FAILURES, type Attempt, type Ledger } from './ledger.ts';
@@ -239,7 +241,7 @@ test('a third deferred attempt on a head holds it', t => {
   assert.deepEqual(JSON.parse(result.stdout).held, [{ repo: 'Example/app', pr: 1, reason: `${MAX_DEFERRED_ATTEMPTS} deferred attempts on head ${f.state.head}` }]);
   assert.deepEqual(f.read().mutations, [['labels', 'needs-victor']]);
 });
-test('a second failed attempt applies the hold label with a comment, and the next tick skips the held PR', t => {
+test('a second failed attempt applies the hold label with a comment and a notification, and the next tick skips the held PR', t => {
   const f = fixture(); t.after(f.cleanup);
   const { file, state } = configured(f);
   listed(f); fakeClaude(f, writer(outcome(f, { outcome: 'failed', reason: 'six fixer rounds', arm: null, adjustRounds: 6 })));
@@ -253,14 +255,16 @@ test('a second failed attempt applies the hold label with a comment, and the nex
   assert.match(f.read().comments[0].body, /- 1\. certify failed: run suite exited 1/);
   assert.match(f.read().comments[0].body, /- 2\. certify failed: six fixer rounds/);
   assert.equal(f.read().comments[0].body.split('\n').at(-1), 'Remove the hold label to let it try again.', 'a new head does not resume a held PR, so the comment does not promise it');
+  assert.deepEqual(f.notices(), [`-e display notification "Held Example/app#1: ${MAX_FAILED_ATTEMPTS} failed attempts on head ${f.state.head}" with title "Converge local" subtitle "Example/app" sound name "Basso"`]);
   const ledger: Ledger = JSON.parse(readFileSync(ledgerFile(state, 'Example/app', 1), 'utf8'));
   assert.equal(ledger.attempts.length, 2); assert.notEqual(ledger.heldAt, null);
   listed(f);
   const next = tick(f, file);
   assert.deepEqual(classes(next.stdout), [[1, 'skipped', null, 'hold label']]);
   assert.equal(f.read().comments.length, 1);
+  assert.equal(f.notices().length, 1, 'a held PR is not notified again');
 });
-test('an exhausted PR is held before any launch, and two ticks post exactly one comment', t => {
+test('an exhausted PR is held before any launch, and two ticks post exactly one comment and one notification', t => {
   const f = fixture(); t.after(f.cleanup);
   const { file, state } = configured(f);
   listed(f); fakeClaude(f, writer(outcome(f, {})));
@@ -276,6 +280,7 @@ test('an exhausted PR is held before any launch, and two ticks post exactly one 
   assert.deepEqual(classes(second.stdout), [[1, 'skipped', null, 'hold label']]);
   assert.deepEqual(f.read().mutations, [['labels', 'needs-victor']]);
   assert.equal(f.read().comments.length, 1);
+  assert.equal(f.notices().length, 1);
 });
 test('a hold whose comment fails still stands: label and ledger are written, the error is reported', t => {
   const f = fixture(); t.after(f.cleanup);
@@ -288,6 +293,35 @@ test('a hold whose comment fails still stands: label and ledger are written, the
   assert.deepEqual(JSON.parse(result.stdout).errors, ['Example/app#1: hold comment failed: gh request failed']);
   assert.deepEqual(f.read().mutations, [['labels', 'needs-victor']]);
   assert.notEqual(JSON.parse(readFileSync(ledgerFile(state, 'Example/app', 1), 'utf8')).heldAt, null);
+});
+test('a hold whose notification fails still stands: label, ledger and comment are written, the error is reported', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const { file, state } = configured(f);
+  listed(f);
+  writeLedger(ledgerFile(state, 'Example/app', 1), seeded(f, MAX_FAILED_ATTEMPTS));
+  writeFileSync(join(f.directory, 'osascript-exit'), '1');
+  const result = tick(f, file);
+  assert.equal(result.status, 1);
+  assert.deepEqual(JSON.parse(result.stdout).errors, ['Example/app#1: notification failed: osascript exited 1: fake osascript failed']);
+  assert.deepEqual(f.read().mutations, [['labels', 'needs-victor']]);
+  assert.notEqual(JSON.parse(readFileSync(ledgerFile(state, 'Example/app', 1), 'utf8')).heldAt, null);
+  assert.equal(f.read().comments.length, 1);
+});
+test('a hold with no osascript on PATH still stands, and the tick reports that the notification did not start', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const { file, state } = configured(f);
+  listed(f);
+  writeLedger(ledgerFile(state, 'Example/app', 1), seeded(f, MAX_FAILED_ATTEMPTS));
+  rmSync(join(f.directory, 'osascript'));
+  const node = dirname(process.execPath);
+  assert.equal(existsSync(join(node, 'osascript')), false, `${node} holds no osascript`);
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL('../converge-local', import.meta.url)), 'tick', '--job', 'raiz', '--config', file, '--now', String(t0)],
+    { encoding: 'utf8', timeout: 60_000, env: { ...process.env, PATH: `${f.directory}:${node}`, CONVERGE_FIXTURE: f.statePath, TMPDIR: join(f.directory, 'tmp'), FAKE_ARGV: join(f.directory, 'argv.txt') } });
+  assert.equal(result.status, 1, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout).errors, ['Example/app#1: notification failed: osascript did not start: spawnSync osascript ENOENT']);
+  assert.deepEqual(f.read().mutations, [['labels', 'needs-victor']]);
+  assert.notEqual(JSON.parse(readFileSync(ledgerFile(state, 'Example/app', 1), 'utf8')).heldAt, null);
+  assert.equal(f.read().comments.length, 1);
 });
 test('the cap after an attempt reads the attempt end, not the tick start', t => {
   const f = fixture(); t.after(f.cleanup);

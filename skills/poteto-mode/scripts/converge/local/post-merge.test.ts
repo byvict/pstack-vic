@@ -149,7 +149,7 @@ test('exit 75 defers the commit: the tip stays, the next tick tries again, and a
   assert.equal(failed.status, 1);
   assert.deepEqual(outcomes(failed.stdout), [[commits[1], 'failed', `release exited 75 for 24 hours since ${aged.firstAttemptAt}`]]);
 });
-test('a failed commit stops the queue, comments once on its merged PR, shows in status, repeats the error on every tick, and runs again once its ledger is deleted', t => {
+test('a failed commit stops the queue, comments once on its merged PR, notifies once, shows in status, repeats the error on every tick, and runs again once its ledger is deleted', t => {
   const f = fixture(); t.after(f.cleanup);
   const { commits, file, ledger } = trunk(f, 3);
   assert.equal(sweepTick(f, file).status, 0);
@@ -161,12 +161,14 @@ test('a failed commit stops the queue, comments once on its merged PR, shows in 
   assert.equal(failed.stderr, error + '\n');
   const logFile = ledgerOf(ledger(commits[1])).attempts[0]?.runs[0]?.logFile;
   assert.deepEqual(f.read().posted, [{ pr: 41, body: [`The local converge daemon's post-merge stopped on commit ${commits[1]}: release exited 1.`, '', 'Runs:', `- release exited 1 (${logFile})`, '', `Later trunk commits wait. Delete \`${ledger(commits[1])}\` to retry.`].join('\n') }]);
+  assert.deepEqual(f.notices(), [`-e display notification "Post-merge stopped on commit ${commits[1]?.slice(0, 8)}: release exited 1 (PR #41)" with title "Converge local" subtitle "Example/app" sound name "Basso"`]);
   assert.deepEqual(released(f).map(l => l[1]), [commits[1]], 'the later commit waits');
   const status = JSON.parse(f.run('converge-local', ['status', '--config', file], env(f)).stdout);
   assert.deepEqual(status.postMerge, [{ repo: 'Example/app', tip: commits[0], commits: [{ commit: commits[1], pr: 41, outcome: 'failed', reason: 'release exited 1', attempts: 1, file: ledger(commits[1]) }] }]);
   const again = sweepTick(f, file);
   assert.equal(again.stderr, error + '\n');
   assert.equal(f.read().posted.length, 1, 'one comment per recorded failure');
+  assert.equal(f.notices().length, 1, 'one notification per recorded failure');
   assert.equal(released(f).length, 1, 'a failed commit never runs again on its own');
   rmSync(ledger(commits[1])); rmSync(join(f.directory, 'exits', String(commits[1])));
   const retried = sweepTick(f, file);
@@ -183,6 +185,19 @@ test('a failure comment that cannot be posted leaves the failure standing and na
   assert.equal(failed.status, 1);
   assert.equal(failed.stderr, `Example/app: post-merge: ${commits[1]} failed: release exited 1; delete ${ledger(commits[1])} to retry\nExample/app: post-merge: ${commits[1]}: failure comment failed: gh request failed\n`);
   assert.equal(ledgerOf(ledger(commits[1])).attempts[0]?.outcome, 'failed');
+});
+test('a notification that cannot be shown leaves the failure and its comment standing and names the notification', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const { commits, file, ledger } = trunk(f, 2);
+  assert.equal(sweepTick(f, file).status, 0);
+  edit(f, live => { live.trunk = commits[1]; live.commitPulls = { [commits[1]]: [merged(41)] }; });
+  writeFileSync(join(f.directory, 'exits', String(commits[1])), '1');
+  writeFileSync(join(f.directory, 'osascript-exit'), '1');
+  const failed = sweepTick(f, file);
+  assert.equal(failed.status, 1);
+  assert.equal(failed.stderr, `Example/app: post-merge: ${commits[1]} failed: release exited 1; delete ${ledger(commits[1])} to retry\nExample/app: post-merge: ${commits[1]}: notification failed: osascript exited 1: fake osascript failed\n`);
+  assert.equal(ledgerOf(ledger(commits[1])).attempts[0]?.outcome, 'failed');
+  assert.deepEqual(f.read().posted.map((comment: { pr: number }) => comment.pr), [41]);
 });
 test('a ledger that already ends done only advances the tip', t => {
   const f = fixture(); t.after(f.cleanup);
@@ -240,6 +255,7 @@ test('a command that does not start fails the attempt with exitCode null', t => 
   assert.equal(result.status, 1);
   assert.deepEqual(outcomes(result.stdout), [[commits[1], 'failed', 'release did not start']]);
   assert.equal(ledgerOf(ledger(String(commits[1]))).attempts[0]?.runs[0]?.exitCode, null);
+  assert.deepEqual(f.notices(), [`-e display notification "Post-merge stopped on commit ${commits[1]?.slice(0, 8)}: release did not start" with title "Converge local" subtitle "Example/app" sound name "Basso"`], 'a direct push has no PR to name');
 });
 test('a command past its cap is killed and the attempt fails with reason timeout', async t => {
   const f = fixture(); t.after(f.cleanup);
