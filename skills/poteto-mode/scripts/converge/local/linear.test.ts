@@ -12,6 +12,7 @@ import { claimLinearEffect, planLinear, readLinearTargets, reconcileLinear, reco
 import { LINEAR_PREFIX, linearTrace, launchLinearSession, type NativeCall } from './linear-session.ts';
 import { proofCatalogue } from './linear-proof.ts';
 import { linearTarget } from '../linear-targets.ts';
+import { parseLinearPlan } from './linear-plan.ts';
 
 const root = fileURLToPath(new URL('../../../../../', import.meta.url));
 const lane = { provider: 'claude', model: 'fable', effort: 'max' };
@@ -33,6 +34,12 @@ function metadataAssessment(state: ReturnType<ReturnType<typeof setup>['read']>)
   const proof = proofCatalogue(merge(), [call('observed', 'get_issue', {}, state.issue)]).find(p => p.kind === 'structural' && p.field === 'labels');
   assert.ok(proof);
   return { targets: [{ url: issueUrl, coverage: 'complete', references: [{ key: 'https://linear.app/example/document/plan-doc-1', required: false, reason: 'Historical project plan unrelated to the requested labels.' }], obligations: [{ source: 'ENG-1', quote: state.issue.description, kind: 'acceptance', requiredClass: 'structural', status: 'met', outcome: { subject: issueUrl, field: 'labels', operator: 'includes', value: 'pstack' }, proofIds: [proof.id], relevance: 'The explicitly required pstack label is present on ENG-1.' }] }] };
+}
+async function reviewedApply(f: ReturnType<typeof setup>, checkpoint: LinearCheckpoint | null = null) {
+  const planPath = join(f.dir, 'reviewed.json');
+  const preview = await reconcileLinear({ ...f.input(true, checkpoint), manual: true, planPath });
+  assert.equal(preview.kind, 'dry-run', preview.reason);
+  return reconcileLinear({ ...f.input(false, checkpoint), manual: true, planPath });
 }
 test('native parser pairs direct calls and results; model JSON and shell tool output cannot forge MCP usage', () => {
   const tool = { type: 'tool_use', id: 'native-1', name: LINEAR_PREFIX + 'get_issue', input: { id: issueUrl } };
@@ -119,11 +126,57 @@ test('a retry never reissues a sent completion after live acceptance or rollout 
   assert.deepEqual(retry.effects.map(e => [e.kind, e.status.kind]), [['comment', 'confirmed'], ['complete', 'withheld']]); assert.equal(f.read().issue.statusType, 'started');
   assert.equal(f.read().mutations.length, 1); assert.match(f.read().comments[0].body, /Completion is unproved/);
 });
-test('independent cited proof for every recorded obligation permits a native completion with readback', async t => {
+test('matching assessments that omit an acceptance criterion defer completion until exact reviewed manual application', async t => {
   const f = setup(t), s = f.read(); s.issue.description = 'ENG-1 labels must include pstack.'; s.issue.labels = ['pstack'];
-  s.assessment = metadataAssessment(s); writeJsonFile(f.remote, s);
-  const result = await reconcileLinear(f.input()); assert.equal(result.kind, 'done', result.reason);
-  assert.equal(f.read().issue.statusType, 'completed'); assert.equal(f.read().mutations.length, 2); assert.ok(result.effects.every(e => e.status.kind === 'confirmed'));
+  s.assessment = metadataAssessment(s); s.issue.description += '\nPersist the release checkpoint before the next command.'; writeJsonFile(f.remote, s);
+  const input = f.input(), result = await reconcileLinear(input);
+  assert.equal(result.kind, 'deferred', result.reason);
+  assert.match(result.reason, /completion requires reviewed manual application/);
+  const completion = result.effects.find(e => e.kind === 'complete'); assert.ok(completion);
+  assert.equal(completion.status.kind, 'withheld');
+  assert.deepEqual(f.read().mutations, []); assert.equal(f.read().issue.statusType, 'started');
+  assert.throws(() => claimLinearEffect(f.ledger, completion.tool, completion.args, 'write'), /unplanned/);
+  const artifact = result.reason.match(/Concrete Linear plan (.+) \(([a-f0-9]{64})\)/); assert.ok(artifact);
+  const planPath = artifact[1], reviewed = readFileSync(planPath, 'utf8'), plan = parseLinearPlan(JSON.parse(reviewed));
+  assert.equal(planPath, join(input.runDirectory, `plan-${plan.digest}.json`));
+  assert.equal(plan.effects.filter(e => e.tool === LINEAR_PREFIX + 'save_issue').length, 1);
+  const checkpoint = JSON.parse(readFileSync(f.ledger, 'utf8')).checkpoint.linear;
+  const automatic = await reconcileLinear({ ...f.input(false, checkpoint), planPath });
+  assert.equal(automatic.kind, 'deferred'); assert.deepEqual(f.read().mutations, []); assert.equal(readFileSync(planPath, 'utf8'), reviewed);
+  const applied = await reconcileLinear({ ...f.input(false, checkpoint), manual: true, planPath });
+  assert.equal(applied.kind, 'done', applied.reason); assert.equal(f.read().issue.statusType, 'completed');
+  assert.equal(f.read().mutations.length, 2); assert.ok(applied.effects.every(e => e.status.kind === 'confirmed')); assert.equal(readFileSync(planPath, 'utf8'), reviewed);
+});
+test('old planned completions are revoked before missing-plan refusal or native read failure', async t => {
+  for (const mode of ['automatic-read-failure', 'manual-missing-plan', 'manual-read-failure', 'manual-changed-source']) {
+    const f = setup(t), s = f.read(); s.issue.description = 'ENG-1 labels must include pstack.'; s.issue.labels = ['pstack']; s.assessment = metadataAssessment(s); writeJsonFile(f.remote, s);
+    const proposal = await reconcileLinear(f.input(true)); assert.equal(proposal.effects[1].kind, 'complete');
+    const artifact = proposal.reason.match(/Concrete Linear plan (.+) \(([a-f0-9]{64})\)/); assert.ok(artifact);
+    const planPath = mode === 'manual-missing-plan' ? undefined : artifact[1];
+    const checkpoint: LinearCheckpoint = { repo: f.m.repo, commit: f.m.commit, head: f.m.head, effects: proposal.effects.map(e => ({ ...e, status: { kind: 'planned' } })), logPaths: proposal.logs }; f.save(checkpoint);
+    if (mode.endsWith('read-failure')) f.edit('no-mcp');
+    if (mode === 'manual-changed-source') { s.issue.description += ' Another criterion.'; writeJsonFile(f.remote, s); }
+    const result = await reconcileLinear({ ...f.input(false, checkpoint), manual: mode.startsWith('manual-'), planPath });
+    assert.equal(result.kind, mode.endsWith('read-failure') ? 'deferred' : 'refused');
+    const completion = JSON.parse(readFileSync(f.ledger, 'utf8')).checkpoint.linear.effects[1];
+    assert.equal(completion.status.kind, 'withheld'); assert.throws(() => claimLinearEffect(f.ledger, completion.tool, completion.args, 'write'), /unplanned/); assert.deepEqual(f.read().mutations, []);
+  }
+});
+test('changed completion sources or effects refuse reviewed replay, and automatic candidates preserve older artifacts', async t => {
+  const f = setup(t), s = f.read(); s.issue.description = 'ENG-1 labels must include pstack.'; s.issue.labels = ['pstack']; s.assessment = metadataAssessment(s); writeJsonFile(f.remote, s);
+  const input = f.input(), first = await reconcileLinear(input); assert.equal(first.kind, 'deferred');
+  const artifact = first.reason.match(/Concrete Linear plan (.+) \(([a-f0-9]{64})\)/); assert.ok(artifact);
+  const planPath = artifact[1], reviewed = readFileSync(planPath, 'utf8'), checkpoint = JSON.parse(readFileSync(f.ledger, 'utf8')).checkpoint.linear;
+  const changed = f.read(); changed.issue.description += '\nAnother acceptance criterion.'; writeJsonFile(f.remote, changed);
+  const retry = await reconcileLinear({ ...input, checkpoint }); assert.equal(retry.kind, 'deferred');
+  assert.ok(!retry.reason.includes(planPath)); assert.equal(readFileSync(planPath, 'utf8'), reviewed);
+  const sourceRefusal = await reconcileLinear({ ...f.input(false, checkpoint), manual: true, planPath });
+  assert.equal(sourceRefusal.kind, 'refused'); assert.match(sourceRefusal.reason, /sources changed/); assert.equal(readFileSync(planPath, 'utf8'), reviewed);
+  const restored = f.read(); restored.issue.description = s.issue.description; restored.assessment.targets[0].coverage = 'unknown'; writeJsonFile(f.remote, restored);
+  const effectRefusal = await reconcileLinear({ ...f.input(false, checkpoint), manual: true, planPath });
+  assert.equal(effectRefusal.kind, 'refused'); assert.match(effectRefusal.reason, /effects changed/);
+  assert.equal(JSON.parse(readFileSync(f.ledger, 'utf8')).checkpoint.linear.effects[1].status.kind, 'withheld');
+  assert.equal(readFileSync(planPath, 'utf8'), reviewed); assert.deepEqual(f.read().mutations, []); assert.equal(f.read().issue.statusType, 'started');
 });
 test('late scoped proof adds completion and updates the existing comment without another create', async t => {
   const f = setup(t), s = f.read(); s.issue.description = 'ENG-1 labels must include pstack.'; s.issue.labels = ['pstack'];
@@ -131,13 +184,15 @@ test('late scoped proof adds completion and updates the existing comment without
   const first = await reconcileLinear(f.input()); assert.equal(first.kind, 'done'); assert.deepEqual(first.effects.map(e => e.kind), ['comment']);
   const checkpoint = JSON.parse(readFileSync(f.ledger, 'utf8')).checkpoint.linear, live = f.read();
   live.assessment = metadataAssessment(live); writeJsonFile(f.remote, live);
-  const retry = await reconcileLinear(f.input(false, checkpoint)); assert.equal(retry.kind, 'done', retry.reason);
-  assert.deepEqual(retry.effects.map(e => e.kind), ['comment', 'complete']); assert.equal(f.read().comments.length, 1); assert.equal(f.read().issue.statusType, 'completed'); assert.ok(!f.read().comments[0].body.includes('Completion is unproved')); assert.equal(f.read().mutations.filter((e: {args: Record<string, unknown>}) => e.args.id && 'body' in e.args).length, 1);
+  const retry = await reconcileLinear(f.input(false, checkpoint)); assert.equal(retry.kind, 'deferred', retry.reason);
+  assert.deepEqual(retry.effects.map(e => e.kind), ['comment', 'complete']); assert.equal(f.read().comments.length, 1); assert.equal(f.read().issue.statusType, 'started'); assert.equal(f.read().mutations.length, 1);
+  const applied = await reviewedApply(f, JSON.parse(readFileSync(f.ledger, 'utf8')).checkpoint.linear); assert.equal(applied.kind, 'done', applied.reason);
+  assert.equal(f.read().issue.statusType, 'completed'); assert.ok(!f.read().comments[0].body.includes('Completion is unproved')); assert.equal(f.read().mutations.filter((e: {args: Record<string, unknown>}) => e.args.id && 'body' in e.args).length, 1);
 });
 test('a reopened issue requires current proof again, and a deleted confirmed comment defers without another create', async t => {
   const f = setup(t), s = f.read(); s.issue.description = 'ENG-1 labels must include pstack.'; s.issue.labels = ['pstack'];
   s.assessment = metadataAssessment(s); writeJsonFile(f.remote, s);
-  assert.equal((await reconcileLinear(f.input())).kind, 'done');
+  assert.equal((await reviewedApply(f)).kind, 'done');
   let checkpoint = JSON.parse(readFileSync(f.ledger, 'utf8')).checkpoint.linear, live = f.read(); live.issue.statusType = 'started'; live.assessment.targets[0].coverage = 'unknown'; writeJsonFile(f.remote, live);
   const reopened = await reconcileLinear(f.input(false, checkpoint)); assert.equal(reopened.kind, 'done'); assert.equal(reopened.effects[1].status.kind, 'withheld'); assert.equal(f.read().issue.statusType, 'started'); assert.equal(f.read().mutations.length, 3);
   checkpoint = JSON.parse(readFileSync(f.ledger, 'utf8')).checkpoint.linear; live = f.read(); live.comments = []; writeJsonFile(f.remote, live);

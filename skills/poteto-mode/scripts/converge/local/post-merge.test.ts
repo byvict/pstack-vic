@@ -4,11 +4,13 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, s
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { commit, fixture, git } from '../fixtures/setup.ts';
-import { dossier, issueUrl } from '../fixtures/linear.ts';
+import { dossier, issueUrl, merge } from '../fixtures/linear.ts';
 import { linearTarget } from '../linear-targets.ts';
 import { loadConfig } from './config.ts';
 import { writeJsonFile } from './ledger.ts';
 import { parseLinearPlan, type LinearPlan } from './linear-plan.ts';
+import { proofCatalogue } from './linear-proof.ts';
+import { LINEAR_PREFIX, type NativeCall } from './linear-session.ts';
 import { tickSweep } from './local.ts';
 import { takeLease } from './lease.ts';
 import { POST_MERGE_DEFER_HOURS, postMergeLeaseFile, postMergeLedgerFile, postMergeStateFile, redTrunkFile, type Handled, type PostMergeLedger } from './post-merge.ts';
@@ -411,9 +413,36 @@ function manualLinear(f: F) {
     documents: [], comments: Array<{ id: string; body: string }>(), mutations: Array<Pick<LinearPlan['effects'][number], 'tool' | 'args'>>(),
   };
   writeJsonFile(remote, state);
-  const run = (args: string[]) => f.run('converge-local', ['post-merge', '--repo', 'Example/app', '--commit', commitSha, '--config', setup.file, ...args], { ...env(f), LINEAR_REMOTE: remote, LINEAR_ARGV: join(f.directory, 'linear-argv.json') });
-  return { ...setup, commitSha, remote, plan, run, read: (): typeof state => JSON.parse(readFileSync(remote, 'utf8')) };
+  const linearEnv = { ...env(f), LINEAR_REMOTE: remote, LINEAR_ARGV: join(f.directory, 'linear-argv.json') };
+  const run = (args: string[]) => f.run('converge-local', ['post-merge', '--repo', 'Example/app', '--commit', commitSha, '--config', setup.file, ...args], linearEnv);
+  const sweep = () => f.run('converge-local', ['tick', '--job', 'sweep', '--config', setup.file], linearEnv);
+  return { ...setup, commitSha, remote, plan, run, sweep, read: (): typeof state => JSON.parse(readFileSync(remote, 'utf8')) };
 }
+test('public sweep defers a mixed completion proposal until exact reviewed manual CLI application', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const s = manualLinear(f), criterion = 'ENG-1 labels must include pstack.';
+  const issue = { ...s.read().issue, description: criterion + '\nPersist the release checkpoint before the next command.', labels: ['pstack'] };
+  const observed = { id: 'observed', tool: LINEAR_PREFIX + 'get_issue', args: {}, result: issue, error: false, line: 1, session: 'fixture' } satisfies NativeCall;
+  const proof = proofCatalogue(merge(), [observed]).find(p => p.kind === 'structural' && p.field === 'labels'); assert.ok(proof);
+  const assessment = { targets: [{ url: issueUrl, coverage: 'complete', references: [], obligations: [{ source: 'ENG-1', quote: criterion, kind: 'acceptance', requiredClass: 'structural', status: 'met', outcome: { subject: issueUrl, field: 'labels', operator: 'includes', value: 'pstack' }, proofIds: [proof.id], relevance: 'The required label is present.' }] }] };
+  writeJsonFile(s.remote, { ...s.read(), issue, assessment });
+  edit(f, live => { live.trunk = s.commits[0]; }); assert.equal(s.sweep().status, 0);
+  edit(f, live => { live.trunk = s.commitSha; });
+  const automatic = s.sweep(); assert.equal(automatic.status, 0, automatic.stderr);
+  const pending = pass(automatic.stdout).commits[0]; assert.equal(pending.outcome, 'deferred');
+  assert.match(pending.reason, /completion requires reviewed manual application/);
+  const artifact = pending.reason.match(/Concrete Linear plan (.+) \(([a-f0-9]{64})\)/); assert.ok(artifact);
+  assert.equal(parseLinearPlan(JSON.parse(readFileSync(artifact[1], 'utf8'))).effects.filter(e => e.tool === LINEAR_PREFIX + 'save_issue').length, 1);
+  assert.equal(ledgerOf(s.ledger(s.commitSha)).checkpoint?.linear?.effects.find(e => e.kind === 'complete')?.status.kind, 'withheld');
+  assert.deepEqual(s.read().mutations, []); assert.equal(s.read().issue.statusType, 'started'); assert.equal(released(f).length, 1);
+  const retry = s.sweep(); assert.equal(retry.status, 0, retry.stderr); assert.equal(pass(retry.stdout).commits[0].outcome, 'deferred'); assert.deepEqual(s.read().mutations, []); assert.equal(released(f).length, 1);
+  const dry = s.run(['--dry-run', '--plan', s.plan]); assert.equal(dry.status, 0, dry.stderr);
+  const reviewed = readFileSync(s.plan, 'utf8'), approved = parseLinearPlan(JSON.parse(reviewed));
+  const applied = s.run(['--plan', s.plan]); assert.equal(applied.status, 0, applied.stderr); assert.equal(JSON.parse(applied.stdout).commits[0].outcome, 'done');
+  assert.deepEqual(s.read().mutations.toSorted((a, b) => a.tool.localeCompare(b.tool)), approved.effects.map(({ tool, args }) => ({ tool, args })).toSorted((a, b) => a.tool.localeCompare(b.tool))); assert.equal(s.read().issue.statusType, 'completed'); assert.equal(readFileSync(s.plan, 'utf8'), reviewed);
+  assert.deepEqual(ledgerOf(s.ledger(s.commitSha)).attempts.map(a => a.outcome), ['deferred', 'deferred', 'done']); assert.equal(released(f).length, 1);
+  const settled = s.sweep(); assert.equal(settled.status, 0, settled.stderr); assert.equal(pass(settled.stdout).commits[0].reason, 'done on an earlier pass'); assert.equal(s.read().mutations.length, 2);
+});
 test('manual CLI emits a concrete reviewed plan and applies exactly its effects without changing the artifact', t => {
   const f = fixture(); t.after(f.cleanup);
   const s = manualLinear(f);

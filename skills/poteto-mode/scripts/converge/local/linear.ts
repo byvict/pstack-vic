@@ -1,5 +1,5 @@
 import { assessmentFormat, completionEvidence, proofCatalogue, latestLinearReads, linearReferenceIdentity } from './linear-proof.ts';
-import { mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { assertLinearPlan, createLinearPlan, parseLinearPlan } from './linear-plan.ts';
 import { array, hash, jsonHash, object, oneOf, repoName, sha, string } from '../contract.ts';
@@ -253,6 +253,9 @@ export interface ReconcileLinearInput extends Omit<LinearSessionInput, 'phase' |
 export async function reconcileLinear(input: ReconcileLinearInput): Promise<LinearResult> {
   const checkpoint = input.checkpoint ? structuredClone(input.checkpoint) : { repo: input.merge.repo, commit: input.merge.commit, head: input.merge.head, effects: [], logPaths: [] };
   const result = (kind: LinearResult['kind'], reason: string): LinearResult => ({ kind, reason, effects: checkpoint.effects, logs: checkpoint.logPaths });
+  const oldCompletions = checkpoint.effects.filter(e => e.kind === 'complete' && e.status.kind === 'planned');
+  for (const effect of oldCompletions) effect.status = { kind: 'withheld' };
+  if (oldCompletions.length && !input.dryRun) input.save(checkpoint);
   if (checkpoint.repo !== input.merge.repo || checkpoint.commit !== input.merge.commit || checkpoint.head !== input.merge.head) return result('refused', 'Linear checkpoint is bound to another merge');
   if (input.manual && !input.dryRun && !input.planPath) return result('refused', 'Manual Linear apply requires the reviewed --plan FILE from a dry run');
   if (input.lane.provider !== 'claude') return result('deferred', 'Native Linear trace and scoped writer are unavailable for this provider');
@@ -283,16 +286,24 @@ export async function reconcileLinear(input: ReconcileLinearInput): Promise<Line
     });
     checkpoint.effects.push(...plan.filter(p => !checkpoint.effects.some(e => e.key === p.key)));
     reconcileLinearEffects(checkpoint.effects, reads, storedLinearCalls(checkpoint.logPaths));
-    for (const effect of checkpoint.effects.filter(e => e.kind === 'complete' && e.status.kind !== 'confirmed')) effect.status = { kind: plan.some(p => p.key === effect.key) ? 'planned' : 'withheld' };
+    const completions = checkpoint.effects.filter(e => e.kind === 'complete' && e.status.kind !== 'confirmed');
+    for (const effect of completions) effect.status = { kind: 'withheld' };
+    const proposedCompletions = completions.filter(e => plan.some(p => p.key === e.key));
     const { repo, pr, head, commit } = input.merge;
-    const currentPlan = createLinearPlan({ merge: { repo, pr, head, commit }, sourceDigest: linearSourceDigest(reads, catalogue), effects: checkpoint.effects.filter(e => e.status.kind === 'planned').map(({ key, tool, args }) => ({ key, tool, args })) });
-    const planFile = resolve(input.planPath ?? join(input.runDirectory, 'plan.json'));
+    const currentPlan = createLinearPlan({ merge: { repo, pr, head, commit }, sourceDigest: linearSourceDigest(reads, catalogue), effects: checkpoint.effects.filter(e => e.status.kind === 'planned' || proposedCompletions.includes(e)).map(({ key, tool, args }) => ({ key, tool, args })) });
+    const planFile = resolve(input.planPath ?? join(input.runDirectory, `plan-${currentPlan.digest}.json`));
     if (planFile === resolve(input.ledgerFile) || checkpoint.logPaths.some(path => resolve(path) === planFile)) throw new LinearRefusal('The plan file must differ from the ledger and native transcript files');
     if (input.dryRun) { writeJsonFile(planFile, currentPlan); return result('dry-run', `Concrete Linear plan ${planFile} (${currentPlan.digest}); no mutations`); }
     if (input.planPath) {
       try { assertLinearPlan(parseLinearPlan(JSON.parse(readFileSync(planFile, 'utf8'))), currentPlan); }
       catch (error) { throw new LinearRefusal(error instanceof Error ? error.message : String(error)); }
     }
+    if (proposedCompletions.length && !(input.manual && input.planPath)) {
+      if (!input.planPath && !existsSync(planFile)) writeJsonFile(planFile, currentPlan);
+      input.save(checkpoint);
+      return result('deferred', `Issue completion requires reviewed manual application; the mixed proposal is deferred without Linear mutations. Concrete Linear plan ${planFile} (${currentPlan.digest})`);
+    }
+    for (const effect of proposedCompletions) effect.status = { kind: 'planned' };
     input.save(checkpoint);
     if (checkpoint.effects.some(e => e.status.kind === 'sent')) return result('deferred', 'A dispatched Linear create has no confirmed readback; no blind retry');
     const planned = checkpoint.effects.filter(e => e.status.kind === 'planned');
