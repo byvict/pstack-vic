@@ -250,7 +250,6 @@ async function linearStep(p: Pass, commit: string, file: string, checkout: strin
     return await reconcileLinear({ merge: admission.merge, lane, checkout, pluginDir: p.config.pluginDir, runDirectory: join(runDirectory, 'linear'), ledgerFile: file, checkpoint, save, dryRun: p.options.dryRun, env: p.options.env, capMs: p.options.runCapMs ?? POST_MERGE_RUN_MINUTES * 60_000, planPath: p.options.planPath, manual: p.options.manual });
   } catch (error) { return result('deferred', `Linear admission or runtime unavailable: ${message(error)}`); }
 }
-/** Successful processing stays settled even if a later manual completion replay fails. */
 async function next(p: Pass, commit: string): Promise<Handled> {
   const file = postMergeLedgerFile(p.config.stateDirectory, p.repo.repo, commit);
   const ledger = readPostMergeLedger(file);
