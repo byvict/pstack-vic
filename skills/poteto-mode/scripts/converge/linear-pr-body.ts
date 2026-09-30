@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
-import { object, repoName, sha } from './contract.ts';
+import { object, relativePath, repoName, sha } from './contract.ts';
 import { api, branchCommits } from './github.ts';
 import { linearTargets, type LinearTarget } from './linear-targets.ts';
 
@@ -47,10 +47,11 @@ export function prepareLinearPrBody(options: { body: string; targets: LinearTarg
 }
 export async function main(args: string[]): Promise<number> {
   try {
-    const { values } = parseArgs({ args, options: { repo: { type: 'string' }, base: { type: 'string' }, head: { type: 'string' }, 'body-file': { type: 'string' }, check: { type: 'boolean', default: false } } });
-    if (!values.repo || !values.base || !values.head || !values['body-file']) throw new Error('Usage: converge-pr-body --repo owner/repo --base REF --head SHA --body-file PATH [--check]');
+    const { values } = parseArgs({ args, options: { repo: { type: 'string' }, head: { type: 'string' }, 'body-file': { type: 'string' }, check: { type: 'boolean', default: false } } });
+    if (!values.repo || !values.head || !values['body-file']) throw new Error('Usage: converge-pr-body --repo owner/repo --head SHA --body-file PATH [--check]');
     const repo = repoName(values.repo), head = sha(values.head), file = values['body-file'];
-    const base = sha(object(await api(`repos/${repo}/commits/${encodeURIComponent(values.base)}`)).sha);
+    const trunk = relativePath(object(await api(`repos/${repo}`)).default_branch);
+    const base = sha(object(await api(`repos/${repo}/commits/${encodeURIComponent(trunk)}`)).sha);
     const targets = linearTargets((await branchCommits(repo, base, head)).map(c => c.message));
     const before = readFileSync(file, 'utf8');
     const body = values.check ? before : prepareLinearPrBody({ body: before, targets });

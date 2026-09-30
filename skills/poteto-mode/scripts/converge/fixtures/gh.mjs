@@ -117,10 +117,10 @@ else if (args[0] === 'api') {
     process.stdout.write(state.diff);
   }
   else if (endpoint.startsWith(`${root}/compare/`)) {
-    const [, head] = endpoint.slice(`${root}/compare/`.length).split('...');
+    const [base, head] = endpoint.slice(`${root}/compare/`.length).split('...');
     if (head === state.queueHead) { send({ files: state.groupFiles ?? state.files }); process.exit(0); }
     if (head !== (state.pushedHead ?? state.head) && !(state.memberHeads ?? []).includes(head)) fail();
-    const commits = (state.commits ?? [{ message: 'head' }]).map(c => ({ sha: c.sha ?? state.head, commit: { message: c.message } }));
+    const commits = (state.compareCommits?.[base] ?? state.commits ?? [{ message: 'head' }]).map(c => ({ sha: c.sha ?? state.head, commit: { message: c.message } }));
     send({ merge_base_commit: { sha: state.base }, files: listed(state.files), commits, total_commits: state.totalCommits ?? commits.length });
   }
   else if (endpoint === `${root}/pulls` && (query.get('base') === 'main' || query.get('state') === 'open')) send(state.pulls ?? []);

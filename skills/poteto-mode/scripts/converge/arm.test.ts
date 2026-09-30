@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fixture, moveTrunk, publishCertificate, moveTrunkToEmptyLightPaths } from './fixtures/setup.ts';
+import { certifiedPr, fixture, moveTrunk, prReport, publishCertificate, moveTrunkToEmptyLightPaths, retarget, stackChild } from './fixtures/setup.ts';
 
 function publish(f: ReturnType<typeof fixture>, proof = false) {
   const report = join(f.directory, 'report.json');
@@ -42,6 +43,34 @@ test('production arm uses exact head and squash auto-merge', t => {
   assert.deepEqual(f.read().mutations, [['pr', 'merge', '1', '--repo', 'Example/app', '--squash', '--auto', '--match-head-commit', f.state.head]]);
 });
 const linearIssue = 'https://linear.app/example/issue/ENG-1/lifecycle';
+for (const stacked of [false, true]) test(`a prepared ${stacked ? 'stack child protects inherited targets through retarget' : 'root PR protects its Linear targets'} and arms`, t => {
+  const f = fixture(); t.after(f.cleanup);
+  if (stacked) stackChild(f);
+  const parent = 'e'.repeat(40);
+  const child = { message: 'child\n\nPstack-Linear: https://linear.app/example/issue/ENG-2/child' };
+  f.state.commits = [{ sha: parent, message: `parent\n\nPstack-Linear: ${linearIssue}` }, child];
+  f.state.compareCommits[parent] = [child]; f.save();
+  const run = certifiedPr(f);
+  const file = join(f.directory, 'body.md'); writeFileSync(file, '## Verification\ncertificate: pre-pr\n');
+  const args = ['--repo', 'Example/app', '--head', f.state.head, '--body-file', file];
+  const prepared = f.run('converge-pr-body', args);
+  assert.equal(prepared.status, 0, prepared.stderr);
+  const checked = f.run('converge-pr-body', [...args, '--check']);
+  assert.equal(checked.status, 0, checked.stderr); assert.equal(JSON.parse(checked.stdout).changed, false);
+  f.state.body = readFileSync(file, 'utf8'); f.save();
+  const published = f.run('publish.ts', ['--report', prReport(f), '--certificate', join(run, 'certificate.json'), '--evidence', join(f.directory, 'evidence')]);
+  assert.equal(published.status, 0, published.stderr);
+  if (stacked) {
+    const waiting = arm(f);
+    assert.notEqual(waiting.status, 0); assert.match(waiting.stderr, /^PR base differs from trunk$/m);
+    moveTrunk(f); retarget(f);
+  }
+  const ready = arm(f, false);
+  assert.equal(ready.status, 0, ready.stderr);
+  assert.deepEqual(JSON.parse(prepared.stdout).issueKeys, ['ENG-1', 'ENG-2']);
+  assert.equal(f.calls().some(call => call[1] === `repos/Example/app/compare/${parent}...${f.state.head}`), false);
+  assert.deepEqual(f.read().mutations, merge(f.state.head));
+});
 test('a branch-linked Linear issue without a closing keyword requires an override even with Linear disabled', t => {
   const f = fixture(); t.after(f.cleanup);
   f.state.commits = [{ message: `lifecycle work remains open\n\nPstack-Linear: ${linearIssue}` }];

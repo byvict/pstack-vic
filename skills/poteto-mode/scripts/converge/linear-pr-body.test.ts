@@ -51,7 +51,7 @@ test('the opening CLI prepares the pushed head with Linear disabled and validate
   const f = fixture(); t.after(f.cleanup);
   f.state.commits = [{ message: `lifecycle work remains open\n\nPstack-Linear: ${issue}\nPstack-Linear: ${other}` }]; f.save();
   const file = join(f.directory, 'body.md'); writeFileSync(file, 'Lifecycle work remains open.\n');
-  const args = ['--repo', 'Example/app', '--base', 'main', '--head', f.state.head, '--body-file', file];
+  const args = ['--repo', 'Example/app', '--head', f.state.head, '--body-file', file];
   const check = f.run('converge-pr-body', [...args, '--check']);
   assert.notEqual(check.status, 0); assert.match(check.stderr, /ENG-2, ENG-20/);
   assert.equal(readFileSync(file, 'utf8'), 'Lifecycle work remains open.\n');
@@ -72,8 +72,15 @@ for (const scenario of ['malformed', 'misplaced', 'truncated', 'wrong-head'] as 
   if (scenario === 'wrong-head') f.state.commits[0].sha = 'c'.repeat(40);
   f.save();
   const file = join(f.directory, 'body.md'); writeFileSync(file, 'Original body.\n');
-  const result = f.run('converge-pr-body', ['--repo', 'Example/app', '--base', 'main', '--head', f.state.head, '--body-file', file]);
+  const result = f.run('converge-pr-body', ['--repo', 'Example/app', '--head', f.state.head, '--body-file', file]);
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, { malformed: /Invalid URL/, misplaced: /final commit trailer/, truncated: /compare truncated/, 'wrong-head': /requested head/ }[scenario]);
+  assert.equal(readFileSync(file, 'utf8'), 'Original body.\n'); assert.deepEqual(f.read().mutations, []);
+});
+test('the opening CLI refuses a caller-selected base before editing', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const file = join(f.directory, 'body.md'); writeFileSync(file, 'Original body.\n');
+  const result = f.run('converge-pr-body', ['--repo', 'Example/app', '--base', 'parent', '--head', f.state.head, '--body-file', file]);
+  assert.notEqual(result.status, 0); assert.match(result.stderr, /Unknown option '--base'/);
   assert.equal(readFileSync(file, 'utf8'), 'Original body.\n'); assert.deepEqual(f.read().mutations, []);
 });
