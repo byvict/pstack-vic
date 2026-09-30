@@ -1115,3 +1115,18 @@ O PR #59 ficou 18 minutos e 35 segundos aberto com o auto-merge armado, os três
 - `npm run test:bun`: 52 testes, 0 falhas, typecheck limpo. `npm run matrix:check`, `npm run agents:check`, `npm run collision:check`, `claude plugin validate .` e `git diff --check` limpos.
 - Formato real conferido no GitHub em 2026-09-30: `GET pulls/60` respondeu `mergeable_state: "blocked"` e `merged: false` com o PR armado e o `test` rodando, e `GET pulls/59` respondeu `merged: true`; as execuções de check trazem `completed_at`.
 - Não exercitado contra o GitHub real: o destrave em si. O fixture reproduz o comportamento do `gh` lido no código dele (`merge.go`, linha 593, versão 2.101.0), e a primeira prova real é a próxima parada.
+
+# 0.4.16 — Autor exibido do plugin: byvict (2026-09-30)
+
+Na tela de plugins do Claude Code, o pstack-vic aparecia como "pstack, por Lauren Tan", e Victor leu a linha como o upstream instalado. O plugin instalado era o nosso (`pstack@pstack-vic`); o nome vinha do campo `author` dos manifests, herdado do manifest da Cursor na fase 7. Victor pediu a troca por `byvict`.
+
+## Desenho
+
+- **Autor.** `author.name` passa a `byvict` em `.claude-plugin/plugin.json`, na entrada do plugin em `.claude-plugin/marketplace.json` e em `.codex-plugin/plugin.json`. No Codex, `interface.developerName` passa a `byvict (port of pstack by Lauren Tan)`.
+- **Crédito.** A descrição dos três manifests nomeia a origem: "Port autoral do pstack de Lauren Tan (Cursor)". `LICENSE`, `LICENSE-open-pstack`, `NOTICE.md` e o `README.md` não mudam, e o copyright de Lauren Tan segue neles.
+- **Fora.** `owner.name` do marketplace (`Victor Baccega`) não muda: é o dono do marketplace, outro campo.
+
+## Verificação
+
+- `npm test`: 934 testes, 0 falhas, os mesmos da 0.4.15; `manifests.test.ts` confere a versão nos quatro manifests e roda `claude plugin validate --strict`.
+- `npm run test:bun` e `npm run matrix:check` limpos.
