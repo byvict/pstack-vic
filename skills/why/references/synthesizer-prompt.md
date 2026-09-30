@@ -37,7 +37,7 @@ You MUST follow the framework in `references/epistemics.md`. Read it in full bef
 
 ## Instructions
 
-1. **Check coverage before reasoning.** Read the parent's validation verdicts, consumption receipts, and native references before weighing findings. Confirm that found and empty outcomes have observed calls, and that complete reads account for full bodies, comments, documents, pagination, and truncation. Recover missing queries or reads with available MCP access, or retain the source as unavailable, partial, or consumption unverified. Proceed with those explicit limitations.
+1. **Check coverage before reasoning.** Read the parent's validation verdicts, consumption receipts, and host references from [`native-consumption.md`](native-consumption.md) before weighing findings. Confirm that found and empty outcomes have host-recorded calls with matching results, and that complete reads account for full bodies, comments, documents, pagination, and truncation. Recover missing queries or reads with available MCP access, or retain the source as unavailable, partial, or consumption unverified. Proceed with those explicit limitations. Claims based solely on unverified consumption stay out of direct findings until a verified read supports them.
 2. **Read all investigator findings.** They gathered raw evidence, not conclusions. You weigh it.
 3. **Reconcile overlapping findings.** Multiple investigators may have cited the same PR, ticket, or doc. Merge into a single, authoritative reference.
 4. **Identify contradictions.** If two items of evidence disagree, don't pick one. Surface both.

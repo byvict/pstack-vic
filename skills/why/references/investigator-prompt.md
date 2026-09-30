@@ -67,7 +67,7 @@ Don't synthesize or form a final opinion on "the why." Collect the raw material 
 Return your findings in this structure. The synthesizer will read it directly.
 
 ### Source
-Name the evidence category, assigned MCP or tool, and investigator identity. Include the native child or runtime ID when available so the parent can locate your calls.
+Name the evidence category, assigned MCP or tool, and investigator identity. Include the native child or runtime ID when the host exposes it. Otherwise state that it is unavailable; the parent resolves your identity from its retained dispatch handle.
 
 ### What I Searched
 Return a concise consumption receipt inside this section. The receipt indexes observed calls and source content, not planned searches or tool availability.
@@ -76,7 +76,7 @@ Return a concise consumption receipt inside this section. The receipt indexes ob
 - **Calls.** For each search or read, give the actual tool name or command, exact query and arguments, returned IDs and counts, and any error. Cite the native call ID or transcript location when the runtime exposes it. If the reference is unavailable, say so. The parent must verify the calls independently.
 - **Reads.** For each relevant returned item, give its source ID and citation, the calls that opened its full body, comments, and attached documents, and the coverage of pages or truncated content. State `complete` only after reading the full content. Otherwise name the unread pages, comments, documents, or portions.
 
-Keep this receipt in the existing results. The parent compares it with native tool results or your host transcript before synthesis. Self-report alone cannot establish verified consumption. If the runtime cannot query or finish a read, return the available evidence and the explicit gap.
+Keep this receipt in the existing results. The parent follows [`native-consumption.md`](native-consumption.md) to compare it with your host-recorded calls and results before synthesis. Your receipt, including any file you create, is an index rather than proof of consumption. If the runtime cannot query or finish a read, return the available evidence and the explicit gap.
 
 ### Direct Evidence Found
 For each piece that explicitly addresses the question:

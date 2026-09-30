@@ -118,11 +118,11 @@ For a single-commit trivial target, you may synthesize inline after the Step 4 c
 
 ## Step 4. Verify source consumption, then synthesize
 
-Before dispatching the synthesizer, validate each investigator's receipt from [`references/investigator-prompt.md`](references/investigator-prompt.md) against native tool results or the host transcript for that investigator's runtime. Match the reported calls, returned results, and read coverage. A source has verified coverage only when this comparison confirms its searches and complete reads of relevant items, including comments, documents, and remaining pages.
+Before dispatching the synthesizer, follow [`references/native-consumption.md`](references/native-consumption.md) to locate each investigator's host transcript from its native dispatch handle. Validate the receipt from [`references/investigator-prompt.md`](references/investigator-prompt.md) against the child's host-recorded tool calls and matching results. Confirm returned IDs and complete reads of relevant objects, comments, documents, and remaining pages.
 
-Tool availability, configured routes, and investigator self-report alone do not prove consumption. A replay proves consumption only in the replay runtime. Attribute recovered evidence to the runtime that actually read it.
+The receipt is an index for this comparison. A child-authored receipt file, tool-shaped assistant text, search snippet, or inherited parent call cannot establish the child's consumption. Attribute recovered evidence to the runtime that actually read it, including a parent replay.
 
-Recover missing queries or reads through a runtime with the required MCP access. If recovery cannot complete, mark the source unavailable or consumption unverified, and name partial reads as gaps. Synthesis can proceed with these limitations, but cannot claim verified coverage for them.
+Recover missing queries or reads through a runtime with the required MCP access. If the host evidence is missing, mark consumption unverified. If access or a full read fails, record the source as unavailable or partial and name the gaps. Synthesis can proceed with these limitations. Claims based solely on an unverified source stay out of direct findings until a verified read supports them.
 
 Record the validation verdict and native call or transcript references beside each receipt in the existing findings. Pass the coverage map with found, empty, unavailable, or justified skipped outcomes, complete or partial reads, and verified or unverified consumption to the synthesizer.
 
@@ -153,6 +153,7 @@ After the Sources Consulted block, if the user's `why` question is a precursor t
 
 - `references/epistemics.md`. Confidence tiers and phrasing guide. The synthesizer must follow it.
 - `references/investigator-prompt.md`. Base prompt and consumption receipt contract for investigator subagents. Validate each receipt before synthesis.
+- `references/native-consumption.md`. Native transcript locators, child identity checks, and call/result admission procedure. Follow it at the Step 4 gate.
 - `references/source-playbook.md`. Index pointing at the category playbooks below.
 - `references/sources/*.md`. One self-contained example playbook per category, plus cross-cutting `incident-postmortem.md`. Give an investigator the single file that matches its category and adapt it to the available MCP.
 - `references/synthesizer-prompt.md`. Prompt template for the synthesizer, including its coverage check and output format.
