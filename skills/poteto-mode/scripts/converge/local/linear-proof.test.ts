@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { object } from '../contract.ts';
 import { issueUrl, merge } from '../fixtures/linear.ts';
 import { proofCatalogue, completionEvidence, type LinearProof } from './linear-proof.ts';
 import { LINEAR_PREFIX, type NativeCall } from './linear-session.ts';
@@ -52,7 +53,7 @@ test('conditional Done after rollout cannot be relabeled as a structural adminis
 test('an exact opened publication proves only the named publication, not a deployment assertion or unrelated content', () => {
   const url = 'https://linear.app/example/initiative/maintenance/activity#initiative-update-weekly', content = 'Weekly maintenance: 28 open records, all assigned to projects.';
   const output = call('artifact', 'get_status_updates', { id: 'weekly', url, body: content });
-  const quote = `Publish the weekly update at ${url}.`, f = fixture(quote, [output]); f.read.references = [{ key: url, read: true }];
+  const quote = `Publish the weekly update at ${url}.`, f = fixture(quote, [output]); assert.deepEqual(f.read.references, [{ key: url, read: true }]);
   const p = f.catalogue.find(p => p.kind === 'publication'); assert.ok(p);
   const a = assessment(quote, p, { content }); a.targets[0].references.push({ key: url, required: true, reason: 'The requested weekly output.' });
   assert.equal(completionEvidence(f.read, [a, a], f.catalogue).complete, true);
@@ -74,6 +75,18 @@ test('a clean head-bound check proves its exact requested command, never generic
   }
   d.certificate.runs[0] = { ...d.certificate.runs[0], head: 'c'.repeat(40) };
   assert.equal(proofCatalogue(f.m, f.calls).some(p => p.kind === 'verification'), false);
+});
+test('actual complete child bodies and comments satisfy required reference coverage; partial comments remain unknown', () => {
+  const quote = 'ENG-1 labels must include pstack.', childUrl = 'https://linear.app/example/issue/ENG-2/child';
+  const child = call('child', 'get_issue', { id: 'ENG-2', url: childUrl, description: 'Relevant linked work.', statusType: 'completed' });
+  const comments = { ...call('child-comments', 'list_comments', { comments: [], hasNextPage: false }), args: { issueId: 'ENG-2' } };
+  const f = fixture(quote, [child, comments]); f.calls[0].result = { ...object(f.calls[0].result), children: [{ id: 'ENG-2', url: childUrl }] };
+  const read = readLinearTargets(f.m, f.calls)[0]; assert.deepEqual(read.references, [{ key: childUrl, read: true }]);
+  const a = assessment(quote, structural(f), { field: 'labels', operator: 'includes', value: 'pstack' }); a.targets[0].references.push({ key: childUrl, required: true, reason: 'Named child context.' });
+  assert.equal(completionEvidence(read, [a, a], f.catalogue).complete, true);
+  comments.result = { comments: [], pageInfo: {} };
+  const missing = readLinearTargets(f.m, f.calls)[0]; assert.equal(missing.references[0].read, false);
+  assert.equal(completionEvidence(missing, [a, a], f.catalogue).complete, false);
 });
 test('required unread references remain open while independently justified unrelated children do not block', () => {
   const quote = 'ENG-1 labels must include pstack.', f = fixture(quote); f.read.references = [{ key: 'ENG-2', read: false }];

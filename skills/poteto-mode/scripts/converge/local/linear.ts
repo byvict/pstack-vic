@@ -75,11 +75,11 @@ function commentReads(calls: NativeCall[], field: string, ids: string[]): Target
     if (typeof cursor !== 'string' || !cursor) throw new Error('Missing next comment cursor');
   } while (true);
 }
-function sourceReferences(calls: NativeCall[], texts: TextRead[]): SourceReference[] {
+function sourceReferences(calls: NativeCall[], texts: TextRead[], publicationUrls: string[]): SourceReference[] {
   const references = new Map<string, SourceReference>();
   const objects = calls.filter(c => !c.error && c.result !== null && /(?:get_issue|get_project|get_document)$/.test(c.tool));
   const record = (key: string) => {
-    const read = objects.some(c => {
+    const read = publicationUrls.includes(key) || objects.some(c => {
       const v = data(c);
       try { full(v); } catch { return false; }
       return [v.url, v.id, v.uuid].includes(key) && texts.some(t => t.callId === c.id);
@@ -106,7 +106,7 @@ function sourceReferences(calls: NativeCall[], texts: TextRead[]): SourceReferen
         if (typeof count === 'number' && count !== raw.length) record(`${text.id}:${field}:coverage-unknown`);
       }
     }
-    for (const url of text.body.match(/https?:\/\/[^\s<>)\]]+/g) ?? []) record(url);
+    for (const url of text.body.match(/https?:\/\/[^\s<>)\]]+/g) ?? []) record(url.replace(/[.,;]+$/, ''));
   }
   return [...references.values()].sort((a, b) => a.key.localeCompare(b.key));
 }
@@ -152,8 +152,23 @@ export function readLinearTargets(merge: LinearMerge, calls: NativeCall[]): Targ
       texts.push({ id: doc, body: string(body.content ?? body.body, 'full document body'), callId: docCall.id });
       texts.push(...commentReads(calls, 'documentId', [doc, string(body.id ?? doc), string(body.uuid ?? body.id ?? doc)]).map(c => ({ id: c.id, body: c.body, callId: c.callId })));
     }
+    for (const context of calls.filter(c => !c.error && c.result !== null && ['get_issue', 'get_project', 'get_document'].some(name => c.tool === LINEAR_PREFIX + name))) {
+      if (texts.some(t => t.callId === context.id)) continue;
+      const value = data(context);
+      try {
+        full(value);
+        const document = context.tool.endsWith('get_document'), project = context.tool.endsWith('get_project');
+        if (project && context.args.includeResources !== true) continue;
+        if (!document && !('description' in value)) continue;
+        const contextId = string(value.id), body = document ? string(value.content ?? value.body) : value.description === null ? '' : string(value.description);
+        const contextComments = commentReads(calls, document ? 'documentId' : project ? 'projectId' : 'issueId', [contextId, string(value.uuid ?? contextId)]);
+        texts.push({ id: contextId, body, callId: context.id }, ...contextComments.map(c => ({ id: c.id, body: c.body, callId: c.callId })));
+      } catch { /* An advertised incomplete context stays unread; its scoped relevance is assessed below. */ }
+    }
+    const publications = proofCatalogue(merge, calls).filter(p => p.kind === 'publication' && calls.some(c => c.id === p.origin.callId && c.tool === LINEAR_PREFIX + 'get_status_updates'));
+    for (const publication of publications) if (publication.kind === 'publication') texts.push({ id: publication.subject, body: publication.content, callId: publication.origin.callId });
     const sourceTexts = texts.filter(t => !t.body.split('\n').some(line => line.startsWith(`pstack-linear ${merge.repo} ${merge.commit} `)));
-    const references = sourceReferences(calls, sourceTexts);
+    const references = sourceReferences(calls, sourceTexts, publications.map(p => p.subject));
     return { references, target, id, state: typeof v.statusType === 'string' ? v.statusType : 'unknown', comments, texts: sourceTexts, callId: call.id };
   });
 }

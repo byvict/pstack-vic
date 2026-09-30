@@ -33,6 +33,7 @@ export function proofCatalogue(merge: LinearMerge, calls: NativeCall[]): LinearP
         records.push({ ...fact, id: jsonHash(fact), origin: origin(call) });
       }
     }
+    if (call.tool === LINEAR_PREFIX + 'get_status_updates' && v.updates !== undefined && v.hasNextPage !== false && !(v.pageInfo && object(v.pageInfo).hasNextPage === false)) continue;
     const outputs = call.tool === LINEAR_PREFIX + 'get_status_updates' ? v.updates === undefined ? [v] : array(v.updates).map(raw => object(raw)) : call.tool === LINEAR_PREFIX + 'get_document' ? [v] : [];
     for (const output of outputs) {
       const content = output.body ?? output.content;
