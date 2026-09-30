@@ -16,6 +16,13 @@ const lease = plan.lease && existsSync(plan.lease) ? JSON.parse(readFileSync(pla
 appendFileSync(plan.log, JSON.stringify({ lane: manifest.laneId, event: 'start', at: Date.now(), argv: process.argv.slice(2), leaseExpiresAt: lease?.expiresAt ?? null, leaseBy: lease?.by ?? null }) + '\n');
 await new Promise(done => setTimeout(done, plan.delays?.[manifest.laneId] ?? 0));
 if (plan.dirty?.[manifest.laneId]?.includes(attempt)) writeFileSync(join(args.cwd, 'left-behind.txt'), 'left behind\n');
+if (plan.moved?.[manifest.laneId]?.includes(attempt)) {
+  const tracked = join(args.cwd, 'client', 'Login.jsx');
+  writeFileSync(tracked, 'committed\n');
+  const committed = spawnSync('git', ['-C', args.cwd, '-c', 'user.name=fake', '-c', 'user.email=fake@example.invalid', 'commit', '-am', 'moved'], { encoding: 'utf8' });
+  if (committed.status !== 0) throw new Error((committed.stderr || 'git commit failed').trim());
+  writeFileSync(tracked, 'edited again\n');
+}
 const git = (...command) => spawnSync('git', ['-C', args.cwd, ...command], { encoding: 'utf8' }).stdout;
 const round = manifest.round;
 const certifier = manifest.role === 'pre-pr certifier';

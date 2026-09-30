@@ -391,7 +391,7 @@ function restoreCertifierWorktree(cwd: string, directory: string, head: string):
   };
   writeFileSync(join(directory, 'worktree-status.txt'), git(['status', '--porcelain', '--untracked-files=all']), { mode: 0o600 });
   writeFileSync(join(directory, 'worktree.diff'), git(['diff', 'HEAD']), { mode: 0o600 });
-  git(['checkout', '--detach', head]);
+  git(['checkout', '-f', '--detach', head]);
   git(['reset', '--hard', head]);
   git(['clean', '-fd']);
 }

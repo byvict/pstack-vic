@@ -492,7 +492,7 @@ test('assemble refuses a round whose commit carries an unreadable Pstack-Author 
   assert.equal(result.status, 1); assert.match(result.stderr, /INCONCLUSIVE: Unreadable Pstack-Author trailer in commit/);
 });
 const fakeRunner = fileURLToPath(new URL('./fixtures/runner.mjs', import.meta.url));
-interface RunnerPlan { statuses?: Record<string, string[]>; delays?: Record<string, number>; findings?: Record<string, unknown[]>; dirty?: Record<string, number[]> }
+interface RunnerPlan { statuses?: Record<string, string[]>; delays?: Record<string, number>; findings?: Record<string, unknown[]>; dirty?: Record<string, number[]>; moved?: Record<string, number[]> }
 interface RunnerEvent { lane: string; event: 'start' | 'end'; at: number; leaseExpiresAt: string | null; leaseBy: string | null; status?: string }
 function worktree(from: string, path: string): void {
   const added = spawnSync('git', ['-C', from, 'worktree', 'add', '-q', '--detach', path, 'HEAD'], { encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } });
@@ -556,6 +556,13 @@ test('certify relaunches a certifier once when its first attempt fails and leave
   const attempt = join(s.run, 'attempts', 'pre-pr-certifier-1');
   assert.equal(readFileSync(join(attempt, 'worktree-status.txt'), 'utf8'), '?? left-behind.txt\n');
   assert.equal(readFileSync(join(attempt, 'worktree.diff'), 'utf8'), '');
+});
+test('certify relaunches a certifier once when its first attempt fails and leaves a tracked edit over its own commit', async t => {
+  const s = certifySetup(t, { plan: { statuses: { 'pre-pr-certifier': ['timed-out'] }, moved: { 'pre-pr-certifier': [0] } } });
+  const result = await certifyHead(s.options, fakeRunner);
+  assert.ok('certificate' in result, JSON.stringify(result));
+  assert.equal(s.events().filter(e => e.lane === 'pre-pr-certifier' && e.event === 'start').length, 2);
+  assert.notEqual(readFileSync(join(s.run, 'attempts', 'pre-pr-certifier-1', 'worktree.diff'), 'utf8'), '');
 });
 test('certify refuses at the reviewer step when the relaunched lane fails again', async t => {
   const s = certifySetup(t, { plan: { statuses: { 'pre-pr-reviewer': ['timed-out', 'rate-limited'] } } });
