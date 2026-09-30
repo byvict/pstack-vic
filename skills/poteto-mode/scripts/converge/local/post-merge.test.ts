@@ -7,7 +7,7 @@ import { loadConfig } from './config.ts';
 import { writeJsonFile } from './ledger.ts';
 import { tickSweep } from './local.ts';
 import { takeLease } from './lease.ts';
-import { POST_MERGE_DEFER_HOURS, postMergeLeaseFile, postMergeLedgerFile, postMergeStateFile, type Handled, type PostMergeLedger } from './post-merge.ts';
+import { POST_MERGE_DEFER_HOURS, postMergeLeaseFile, postMergeLedgerFile, postMergeStateFile, redTrunkFile, type Handled, type PostMergeLedger } from './post-merge.ts';
 
 type F = ReturnType<typeof fixture>;
 const isolated = { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
@@ -129,6 +129,61 @@ test('a commit whose push Tests or test job did not succeed waits, reported as a
   assert.equal(existsSync(ledger(commits[1])), false, 'a wait records no attempt');
   edit(f, live => { live.pushRuns[commits[1]] = { status: 'completed', conclusion: 'success' }; });
   assert.deepEqual(outcomes(sweepTick(f, file).stdout), [[commits[1], 'done', '']]);
+});
+const redNotice = (commit: string, reason: string, pr = '') => `-e display notification "Trunk red at ${commit.slice(0, 8)}: ${reason}${pr}" with title "Converge local" subtitle "Example/app" sound name "Basso"`;
+test('a commit that waits on a red push run notifies once, recorded before the notification; a dry run notifies nothing', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const { commits, file, state } = trunk(f, 2);
+  assert.equal(sweepTick(f, file).status, 0);
+  edit(f, live => { live.trunk = commits[1]; live.pushRuns[commits[1]] = { status: 'completed', conclusion: 'failure' }; live.commitPulls = { [commits[1]]: [merged(41)] }; });
+  assert.equal(sweepTick(f, file, ['--dry-run']).status, 1);
+  assert.deepEqual(f.notices(), []);
+  assert.equal(existsSync(join(state, 'red-trunk')), false);
+  const red = sweepTick(f, file);
+  assert.equal(red.stderr, `Example/app: post-merge: ${commits[1]} waits: Tests did not succeed on the commit\n`, 'the notice adds no error line');
+  assert.deepEqual(f.notices(), [redNotice(commits[1], 'Tests did not succeed on the commit', ' (PR #41)')]);
+  const record = JSON.parse(readFileSync(redTrunkFile(state, 'Example/app', commits[1]), 'utf8'));
+  assert.deepEqual([record.schemaVersion, record.repo, record.commit, record.pr, record.reason], [1, 'Example/app', commits[1], 41, 'Tests did not succeed on the commit']);
+  edit(f, live => { live.pushRuns[commits[1]] = { status: 'completed', conclusion: 'success', jobConclusion: 'failure' }; });
+  assert.equal(sweepTick(f, file).status, 1);
+  assert.equal(f.notices().length, 1, 'one notification per red commit, whatever the next tick reads');
+});
+test('a red-trunk notification that fails is an error once, and the record keeps the next tick from retrying it', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const { commits, file, state } = trunk(f, 2);
+  assert.equal(sweepTick(f, file).status, 0);
+  edit(f, live => { live.trunk = commits[1]; live.pushRuns[commits[1]] = { status: 'completed', conclusion: 'failure' }; });
+  writeFileSync(join(f.directory, 'osascript-exit'), '1');
+  const red = sweepTick(f, file);
+  assert.equal(red.stderr, `Example/app: post-merge: ${commits[1]} waits: Tests did not succeed on the commit\nExample/app: post-merge: ${commits[1]}: notification failed: osascript exited 1: fake osascript failed\n`);
+  assert.equal(existsSync(redTrunkFile(state, 'Example/app', commits[1])), true);
+  assert.equal(sweepTick(f, file).stderr, `Example/app: post-merge: ${commits[1]} waits: Tests did not succeed on the commit\n`);
+  assert.equal(f.notices().length, 1);
+});
+test('without a postMerge block, the sweep tick notifies once for a red trunk tip, and not for a green or pending one', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const checkout = f.checkout();
+  const state = join(f.directory, 'state');
+  const file = join(f.directory, 'converge-local.json');
+  writeFileSync(file, JSON.stringify({ parent: 'claude', repos: [{ repo: 'Example/app', checkout }], pluginDir: f.directory, stateDirectory: state, sheetPath: join(f.directory, 'sheet.md'), logDirectory: f.directory }));
+  const tip = f.state.trunk;
+  const redTrunk = (stdout: string) => JSON.parse(stdout).repos[0].redTrunk;
+  for (const run of [{ status: 'completed', conclusion: 'success' }, { status: 'in_progress', conclusion: null }]) {
+    edit(f, live => { live.pushRuns = { [tip]: run }; });
+    const quiet = sweepTick(f, file);
+    assert.equal(quiet.status, 0, quiet.stderr);
+    assert.deepEqual(redTrunk(quiet.stdout), { commit: tip, reason: null, errors: [] });
+  }
+  edit(f, live => { live.pushRuns = { [tip]: { status: 'completed', conclusion: 'cancelled' } }; });
+  const dry = sweepTick(f, file, ['--dry-run']);
+  assert.deepEqual([redTrunk(dry.stdout).reason, f.notices()], ['Tests did not succeed on the commit', []]);
+  const red = sweepTick(f, file);
+  assert.equal(red.status, 0, red.stderr);
+  assert.deepEqual(redTrunk(red.stdout), { commit: tip, reason: 'Tests did not succeed on the commit', errors: [] });
+  assert.equal(JSON.parse(red.stdout).repos[0].postMerge, null);
+  assert.deepEqual(f.notices(), [redNotice(tip, 'Tests did not succeed on the commit')]);
+  assert.equal(sweepTick(f, file).status, 0);
+  assert.equal(f.notices().length, 1);
 });
 test('exit 75 defers the commit: the tip stays, the next tick tries again, and a 75 after 24 hours of deferring fails', t => {
   const f = fixture(); t.after(f.cleanup);

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fillPatches, type ChangedFile } from './github.ts';
+import { fillPatches, isNote, NOTE_MARKER, postedAfter, pull, type ChangedFile } from './github.ts';
+import { fixture } from './fixtures/setup.ts';
 
 const diff = [
   'diff --git a/docs/guide.md b/docs/guide.md', 'index 1111111..2222222 100644', '--- a/docs/guide.md', '+++ b/docs/guide.md', '@@ -1 +1 @@', '-old', '+new',
@@ -53,3 +54,62 @@ const cases: [string, string[], ChangedFile[], ChangedFile[]][] = [
 for (const [name, lines, files, expected] of cases) {
   test(`fillPatches: ${name}`, () => assert.deepEqual(fillPatches(files, lines.join('\n') + '\n'), expected));
 }
+function edit(f: ReturnType<typeof fixture>, change: (live: ReturnType<ReturnType<typeof fixture>['read']>) => void) {
+  const live = f.read(); change(live); Object.assign(f.state, live); f.save();
+}
+async function withFixture<T>(f: ReturnType<typeof fixture>, run: () => Promise<T>): Promise<T> {
+  const saved = [process.env.PATH, process.env.CONVERGE_FIXTURE];
+  process.env.PATH = f.directory + ':' + process.env.PATH; process.env.CONVERGE_FIXTURE = f.statePath;
+  try { return await run(); }
+  finally { process.env.PATH = saved[0]; if (saved[1] === undefined) delete process.env.CONVERGE_FIXTURE; else process.env.CONVERGE_FIXTURE = saved[1]; }
+}
+for (const [name, value, expected] of [['true', true, true], ['false', false, false], ['null', null, null], ['absent', 'absent', null]] as const) {
+  test(`pull reads mergeable ${name} as ${expected}`, async t => {
+    const f = fixture(); t.after(f.cleanup);
+    edit(f, live => { if (value === 'absent') live.omitMergeable = true; else live.mergeable = value; });
+    assert.equal((await withFixture(f, () => pull('Example/app', 1))).mergeable, expected);
+  });
+}
+test('pull refuses a mergeable state that is neither a boolean nor null', async t => {
+  const f = fixture(); t.after(f.cleanup);
+  edit(f, live => { live.mergeable = 'unknown'; });
+  await assert.rejects(withFixture(f, () => pull('Example/app', 1)), /^Error: Invalid PR mergeable state$/);
+});
+const account = 7;
+const posted = (id: number, body: string, at: string, user = { id: 10, login: 'author' }) => ({ id, body, user, created_at: at, updated_at: at, html_url: `https://github.com/Example/app/pull/1#issuecomment-${id}` });
+test('a flow note is a comment by the authenticated account that starts with the marker, the legacy daemon prefix or a Dependabot command', () => {
+  const mine = { id: account, login: 'byvict' };
+  assert.equal(isNote(posted(1, `${NOTE_MARKER}\nReplied.`, 'x', mine), account), true);
+  assert.equal(isNote(posted(1, 'The local converge daemon stopped on head abc: cap.', 'x', mine), account), true);
+  assert.equal(isNote(posted(1, '@dependabot rebase', 'x', mine), account), true);
+  assert.equal(isNote(posted(1, 'Please rename this.', 'x', mine), account), false, "Victor's own text under the same account");
+  assert.equal(isNote(posted(1, `${NOTE_MARKER}\nForged.`, 'x'), account), false, 'another account cannot write a note');
+});
+test('postedAfter lists the text posted at or after the verdict second, oldest first, without publications, notes, empty approvals or pending reviews', async t => {
+  const f = fixture(); t.after(f.cleanup);
+  const mine = { id: account, login: 'converge' };
+  const verdictAt = '2026-09-22T00:00:00Z';
+  const comments = [
+    posted(100, '<!-- converge:v1 00000000-0000-4000-8000-000000000000 -->\n```json\n{}\n```\n', verdictAt, mine),
+    posted(90, 'Earlier review note.', '2026-09-21T23:59:59Z'),
+    posted(101, 'Same second as the verdict.', verdictAt),
+    posted(102, `${NOTE_MARKER}\nThe local converge daemon stopped on head x.`, '2026-09-22T00:01:00Z', mine),
+    posted(103, '@dependabot rebase', '2026-09-22T00:02:00Z', mine),
+    { ...posted(5000, 'Inline: this branch never runs.', '2026-09-22T00:04:00Z', { id: 11, login: 'reviewer' }), pull_request_review_id: 1 },
+  ];
+  edit(f, live => { live.reviews = [
+    { id: 1, user: { id: 11, login: 'reviewer' }, body: '', state: 'COMMENTED', submitted_at: '2026-09-22T00:04:00Z' },
+    { id: 2, user: { id: 11, login: 'reviewer' }, body: '', state: 'APPROVED', submitted_at: '2026-09-22T00:05:00Z' },
+    { id: 3, user: { id: 11, login: 'reviewer' }, body: '', state: 'CHANGES_REQUESTED', submitted_at: '2026-09-22T00:06:00Z' },
+    { id: 4, user: { id: 12, login: 'other' }, body: 'Consider a guard.', state: 'COMMENTED', submitted_at: '2026-09-22T00:03:00Z' },
+    { id: 5, user: { id: 12, login: 'other' }, body: 'Draft.', state: 'PENDING' },
+    { id: 6, user: { id: 12, login: 'other' }, body: 'Old review.', state: 'COMMENTED', submitted_at: '2026-09-21T12:00:00Z' },
+  ]; });
+  const found = await withFixture(f, () => postedAfter('Example/app', 1, verdictAt, account, comments));
+  assert.deepEqual(found, [
+    { kind: 'comment', id: 101, login: 'author', at: verdictAt },
+    { kind: 'review', id: 4, login: 'other', at: '2026-09-22T00:03:00Z' },
+    { kind: 'comment', id: 5000, login: 'reviewer', at: '2026-09-22T00:04:00Z' },
+    { kind: 'review', id: 3, login: 'reviewer', at: '2026-09-22T00:06:00Z' },
+  ]);
+});
