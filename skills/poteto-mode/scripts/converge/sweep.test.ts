@@ -269,3 +269,71 @@ test('sweep disarms an armed light PR once the trunk contract takes its path out
   assert.deepEqual(outcomes(result.stdout), [[1, 'refused', `Certificate lacks a lane the policy now requires at trunk tip ${'d'.repeat(40)}, auto-merge disarmed`]]);
   assert.deepEqual(f.read().mutations, disabled);
 });
+const stale = '2026-09-21T00:00:00Z';
+/** An armed PR whose required check runs all completed at `completed` and that GitHub reports in `mergeState`. */
+function armedGreen(f: ReturnType<typeof fixture>, completed: string | null, knobs: Record<string, unknown> = {}) {
+  const live = f.read(); live.autoMerge = true; live.mergeState = 'clean';
+  live.checks = live.checks.map((c: Record<string, unknown>) => ({ ...c, completed_at: completed }));
+  Object.assign(live, knobs); Object.assign(f.state, live); f.save(); listed(f);
+}
+for (const mergeState of ['clean', 'unstable', 'has_hooks']) {
+  test(`sweep runs the arm command again on an armed certified PR that GitHub left open and ${mergeState} after its required checks passed`, t => {
+    const f = fixture(); t.after(f.cleanup); publishCertificate(f); armedGreen(f, stale, { mergeState });
+    const result = f.run('converge-sweep', ['--repo', 'Example/app']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(outcomes(result.stdout), [[1, 'merged', `auto-merge stalled since ${stale}, merged after the arm command`]]);
+    assert.deepEqual(f.read().mutations, merge(f.state.head));
+  });
+}
+for (const [name, completed, knobs] of [
+  ['whose required checks passed under 5 minutes ago', () => new Date(Date.now() - 120_000).toISOString(), {}],
+  ['that GitHub reports blocked', () => stale, { mergeState: 'blocked' }],
+  ['whose merge state GitHub has not computed', () => stale, { mergeState: undefined }],
+  ['with a required check run that has no completion time', () => null, {}],
+  ['with a required check still running', () => stale, { checks: [{ id: 11, name: 'Run test suite', status: 'in_progress', conclusion: null, completed_at: null, app: { id: 15368 } }, { id: 12, name: 'Secrets scan', status: 'completed', conclusion: 'success', completed_at: stale, app: { id: 15368 } }, { id: 10, name: 'hold', status: 'completed', conclusion: 'success', completed_at: stale, app: { id: 15368 } }] }],
+  ['with a required check that has no run', () => stale, { checks: [{ id: 11, name: 'Run test suite', status: 'completed', conclusion: 'success', completed_at: stale, app: { id: 15368 } }, { id: 10, name: 'hold', status: 'completed', conclusion: 'success', completed_at: stale, app: { id: 15368 } }] }],
+  ['with a required check that failed', () => stale, { checks: [{ id: 11, name: 'Run test suite', status: 'completed', conclusion: 'failure', completed_at: stale, app: { id: 15368 } }, { id: 12, name: 'Secrets scan', status: 'completed', conclusion: 'success', completed_at: stale, app: { id: 15368 } }, { id: 10, name: 'hold', status: 'completed', conclusion: 'success', completed_at: stale, app: { id: 15368 } }] }],
+] as const) {
+  test(`sweep leaves to GitHub an armed certified PR ${name}`, t => {
+    const f = fixture(); t.after(f.cleanup); published(f); armedGreen(f, completed(), knobs);
+    const result = f.run('converge-sweep', ['--repo', 'Example/app']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(outcomes(result.stdout), [[1, 'skipped', 'auto-merge already pending']]);
+    assert.deepEqual(f.read().mutations, []);
+  });
+}
+test('sweep dry run reports a stalled armed PR and makes no mutation', t => {
+  const f = fixture(); t.after(f.cleanup); published(f); armedGreen(f, stale);
+  const result = f.run('converge-sweep', ['--repo', 'Example/app', '--dry-run']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(outcomes(result.stdout), [[1, 'dry-run', `auto-merge stalled since ${stale}, would run the arm command again`]]);
+  assert.deepEqual(f.read().mutations, []);
+});
+test('sweep counts the stall from the required check that passed last', t => {
+  const f = fixture(); t.after(f.cleanup); published(f);
+  const last = '2026-09-22T00:00:00Z';
+  armedGreen(f, stale, { checks: [{ id: 11, name: 'Run test suite', status: 'completed', conclusion: 'success', completed_at: last, app: { id: 15368 } }, { id: 12, name: 'Secrets scan', status: 'completed', conclusion: 'skipped', completed_at: stale, app: { id: 15368 } }, { id: 10, name: 'hold', status: 'completed', conclusion: 'success', completed_at: stale, app: { id: 15368 } }, { id: 13, name: 'Optional lint', status: 'completed', conclusion: 'failure', completed_at: '2026-09-23T00:00:00Z', app: { id: 15368 } }] });
+  const result = f.run('converge-sweep', ['--repo', 'Example/app', '--dry-run']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(outcomes(result.stdout), [[1, 'dry-run', `auto-merge stalled since ${last}, would run the arm command again`]]);
+});
+test('sweep reports a stalled armed PR the arm command did not merge as refused and leaves it armed', t => {
+  const f = fixture(); t.after(f.cleanup); published(f); armedGreen(f, stale, { failMerge: true });
+  const result = f.run('converge-sweep', ['--repo', 'Example/app']);
+  assert.equal(result.status, 1);
+  assert.deepEqual(outcomes(result.stdout), [[1, 'refused', `auto-merge stalled since ${stale}, still open after the arm command`]]);
+  assert.deepEqual(f.read().mutations, []);
+  assert.equal(f.read().autoMerge, true);
+});
+test('sweep counts a stalled armed PR as merged when the arm command failed after GitHub merged it', t => {
+  const f = fixture(); t.after(f.cleanup); published(f); armedGreen(f, stale, { failMerge: 'after' });
+  const result = f.run('converge-sweep', ['--repo', 'Example/app']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(outcomes(result.stdout), [[1, 'merged', `auto-merge stalled since ${stale}, merged after the arm command`]]);
+});
+test('sweep skips a stalled armed PR that someone closed without a merge while the arm command ran', t => {
+  const f = fixture(); t.after(f.cleanup); published(f); armedGreen(f, stale, { failMerge: 'closed' });
+  const result = f.run('converge-sweep', ['--repo', 'Example/app']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(outcomes(result.stdout), [[1, 'skipped', 'PR is no longer open']]);
+});

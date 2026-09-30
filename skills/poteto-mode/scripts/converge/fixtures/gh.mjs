@@ -29,11 +29,16 @@ if (args[0] === 'pr' && args[1] === 'diff') process.stdout.write(state.prDiff ??
 else if (args[0] === 'run') process.stdout.write(state.log ?? 'Tests completed\n');
 else if (args[0] === 'pr' && args[1] === 'merge') {
   if (args.includes('--disable-auto') && state.failDisarm === true) fail();
+  if (args.includes('--auto') && state.failMerge === true) fail();
+  // Someone closes the PR without a merge while the command runs.
+  if (args.includes('--auto') && state.failMerge === 'closed') { state.prState = 'closed'; save(); fail(); }
   state.mutations.push(args);
-  if (args.includes('--auto')) state.autoMerge = true;
+  // gh merges at once a PR whose merge state is one of these, and enables auto-merge on any other.
+  if (args.includes('--auto')) { if (['clean', 'unstable', 'has_hooks'].includes(state.mergeState)) { state.prState = 'closed'; state.merged = true; } else state.autoMerge = true; }
   if (args.includes('--disable-auto') && !state.stickyAutoMerge) state.autoMerge = false;
   save();
   if (args.includes('--disable-auto') && state.failDisarm === 'after') fail();
+  if (args.includes('--auto') && state.failMerge === 'after') fail();
   process.stdout.write('{}');
 }
 else if (args[0] === 'api') {
@@ -75,7 +80,7 @@ else if (args[0] === 'api') {
   else if (endpoint === root) send({ default_branch: 'main' });
   else if (endpoint === `${root}/pulls/1`) {
     later('pulls/1');
-    send({ number: 1, head: { sha: state.head, ref: 'change', repo: { full_name: repo } }, base: { ref: state.prBase }, state: state.prState, draft: state.prDraft, body: state.body, labels: state.hold ? [{ name: 'needs-victor' }] : [], user: state.prUser ?? { id: 10, login: 'author', type: 'User' }, auto_merge: state.autoMerge ? {} : null, created_at: state.createdAt ?? '2026-09-21T00:00:00Z', ...(state.omitMergeable ? {} : { mergeable: state.mergeable === undefined ? true : state.mergeable }) });
+    send({ number: 1, head: { sha: state.head, ref: 'change', repo: { full_name: repo } }, base: { ref: state.prBase }, state: state.prState, draft: state.prDraft, body: state.body, labels: state.hold ? [{ name: 'needs-victor' }] : [], user: state.prUser ?? { id: 10, login: 'author', type: 'User' }, auto_merge: state.autoMerge ? {} : null, created_at: state.createdAt ?? '2026-09-21T00:00:00Z', ...(state.omitMergeable ? {} : { mergeable: state.mergeable === undefined ? true : state.mergeable }), ...(state.mergeState === undefined ? {} : { mergeable_state: state.mergeState }), ...(state.merged === undefined ? {} : { merged: state.merged }) });
   }
   else if (/^repos\/Example\/app\/pulls\/\d+$/.test(endpoint) && state.pulls.some(p => p.number === Number(endpoint.split('/').at(-1)))) send(state.pulls.find(p => p.number === Number(endpoint.split('/').at(-1))));
   else if (endpoint === `${root}/commits/main`) { later('commits/main'); send({ sha: state.trunk }); }

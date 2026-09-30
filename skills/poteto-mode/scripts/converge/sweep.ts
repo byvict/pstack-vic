@@ -1,10 +1,36 @@
 import { parseArgs } from 'node:util';
 import { integer, object, repoName, sha, string } from './contract.ts';
-import { api, pages, principal, pull, RequestError, trusted, verdictStatus, type Pull, type Trusted } from './github.ts';
+import { api, pages, principal, pull, RequestError, timedChecks, trusted, verdictStatus, type Pull, type Trusted } from './github.ts';
 import { verdictGate, type Gate } from './gate.ts';
-import { arm, disarm } from './arm.ts';
+import { arm, armCommand, disarm, passing, requiredChecks, MERGES_AT_ONCE } from './arm.ts';
 
-export interface Swept { pr: number; head: string; outcome: 'armed' | 'disarmed' | 'dry-run' | 'skipped' | 'refused'; reason: string }
+export interface Swept { pr: number; head: string; outcome: 'armed' | 'disarmed' | 'merged' | 'dry-run' | 'skipped' | 'refused'; reason: string }
+/** GitHub merged 20 armed PRs 5 to 90 seconds after their last required check passed, and left one open for 18 minutes, green and `clean`, until a session read it (pstack-vic#59). Past this many minutes the merge was missed, not slow. */
+export const STALL_MINUTES = 5;
+/** When the last required check run passed, for a PR that GitHub reports as mergeable now and whose required check runs all passed at least STALL_MINUTES ago; null for any other. The `verdict` status has no run: the gate certified it, and it precedes every arm. */
+async function stalledSince(t: Trusted, p: Pull): Promise<string | null> {
+  if (!MERGES_AT_ONCE.includes(p.mergeState)) return null;
+  const observed = await timedChecks(t.repo, p.head);
+  let last: string | null = null;
+  for (const c of await requiredChecks(t)) {
+    if (c.context === 'verdict') continue;
+    const run = observed.find(check => check.context === c.context && (c.appId === null || c.appId === check.appId));
+    if (!run || !passing.includes(run.state) || run.completedAt === null) return null;
+    if (last === null || Date.parse(run.completedAt) > Date.parse(last)) last = run.completedAt;
+  }
+  return last !== null && Date.now() - Date.parse(last) >= STALL_MINUTES * 60_000 ? last : null;
+}
+/** GitHub's auto-merge missed an armed PR it reports as mergeable, so the sweep runs the arm command again: on such a PR gh merges at once, and GitHub still enforces the required checks. A command that fails is not a refusal of the PR, so nothing is disarmed; the read after it says what happened. */
+async function unstick(t: Trusted, p: Pull, since: string, dryRun: boolean): Promise<Pick<Swept, 'outcome' | 'reason'>> {
+  const stalled = `auto-merge stalled since ${since}`;
+  if (dryRun) return { outcome: 'dry-run', reason: `${stalled}, would run the arm command again` };
+  try { armCommand(t.repo, p.number, p.head); }
+  catch (error) { if (!(error instanceof RequestError)) throw error; }
+  const after = await pull(t.repo, p.number);
+  if (after.merged) return { outcome: 'merged', reason: `${stalled}, merged after the arm command` };
+  if (after.state !== 'open') return { outcome: 'skipped', reason: 'PR is no longer open' };
+  return { outcome: 'refused', reason: `${stalled}, still open after the arm command` };
+}
 const disarmed = { 'would disarm': 'would disarm auto-merge', disarmed: 'auto-merge disarmed', 'already off': 'auto-merge already off', closed: 'PR merged or closed before disarm', 'still armed': 'auto-merge still pending after disarm' } as const;
 async function observedDisarm(repo: string, pr: number, dryRun: boolean): Promise<keyof typeof disarmed> {
   if (dryRun) return 'would disarm';
@@ -51,8 +77,11 @@ async function decideOne(t: Trusted, p: Pull, author: number, options: { configP
   if (held) return result('skipped', 'hold label');
   if (p.autoMerge) {
     const gate = await verdictGate(t, pr, head, author).catch((error: unknown): Gate => ({ kind: 'refused', reason: error instanceof Error ? error.message : 'Verdict gate failed' }));
-    if (gate.kind === 'certified') return result('skipped', 'auto-merge already pending');
-    return result('refused', gate.reason + ', ' + disarmed[await observedDisarm(t.repo, pr, options.dryRun)]);
+    if (gate.kind !== 'certified') return result('refused', gate.reason + ', ' + disarmed[await observedDisarm(t.repo, pr, options.dryRun)]);
+    const since = await stalledSince(t, p);
+    if (since === null) return result('skipped', 'auto-merge already pending');
+    const done = await unstick(t, p, since, options.dryRun);
+    return result(done.outcome, done.reason);
   }
   if (p.draft) return result('skipped', 'draft');
   const verdict = await verdictStatus(t.repo, pr, head, author);
