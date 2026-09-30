@@ -41,7 +41,7 @@ export function fixture() {
     blobs: { '.cursor/converge.json': JSON.stringify(config), 'verify/SKILL.md': 'Drive the app.', 'features/README.md': '| [Login](./login.md) | `client/Login.jsx` |\n', 'features/login.md': 'Use Entrar.', '.github/workflows/tests.yml': 'name: Tests\n', 'package.json': JSON.stringify({scripts:{test:'node tools/run-all-tests.js'}}), 'tools/run-all-tests.js': 'function printOneResult() {} function printRunnerFooter() {}' },
     headBlobs: {} as Record<string, string>,
     checks: [{ id: 11, name: 'Run test suite', status: 'completed', conclusion: 'success', app: { id: 15368 } }, { id: 12, name: 'Secrets scan', status: 'completed', conclusion: 'success', app: { id: 15368 } }, { id: 10, name: 'hold', status: 'completed', conclusion: 'success', app: { id: 15368 } }],
-    protected: ['Run test suite', 'Secrets scan', 'verdict', 'hold'], classicProtection: true, protectionMessage: 'Branch not protected', comments: [], statuses: [], pulls: [] as Record<string, unknown>[], pushedHead: head, mutations: [] };
+    protected: ['Run test suite', 'Secrets scan', 'verdict', 'hold'], classicProtection: true, protectionMessage: 'Branch not protected', comments: [], statuses: [], pulls: [] as Record<string, unknown>[], pushedHead: head, commits: null as { sha?: string; message: string }[] | null, totalCommits: null as number | null, mutations: [] };
   writeFileSync(statePath, JSON.stringify(state));
   const scriptDirectory = fileURLToPath(new URL('../', import.meta.url));
   return {
@@ -102,7 +102,13 @@ export function certifiedPr(f: ReturnType<typeof fixture>, options: { body?: str
   assert.equal(local.status, 0, local.stderr);
   const { round, mode, lanes } = JSON.parse(local.stdout);
   assert.deepEqual([mode, lanes], options.full ? ['full', ['pre-pr reviewer', 'pre-pr certifier']] : options.light ? ['light', options.light.reviewer === 'none' ? [] : ['pre-pr reviewer']] : ['ci-only', ['pre-pr reviewer']]);
-  if (lanes.includes('pre-pr reviewer')) lane(run, round, 'pre-pr reviewer');
+  if (lanes.includes('pre-pr reviewer')) {
+    const sheet = join(f.directory, 'reviewer-sheet.md');
+    writeFileSync(sheet, '# pstack model configuration\n\npre-pr reviewer: grok:grok-4.7@xhigh\n');
+    const chosen = f.run('converge-certify', ['reviewer', '--directory', run, '--parent', 'claude', '--sheet', sheet, '--author-provider', 'claude']);
+    assert.equal(chosen.status, 0, chosen.stderr);
+    lane(run, round, 'pre-pr reviewer');
+  }
   if (lanes.includes('pre-pr certifier')) lane(run, round, 'pre-pr certifier', options.steps, options.features);
   const assembled = f.run('converge-certify', ['assemble', '--directory', run, '--author-provider', 'claude', '--output', join(run, 'certificate.json'), '--adjust-rounds', '1']);
   assert.equal(assembled.status, 0, assembled.stderr);

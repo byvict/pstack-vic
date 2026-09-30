@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { fixture, omittedPatch, stackChild } from './fixtures/setup.ts';
 import { dependencyOnly } from './dependencies.ts';
 import { branchSnapshot } from './github.ts';
-import { analyze } from './reconcile.ts';
+import { analyze, authorFamilies } from './reconcile.ts';
 import type { Report } from './contract.ts';
 
 function runReconcile(f: ReturnType<typeof fixture>, name = 'report.json') {
@@ -532,4 +532,34 @@ test('a pre-pr PR round agrees with its branch round on a dependency bump by a p
   assert.equal(r.status, 0, r.stderr);
   assert.equal(JSON.parse(r.stdout).mode, 'light');
   assert.equal(branchReport(f).mode, 'light');
+});
+const unreadable = (sha: string) => `Unreadable Pstack-Author trailer in commit ${sha.slice(0, 7)}`;
+test('author trailers read a megabyte whitespace run before a last character in linear time', () => {
+  const message = 'feat: x\n\n' + ' '.repeat(1_000_000) + 'x';
+  const started = performance.now();
+  assert.deepEqual(authorFamilies([{ sha: 'a'.repeat(40), message }]), { authors: [], gaps: [] });
+  const elapsed = performance.now() - started;
+  assert.ok(elapsed < 500, `a 1 MB message took ${Math.round(elapsed)} ms`);
+});
+test('an author trailer counts for its matrix provider even when the matrix no longer selects its model or effort; another provider or malformed text is a gap', () => {
+  const commit = (sha: string, value: string) => ({ sha, message: `feat: x\n\nPstack-Author: ${value}` });
+  assert.deepEqual(authorFamilies([commit('a'.repeat(40), 'codex:gpt-5.6-sol@xhigh'), commit('b'.repeat(40), 'grok:grok-4.7@max'), commit('c'.repeat(40), 'claude')]), { authors: ['claude', 'codex', 'grok'], gaps: [] });
+  const bad = ['gemini:pro@high', 'Grok', 'codex:gpt-5.6-sol@XHIGH', 'codex:gpt-5.6-sol'].map((value, n) => commit(String(n + 1).repeat(40), value));
+  assert.deepEqual(authorFamilies(bad), { authors: [], gaps: bad.map(c => unreadable(c.sha)) });
+});
+test('a Pstack-Author line the trailer block does not hold is a gap, never a silent drop', () => {
+  const sha = 'a'.repeat(40);
+  for (const message of [
+    'feat: x\n\nPstack-Author:claude',
+    'feat: x\n\nPstack-Author : grok',
+    'feat: x\n\nPstack-Author:\tgrok',
+    'feat: x\n \nPstack-Author: claude',
+    'feat: x\r\n\r\nPstack-Author: claude\r\n(cherry picked from commit ' + 'f'.repeat(40) + ')\r\n',
+    'feat: x\n\nSigned-off-by: A <a@example.com>\n  folded\nPstack-Author: claude',
+    'Pstack-Author: claude',
+  ]) assert.deepEqual(authorFamilies([{ sha, message }]), { authors: [], gaps: [unreadable(sha)] }, JSON.stringify(message));
+  const squashed = 'feat: a\n\nPstack-Author: grok:grok-4.7@xhigh\n\nfix: b\n\nPstack-Author: claude';
+  assert.deepEqual(authorFamilies([{ sha, message: squashed }]), { authors: ['claude'], gaps: [unreadable(sha)] }, 'a squash leaves the first commit\'s trailers mid-message');
+  const prose = 'docs: x\n\nEach Pstack-Author: line names a family.\n  Pstack-Author: indented\n\nPstack-Author: claude';
+  assert.deepEqual(authorFamilies([{ sha, message: prose }]), { authors: ['claude'], gaps: [] }, 'only a line that starts with the key counts');
 });

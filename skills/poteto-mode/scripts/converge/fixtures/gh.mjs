@@ -91,7 +91,8 @@ else if (args[0] === 'api') {
   else if (endpoint.startsWith(`${root}/compare/`)) {
     const [, head] = endpoint.slice(`${root}/compare/`.length).split('...');
     if (head !== (state.pushedHead ?? state.head)) fail();
-    send({ merge_base_commit: { sha: state.base }, files: listed(state.files) });
+    const commits = (state.commits ?? [{ message: 'head' }]).map(c => ({ sha: c.sha ?? state.head, commit: { message: c.message } }));
+    send({ merge_base_commit: { sha: state.base }, files: listed(state.files), commits, total_commits: state.totalCommits ?? commits.length });
   }
   else if (endpoint === `${root}/pulls` && (query.get('base') === 'main' || query.get('state') === 'open')) send(state.pulls ?? []);
   else if (endpoint === `${root}/pulls/1/files`) send(listed(state.prFiles ?? state.files));

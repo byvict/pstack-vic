@@ -1,7 +1,8 @@
 import { writeFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { executionId, executions, matches, testOnly, type Claim, type Execution, type Finding, type Report } from './contract.ts';
-import { snapshot, type Snapshot, type TextSource } from './github.ts';
+import { snapshot, type BranchCommit, type Snapshot, type TextSource } from './github.ts';
+import { loadMatrix, parseDescriptor, type ModelMatrix } from '../../../../scripts/model-matrix.ts';
 
 const secretRules = [
   /\b(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[A-Z0-9]{16})\b/,
@@ -52,6 +53,34 @@ function ordinaryDoc(path: string): boolean {
   return /(?:\.md|\.txt|\.rst)$/.test(path) && !/(?:^|\/)(?:AGENTS|CLAUDE|SKILL)\.md$/.test(path) && !/^(?:\.cursor|\.github|skills|scripts|tools)\//.test(path)
     || /^(?:LICENSE|README|CHANGELOG)(?:\.md|\.txt)?$/.test(path);
 }
+const AUTHOR_TRAILER = 'pstack-author';
+/** One entry per Pstack-Author line of the message, the key compared without case: its value when the trailer block holds the line, null anywhere else, so a misplaced or malformed line fails closed instead of vanishing. The trailer block is the message's last paragraph when every line there is `Key: value`, as git reads it; a subject-only message has none. Linear in the message, which a commit author controls. */
+export function authorTrailers(message: string): (string | null)[] {
+  const paragraphs = message.replace(/\r\n/g, '\n').trimEnd().split(/\n{2,}/);
+  const last = paragraphs.length > 1 ? (paragraphs.at(-1) ?? '').split('\n') : [];
+  const block = last.every(line => /^[A-Za-z][A-Za-z0-9-]*: \S/.test(line)) ? last : [];
+  const outside = (block.length ? paragraphs.slice(0, -1) : paragraphs).flatMap(paragraph => paragraph.split('\n'));
+  return [
+    ...block.filter(line => line.slice(0, line.indexOf(':')).toLowerCase() === AUTHOR_TRAILER).map(line => line.slice(line.indexOf(':') + 1).trim()),
+    ...outside.filter(line => /^pstack-author\s*:/i.test(line)).map(() => null),
+  ];
+}
+/** `Pstack-Author: <provider>` or `Pstack-Author: <provider>:<model>@<effort>` with a matrix provider: that provider, or null. The long form needs only the descriptor's grammar, not a family the matrix still lists, because trailers outlive the models and efforts the matrix retires. */
+function trailerProvider(value: string, matrix: ModelMatrix): string | null {
+  const provider = parseDescriptor(value)?.provider ?? value;
+  return Object.hasOwn(matrix.providers, provider) ? provider : null;
+}
+/** The author families the branch's commits record, once each and sorted, and one gap per Pstack-Author line that names no matrix provider or sits outside its message's trailer block. */
+export function authorFamilies(commits: BranchCommit[], matrix: ModelMatrix = loadMatrix()): { authors: string[]; gaps: string[] } {
+  const authors = new Set<string>();
+  const gaps: string[] = [];
+  for (const commit of commits) for (const value of authorTrailers(commit.message)) {
+    const found = value === null ? null : trailerProvider(value, matrix);
+    if (found === null) gaps.push(`Unreadable Pstack-Author trailer in commit ${commit.sha.slice(0, 7)}`);
+    else authors.add(found);
+  }
+  return { authors: [...authors].sort(), gaps };
+}
 export function analyze(s: Snapshot, options: { id: string; configPath: string; execution: Execution }): Report {
   const paths = [...new Set(s.files.flatMap(f => f.previous ? [f.path, f.previous] : [f.path]))];
   const c = s.trusted.config;
@@ -94,11 +123,12 @@ export function analyze(s: Snapshot, options: { id: string; configPath: string; 
     ? mode === 'full' ? (c.prePr?.certifier ? ['pre-pr reviewer', 'pre-pr certifier'] : ['pre-pr reviewer']) : mode === 'light' && light?.reviewer === 'none' ? [] : ['pre-pr reviewer']
     : mode === 'ci-only' ? [] : ['pr verifier'];
   const ciGap = /Tests workflow|Required check is not successful|Tests logs/;
-  const gaps = prePr ? s.gaps.filter(g => !ciGap.test(g)) : [...s.gaps];
+  const recorded = authorFamilies(s.commits);
+  const gaps = [...(prePr ? s.gaps.filter(g => !ciGap.test(g)) : s.gaps), ...recorded.gaps];
   return { schemaVersion: 1, round: { id: options.id, repo: c.repo, pr: s.pull.number, head: s.pull.head, contract: s.trusted.sha, base: s.base,
     patch_id: s.patchId, verificationDigest: s.verificationDigest, inputDigest: s.inputDigest, configPath: options.configPath, execution: options.execution },
     mode, touchedFeatures, unmappedSurfaces: surfacePaths.filter(p => !s.reachedPaths.includes(p) && !testOnly(p) && !(touchedFeatures.length && (/^client\/(?:src\/)?(?:components|hooks|contexts|lib|utils)\//.test(p) || /^server\/routes\//.test(p) || /^client\/(?:src\/)?App\.[jt]sx?$/.test(p)))),
-    claims: claims(s), hardList, injection, findings, checks: s.checks, lanes, gaps, inputFingerprint: s.inputFingerprint };
+    claims: claims(s), hardList, injection, findings, checks: s.checks, lanes, authors: recorded.authors, gaps, inputFingerprint: s.inputFingerprint };
 }
 export async function reconcile(options: { repo: string; pr: number; configPath?: string; execution?: Execution; output: string }): Promise<Report> {
   const configPath = options.configPath ?? '.cursor/converge.json';
