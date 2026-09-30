@@ -1,4 +1,4 @@
-import { assessmentFormat, completionEvidence, proofCatalogue } from './linear-proof.ts';
+import { assessmentFormat, completionEvidence, proofCatalogue, latestLinearReads, linearReferenceIdentity } from './linear-proof.ts';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { assertLinearPlan, createLinearPlan, parseLinearPlan } from './linear-plan.ts';
@@ -42,7 +42,7 @@ export function claimLinearEffect(file: string, tool: string, args: unknown, pha
   } finally { rmSync(lock, { recursive: true, force: true }); }
 }
 interface TextRead { id: string; body: string; callId: string }
-export interface SourceReference { key: string; read: boolean }
+export type SourceReference = { key: string; read: boolean } | { key: string; read: boolean; source: string; relation: 'blocks' | 'blockedBy' | 'relatedTo' | 'duplicateOf'; entity: string };
 export interface TargetRead { references: SourceReference[]; target: LinearTarget; id: string; state: string; comments: { id: string; body: string; callId: string }[]; texts: TextRead[]; callId: string }
 function data(call: NativeCall): Record<string, unknown> { if (call.error || call.result === null) throw new Error(`Native read ${call.id} failed or has no result`); return object(call.result, 'Linear read result'); }
 function full(value: Record<string, unknown>): void {
@@ -81,19 +81,32 @@ function commentReads(calls: NativeCall[], field: string, ids: string[], scope: 
 function sourceReferences(calls: NativeCall[], texts: TextRead[], publicationUrls: string[]): SourceReference[] {
   const references = new Map<string, SourceReference>();
   const objects = calls.filter(c => !c.error && c.result !== null && /(?:get_issue|get_project|get_document)$/.test(c.tool));
-  const record = (key: string) => {
-    const read = publicationUrls.includes(key) || objects.some(c => {
+  const record = (key: string, entity = key, relation?: 'blocks' | 'blockedBy' | 'relatedTo' | 'duplicateOf', source = '') => {
+    const read = publicationUrls.includes(entity) || objects.some(c => {
       const v = data(c);
       try { full(v); } catch { return false; }
-      return [v.url, v.id, v.uuid].includes(key) && texts.some(t => t.callId === c.id);
+      return [v.url, v.id, v.uuid].some(candidate => typeof candidate === 'string' && linearReferenceIdentity(candidate) === linearReferenceIdentity(entity)) && texts.some(t => t.callId === c.id);
     });
-    references.set(key, { key, read });
+    const identity = relation ? key : linearReferenceIdentity(key);
+    if (!references.has(identity)) references.set(identity, relation ? { key, read, relation, source, entity } : { key, read });
   };
   for (const text of texts) {
     const call = objects.find(c => c.id === text.callId);
     if (call) {
       const v = data(call);
-      for (const field of ['attachments', 'children', 'subIssues', 'relations', 'resources']) {
+      if (v.relations !== undefined && !Array.isArray(v.relations)) {
+        const relations = object(v.relations);
+        for (const relation of ['blocks', 'blockedBy', 'relatedTo', 'duplicateOf'] as const) {
+          const entries = relation === 'duplicateOf' ? relations[relation] == null ? [] : [relations[relation]] : array(relations[relation] ?? []);
+          for (const entry of entries) {
+            const ref = typeof entry === 'string' ? { id: entry } : object(entry);
+            let entity = string(ref.url ?? ref.id);
+            if (/^[A-Z][A-Z0-9]*-\d+$/.test(entity)) entity = `https://linear.app/${linearTarget(v.url).workspace}/issue/${entity}`;
+            record(`${text.id}:${relation}:${linearReferenceIdentity(entity)}`, entity, relation, text.id);
+          }
+        }
+      }
+      for (const field of ['attachments', 'children', 'subIssues', 'resources', ...(Array.isArray(v.relations) ? ['relations'] : [])]) {
         if (v[field] === undefined) continue;
         const raw = v[field];
         if (!Array.isArray(raw)) { record(`${text.id}:${field}:coverage-unknown`); continue; }
@@ -109,11 +122,12 @@ function sourceReferences(calls: NativeCall[], texts: TextRead[], publicationUrl
         if (typeof count === 'number' && count !== raw.length) record(`${text.id}:${field}:coverage-unknown`);
       }
     }
-    for (const url of text.body.match(/https?:\/\/[^\s<>)\]]+/g) ?? []) record(url.replace(/[.,;]+$/, ''));
+    for (const url of text.body.match(/https?:\/\/[^\s<>)\]\"']+/g) ?? []) record(url.replace(/[.,;]+$/, ''));
   }
   return [...references.values()].sort((a, b) => a.key.localeCompare(b.key));
 }
 export function readLinearTargets(merge: LinearMerge, calls: NativeCall[]): TargetRead[] {
+  calls = latestLinearReads(calls);
   return merge.targets.map(target => {
     const call = calls.filter(c => {
       if (c.error || c.result === null || c.tool !== LINEAR_PREFIX + (target.kind === 'issue' ? 'get_issue' : 'get_project')) return false;
@@ -131,7 +145,7 @@ export function readLinearTargets(merge: LinearMerge, calls: NativeCall[]): Targ
     while (typeof parent === 'string') {
       if (parents.has(parent)) throw new Error('Linear parent issue links loop');
       parents.add(parent);
-      const parentCall = calls.find(c => !c.error && c.tool === LINEAR_PREFIX + 'get_issue' && c.result !== null && [object(c.result).id, object(c.result).uuid].includes(parent));
+      const parentCall = calls.findLast(c => !c.error && c.tool === LINEAR_PREFIX + 'get_issue' && c.result !== null && [object(c.result).id, object(c.result).uuid].includes(parent));
       if (!parentCall) throw new Error('Missing parent issue read');
       const ancestor = data(parentCall); full(ancestor);
       texts.push({ id: string(ancestor.id), body: ancestor.description === null ? '' : string(ancestor.description), callId: parentCall.id });
@@ -141,8 +155,8 @@ export function readLinearTargets(merge: LinearMerge, calls: NativeCall[]): Targ
     }
     if (target.kind === 'project' && call.args.includeResources !== true) throw new Error('Project resources were not read');
     if (target.kind === 'issue' && typeof v.projectId === 'string') {
-      const projectCall = calls.find(c => !c.error && c.tool === LINEAR_PREFIX + 'get_project' && c.args.includeResources === true && c.result !== null && [object(c.result).id, object(c.result).uuid].includes(v.projectId));
-      if (!projectCall) throw new Error('Missing native issue project read with resources');
+      const projectCall = calls.findLast(c => !c.error && c.tool === LINEAR_PREFIX + 'get_project' && c.result !== null && [object(c.result).id, object(c.result).uuid].includes(v.projectId));
+      if (!projectCall || projectCall.args.includeResources !== true) throw new Error('Missing native issue project read with resources');
       const project = data(projectCall); full(project);
       if (!('description' in project)) throw new Error('Full project description is missing');
       texts.push({ id: string(project.id), body: project.description === null ? '' : string(project.description), callId: projectCall.id });
@@ -159,7 +173,7 @@ export function readLinearTargets(merge: LinearMerge, calls: NativeCall[]): Targ
     for (const call of calls.filter(c => !c.error && c.result !== null && ['get_issue', 'get_project', 'get_document'].some(name => c.tool === LINEAR_PREFIX + name))) {
       const v = data(call);
       let identity = string(v.url ?? v.uuid ?? v.id);
-      try { identity = targetIdentity(linearTarget(v.url)); } catch { /* Non-target document identity uses its native URL. */ }
+      try { identity = targetIdentity(linearTarget(v.url)); } catch {}
       contexts.set(identity, call);
     }
     for (const context of contexts.values()) {
@@ -173,7 +187,7 @@ export function readLinearTargets(merge: LinearMerge, calls: NativeCall[]): Targ
         const contextId = string(value.id), body = document ? string(value.content ?? value.body) : value.description === null ? '' : string(value.description);
         const contextComments = commentReads(calls, document ? 'documentId' : project ? 'projectId' : 'issueId', [contextId, string(value.uuid ?? contextId)]);
         texts.push({ id: contextId, body, callId: context.id }, ...contextComments.map(c => ({ id: c.id, body: c.body, callId: c.callId })));
-      } catch { /* An advertised incomplete context stays unread; its scoped relevance is assessed below. */ }
+      } catch {}
     }
     const publicationUrls: string[] = [];
     for (const publication of proofCatalogue(merge, calls)) {
@@ -185,7 +199,7 @@ export function readLinearTargets(merge: LinearMerge, calls: NativeCall[]): Targ
         const comments = commentReads(calls, 'statusUpdateId', [publication.sourceId], { statusUpdateType: type });
         texts.push({ id: publication.sourceId, body: publication.content, callId: call.id }, ...comments.map(c => ({ id: c.id, body: c.body, callId: c.callId })));
         publicationUrls.push(publication.subject);
-      } catch { /* Missing publication comments leave its required reference unread. */ }
+      } catch {}
     }
     const sourceTexts = texts.filter(t => !t.body.split('\n').some(line => line.startsWith(`pstack-linear ${merge.repo} ${merge.commit} `)));
     const references = sourceReferences(calls, sourceTexts, publicationUrls);

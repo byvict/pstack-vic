@@ -198,3 +198,17 @@ test('unchanged reviewed native plan applies exactly and dry run does not mutate
   const original = readFileSync(planPath, 'utf8'); const applied = await reconcileLinear({ ...f.input(), manual: true, planPath });
   assert.equal(applied.kind, 'done', applied.reason); assert.equal(f.read().mutations.length, 1); assert.equal(readFileSync(planPath, 'utf8'), original);
 });
+
+test('parent and project context use the final native observation, including failed coverage replacements', () => {
+  for (const kind of ['parent', 'project']) {
+    const native = calls(), id = kind === 'parent' ? 'ENG-2' : 'project-2', name = kind === 'parent' ? 'get_issue' : 'get_project';
+    native[0].result = { ...object(native[0].result), [kind === 'parent' ? 'parentId' : 'projectId']: id };
+    const args = kind === 'parent' ? { id } : { query: id, includeResources: true };
+    const old = call('old-context', name, args, { id, description: 'Old context.', resources: [], truncated: true });
+    const latest = call('new-context', name, args, { id, description: 'Current context.', resources: [] });
+    native.push(old, latest, call('context-comments', 'list_comments', { [kind === 'parent' ? 'issueId' : 'projectId']: id }, { comments: [], hasNextPage: false }));
+    const read = readLinearTargets(merge(), native)[0]; assert.equal(read.texts.some(t => t.body === 'Old context.'), false); assert.equal(read.texts.some(t => t.body === 'Current context.'), true);
+    native.push(call('partial-replacement', name, args, { id, description: 'Partial replacement.', resources: [], truncated: true }));
+    assert.throws(() => readLinearTargets(merge(), native), /unread pages|truncated/);
+  }
+});

@@ -19,23 +19,37 @@ function values(raw: unknown): string | string[] | number | null | undefined {
   return undefined;
 }
 function bounded(v: Record<string, unknown>): boolean { return v.truncated !== true && v.isTruncated !== true && v.hasNextPage !== true && !(v.pageInfo && object(v.pageInfo).hasNextPage === true); }
-function entityIdentity(url: string): string { try { return targetIdentity(linearTarget(url)); } catch { return url; } }
+export function linearReferenceIdentity(url: string): string { try { return targetIdentity(linearTarget(url)); } catch { return url; } }
 function nativeUrl(value: string): boolean { try { const url = new URL(value); return url.protocol === 'https:' && url.hostname === 'linear.app'; } catch { return false; } }
+export function latestLinearReads(calls: NativeCall[]): NativeCall[] {
+  const observations: { call: NativeCall; workspace: string | null; ids: string[]; addresses: string[] }[] = [];
+  for (const call of calls) {
+    if (!['get_issue', 'get_project', 'get_initiative', 'get_document', 'get_status_updates'].some(name => call.tool === LINEAR_PREFIX + name)) continue;
+    let value: Record<string, unknown> = {};
+    try { value = object(call.result); } catch {}
+    const urls = [value.url, call.args.id, call.args.query].filter(v => typeof v === 'string' && nativeUrl(v));
+    const workspace = urls.length ? new URL(string(urls[0])).pathname.split('/')[1] : null;
+    const ids = [value.id, value.uuid].filter(v => typeof v === 'string');
+    const addresses = [call.args.id, call.args.query, ...urls.map(v => linearReferenceIdentity(string(v)))].filter(v => typeof v === 'string');
+    for (const url of urls) try { addresses.push(linearTarget(url).key); } catch {}
+    for (let index = observations.length - 1; index >= 0; index--) {
+      const previous = observations[index];
+      if (previous.call.tool !== call.tool || previous.workspace && workspace && previous.workspace !== workspace) continue;
+      const candidates = ids.length && previous.ids.length ? previous.ids : [...previous.ids, ...previous.addresses];
+      const identities = ids.length && previous.ids.length ? ids : [...ids, ...addresses];
+      if (identities.some(id => candidates.includes(id)) || addresses.some(a => a.includes(':') && previous.addresses.includes(a))) observations.splice(index, 1);
+    }
+    observations.push({ call, workspace, ids, addresses });
+  }
+  const reads = new Set(observations.map(o => o.call));
+  return calls.filter(c => !observations.some(o => o.call.tool === c.tool) || reads.has(c));
+}
 export function proofCatalogue(merge: LinearMerge, calls: NativeCall[]): LinearProof[] {
   const records: LinearProof[] = [];
-  for (const call of calls.filter(c => !c.error && c.result !== null)) {
+  for (const call of latestLinearReads(calls).filter(c => !c.error && c.result !== null)) {
     if (!call.tool.startsWith(LINEAR_PREFIX)) continue;
     let v: Record<string, unknown>;
     try { v = object(call.result); } catch { continue; }
-    if (typeof v.url === 'string' && ['get_issue', 'get_project', 'get_initiative', 'get_document', 'get_status_updates'].some(name => call.tool === LINEAR_PREFIX + name)) {
-      for (let index = records.length - 1; index >= 0; index--) if (entityIdentity(records[index].subject) === entityIdentity(v.url) && records[index].kind !== 'verification') records.splice(index, 1);
-    }
-    if (['get_document', 'get_status_updates'].some(name => call.tool === LINEAR_PREFIX + name) && typeof v.url === 'string') {
-      for (let index = records.length - 1; index >= 0; index--) {
-        const previous = records[index];
-        if (previous.kind === 'publication' && previous.sourceId === v.id && new URL(previous.subject).pathname.split('/')[1] === new URL(v.url).pathname.split('/')[1]) records.splice(index, 1);
-      }
-    }
     if (!bounded(v)) continue;
     if (['get_issue', 'get_project', 'get_initiative'].some(n => call.tool === LINEAR_PREFIX + n) && typeof v.url === 'string') {
       for (const field of fields) {
@@ -46,9 +60,8 @@ export function proofCatalogue(merge: LinearMerge, calls: NativeCall[]): LinearP
     }
     const outputs = ['get_status_updates', 'get_document'].some(name => call.tool === LINEAR_PREFIX + name) ? [v] : [];
     for (const output of outputs) {
-      for (let index = records.length - 1; index >= 0; index--) if (records[index].kind === 'publication' && records[index].subject === output.url) records.splice(index, 1);
       const content = output.body ?? output.content;
-      if (!bounded(output) || typeof output.url !== 'string' || !nativeUrl(output.url) || typeof output.id !== 'string' || typeof content !== 'string' || !content.trim()) continue;
+      if (typeof output.url !== 'string' || !nativeUrl(output.url) || typeof output.id !== 'string' || typeof content !== 'string' || !content.trim()) continue;
       const fact = { kind: 'publication' as const, sourceId: output.id, subject: output.url, content, digest: jsonHash(content) };
       records.push({ ...fact, id: jsonHash(fact), origin: origin(call) });
     }
@@ -69,37 +82,65 @@ const verification = /\b(?:verify|verification|check|test(?:s)?|pass(?:es)?|veri
 function requestContext(quote: string, literals: string[]): string {
   return literals.reduce((text, value) => value ? text.split(value.toLowerCase()).join('') : text, quote.toLowerCase());
 }
+function exactLiteral(text: string, value: string): boolean {
+  if (!value.trim()) return false;
+  const source = text.toLowerCase(), token = value.toLowerCase();
+  let index = source.indexOf(token);
+  while (index >= 0) {
+    const before = source[index - 1] ?? '', after = source[index + token.length] ?? '';
+    if (!/[\p{L}\p{N}_-]/u.test(before) && !/[\p{L}\p{N}_-]/u.test(after)) return true;
+    index = source.indexOf(token, index + 1);
+  }
+  return false;
+}
 function literal(quote: string, value: unknown): boolean {
-  const q = quote.toLocaleLowerCase();
-  return typeof value === 'string' ? !!value.trim() && q.includes(value.toLocaleLowerCase()) : typeof value === 'number' ? q.includes(String(value)) || value === 0 && /\bzero\b/i.test(quote) : Array.isArray(value) ? value.length > 0 && value.every(v => literal(quote, v)) : value === null && /\b(?:none|null|no |without)\b/i.test(quote);
+  return typeof value === 'string' ? exactLiteral(quote, value) : typeof value === 'number' ? exactLiteral(quote, String(value)) || value === 0 && /\bzero\b/i.test(quote) : Array.isArray(value) ? value.length > 0 && value.every(v => literal(quote, v)) : value === null && /\b(?:none|null|no |without)\b/i.test(quote);
+}
+function namesEntity(quote: string, proof: FieldProof): boolean {
+  const urls = quote.match(/https?:\/\/[^\s<>)\]"']+/g) ?? [];
+  if (urls.some(url => linearReferenceIdentity(url.replace(/[.,;]+$/, '')) === linearReferenceIdentity(proof.subject))) return true;
+  const prose = quote.replace(/https?:\/\/[^\s<>)\]"']+/g, ' ');
+  return proof.names.some(name => !name.startsWith('https://') && exactLiteral(prose, name));
+}
+type Outcome = { kind: 'structural'; subject: string; field: string; operator: 'equals' | 'includes'; value: unknown } | { kind: 'publication'; subject: string; content: string } | { kind: 'verification'; subject: string; command: string };
+function outcomeValue(kind: ProofClass, raw: unknown): Outcome {
+  const value = object(raw), subject = string(value.subject);
+  if (kind === 'structural') return { kind, subject: linearReferenceIdentity(subject), field: string(value.field), operator: oneOf(value.operator, ['equals', 'includes']), value: value.value };
+  if (kind === 'publication') return { kind, subject, content: string(value.content) };
+  return { kind, subject, command: string(value.command) };
 }
 function assess(answer: unknown, read: TargetRead, catalogue: LinearProof[]): Obligation[] | null {
   try {
     const assessment = array(answerObject(answer).targets).map(v => object(v)).find(t => targetIdentity(linearTarget(t.url)) === targetIdentity(read.target));
     if (!assessment || assessment.coverage !== 'complete') return null;
     const references = array(assessment.references ?? []).map(v => object(v));
-    if (new Set(references.map(r => r.key)).size !== references.length) return null;
-    const scope = read.references.map(ref => ({ key: ref.key, required: references.find(r => r.key === ref.key)?.required }));
+    const referenceKey = (r: Record<string, unknown>) => linearReferenceIdentity(string(r.key));
+    if (new Set(references.map(referenceKey)).size !== references.length) return null;
+    const scope = read.references.map(ref => ({ key: ref.key, required: references.find(r => referenceKey(r) === linearReferenceIdentity(ref.key))?.required }));
     for (const ref of read.references) {
-      const decision = references.find(r => r.key === ref.key);
+      const decision = references.find(r => referenceKey(r) === linearReferenceIdentity(ref.key));
       if (!decision || typeof decision.required !== 'boolean' || !string(decision.reason).trim() || decision.required && !ref.read) return null;
     }
     return array(assessment.obligations).map(raw => {
-      const o = object(raw), source = string(o.source), quote = string(o.quote), requiredClass: ProofClass = oneOf(o.requiredClass, ['structural', 'publication', 'verification']), outcome = object(o.outcome);
+      const o = object(raw), source = string(o.source), quote = string(o.quote), kind = oneOf(o.kind, ['acceptance', 'rollout']);
       if (!quote.trim() || !read.texts.some(t => t.id === source && t.body.includes(quote))) throw new Error('Obligation has no verbatim live citation');
+      let requiredClass: ProofClass, outcome: Outcome;
+      try { requiredClass = oneOf(o.requiredClass, ['structural', 'publication', 'verification']); outcome = outcomeValue(requiredClass, o.outcome); }
+      catch { return { identity: jsonHash({ scope, source, quote, kind, requiredClass: 'unknown' }), met: false, text: `${kind}: ${quote}`, proofIds: [] }; }
       const proofIds = array(o.proofIds).map(v => string(v)), relevance = string(o.relevance);
       const met = o.status === 'met' && !!relevance.trim() && proofIds.length > 0 && proofIds.every(id => {
-        const proof = catalogue.find(p => p.id === id); if (!proof || proof.kind !== requiredClass || proof.subject !== outcome.subject) return false;
-        if (proof.kind === 'structural') {
-          const operation = oneOf(outcome.operator, ['equals', 'includes']);
+        const proof = catalogue.find(p => p.id === id); if (!proof || proof.kind !== requiredClass || (proof.kind === 'structural' ? linearReferenceIdentity(proof.subject) : proof.subject) !== outcome.subject) return false;
+        if (proof.kind === 'structural' && outcome.kind === 'structural') {
+          const operation = outcome.operator;
           const matching = operation === 'equals' ? jsonHash(outcome.value) === jsonHash(proof.value) : Array.isArray(proof.value) && proof.value.includes(string(outcome.value));
           const requestedValues = Array.isArray(outcome.value) ? outcome.value.map(v => string(v)) : typeof outcome.value === 'string' ? [outcome.value] : [];
-          return !deployment.test(requestContext(quote, [...proof.names, proof.field, ...requestedValues])) && matching && outcome.field === proof.field && quote.toLowerCase().includes(proof.field.toLowerCase()) && literal(quote, outcome.value) && proof.names.some(name => quote.includes(name));
+          return !deployment.test(requestContext(quote, [...proof.names, proof.field, ...requestedValues])) && matching && outcome.field === proof.field && exactLiteral(quote, proof.field) && literal(quote, outcome.value) && namesEntity(quote, proof);
         }
-        if (proof.kind === 'publication') return !deployment.test(requestContext(quote, [proof.subject])) && publication.test(quote) && quote.includes(proof.subject) && proof.subject !== read.target.url && !read.texts.some(t => t.id === source && t.body === proof.content) && typeof outcome.content === 'string' && outcome.content.trim().length > 0 && proof.content.includes(outcome.content) && outcome.content !== quote;
-        return o.kind !== 'rollout' && !deployment.test(requestContext(quote, [proof.command])) && verification.test(quote) && quote.includes(proof.command) && outcome.command === proof.command;
+        if (proof.kind === 'publication' && outcome.kind === 'publication') return !deployment.test(requestContext(quote, [proof.subject])) && publication.test(quote) && exactLiteral(quote, proof.subject) && proof.subject !== read.target.url && !read.texts.some(t => t.id === source && t.body === proof.content) && typeof outcome.content === 'string' && outcome.content.trim().length > 0 && proof.content.includes(outcome.content) && outcome.content !== quote;
+        return proof.kind === 'verification' && outcome.kind === 'verification' && kind !== 'rollout' && !deployment.test(requestContext(quote, [proof.command])) && verification.test(quote) && exactLiteral(quote, proof.command) && outcome.command === proof.command;
       });
-      return { identity: jsonHash({ scope, source, quote, kind: oneOf(o.kind, ['acceptance', 'rollout']), requiredClass, outcome }), met, text: `${o.kind}: ${quote}`, proofIds };
+      const identityOutcome = outcome.kind === 'publication' ? { kind: outcome.kind, subject: outcome.subject } : outcome;
+      return { identity: jsonHash({ scope, source, quote, kind, requiredClass, outcome: identityOutcome }), met, text: `${o.kind}: ${quote}`, proofIds };
     });
   } catch { return null; }
 }
@@ -107,7 +148,7 @@ export function completionEvidence(read: TargetRead, answers: [unknown, unknown]
   const first = assess(answers[0], read, catalogue), second = assess(answers[1], read, catalogue);
   if (!first || !second) return { complete: false, remaining: ['The scope, required source coverage or outcome proof is unverified.', ...read.references.filter(r => !r.read).map(r => `Unread advertised source: ${r.key}`)], proofIds: [] };
   const a = new Map(first.map(o => [o.identity, o])), b = new Map(second.map(o => [o.identity, o]));
-  if (a.size !== first.length || b.size !== second.length || a.size !== b.size || [...a.keys()].some(k => !b.has(k))) return { complete: false, remaining: ['Independent assessments disagree on the obligations, required proof class or concrete outcome.'], proofIds: [] };
+  if (a.size !== first.length || b.size !== second.length || a.size !== b.size || [...a.keys()].some(k => !b.has(k))) return { complete: false, remaining: ['Independent assessments disagree on the obligations, required proof class or concrete outcome.', ...new Set([...first, ...second].map(o => o.text))], proofIds: [] };
   const remaining = [...a].filter(([key, o]) => !o.met || !b.get(key)?.met).map(([, o]) => o.text);
   return { complete: a.size > 0 && !remaining.length, remaining: a.size ? remaining : ['No scoped obligations have verified outcomes.'], proofIds: [...new Set([...first, ...second].flatMap(o => o.proofIds))] };
 }

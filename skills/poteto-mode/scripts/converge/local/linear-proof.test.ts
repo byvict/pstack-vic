@@ -137,3 +137,69 @@ test('renaming an issue URL does not preserve an older field or criterion as cur
   assert.equal(read.texts.some(t => t.id === 'ENG-1' && t.body === quote), false);
   assert.equal(completionEvidence(read, [forged, forged], catalogue).complete, false);
 });
+
+test('quoted Linear mentions and slugless URLs resolve to complete native entity reads', () => {
+  const relatedUrl = 'https://linear.app/example/issue/ENG-2/related', shortUrl = 'https://linear.app/example/issue/ENG-2';
+  const quote = `ENG-1 labels must include pstack. Context <issue id="related" href="${shortUrl}">ENG-2</issue> and ${relatedUrl}.`;
+  const f = fixture(quote, [call('related', 'get_issue', { id: 'ENG-2', url: relatedUrl, description: 'Full related issue.' }), { ...call('related-comments', 'list_comments', { comments: [], hasNextPage: false }), args: { issueId: 'ENG-2' } }]);
+  assert.equal(f.read.references.length, 1); assert.equal(f.read.references[0].key, shortUrl); assert.equal(f.read.references[0].read, true);
+  const a = assessment(quote, structural(f), { field: 'labels', operator: 'includes', value: 'pstack' }); a.targets[0].references.push({ key: relatedUrl, required: true, reason: 'Relevant named context.' });
+  assert.equal(completionEvidence(f.read, [a, a], f.catalogue).complete, true);
+});
+test('actual Linear relation objects expose separately scoped blockers, related records and duplicates', () => {
+  const quote = 'ENG-1 labels must include pstack.', f = fixture(quote, [call('blocker', 'get_issue', { id: 'ENG-2', url: 'https://linear.app/example/issue/ENG-2/blocker', description: 'Full blocker.' }), { ...call('blocker-comments', 'list_comments', { comments: [], hasNextPage: false }), args: { issueId: 'ENG-2' } }]);
+  f.calls[0].result = { ...object(f.calls[0].result), relations: { blocks: [], blockedBy: [{ id: 'ENG-2', title: 'Blocker' }], relatedTo: [{ id: 'ENG-3', title: 'Separate work' }], duplicateOf: { id: 'ENG-4', title: 'Original' } } };
+  const read = readLinearTargets(f.m, f.calls)[0];
+  assert.equal(read.references.length, 3);
+  const blocker = read.references.find(r => r.key.includes(':blockedBy:')); assert.ok(blocker); assert.equal(blocker.read, true);
+  assert.equal(read.references.some(r => r.key.endsWith(':ENG-3')), true); assert.equal(read.references.some(r => r.key.includes(':duplicateOf:')), true);
+  const a = assessment(quote, structural(f), { field: 'labels', operator: 'includes', value: 'pstack' });
+  a.targets[0].references = read.references.map(r => ({ key: r.key, required: r === blocker, reason: r === blocker ? 'The blocker context is required.' : 'Independent work outside this labels obligation.' }));
+  assert.equal(completionEvidence(read, [a, a], f.catalogue).complete, true);
+  const missing = readLinearTargets(f.m, f.calls.filter(c => !['blocker', 'blocker-comments'].includes(c.id)))[0];
+  assert.equal(completionEvidence(missing, [a, a], f.catalogue).complete, false);
+});
+test('entity identifiers and requested values need exact token boundaries', () => {
+  const related = call('related', 'get_issue', { id: 'ENG-2', url: 'https://linear.app/example/issue/ENG-2/related', status: 'Done' }), f = fixture('ENG-20 status must be Done.', [related]);
+  const p = f.catalogue.find(p => p.kind === 'structural' && p.field === 'status'); assert.ok(p);
+  const forged = assessment(f.read.texts[0].body, p, { field: 'status', operator: 'equals', value: 'Done' });
+  assert.equal(completionEvidence(f.read, [forged, forged], f.catalogue).complete, false);
+  const g = fixture('ENG-1 labels must include pstack-vic.'), wrongValue = assessment(g.read.texts[0].body, structural(g), { field: 'labels', operator: 'includes', value: 'pstack' });
+  assert.equal(completionEvidence(g.read, [wrongValue, wrongValue], g.catalogue).complete, false);
+});
+test('independent assessments can omit irrelevant outcome fields and choose different valid publication excerpts', () => {
+  const quote = 'ENG-1 labels must include pstack.', f = fixture(quote), a = assessment(quote, structural(f), { field: 'labels', operator: 'includes', value: 'pstack' });
+  const b = assessment(quote, structural(f), { field: 'labels', operator: 'includes', value: 'pstack', content: '', command: '' });
+  assert.equal(completionEvidence(f.read, [a, b], f.catalogue).complete, true);
+  const url = 'https://linear.app/example/initiative/weekly/activity#initiative-update-weekly', publicationQuote = `Publish the weekly update at ${url}.`, g = fixture(publicationQuote, [call('output', 'get_status_updates', { id: 'weekly', url, body: 'Weekly results recorded. Maintenance owners listed.' })]);
+  const p = g.catalogue.find(p => p.kind === 'publication'); assert.ok(p);
+  const first = assessment(publicationQuote, p, { content: 'Weekly results recorded.' }), second = assessment(publicationQuote, p, { content: 'Maintenance owners listed.', field: '', command: '' });
+  for (const answer of [first, second]) answer.targets[0].references.push({ key: url, required: true, reason: 'Required publication.' });
+  assert.equal(completionEvidence(g.read, [first, second], g.catalogue).complete, true);
+});
+test('unsupported outcomes preserve the specific recorded obligation while remaining open', () => {
+  const quote = 'Implement retry behavior.', f = fixture(quote), a = { targets: [{ url: issueUrl, coverage: 'complete', references: [], obligations: [{ source: 'ENG-1', quote, kind: 'acceptance', requiredClass: 'unknown', status: 'unknown', outcome: null, proofIds: [], relevance: '' }] }] };
+  const evidence = completionEvidence(f.read, [a, a], f.catalogue); assert.equal(evidence.complete, false); assert.ok(evidence.remaining.includes(`acceptance: ${quote}`));
+});
+for (const suffix of ['once retry deploys.', 'after the retry ships to prod.', 'after the fix is rolled out.', 'once the release goes live.']) test(`observed conditional inflection cannot relabel Done: ${suffix}`, () => {
+  const quote = `ENG-2 status must be Done ${suffix}`, f = fixture(quote, [call('related', 'get_issue', { id: 'ENG-2', url: 'https://linear.app/example/issue/ENG-2/related', status: 'Done' })]);
+  const p = f.catalogue.find(p => p.kind === 'structural' && p.field === 'status'); assert.ok(p); const a = assessment(quote, p, { field: 'status', operator: 'equals', value: 'Done' });
+  assert.equal(completionEvidence(f.read, [a, a], f.catalogue).complete, false);
+});
+
+test('renamed projects retire old values by native identity while preserving separate workspaces', () => {
+  const quote = 'P-CLI-2 status must be Done.', oldUrl = 'https://linear.app/example/project/old-project', newUrl = 'https://linear.app/example/project/new-project';
+  const old = call('old-project', 'get_project', { id: 'P-CLI-2', uuid: 'project-uuid', url: oldUrl, status: 'Done' }), f = fixture(quote, [old]);
+  const p = f.catalogue.find(p => p.kind === 'structural' && p.subject === oldUrl && p.field === 'status'); assert.ok(p);
+  const a = assessment(quote, p, { field: 'status', operator: 'equals', value: 'Done' });
+  f.calls.push(call('renamed-project', 'get_project', { id: 'P-CLI-2', uuid: 'project-uuid', url: newUrl, status: 'In Progress' }));
+  assert.equal(completionEvidence(f.read, [a, a], proofCatalogue(f.m, f.calls)).complete, false);
+  f.calls.push(call('other-workspace', 'get_project', { id: 'P-CLI-2', uuid: 'another-uuid', url: oldUrl.replace('/example/', '/other/'), status: 'Done' }));
+  const records = proofCatalogue(f.m, f.calls); assert.equal(records.some(p => p.kind === 'structural' && p.subject === newUrl && p.field === 'status' && p.value === 'In Progress'), true);
+});
+test('a failed final native read invalidates prior source coverage rather than reusing a stale parent', () => {
+  const f = fixture('ENG-1 labels must include pstack.'), parent = call('parent', 'get_issue', { id: 'ENG-2', url: 'https://linear.app/example/issue/ENG-2/parent', description: 'Full parent.' });
+  f.calls[0].result = { ...object(f.calls[0].result), parentId: 'ENG-2' };
+  f.calls.push(parent, { ...call('parent-comments', 'list_comments', { comments: [], hasNextPage: false }), args: { issueId: 'ENG-2' } }, { ...call('failed-parent', 'get_issue', { error: 'Unavailable' }), args: { id: 'ENG-2' }, error: true });
+  assert.throws(() => readLinearTargets(f.m, f.calls), /parent issue read/);
+});
