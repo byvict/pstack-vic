@@ -6,7 +6,7 @@ Two halves. **Certify a pushed head** produces `certificate.json` for one exact 
 
 #### Certify a pushed head
 
-**The script.** Since 0.4.10 one command runs steps 1 to 6 for a pushed head, and steps 1 to 6 below describe what it does. Take the lease, push and choose `RUN` as step 1 says. When the trunk contract sets `prePr.certifier`, prepare `$RUN/certify` with its dependencies as step 5 says: the script cannot know yet whether the report will ask for the certifier, and it leaves the worktree unused when it does not. Then launch, with `run_in_background` so you can block on the handle, as for any lane:
+**The script.** Since 0.4.12 one command runs steps 1 to 6 for a pushed head, and steps 1 to 6 below describe what it does. Take the lease, push and choose `RUN` as step 1 says. When the trunk contract sets `prePr.certifier`, prepare `$RUN/certify` with its dependencies as step 5 says: the script cannot know yet whether the report will ask for the certifier, and it leaves the worktree unused when it does not. Then launch, with `run_in_background` so you can block on the handle, as for any lane:
 
     node <plugin>/skills/poteto-mode/scripts/converge/converge-certify certify --repo OWNER/REPO --head $(git rev-parse HEAD) --directory $RUN --worktree <worktree> --parent <claude|codex> --author-provider AUTHORS --adjust-rounds <rounds of step 4> [--certifier-worktree $RUN/certify] --lease-by interactive --branch <branch>
 
