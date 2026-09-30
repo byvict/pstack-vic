@@ -441,7 +441,6 @@ test('public sweep settles progress, exposes withheld completion, and advances a
   rmSync(pending.runDirectory, { recursive: true, force: true }); assert.equal(readFileSync(artifact[1], 'utf8'), reviewed);
   const aged = ledgerOf(s.ledger(s.commitSha)); aged.firstAttemptAt = new Date(Date.now() - 26 * 3_600_000).toISOString(); writeJsonFile(s.ledger(s.commitSha), aged);
   const declined = join(f.directory, 'declined-plan.json'); writeJsonFile(declined, createLinearPlan({ ...approved, effects: [] }));
-  // The ledger settled before a crash could store the handled tip.
   writeJsonFile(s.stateFile, { schemaVersion: 1, repo: 'Example/app', tip: s.commits[0] });
   const beforeRejection = readFileSync(s.stateFile, 'utf8'), rejected = s.run(['--plan', declined]); assert.equal(rejected.status, 1); assert.match(rejected.stderr, /effects changed/);
   assert.equal(readFileSync(s.stateFile, 'utf8'), beforeRejection); assert.equal(s.read().mutations.length, 1); assert.deepEqual(ledgerOf(s.ledger(s.commitSha)).attempts.map(a => a.outcome), ['done', 'failed']);
