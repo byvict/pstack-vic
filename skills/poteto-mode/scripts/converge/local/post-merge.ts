@@ -31,7 +31,7 @@ export interface Handled { commit: string; pr: number | null; outcome: PostMerge
 /** `tip` is the trunk tip the pass worked toward, `handled` the tip it leaves stored, and `note` why it ran no commit: a first pass, or another holder's lease. */
 export interface PostMergeReport { tip: string; handled: string | null; note: string | null; commits: Handled[]; errors: string[] }
 /** `runCapMs` replaces the 20-minute cap in tests; `env` is the environment the commands start from, the tick's by default. */
-export interface PostMergeOptions { dryRun: boolean; leaseBy: string; runCapMs?: number; env?: NodeJS.ProcessEnv }
+export interface PostMergeOptions { dryRun: boolean; leaseBy: string; runCapMs?: number; env?: NodeJS.ProcessEnv; planPath?: string; manual?: boolean }
 interface Pass { config: LocalConfig; repo: RepoConfig; t: Trusted; postMerge: PostMerge; options: PostMergeOptions; errors: string[] }
 
 function message(error: unknown): string { return error instanceof Error ? error.message : String(error); }
@@ -244,7 +244,7 @@ async function linearStep(p: Pass, commit: string, file: string, checkout: strin
     const admission = await admitLinearMerge(p.t, commit);
     if (admission.kind !== 'admitted') return result(admission.kind === 'noop' ? 'done' : 'refused', admission.reason);
     const lane = raizLane(readFileSync(p.config.sheetPath, 'utf8'), p.config.parent);
-    return await reconcileLinear({ merge: admission.merge, lane, checkout, pluginDir: p.config.pluginDir, runDirectory: join(runDirectory, 'linear'), ledgerFile: file, checkpoint, save, dryRun: p.options.dryRun, env: p.options.env, capMs: p.options.runCapMs ?? POST_MERGE_RUN_MINUTES * 60_000 });
+    return await reconcileLinear({ merge: admission.merge, lane, checkout, pluginDir: p.config.pluginDir, runDirectory: join(runDirectory, 'linear'), ledgerFile: file, checkpoint, save, dryRun: p.options.dryRun, env: p.options.env, capMs: p.options.runCapMs ?? POST_MERGE_RUN_MINUTES * 60_000, planPath: p.options.planPath, manual: p.options.manual });
   } catch (error) { return result('deferred', `Linear admission or runtime unavailable: ${message(error)}`); }
 }
 /** The queue's next commit: a ledger that ends `done` only advances, one that ends `failed` stops the queue with its error again, anything else gets an attempt. */
@@ -299,7 +299,7 @@ export function forgetPostMerge(stateDirectory: string, repo: string): void { rm
 /** The sweep tick's pass over one repository whose trunk contract has `postMerge`. It never throws: a failure lands in `errors`, and the stored tip stays where it was. */
 export async function postMergePass(config: LocalConfig, repo: RepoConfig, t: Trusted, postMerge: PostMerge, options: PostMergeOptions): Promise<PostMergeReport> {
   const report: PostMergeReport = { tip: t.sha, handled: null, note: null, commits: [], errors: [] };
-  const p: Pass = { config, repo, t, postMerge, options, errors: report.errors };
+  const p: Pass = { config, repo, t, postMerge, options: { ...options, manual: false }, errors: report.errors };
   const stateFile = postMergeStateFile(config.stateDirectory, repo.repo);
   try {
     const holder = options.dryRun ? null : otherHolder(config.stateDirectory, repo.repo, options.leaseBy);
@@ -334,7 +334,7 @@ export async function postMergeOne(config: LocalConfig, repo: RepoConfig, t: Tru
   const holder = options.dryRun ? null : otherHolder(config.stateDirectory, repo.repo, options.leaseBy);
   if (holder) throw new Error(holder);
   const report: PostMergeReport = { tip: t.sha, handled: readPostMergeState(postMergeStateFile(config.stateDirectory, repo.repo))?.tip ?? null, note: null, commits: [], errors: [] };
-  const p: Pass = { config, repo, t, postMerge, options, errors: report.errors };
+  const p: Pass = { config, repo, t, postMerge, options: { ...options, manual: true }, errors: report.errors };
   await leased(p, async () => { report.commits.push(await attempt(p, commit, readPostMergeLedger(postMergeLedgerFile(config.stateDirectory, repo.repo, commit)))); });
   return report;
 }

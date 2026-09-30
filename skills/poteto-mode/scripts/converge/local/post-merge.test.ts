@@ -391,6 +391,23 @@ test('a dry run prints what the pass would run and writes nothing', t => {
   assert.deepEqual(released(f), []);
 });
 const byHand = (f: F, file: string, args: string[]) => f.run('converge-local', ['post-merge', ...args, '--config', file], env(f));
+for (const linear of [false, true]) test(`manual --plan leaves repository commands unchanged when Linear is ${linear ? 'enabled without targets' : 'disabled'}`, t => {
+  const f = fixture(); t.after(f.cleanup);
+  const { commits, file, ledger } = trunk(f, 2, { runs: [{ name: 'release', command: 'fake-release' }], linear });
+  const commitSha = String(commits[1]), plan = join(f.directory, 'reviewed-plan.json');
+  edit(f, live => { live.trunk = commitSha; });
+  const dry = byHand(f, file, ['--repo', 'Example/app', '--commit', commitSha, '--dry-run', '--plan', plan]);
+  assert.equal(dry.status, 0, dry.stderr);
+  assert.equal(JSON.parse(dry.stdout).commits[0].outcome, 'dry-run');
+  assert.equal(existsSync(plan), false);
+  assert.equal(existsSync(ledger(commitSha)), false);
+  assert.equal(released(f).length, 0);
+  const apply = byHand(f, file, ['--repo', 'Example/app', '--commit', commitSha, '--plan', plan]);
+  assert.equal(apply.status, 0, apply.stderr);
+  assert.equal(JSON.parse(apply.stdout).commits[0].outcome, 'done');
+  assert.equal(existsSync(plan), false);
+  assert.equal(released(f).length, 1);
+});
 test('post-merge runs one attempt by hand on a trunk commit, whatever its ledger says, and leaves the handled tip to the next tick', t => {
   const f = fixture(); t.after(f.cleanup);
   const { commits, file, stateFile, ledger } = trunk(f, 3);
@@ -457,9 +474,10 @@ test('a trunk contract without the block forgets the handled tip, so a block add
   assert.deepEqual([pass(back.stdout).note, pass(back.stdout).commits, pass(back.stdout).handled], ['first pass: stored the trunk tip and ran nothing', [], commits[2]]);
   assert.deepEqual(released(f), []);
 });
-test('a successful local command checkpoints before native Linear unavailability, and manual retry reuses that success', t => {
+test('a successful local command checkpoints before native Linear unavailability and survives retries and opt-in changes', t => {
   const f = fixture(); t.after(f.cleanup);
   const { commits, file, ledger } = trunk(f, 2, { runs: [{ name: 'release', command: 'fake-release' }], linear: true });
+  assert.equal(sweepTick(f, file).status, 0);
   const commitSha = String(commits[1]);
   linearMergedPr(f, commitSha);
   edit(f, live => { live.trunk = commitSha; });
@@ -467,8 +485,9 @@ test('a successful local command checkpoints before native Linear unavailability
   const cli = join(f.directory, 'claude'), remote = join(f.directory, 'linear-remote.json');
   writeFileSync(cli, readFileSync(new URL('../fixtures/linear.mjs', import.meta.url))); chmodSync(cli, 0o700);
   writeJsonFile(remote, { mode: 'no-mcp', issue: { id: 'ENG-1' } });
+  const sweep = () => f.run('converge-local', ['tick', '--job', 'sweep', '--config', file], { ...env(f), LINEAR_REMOTE: remote, LINEAR_ARGV: join(f.directory, 'linear-argv.json') });
   const run = () => f.run('converge-local', ['post-merge', '--config', file, '--repo', 'Example/app', '--commit', commitSha], { ...env(f), LINEAR_REMOTE: remote, LINEAR_ARGV: join(f.directory, 'linear-argv.json') });
-  for (let n = 0; n < 2; n++) { const result = run(); assert.equal(result.status, 0, result.stderr); assert.equal(JSON.parse(result.stdout).commits[0].outcome, 'deferred', result.stdout); }
+  for (let n = 0; n < 2; n++) { const result = sweep(); assert.equal(result.status, 0, result.stderr); assert.equal(pass(result.stdout).commits[0].outcome, 'deferred', result.stdout); }
   const saved = ledgerOf(ledger(commitSha)); assert.equal(saved.checkpoint?.commands.length, 1); assert.equal(saved.attempts.length, 2);
   assert.equal(released(f).length, 1); assert.deepEqual(saved.attempts[1].runs.map(r => [r.name, r.exitCode]), [['release', 0], ['linear', 75]]);
   assert.ok(saved.checkpoint);
@@ -482,9 +501,10 @@ test('a successful local command checkpoints before native Linear unavailability
   assert.deepEqual(retained.attempts.slice(0, 2), saved.attempts);
   assert.equal(released(f).length, 1);
   edit(f, live => { const config = JSON.parse(live.blobs['.cursor/converge.json']); config.postMerge.linear = true; live.blobs['.cursor/converge.json'] = JSON.stringify(config); });
-  const enabled = run(); assert.equal(enabled.status, 0, enabled.stderr);
-  assert.equal(JSON.parse(enabled.stdout).commits[0].outcome, 'deferred');
-  assert.deepEqual(ledgerOf(ledger(commitSha)).checkpoint?.linear?.effects, saved.checkpoint.linear.effects);
+  const enabled = sweep(); assert.equal(enabled.status, 0, enabled.stderr);
+  assert.deepEqual([pass(enabled.stdout).commits[0].outcome, pass(enabled.stdout).commits[0].reason], ['done', 'done on an earlier pass']);
+  assert.deepEqual(ledgerOf(ledger(commitSha)).checkpoint, saved.checkpoint);
+  assert.equal(ledgerOf(ledger(commitSha)).attempts.length, 3);
   assert.equal(released(f).length, 1);
 });
 test('a permanent Linear admission refusal fails visibly and stops later trunk commits', t => {
