@@ -4,6 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, s
 import { join } from 'node:path';
 import { commit, fixture, git } from '../fixtures/setup.ts';
 import { dossier, issueUrl } from '../fixtures/linear.ts';
+import { linearTarget } from '../linear-targets.ts';
 import { loadConfig } from './config.ts';
 import { writeJsonFile } from './ledger.ts';
 import { tickSweep } from './local.ts';
@@ -39,6 +40,12 @@ function trunk(f: F, count: number, postMerge: Record<string, unknown> = { runs:
   chmodSync(join(f.directory, 'fake-release'), 0o755);
   mkdirSync(join(f.directory, 'exits'));
   return { commits, checkout, file, state, stateFile: postMergeStateFile(state, 'Example/app'), ledger: (sha: string) => postMergeLedgerFile(state, 'Example/app', sha) };
+}
+function linearMergedPr(f: F, commitSha: string, message = `change\n\nPstack-Linear: ${issueUrl}`) {
+  const d = dossier(); d.round.head = f.state.head;
+  edit(f, live => {
+    Object.assign(live, { merged: true, prState: 'closed', mergeCommit: commitSha, mergedAt: '2026-09-30T01:00:00Z', prCommits: [{ sha: f.state.head, commit: { message } }], commitPulls: { [commitSha]: [{ ...merged(1), merge_commit_sha: commitSha }] }, comments: [{ id: 100, body: `<!-- converge:v1 ${d.round.id} -->\n\`\`\`json\n${JSON.stringify(d)}\n\`\`\``, user: { id: 7 }, created_at: '2026-09-30T00:00:00Z', updated_at: '2026-09-30T00:00:00Z' }], statuses: [{ id: 200, context: 'verdict', state: 'success', description: 'VERIFIED by converge', creator: { id: 7 }, target_url: 'https://github.com/Example/app/pull/1#issuecomment-100' }] });
+  });
 }
 const env = (f: F) => ({ ...isolated, FAKE_DIR: f.directory, TMPDIR: join(f.directory, 'tmp') });
 const sweepTick = (f: F, file: string, extra: string[] = []) => f.run('converge-local', ['tick', '--job', 'sweep', '--config', file, ...extra], env(f));
@@ -204,6 +211,32 @@ test('exit 75 defers the commit: the tip stays, the next tick tries again, and a
   const failed = sweepTick(f, file);
   assert.equal(failed.status, 1);
   assert.deepEqual(outcomes(failed.stdout), [[commits[1], 'failed', `release exited 75 for 24 hours since ${aged.firstAttemptAt}`]]);
+});
+for (const [exit, outcome] of [[75, 'deferred'], [1, 'failed']] satisfies [number, string][]) test(`commands checkpoint with Linear disabled after ${outcome === 'deferred' ? 'deferral' : 'failure'}, and enabling Linear preserves successful runs`, t => {
+  const f = fixture(); t.after(f.cleanup);
+  const { commits, file, ledger } = trunk(f, 2, { runs: [{ name: 'release', command: 'fake-release' }, { name: 'finish', command: 'fake-finish' }], linear: false });
+  const commitSha = String(commits[1]);
+  edit(f, live => { live.trunk = commitSha; });
+  writeFileSync(join(f.directory, 'fake-finish'), '#!/bin/sh\necho finish >> "$FAKE_DIR/finished.txt"\ncp "$FAKE_DIR/state/post-merge/Example-app/$PSTACK_COMMIT.json" "$FAKE_DIR/checkpoint-observed.json"\nif [ -f "$FAKE_DIR/finish-exit" ]; then exit "$(cat "$FAKE_DIR/finish-exit")"; fi\n');
+  chmodSync(join(f.directory, 'fake-finish'), 0o700);
+  writeFileSync(join(f.directory, 'finish-exit'), String(exit));
+  const first = byHand(f, file, ['--repo', 'Example/app', '--commit', commitSha]);
+  assert.equal(first.status, exit === 75 ? 0 : 1, first.stderr);
+  assert.equal(JSON.parse(first.stdout).commits[0].outcome, outcome);
+  const prior = ledgerOf(ledger(commitSha));
+  assert.deepEqual(prior.checkpoint?.commands.map(r => [r.name, r.command]), [['release', 'fake-release']]);
+  assert.deepEqual(ledgerOf(join(f.directory, 'checkpoint-observed.json')).checkpoint?.commands, prior.checkpoint?.commands);
+  rmSync(join(f.directory, 'finish-exit'));
+  edit(f, live => { const config = JSON.parse(live.blobs['.cursor/converge.json']); config.postMerge.linear = true; live.blobs['.cursor/converge.json'] = JSON.stringify(config); });
+  const retried = byHand(f, file, ['--repo', 'Example/app', '--commit', commitSha]);
+  assert.equal(retried.status, 0, retried.stderr);
+  assert.equal(JSON.parse(retried.stdout).commits[0].outcome, 'done');
+  const saved = ledgerOf(ledger(commitSha));
+  assert.deepEqual(saved.attempts.map(a => a.outcome), [outcome, 'done']);
+  assert.deepEqual(saved.checkpoint?.commands.map(r => r.name), ['release', 'finish']);
+  assert.deepEqual(saved.checkpoint?.commands[0], prior.checkpoint?.commands[0]);
+  assert.equal(released(f).length, 1);
+  assert.equal(readFileSync(join(f.directory, 'finished.txt'), 'utf8'), 'finish\nfinish\n');
 });
 test('a failed commit stops the queue, comments once on its merged PR, notifies once, shows in status, repeats the error on every tick, and manual retry retains its ledger', t => {
   const f = fixture(); t.after(f.cleanup);
@@ -427,10 +460,9 @@ test('a trunk contract without the block forgets the handled tip, so a block add
 test('a successful local command checkpoints before native Linear unavailability, and manual retry reuses that success', t => {
   const f = fixture(); t.after(f.cleanup);
   const { commits, file, ledger } = trunk(f, 2, { runs: [{ name: 'release', command: 'fake-release' }], linear: true });
-  const commitSha = String(commits[1]), d = dossier(); d.round.head = f.state.head;
-  edit(f, live => {
-    Object.assign(live, { trunk: commitSha, merged: true, prState: 'closed', mergeCommit: commitSha, mergedAt: '2026-09-30T01:00:00Z', prCommits: [{ sha: f.state.head, commit: { message: `change\n\nPstack-Linear: ${issueUrl}` } }], commitPulls: { [commitSha]: [{ ...merged(1), merge_commit_sha: commitSha }] }, comments: [{ id: 100, body: `<!-- converge:v1 ${d.round.id} -->\n\`\`\`json\n${JSON.stringify(d)}\n\`\`\``, user: { id: 7 }, created_at: '2026-09-30T00:00:00Z', updated_at: '2026-09-30T00:00:00Z' }], statuses: [{ id: 200, context: 'verdict', state: 'success', description: 'VERIFIED by converge', creator: { id: 7 }, target_url: 'https://github.com/Example/app/pull/1#issuecomment-100' }] });
-  });
+  const commitSha = String(commits[1]);
+  linearMergedPr(f, commitSha);
+  edit(f, live => { live.trunk = commitSha; });
   writeFileSync(join(f.directory, 'sheet.md'), 'converge raiz: claude:fable@max\n');
   const cli = join(f.directory, 'claude'), remote = join(f.directory, 'linear-remote.json');
   writeFileSync(cli, readFileSync(new URL('../fixtures/linear.mjs', import.meta.url))); chmodSync(cli, 0o700);
@@ -439,4 +471,69 @@ test('a successful local command checkpoints before native Linear unavailability
   for (let n = 0; n < 2; n++) { const result = run(); assert.equal(result.status, 0, result.stderr); assert.equal(JSON.parse(result.stdout).commits[0].outcome, 'deferred', result.stdout); }
   const saved = ledgerOf(ledger(commitSha)); assert.equal(saved.checkpoint?.commands.length, 1); assert.equal(saved.attempts.length, 2);
   assert.equal(released(f).length, 1); assert.deepEqual(saved.attempts[1].runs.map(r => [r.name, r.exitCode]), [['release', 0], ['linear', 75]]);
+  assert.ok(saved.checkpoint);
+  saved.checkpoint.linear = { repo: 'Example/app', commit: commitSha, head: f.state.head, effects: [{ key: 'prior-comment', target: linearTarget(issueUrl), kind: 'comment', tool: 'mcp__claude_ai_Linear__save_comment', args: { issueId: 'ENG-1', body: 'prior reconciliation' }, marker: '<!-- prior reconciliation -->', status: { kind: 'sent' } }], logPaths: ['prior-native.jsonl'] };
+  writeJsonFile(ledger(commitSha), saved);
+  edit(f, live => { const config = JSON.parse(live.blobs['.cursor/converge.json']); config.postMerge.linear = false; live.blobs['.cursor/converge.json'] = JSON.stringify(config); });
+  const optedOut = run(); assert.equal(optedOut.status, 0, optedOut.stderr);
+  assert.equal(JSON.parse(optedOut.stdout).commits[0].outcome, 'done');
+  const retained = ledgerOf(ledger(commitSha));
+  assert.deepEqual(retained.checkpoint, saved.checkpoint);
+  assert.deepEqual(retained.attempts.slice(0, 2), saved.attempts);
+  assert.equal(released(f).length, 1);
+  edit(f, live => { const config = JSON.parse(live.blobs['.cursor/converge.json']); config.postMerge.linear = true; live.blobs['.cursor/converge.json'] = JSON.stringify(config); });
+  const enabled = run(); assert.equal(enabled.status, 0, enabled.stderr);
+  assert.equal(JSON.parse(enabled.stdout).commits[0].outcome, 'deferred');
+  assert.deepEqual(ledgerOf(ledger(commitSha)).checkpoint?.linear?.effects, saved.checkpoint.linear.effects);
+  assert.equal(released(f).length, 1);
+});
+test('a permanent Linear admission refusal fails visibly and stops later trunk commits', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const { commits, file, ledger } = trunk(f, 3, { runs: [{ name: 'release', command: 'fake-release' }], linear: true });
+  assert.equal(sweepTick(f, file).status, 0);
+  const commitSha = String(commits[1]);
+  linearMergedPr(f, commitSha, 'change\n\nPstack-Linear: ENG-1');
+  edit(f, live => { live.trunk = commits[2]; });
+  const failed = sweepTick(f, file);
+  assert.equal(failed.status, 1, failed.stdout);
+  assert.deepEqual(outcomes(failed.stdout), [[commitSha, 'failed', 'linear: Invalid URL']]);
+  assert.equal(pass(failed.stdout).handled, commits[0]);
+  const saved = ledgerOf(ledger(commitSha));
+  assert.deepEqual(saved.attempts[0]?.runs.map(r => [r.name, r.exitCode]), [['release', 0], ['linear', 1]]);
+  assert.equal(saved.attempts[0]?.outcome, 'failed');
+  assert.match(failed.stderr, /failed: linear: Invalid URL; retry with converge-local post-merge/);
+  assert.match(f.read().comments.at(-1).body, /post-merge stopped.*linear: Invalid URL/);
+  assert.equal(f.notices().length, 1);
+  const status = JSON.parse(f.run('converge-local', ['status', '--config', file], env(f)).stdout);
+  assert.deepEqual(status.postMerge[0].commits.map((c: Handled) => [c.commit, c.outcome, c.reason]), [[commitSha, 'failed', 'linear: Invalid URL']]);
+  const again = sweepTick(f, file);
+  assert.equal(again.status, 1);
+  assert.deepEqual(outcomes(again.stdout), [[commitSha, 'failed', 'linear: Invalid URL']]);
+  assert.equal(released(f).length, 1);
+  assert.equal(ledgerOf(ledger(commitSha)).attempts.length, 1);
+  assert.equal(f.read().comments.length, 2);
+  assert.equal(f.notices().length, 1);
+});
+test('transient Linear admission failures defer without repeating commands and fail after 24 hours', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const { commits, file, ledger } = trunk(f, 2, { runs: [{ name: 'release', command: 'fake-release' }], linear: true });
+  assert.equal(sweepTick(f, file).status, 0);
+  const commitSha = String(commits[1]);
+  linearMergedPr(f, commitSha);
+  edit(f, live => { live.trunk = commitSha; live.failEndpoint = 'pulls/1/commits'; });
+  const reason = 'linear: Linear admission or runtime unavailable: gh request failed';
+  for (let n = 0; n < 2; n++) {
+    const deferred = sweepTick(f, file);
+    assert.equal(deferred.status, 0, deferred.stderr);
+    assert.deepEqual(outcomes(deferred.stdout), [[commitSha, 'deferred', reason]]);
+    assert.equal(pass(deferred.stdout).handled, commits[0]);
+  }
+  assert.equal(released(f).length, 1);
+  const aged = ledgerOf(ledger(commitSha));
+  aged.firstAttemptAt = new Date(Date.now() - (POST_MERGE_DEFER_HOURS + 1) * 3_600_000).toISOString();
+  writeJsonFile(ledger(commitSha), aged);
+  const failed = sweepTick(f, file);
+  assert.equal(failed.status, 1);
+  assert.deepEqual(outcomes(failed.stdout), [[commitSha, 'failed', `${reason} for 24 hours since ${aged.firstAttemptAt}`]]);
+  assert.equal(released(f).length, 1);
 });
