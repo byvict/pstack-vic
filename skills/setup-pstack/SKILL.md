@@ -7,7 +7,7 @@ description: Configure pstack's provider-qualified models, per-lane requested ef
 
 Configure one portable model sheet for the current parent harness. Read [`provider-dispatch.md`](../poteto-mode/references/provider-dispatch.md) before probing or writing anything. Its model matrix, descriptor grammar, route table, and role defaults are the contract. Each lane carries its own effort, so two roles may run the same family at different efforts. Do not add a second configuration file, a runtime resolver, or a weaker-model fallback.
 
-The deterministic half of this skill is `scripts/setup-pstack.ts`, next to this file (Node 24, no dependencies; run it as `node <this skill's directory>/scripts/setup-pstack.ts <subcommand>`). It reads the matrix, reads and normalizes the current sheet, renders the new one, runs the external probes through the runner, refuses to write while any required probe is missing, and writes with snapshot, read-back, and restore. You own the conversation (parent, efforts, role changes, confirmation) and the native one-turn probes. Every subcommand prints JSON; `--help` prints the usage. Never edit the sheet or the integration files by hand, and never paste a rendered sheet as the result.
+The deterministic half of this skill is `scripts/setup-pstack.ts`, next to this file (Node 24, no dependencies; run it as `node <this skill's directory>/scripts/setup-pstack.ts <subcommand>`). It reads the matrix, reads and normalizes the current sheet, renders the new one, runs the external probes through the runner, refuses to write while any required probe is missing, and writes with snapshot, read-back, and restore. You own the conversation (parent, efforts, role changes, confirmation) and the native one-turn probes. Every subcommand prints JSON; `--help` prints the usage. Never edit the sheet or the integration files by hand, and never paste a rendered sheet as the result. A second script, `scripts/authorize.ts`, checks the operator's standing authorization for the Pré-PR (step 10).
 
 Claude Code writes `~/.claude/pstack-models.md` and loads it from `~/.claude/CLAUDE.md` with:
 
@@ -115,6 +115,24 @@ Do not copy the model sheet or the ledger between harnesses; route availability 
 Run the smoke only when step 6 probed at least one family. Skip it when the plan had no `pairs`: an effort change or a role move between verified families needs no smoke. Otherwise, before declaring setup complete, run one small read-only mixed panel from this parent: one lane per newly probed family, distinct output/receipt paths, and an independent cross-judge. Launch Claude-native agents and every external process in the background with retained handles, then drain them. Verify the native transcript entries and every external receipt. A structural config check or unit test is not a substitute.
 
 Report the sheet path, the ledger path, the parent route table, the families probed and the families already verified, smoke results when a smoke ran, and external elapsed/token/cost receipts. Re-running this skill updates the same sheet and probes only the families missing from this parent's ledger. Do not claim the provider exposed hidden applied-effort observability.
+
+### 10. Standing authorization
+
+pstack merges a pull request that a different model family reviewed and no human approved. Claude Code's auto mode blocks that merge by default, under its rules Merge Without Review and Self-Approval. Its classifier reads the user's messages and the commands. It does not read your questions, so an "ok" to your question authorizes nothing. The operator records the decision once, in their own settings. Check the authorization on every run of this skill. When the operator asks only for the authorization, run this step alone:
+
+```shell
+node scripts/authorize.ts check --parent <parent>
+```
+
+On exit 0, say in one line that the parent is authorized.
+
+On exit 1 on Claude Code, the JSON carries the `reason`, the `entry` and the `grant` command. Show the operator the `entry` in full. Say in their language what the entry allows in every repository: certify a branch, publish the verdict, arm and merge a pull request that no human approved, and launch pstack's lanes. Say what stays blocked: `--admin` and any other way around a required check, a change to branch protection, and everything the other rules protect (destroyed files and branches, production, secrets, data that leaves). Then give the operator the `grant` command to run on a terminal. `apply` shows the entry, asks for a typed yes, keeps every other setting, and copies the old file to `settings.json.before-pstack-authorization`.
+
+The authorization is the operator's act. Never run `apply` yourself, never write the entry into a settings file, and never supply the answer. The script refuses without a terminal for that reason. Claude Code reads `autoMode` from the user's settings and from no repository or plugin, so the plugin cannot ship the entry. When the operator says that `apply` ran, run `check` again and report the result.
+
+On exit 1 on Codex, show the `reason`. Codex has no such list. Codex asks for no approval when `approval_policy` is `"never"` at the top level of `~/.codex/config.toml`. The operator sets that value, or accepts that Codex stops to ask.
+
+The entry names its version (`pstack standing authorization v1`). A release that changes what the entry grants raises the version, and `check` fails until the operator runs `apply` again. To withdraw the authorization, the operator deletes the entry from `autoMode.allow`.
 
 ## First-run role maps
 

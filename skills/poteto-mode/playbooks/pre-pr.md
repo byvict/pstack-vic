@@ -6,6 +6,14 @@ Two halves. **Certify a pushed head** produces `certificate.json` for one exact 
 
 #### Certify a pushed head
 
+**Authorization.** In an interactive session, before the lease, check that the parent runs this flow without a stop for approval:
+
+    node <plugin>/skills/setup-pstack/scripts/authorize.ts check --parent <claude|codex>
+
+On exit 0, go on. On exit 1, the JSON carries a `reason`. Stop before the lease and the push, and give the user the reason in one line. Then ask once for one of two things. The first is the standing authorization (`/setup-pstack`, step 10). The second is a message, in the user's own words, that you may certify the branch, open the PR and arm auto-merge. Claude Code's auto mode reads the user's messages and the commands. It does not read your questions, so an "ok" to your question authorizes nothing. Go on after either one.
+
+If a command of this flow is denied anyway, name the rule of the denial in one line, and do not run the command in another form. After a denied `converge-arm`, release the lease and nudge as step 8 says, and ask nothing, because the sweep arms the PR. After any other denied command, wait for the user. A Raiz that the daemon launched ([Catch-up](catch-up.md)) skips this check, because the daemon launches that Raiz with no approval step.
+
 **The script.** Since 0.4.12 one command runs steps 1 to 6 for a pushed head, and steps 1 to 6 below describe what it does. Take the lease, push and choose `RUN` as step 1 says. When the trunk contract sets `prePr.certifier`, prepare `$RUN/certify` with its dependencies as step 5 says: the script cannot know yet whether the report will ask for the certifier, and it leaves the worktree unused when it does not. Then launch, with `run_in_background` so you can block on the handle, as for any lane:
 
     node <plugin>/skills/poteto-mode/scripts/converge/converge-certify certify --repo OWNER/REPO --head $(git rev-parse HEAD) --directory $RUN --worktree <worktree> --parent <claude|codex> --author-provider AUTHORS --adjust-rounds <rounds of step 4> [--certifier-worktree $RUN/certify] --lease-by interactive --branch <branch>
