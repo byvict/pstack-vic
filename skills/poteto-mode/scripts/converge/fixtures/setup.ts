@@ -29,6 +29,7 @@ export function fixture() {
   writeFileSync(osascript, ['#!/bin/sh', 'printf \'%s\\n\' "$*" >> "${0%/*}/osascript.calls"', 'if [ -f "${0%/*}/osascript-exit" ]; then read code < "${0%/*}/osascript-exit"; echo "fake osascript failed" >&2; exit "$code"; fi', ''].join('\n')); chmodSync(osascript, 0o700);
   const config = { repo: 'Example/app', trunk: 'main', requiredChecks: ['Run test suite', 'Secrets scan', 'verdict', 'hold'], holdLabels: ['needs-victor'], surfaces: ['client/**', 'server/routes/**'], riskClasses: { irreversible: ['migrations/**'], contained: ['server/domain/**'] }, verifySkill: 'verify/SKILL.md', featureMap: 'features/README.md', evidenceRoot: 'evidence', deployWindow: '04:00 America/Sao_Paulo', bugbot: 'never' };
   const runOverrides: Record<string, unknown> = {};
+  const compareCommits: Record<string, { sha?: string; message: string }[]> = {};
   const files: { filename: string; status: string; patch: string; previous_filename?: string }[] = [{ filename: 'docs/guide.md', status: 'modified', patch: '@@ -1 +1 @@\n-old\n+new' }];
   const jobs = [
     { id: 4, name: 'Run test suite', run_id: 8, run_attempt: 1, head_sha: trunk, status: 'completed', conclusion: 'success', started_at: '2026-09-22T00:33:26Z', completed_at: '2026-09-22T00:41:50Z', check_run_url: 'https://api.github.com/repos/Example/app/check-runs/11', steps: [] },
@@ -43,7 +44,7 @@ export function fixture() {
     blobs: { '.cursor/converge.json': JSON.stringify(config), 'verify/SKILL.md': 'Drive the app.', 'features/README.md': '| [Login](./login.md) | `client/Login.jsx` |\n', 'features/login.md': 'Use Entrar.', '.github/workflows/tests.yml': 'name: Tests\n', 'package.json': JSON.stringify({scripts:{test:'node tools/run-all-tests.js'}}), 'tools/run-all-tests.js': 'function printOneResult() {} function printRunnerFooter() {}' },
     headBlobs: {} as Record<string, string>,
     checks: [{ id: 11, name: 'Run test suite', status: 'completed', conclusion: 'success', app: { id: 15368 } }, { id: 12, name: 'Secrets scan', status: 'completed', conclusion: 'success', app: { id: 15368 } }, { id: 10, name: 'hold', status: 'completed', conclusion: 'success', app: { id: 15368 } }],
-    protected: ['Run test suite', 'Secrets scan', 'verdict', 'hold'], classicProtection: true, protectionMessage: 'Branch not protected', comments: [], statuses: [], pulls: [] as Record<string, unknown>[], pushedHead: head, commits: null as { sha?: string; message: string }[] | null, totalCommits: null as number | null, mutations: [] };
+    protected: ['Run test suite', 'Secrets scan', 'verdict', 'hold'], classicProtection: true, protectionMessage: 'Branch not protected', comments: [], statuses: [], pulls: [] as Record<string, unknown>[], pushedHead: head, commits: null as { sha?: string; message: string }[] | null, compareCommits, totalCommits: null as number | null, mutations: [] };
   writeFileSync(statePath, JSON.stringify(state));
   const scriptDirectory = fileURLToPath(new URL('../', import.meta.url));
   return {

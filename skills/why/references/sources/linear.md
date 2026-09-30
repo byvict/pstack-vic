@@ -16,10 +16,10 @@ Linear is where the product/business context often lives: the "we're doing this 
 
 Use the Linear MCP.
 
-1. **Start with linked tickets.** If the seed commits or PRs reference ticket IDs (e.g., `ENG-1234`, `[BUG-567]`), fetch those first with `get_issue`. Read the full issue including comments.
+1. **Start with linked tickets.** If the seed commits or PRs reference ticket IDs (e.g., `ENG-1234`, `[BUG-567]`), fetch those first with `get_issue`. Read the full issue body. Use the available comments tool to read all comments, and fetch remaining pages or truncated content. An issue summary or a comment count does not establish a full read.
 2. **List related issues by keyword.** Use `list_issues` with text search for the feature name, key symbol, or business term. Try multiple phrasings.
 3. **Walk the issue tree.** If you land on a sub-issue, fetch its parent. Sub-issues are tactical. Parents often carry the "why."
-4. **Read project docs.** If the issue belongs to a project, use `get_project` and check attached docs. Project-level documents are where specs and rationale are most often captured.
+4. **Read project docs.** If the issue belongs to a project, use `get_project` to find attached docs, then open the relevant full documents. Project metadata and document titles do not establish document consumption. Record inaccessible documents as gaps.
 5. **Check labels and milestones.** Labels hint at the category of motivation (customer-request, incident-followup, compliance). Milestones tie work to deadlines, which often reveal motivation.
 
 ## What good evidence looks like here
@@ -39,6 +39,8 @@ Use the Linear MCP.
 - **Private workspace content.** If you can't access an issue, note that as a gap rather than guessing.
 
 ## What to return
+
+Use the consumption receipt in [`investigator-prompt.md`](../investigator-prompt.md) to account for actual issue searches and full issue, comment, and document reads. Include pagination or truncation gaps and native call references.
 
 For each relevant ticket:
 - Ticket ID and title

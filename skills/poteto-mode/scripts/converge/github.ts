@@ -3,6 +3,7 @@ import { posix } from 'node:path';
 import { array, instant, integer, matches, object, parseContract, relativePath, repoName, sha, string, jsonHash, hash, testOnly, type Contract, type Check, type Execution, type Feature } from './contract.ts';
 import { dependencyOnly } from './dependencies.ts';
 import { parseClinextTests, type TestEvidence, type ClinextProvenance, type StepWindow } from './claims.ts';
+import { linearTargets } from './linear-targets.ts';
 
 function childEnvironment(binary: string, credential: 'writer' | 'installation' = 'writer'): NodeJS.ProcessEnv {
   if (binary !== 'gh') return process.env;
@@ -287,6 +288,16 @@ export function fillPatches(files: ChangedFile[], diff: string): ChangedFile[] {
   });
 }
 export interface BranchCommit { sha: string; message: string }
+function comparedCommits(comparison: Record<string, unknown>): BranchCommit[] {
+  const commits = array(comparison.commits).map(value => { const v = object(value, 'commit'); return { sha: sha(v.sha), message: string(object(v.commit, 'commit').message, 'commit message') }; });
+  if (integer(comparison.total_commits) !== commits.length || commits.length > 250) throw new Error('Branch compare truncated');
+  return commits;
+}
+export async function branchCommits(repo: string, base: string, head: string): Promise<BranchCommit[]> {
+  const commits = comparedCommits(object(await api(`repos/${repoName(repo)}/compare/${sha(base)}...${sha(head)}`)));
+  if (commits.length && commits.at(-1)?.sha !== head) throw new Error('Branch commits are not bound to the requested head');
+  return commits;
+}
 /** GitHub's compare of the contract commit and a head: the files, diff and commits every `pre-pr` round reads, before and after the PR exists. It lists at most 300 files and 250 commits. */
 async function compared(repo: string, contract: string, head: string): Promise<{ base: string; files: ChangedFile[]; diff: string; commits: BranchCommit[] }> {
   const endpoint = `repos/${repo}/compare/${contract}...${head}`;
@@ -294,8 +305,8 @@ async function compared(repo: string, contract: string, head: string): Promise<{
   const c = object(comparison);
   const files = array(c.files).map(changedFile);
   if (files.length >= 300) throw new Error('Branch compare truncated');
-  const commits = array(c.commits).map(value => { const v = object(value, 'commit'); return { sha: sha(v.sha), message: string(object(v.commit, 'commit').message, 'commit message') }; });
-  if (integer(c.total_commits) !== commits.length) throw new Error('Branch compare truncated');
+  const commits = comparedCommits(c);
+  linearTargets(commits.map(c => c.message));
   return { base: sha(object(c.merge_base_commit).sha), files: fillPatches(files, diff), diff, commits };
 }
 const prePrManifests = /^(?:client\/)?package(?:-lock)?\.json$/;
