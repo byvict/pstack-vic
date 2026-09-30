@@ -1,10 +1,12 @@
-import { test } from 'node:test';
+import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { commit, fixture, omittedPatch, prReport } from './fixtures/setup.ts';
 import { hash, parseReport } from './contract.ts';
-import { parseCertificate } from './certify.ts';
+import { certifyHead, parseCertificate, type CertifyOptions } from './certify.ts';
 
 function prePrFixture(certifier = true, surface = true) {
   const f = fixture();
@@ -488,4 +490,168 @@ test('assemble refuses a round whose commit carries an unreadable Pstack-Author 
   lane(f, round, 'pre-pr reviewer');
   const result = certify(f, ['assemble', '--directory', run, '--author-provider', 'claude', '--output', join(run, 'certificate.json'), '--adjust-rounds', '0']);
   assert.equal(result.status, 1); assert.match(result.stderr, /INCONCLUSIVE: Unreadable Pstack-Author trailer in commit/);
+});
+const fakeRunner = fileURLToPath(new URL('./fixtures/runner.mjs', import.meta.url));
+interface RunnerPlan { statuses?: Record<string, string[]>; delays?: Record<string, number>; findings?: Record<string, unknown[]>; dirty?: Record<string, number[]>; moved?: Record<string, number[]> }
+interface RunnerEvent { lane: string; event: 'start' | 'end'; at: number; leaseExpiresAt: string | null; leaseBy: string | null; status?: string }
+function worktree(from: string, path: string): void {
+  const added = spawnSync('git', ['-C', from, 'worktree', 'add', '-q', '--detach', path, 'HEAD'], { encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } });
+  assert.equal(added.status, 0, added.stderr);
+}
+function certifySetup(t: TestContext, options: { runs?: string[]; plan?: RunnerPlan; light?: boolean; docs?: boolean; reviewer?: string } = {}) {
+  const f = options.light ? lightFixture() : prePrFixture(true, options.docs !== true);
+  t.after(f.cleanup);
+  const config = JSON.parse(f.state.blobs['.cursor/converge.json']);
+  config.prePr.runs = (options.runs ?? ['sleep 1', 'sleep 1']).map((command, n) => ({ name: `run-${n}`, command }));
+  f.state.blobs['.cursor/converge.json'] = JSON.stringify(config); f.save();
+  const checkout = f.checkout();
+  const run = join(f.directory, 'run');
+  const certifier = join(run, 'certify');
+  worktree(checkout, certifier);
+  const home = join(f.directory, 'home');
+  mkdirSync(home);
+  const sheet = join(f.directory, 'pstack-models.md');
+  writeFileSync(sheet, `feature, refactoring: claude:claude-opus-5-5@xhigh\npre-pr reviewer: ${options.reviewer ?? 'grok:grok-4.7@xhigh'}\npre-pr certifier: grok:grok-4.7@high\n`);
+  const log = join(f.directory, 'runner.log');
+  const lease = join(home, 'Library', 'Application Support', 'pstack', 'converge-local', 'leases', 'Example-app-change.json');
+  writeFileSync(join(f.directory, 'runner.json'), JSON.stringify({ ...options.plan, log, lease }));
+  const saved = { PATH: process.env.PATH, CONVERGE_FIXTURE: process.env.CONVERGE_FIXTURE, HOME: process.env.HOME, FAKE_RUNNER: process.env.FAKE_RUNNER };
+  Object.assign(process.env, { PATH: f.directory + ':' + saved.PATH, CONVERGE_FIXTURE: f.statePath, HOME: home, FAKE_RUNNER: join(f.directory, 'runner.json') });
+  t.after(() => { for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } });
+  const certifyOptions: CertifyOptions = { repo: 'Example/app', head: f.state.head, directory: run, worktree: checkout, parent: 'claude', sheet, authorProviders: ['claude'], adjustRounds: 0, certifierWorktree: certifier, lease: { by: `daemon:${process.pid}`, pid: process.pid, branch: 'change' } };
+  const events = (): RunnerEvent[] => existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line)) : [];
+  const runRecord = (name: string) => JSON.parse(readFileSync(join(run, 'runs', name + '.json'), 'utf8'));
+  return { f, run, checkout, certifier, options: certifyOptions, events, runRecord };
+}
+const at = (events: RunnerEvent[], lane: string, event: 'start' | 'end', n = 0) => events.filter(e => e.lane === lane && e.event === event)[n]?.at ?? NaN;
+test('certify records every contract run at once and returns the certificate', async t => {
+  const s = certifySetup(t);
+  const result = await certifyHead(s.options, fakeRunner);
+  assert.ok('certificate' in result, JSON.stringify(result));
+  assert.deepEqual(result.certificate.lanes.map(l => l.role), ['pre-pr certifier', 'pre-pr reviewer']);
+  const runs = ['run-0', 'run-1'].map(s.runRecord);
+  assert.ok(Math.max(...runs.map(r => Date.parse(r.startedAt))) < Math.min(...runs.map(r => Date.parse(r.completedAt))), 'the runs overlap');
+  assert.deepEqual(parseCertificate(JSON.parse(readFileSync(join(s.run, 'certificate.json'), 'utf8'))), result.certificate);
+});
+test('certify launches the certifier with the runs and the reviewer after them, so both lanes run at once', async t => {
+  const s = certifySetup(t, { plan: { delays: { 'pre-pr-certifier': 3000, 'pre-pr-reviewer': 500 } } });
+  assert.ok('certificate' in await certifyHead(s.options, fakeRunner));
+  const events = s.events();
+  const runsDone = Math.max(...['run-0', 'run-1'].map(name => Date.parse(s.runRecord(name).completedAt)));
+  assert.ok(at(events, 'pre-pr-certifier', 'start') < Date.parse(s.runRecord('run-0').completedAt), 'the certifier starts before the runs end');
+  assert.ok(at(events, 'pre-pr-reviewer', 'start') >= runsDone, 'the reviewer starts after the runs');
+  assert.ok(at(events, 'pre-pr-reviewer', 'start') < at(events, 'pre-pr-certifier', 'end'), 'the lanes overlap');
+});
+test('certify relaunches a lane once when its receipt is not complete', async t => {
+  const s = certifySetup(t, { plan: { statuses: { 'pre-pr-reviewer': ['timed-out'] } } });
+  assert.ok('certificate' in await certifyHead(s.options, fakeRunner));
+  assert.equal(s.events().filter(e => e.lane === 'pre-pr-reviewer' && e.event === 'start').length, 2);
+  assert.equal(JSON.parse(readFileSync(join(s.run, 'attempts', 'pre-pr-reviewer-1', 'receipt.json'), 'utf8')).status, 'timed-out');
+});
+test('certify relaunches a certifier once when its first attempt fails and leaves an untracked file', async t => {
+  const s = certifySetup(t, { plan: { statuses: { 'pre-pr-certifier': ['timed-out'] }, dirty: { 'pre-pr-certifier': [0] } } });
+  const result = await certifyHead(s.options, fakeRunner);
+  assert.ok('certificate' in result, JSON.stringify(result));
+  assert.equal(s.events().filter(e => e.lane === 'pre-pr-certifier' && e.event === 'start').length, 2);
+  const attempt = join(s.run, 'attempts', 'pre-pr-certifier-1');
+  assert.equal(readFileSync(join(attempt, 'worktree-status.txt'), 'utf8'), '?? left-behind.txt\n');
+  assert.equal(readFileSync(join(attempt, 'worktree.diff'), 'utf8'), '');
+});
+test('certify relaunches a certifier once when its first attempt fails and leaves a tracked edit over its own commit', async t => {
+  const s = certifySetup(t, { plan: { statuses: { 'pre-pr-certifier': ['timed-out'] }, moved: { 'pre-pr-certifier': [0] } } });
+  const result = await certifyHead(s.options, fakeRunner);
+  assert.ok('certificate' in result, JSON.stringify(result));
+  assert.equal(s.events().filter(e => e.lane === 'pre-pr-certifier' && e.event === 'start').length, 2);
+  assert.notEqual(readFileSync(join(s.run, 'attempts', 'pre-pr-certifier-1', 'worktree.diff'), 'utf8'), '');
+});
+test('certify refuses at the reviewer step when the relaunched lane fails again', async t => {
+  const s = certifySetup(t, { plan: { statuses: { 'pre-pr-reviewer': ['timed-out', 'rate-limited'] } } });
+  assert.deepEqual(await certifyHead(s.options, fakeRunner), { refused: { step: 'reviewer', reason: 'Lane pre-pr-reviewer receipt is rate-limited after its relaunch' } });
+  assert.equal(existsSync(join(s.run, 'certificate.json')), false);
+});
+test('certify renews the lease before each launch', async t => {
+  const s = certifySetup(t, { plan: { statuses: { 'pre-pr-reviewer': ['timed-out'] }, delays: { 'pre-pr-certifier': 1200, 'pre-pr-reviewer': 1200 } } });
+  assert.ok('certificate' in await certifyHead(s.options, fakeRunner));
+  const starts = s.events().filter(e => e.event === 'start');
+  assert.deepEqual(starts.map(e => e.lane), ['pre-pr-certifier', 'pre-pr-reviewer', 'pre-pr-reviewer']);
+  for (const start of starts) {
+    assert.equal(start.leaseBy, s.options.lease?.by);
+    assert.ok(Math.abs(Date.parse(start.leaseExpiresAt ?? '') - (start.at + 3 * 3_600_000)) < 5_000, 'renewed just before this launch');
+  }
+  const expiries = starts.map(e => Date.parse(e.leaseExpiresAt ?? ''));
+  assert.ok(expiries.every((expiry, n) => n === 0 || expiry > expiries[n - 1]), 'each launch renewed the lease again');
+});
+test('certify refuses at the certifier step when its worktree is not at the head, before any launch', async t => {
+  const s = certifySetup(t);
+  commit(s.certifier, 'moved');
+  const result = await certifyHead(s.options, fakeRunner);
+  assert.deepEqual(result, { refused: { step: 'certifier', reason: 'Certifier worktree is not at the head' } });
+  assert.deepEqual(s.events(), []);
+  assert.equal(existsSync(join(s.run, 'runs')), false);
+});
+test('certify refuses at the certifier step when its worktree has changes, before any launch', async t => {
+  const s = certifySetup(t);
+  writeFileSync(join(s.certifier, 'client', 'New.jsx'), 'new\n');
+  assert.deepEqual(await certifyHead(s.options, fakeRunner), { refused: { step: 'certifier', reason: 'Certifier worktree has changes' } });
+  assert.deepEqual(s.events(), []);
+});
+test('certify refuses a ci-only round at the reviewer step when its worktree has an untracked file, before any launch', async t => {
+  const s = certifySetup(t, { docs: true });
+  writeFileSync(join(s.checkout, 'notes.txt'), 'notes\n');
+  const result = await certifyHead(s.options, fakeRunner);
+  assert.equal(JSON.parse(readFileSync(join(s.run, 'report.json'), 'utf8')).mode, 'ci-only');
+  assert.deepEqual(result, { refused: { step: 'reviewer', reason: 'Worktree has changes' } });
+  assert.deepEqual(s.events(), []);
+});
+test('certify refuses at the runs step when a run exits non-zero, launches no reviewer and stops the certifier', async t => {
+  const s = certifySetup(t, { runs: ['sleep 1', 'false'], plan: { delays: { 'pre-pr-certifier': 20_000 } } });
+  const started = Date.now();
+  assert.deepEqual(await certifyHead(s.options, fakeRunner), { refused: { step: 'runs', reason: 'Run run-1 exited 1' } });
+  assert.ok(Date.now() - started < 15_000, 'the certifier was stopped, not waited for');
+  assert.deepEqual(s.events().map(e => [e.lane, e.event]), [['pre-pr-certifier', 'start']]);
+});
+test('certify refuses at the assemble step when the reviewer reports a defect', async t => {
+  const s = certifySetup(t, { plan: { findings: { 'pre-pr-reviewer': [{ kind: 'regression', source: 'lane', path: 'client/Login.jsx', line: 1, rule: 'lost-submit', severity: 'blocking' }] } } });
+  const result = await certifyHead(s.options, fakeRunner);
+  assert.ok('refused' in result && result.refused.step === 'assemble', JSON.stringify(result));
+  assert.match(result.refused.reason, /^Certificate refused: NOT VERIFIED: regression lost-submit client\/Login\.jsx:1$/);
+});
+test('certify refuses at the reviewer step when the reviewer row is an author family, before any run or launch', async t => {
+  const s = certifySetup(t);
+  assert.deepEqual(await certifyHead({ ...s.options, authorProviders: ['claude', 'grok'] }, fakeRunner), { refused: { step: 'reviewer', reason: 'No pre-pr reviewer lane is outside the author families (claude, grok): the row lists grok:grok-4.7@xhigh; add a lane of another family with /setup-pstack' } });
+  assert.deepEqual(s.events(), []);
+  assert.equal(existsSync(join(s.run, 'runs')), false);
+});
+test('certify refuses at the report step when the report has a gap, before any run or launch', async t => {
+  const s = certifySetup(t);
+  s.f.state.commits = [{ message: 'feat: x\n\nPstack-Author: gemini' }]; s.f.save();
+  const result = await certifyHead(s.options, fakeRunner);
+  assert.ok('refused' in result && result.refused.step === 'report', JSON.stringify(result));
+  assert.match(result.refused.reason, /^The report has gaps: Unreadable Pstack-Author trailer in commit [0-9a-f]{7}$/);
+  assert.deepEqual(s.events(), []);
+  assert.equal(existsSync(join(s.run, 'runs')), false);
+});
+test('certify refuses at the reviewer step when the hard list asks for a risk proof and the chosen reviewer is not Grok', async t => {
+  const s = certifySetup(t, { reviewer: 'codex:gpt-6.1-sol@high' });
+  s.f.state.files = [{ filename: 'billing/charge.js', status: 'modified', patch: '@@ -1 +1 @@\n-old\n+new' }]; s.f.save();
+  assert.deepEqual(await certifyHead(s.options, fakeRunner), { refused: { step: 'reviewer', reason: 'Reviewer risk proof unavailable: the hard list asks for a risk proof, and only a Grok reviewer writes one in this version (chose codex:gpt-6.1-sol@high)' } });
+  assert.deepEqual(s.events(), []);
+});
+test('certify gives a light round the narrow reviewer prompt and no certifier', async t => {
+  const s = certifySetup(t, { light: true });
+  const result = await certifyHead(s.options, fakeRunner);
+  assert.ok('certificate' in result, JSON.stringify(result));
+  assert.equal(result.certificate.decision.displayResult, 'Light');
+  assert.deepEqual(s.events().filter(e => e.event === 'start').map(e => e.lane), ['pre-pr-reviewer']);
+  assert.match(readFileSync(join(s.run, 'lanes', 'pre-pr-reviewer', 'prompt.txt'), 'utf8'), /The diff is small: /);
+});
+test('certify prints a refusal with its step and exits 1', t => {
+  const f = prePrFixture(); t.after(f.cleanup);
+  f.state.files = [{ filename: 'client/src/pages/New.jsx', status: 'added', patch: '@@ -0,0 +1 @@\n+new' }]; f.save();
+  const checkout = f.checkout();
+  const run = join(f.directory, 'run');
+  const result = certify(f, ['certify', '--repo', 'Example/app', '--head', f.state.head, '--directory', run, '--worktree', checkout, '--parent', 'claude', '--sheet', join(f.directory, 'none.md'), '--author-provider', 'claude', '--adjust-rounds', '0']);
+  assert.equal(result.status, 1, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), { refused: { step: 'report', reason: 'Changed user surface lacks a trusted feature recipe: client/src/pages/New.jsx' } });
+  assert.ok(existsSync(join(run, 'report.json')), 'the run directory stays');
 });
