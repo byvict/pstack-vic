@@ -254,3 +254,38 @@ for (const suffix of ['and the retry ships to prod.', 'and the fix is rolled out
   const proof = f.catalogue.find(p => p.kind === 'structural' && p.field === 'status'); assert.ok(proof); const a = assessment(quote, proof, { field: 'status', operator: 'equals', value: 'Done' });
   assert.equal(completionEvidence(f.read, [a, a], f.catalogue).complete, false);
 });
+
+test('a requested value cannot erase part of a separate deployment clause or every repeated occurrence', () => {
+  for (const [value, clause] of [['prod', 'retry reaches production'], ['de', 'retry deploys'], ['lo', 'retry rollout is confirmed'], ['production', 'retry reaches production'], ['installed', 'installed retry is running']]) {
+    for (const literal of [value, `\`${value}\``]) {
+      const quote = `ENG-1 labels must include ${literal} and ${clause}.`, f = fixture(quote); f.calls[0].result = { ...object(f.calls[0].result), labels: [value] };
+      const catalogue = proofCatalogue(f.m, f.calls), proof = catalogue.find(p => p.kind === 'structural' && p.field === 'labels'); assert.ok(proof); const a = assessment(quote, proof, { field: 'labels', operator: 'includes', value });
+      const result = completionEvidence(f.read, [a, a], catalogue); assert.equal(result.complete, false, quote); assert.ok(result.remaining.includes(`acceptance: ${quote}`));
+    }
+  }
+});
+test('only the actual named entity supplies an identity mask; unused and overlapping aliases remain context', () => {
+  for (const [alias, value, clause] of [['prod', 'pstack', 'retry reaches production'], ['de', 'pstack', 'retry deploys'], ['deployment', 'pstack', 'deployment is complete'], ['rollout', 'pstack', 'retry rollout is confirmed'], ['production', 'production', 'retry reaches production']]) {
+    const quote = `ENG-1 labels must include ${value} and ${clause}.`, f = fixture(quote); f.calls[0].result = { ...object(f.calls[0].result), uuid: alias, labels: [value] };
+    const catalogue = proofCatalogue(f.m, f.calls), proof = catalogue.find(p => p.kind === 'structural' && p.field === 'labels'); assert.ok(proof); const a = assessment(quote, proof, { field: 'labels', operator: 'includes', value });
+    assert.equal(completionEvidence(f.read, [a, a], catalogue).complete, false, alias);
+  }
+});
+test('an opened publication discounts its actual URL occurrence while retaining longer referenced literals', () => {
+  const url = 'https://linear.app/example/initiative/weekly/production#initiative-update-weekly', output = call('output', 'get_status_updates', { id: 'weekly', url, body: 'Weekly results published.' });
+  for (const extra of ['', ` and ${url}-extra`, ` and \`${url}/extra\``]) {
+    const quote = `Publish the update at \`${url}\`${extra}.`, f = fixture(quote, [output]), proof = f.catalogue.find(p => p.kind === 'publication'); assert.ok(proof); const a = assessment(quote, proof, { content: 'Weekly results published.' });
+    a.targets[0].references = f.read.references.map(r => ({ key: r.key, required: false, reason: 'Matching assessments claim all other URLs are irrelevant.' }));
+    assert.equal(completionEvidence(f.read, [a, a], f.catalogue).complete, !extra, extra);
+  }
+});
+test('a certified command cannot erase its prefix inside another command or an independent predicate', () => {
+  for (const [command, clause] of [['install', 'installed retry is running'], ['node deploy.mjs', '`node deploy.mjs-extra` is needed']]) {
+    for (const extra of ['', ` and ${clause}`]) {
+      const quote = `Verify \`${command}\` passes${extra}.`, f = fixture(quote), d = f.m.dossier;
+      d.certificate = { schemaVersion: 2, round: d.round, authorProviders: ['codex'], runs: [{ name: 'check', command, exitCode: 0, clean: true, head: f.m.head, logDigest: 'a'.repeat(64), startedAt: '2026-09-30T00:00:00Z', completedAt: '2026-09-30T00:01:00Z' }], lanes: [], artifacts: [], decision: d.decision, reconcileDigest: d.reconcileDigest, evidenceDigest: d.evidenceDigest, coverage: [], adjustRounds: 0, toolingRef: f.m.head };
+      const catalogue = proofCatalogue(f.m, f.calls), proof = catalogue.find(p => p.kind === 'verification'); assert.ok(proof); const a = assessment(quote, proof, { command });
+      assert.equal(completionEvidence(f.read, [a, a], catalogue).complete, !extra, quote);
+    }
+  }
+});
