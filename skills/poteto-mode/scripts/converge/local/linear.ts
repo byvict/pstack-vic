@@ -3,7 +3,8 @@ import { join } from 'node:path';
 import { array, hash, jsonHash, object, oneOf, repoName, sha, string } from '../contract.ts';
 import { writeJsonFile } from './ledger.ts';
 import { LINEAR_PREFIX, launchLinearSession, storedLinearCalls, type LinearSessionInput, type NativeCall } from './linear-session.ts';
-import { linearTarget, targetIdentity, type LinearMerge, type LinearTarget } from './linear-trust.ts';
+import type { LinearMerge } from './linear-trust.ts';
+import { linearTarget, targetIdentity, type LinearTarget } from '../linear-targets.ts';
 
 export type EffectStatus = { kind: 'planned' | 'sent' | 'withheld' } | { kind: 'confirmed'; via: 'write' | 'existing'; callId: string; readbackCallId: string; remoteId: string };
 export interface LinearEffect { key: string; target: LinearTarget; kind: 'comment' | 'complete'; tool: string; args: Record<string, unknown>; marker: string; status: EffectStatus }

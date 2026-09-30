@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { parseContract } from '../contract.ts';
 import { fixture, head, trunk } from '../fixtures/setup.ts';
 import { dossier, issueUrl } from '../fixtures/linear.ts';
-import { admitLinearMerge, linearTarget, linearTargets, targetIdentity } from './linear-trust.ts';
+import { admitLinearMerge } from './linear-trust.ts';
+import { linearTarget, linearTargets, targetIdentity } from '../linear-targets.ts';
 
 async function admitted(change: (live: ReturnType<ReturnType<typeof fixture>['read']>) => void = () => undefined) {
   const f = fixture(), live = f.read(), d = dossier();
@@ -19,6 +20,9 @@ test('explicit immutable URLs retain workspace identity and ignore issue title s
   assert.equal(linearTargets([`change\n\nPstack-Linear: ${issueUrl}\nPstack-Linear: https://linear.app/other/issue/ENG-1/test`]).length, 2);
   for (const value of ['ENG-1', 'https://linear.app/example/issue/ENG-1/test done', 'https://example.com/example/issue/ENG-1/test']) assert.throws(() => linearTarget(value));
   assert.throws(() => linearTargets([`change\n\nPstack-Linear: ${issueUrl}\n\nbody`]), /final commit trailer/);
+  for (const trailer of [` Pstack-Linear: ${issueUrl}`, `Pstack-Linear ${issueUrl}`, `Pstack-Linear=${issueUrl}`, 'Pstack-Linear:']) {
+    assert.throws(() => linearTargets([`change\n\n${trailer}`]), /final commit trailer/);
+  }
 });
 test('exact merged commit, full certified head, latest trusted status and referenced VERIFIED publication admit the explicit targets', async () => {
   const result = await admitted(); assert.equal(result.kind, 'admitted');
@@ -27,6 +31,10 @@ test('exact merged commit, full certified head, latest trusted status and refere
 test('no refs and direct pushes are no-ops without a verifier or Linear launch', async () => {
   assert.equal((await admitted(l => { l.prCommits[0].commit.message = 'change'; l.statuses = []; })).kind, 'noop');
   assert.equal((await admitted(l => { l.commitPulls = {}; })).kind, 'noop');
+});
+test('malformed immutable trailers refuse admission before any verdict or Linear lookup', async () => {
+  const result = await admitted(l => { l.prCommits[0].commit.message = 'change\n\nPstack-Linear: ENG-1'; l.statuses = []; });
+  assert.deepEqual(result, { kind: 'refused', reason: 'Invalid URL' });
 });
 for (const [name, change] of [
   ['merge mismatch', (l: ReturnType<ReturnType<typeof fixture>['read']>) => { l.mergeCommit = 'c'.repeat(40); }],

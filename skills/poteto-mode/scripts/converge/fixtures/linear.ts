@@ -1,6 +1,7 @@
 import type { Dossier } from '../contract.ts';
 import { head, trunk } from './setup.ts';
-import { linearTarget, type LinearMerge } from '../local/linear-trust.ts';
+import type { LinearMerge } from '../local/linear-trust.ts';
+import { linearTarget } from '../linear-targets.ts';
 
 export const issueUrl = 'https://linear.app/example/issue/ENG-1/test';
 export function dossier(): Dossier {

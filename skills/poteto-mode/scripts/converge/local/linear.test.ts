@@ -10,7 +10,7 @@ import { object } from '../contract.ts';
 import { writeJsonFile } from './ledger.ts';
 import { claimLinearEffect, planLinear, readLinearTargets, reconcileLinear, reconcileLinearEffects, type LinearCheckpoint } from './linear.ts';
 import { LINEAR_PREFIX, linearTrace, launchLinearSession, type NativeCall } from './linear-session.ts';
-import { linearTarget } from './linear-trust.ts';
+import { linearTarget } from '../linear-targets.ts';
 
 const root = fileURLToPath(new URL('../../../../../', import.meta.url));
 const lane = { provider: 'claude', model: 'fable', effort: 'max' };
