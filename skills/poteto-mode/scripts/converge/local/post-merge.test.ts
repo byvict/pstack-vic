@@ -2,11 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { commit, fixture, git } from '../fixtures/setup.ts';
 import { dossier, issueUrl } from '../fixtures/linear.ts';
 import { linearTarget } from '../linear-targets.ts';
 import { loadConfig } from './config.ts';
 import { writeJsonFile } from './ledger.ts';
+import { parseLinearPlan, type LinearPlan } from './linear-plan.ts';
 import { tickSweep } from './local.ts';
 import { takeLease } from './lease.ts';
 import { POST_MERGE_DEFER_HOURS, postMergeLeaseFile, postMergeLedgerFile, postMergeStateFile, redTrunkFile, type Handled, type PostMergeLedger } from './post-merge.ts';
@@ -391,6 +393,86 @@ test('a dry run prints what the pass would run and writes nothing', t => {
   assert.deepEqual(released(f), []);
 });
 const byHand = (f: F, file: string, args: string[]) => f.run('converge-local', ['post-merge', ...args, '--config', file], env(f));
+function manualLinear(f: F) {
+  const setup = trunk(f, 2, { runs: [{ name: 'release', command: 'fake-release' }], linear: true });
+  const commitSha = String(setup.commits[1]), remote = join(f.directory, 'linear-remote.json'), plan = join(f.directory, 'reviewed-plan.json');
+  linearMergedPr(f, commitSha);
+  edit(f, live => { live.trunk = commitSha; });
+  const config = JSON.parse(readFileSync(setup.file, 'utf8'));
+  config.pluginDir = fileURLToPath(new URL('../../../../../', import.meta.url));
+  writeJsonFile(setup.file, config);
+  writeFileSync(join(f.directory, 'sheet.md'), 'converge raiz: claude:fable@max\n');
+  const cli = join(f.directory, 'claude');
+  writeFileSync(cli, readFileSync(new URL('../fixtures/linear.mjs', import.meta.url))); chmodSync(cli, 0o700);
+  const state = {
+    mode: 'normal',
+    issue: { id: 'ENG-1', uuid: 'issue-uuid', url: issueUrl, description: 'Retain retry behavior. Production rollout remains pending.', statusType: 'started', documents: [], projectId: 'project-1' },
+    project: { id: 'P-ENG-1', uuid: 'project-1', description: 'Historical project plan.', resources: [] },
+    documents: [], comments: Array<{ id: string; body: string }>(), mutations: Array<Pick<LinearPlan['effects'][number], 'tool' | 'args'>>(),
+  };
+  writeJsonFile(remote, state);
+  const run = (args: string[]) => f.run('converge-local', ['post-merge', '--repo', 'Example/app', '--commit', commitSha, '--config', setup.file, ...args], { ...env(f), LINEAR_REMOTE: remote, LINEAR_ARGV: join(f.directory, 'linear-argv.json') });
+  return { ...setup, commitSha, remote, plan, run, read: (): typeof state => JSON.parse(readFileSync(remote, 'utf8')) };
+}
+test('manual CLI emits a concrete reviewed plan and applies exactly its effects without changing the artifact', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const s = manualLinear(f);
+  const dry = s.run(['--dry-run', '--plan', s.plan]);
+  assert.equal(dry.status, 0, dry.stderr);
+  const reviewed = readFileSync(s.plan, 'utf8'), plan = parseLinearPlan(JSON.parse(reviewed));
+  assert.deepEqual(plan.merge, { repo: 'Example/app', pr: 1, head: f.state.head, commit: s.commitSha });
+  assert.equal(plan.effects.length, 1);
+  assert.equal(plan.effects[0].tool, 'mcp__claude_ai_Linear__save_comment');
+  assert.equal(plan.effects[0].args.issueId, 'issue-uuid');
+  assert.match(String(plan.effects[0].args.body), new RegExp(s.commitSha));
+  assert.deepEqual([released(f), s.read().mutations, s.read().comments], [[], [], []]);
+  assert.equal(existsSync(s.ledger(s.commitSha)), false);
+  const apply = s.run(['--plan', s.plan]);
+  assert.equal(apply.status, 0, apply.stderr);
+  assert.equal(JSON.parse(apply.stdout).commits[0].outcome, 'done');
+  assert.deepEqual(s.read().mutations, plan.effects.map(({ tool, args }) => ({ tool, args })));
+  assert.equal(s.read().comments[0].body, plan.effects[0].args.body);
+  assert.equal(s.read().issue.statusType, 'started');
+  assert.equal(ledgerOf(s.ledger(s.commitSha)).checkpoint?.linear?.effects[0].status.kind, 'confirmed');
+  assert.equal(released(f).length, 1);
+  assert.equal(readFileSync(s.plan, 'utf8'), reviewed);
+});
+test('manual CLI refuses admitted Linear targets without a reviewed plan and records a visible failure', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const s = manualLinear(f), result = s.run([]);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Manual Linear apply requires.*--plan/);
+  assert.equal(JSON.parse(result.stdout).commits[0].outcome, 'failed');
+  assert.equal(ledgerOf(s.ledger(s.commitSha)).attempts[0].outcome, 'failed');
+  assert.deepEqual(s.read().mutations, []);
+});
+test('manual CLI refuses changed Linear sources, preserves the reviewed artifact, and recovers with a fresh plan', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const s = manualLinear(f);
+  const dry = s.run(['--dry-run', '--plan', s.plan]);
+  assert.equal(dry.status, 0, dry.stderr);
+  const reviewed = readFileSync(s.plan, 'utf8'), changed = s.read();
+  changed.issue.description += ' New acceptance criterion.';
+  writeJsonFile(s.remote, changed);
+  const refused = s.run(['--plan', s.plan]);
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /Linear sources changed; generate and review a new plan/);
+  assert.equal(JSON.parse(refused.stdout).commits[0].outcome, 'failed');
+  assert.equal(ledgerOf(s.ledger(s.commitSha)).attempts[0].outcome, 'failed');
+  assert.equal(readFileSync(s.plan, 'utf8'), reviewed);
+  assert.deepEqual(s.read().mutations, []);
+  const fresh = s.run(['--dry-run', '--plan', s.plan]);
+  assert.equal(fresh.status, 0, fresh.stderr);
+  const updated = readFileSync(s.plan, 'utf8');
+  assert.notEqual(parseLinearPlan(JSON.parse(updated)).sourceDigest, parseLinearPlan(JSON.parse(reviewed)).sourceDigest);
+  assert.equal(ledgerOf(s.ledger(s.commitSha)).attempts.length, 1);
+  const applied = s.run(['--plan', s.plan]);
+  assert.equal(applied.status, 0, applied.stderr);
+  assert.deepEqual(ledgerOf(s.ledger(s.commitSha)).attempts.map(a => a.outcome), ['failed', 'done']);
+  assert.equal(s.read().mutations.length, 1);
+  assert.equal(released(f).length, 1, 'the successful repository command is not repeated after refusal');
+  assert.equal(readFileSync(s.plan, 'utf8'), updated);
+});
 for (const linear of [false, true]) test(`manual --plan leaves repository commands unchanged when Linear is ${linear ? 'enabled without targets' : 'disabled'}`, t => {
   const f = fixture(); t.after(f.cleanup);
   const { commits, file, ledger } = trunk(f, 2, { runs: [{ name: 'release', command: 'fake-release' }], linear });
