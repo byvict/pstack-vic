@@ -1142,3 +1142,69 @@ Cada trabalho de escrita independente tem sua branch, worktree e dono. O pstack 
 - **Checks legados.** O portão lê os últimos checks por app e os últimos statuses por contexto. Quando compartilham um nome obrigatório, todos passam; um status sem app nunca satisfaz sozinho um vínculo de app. A leitura do Certificado mantém seu formato anterior.
 - **Leitura limitada.** Proteção clássica vem do resumo da branch e soma as regras efetivas; o token read-only de Actions não precisa de credencial de administrador. Somente a invalidação recebe `contents: write`, necessário para dequeue.
 - **Prova.** Testes cobrem identidade, política, Certificados, Holds, mudança de membros, remoção e dois PRs individualmente verdes cuja combinação falha sem conflito textual. A referência da fila registra a corrida não atômica entre validação final e merge.
+
+# 0.4.18 — Partes sem autopilot dos commits #414, #419 e #422 da Cursor (2026-09-30)
+
+Primeira aplicação de commits do remote `cursor` depois do sync de 2026-09-17 (CLI-191). Três commits, `70b2dc8` (#414), `b0b9c7a` (#419) e `12d587d` (#422), entram em três commits deste PR, na mesma ordem, cada um só com os hunks listados aqui. `b42effe` (#416) é `não aplica`: só toca `README.md` e `docs/guide/`, excluídos na fase 5. Duas decisões do Victor valem para os três: nenhum nome de modelo nem modelo padrão muda (os modelos padrão são nossos, e as skills daqui citam papéis, não modelos), e os hunks de autopilot esperam a comparação entre o Autopilot-full da Cursor e o Pré-PR/converge daqui. Por isso o ponto de sync de `UPSTREAM.md` e a proveniência em `NOTICE.md` não avançam nesta versão: os três commits ainda têm hunks pendentes. O PR que aplicar as partes de autopilot avança o ponto de sync.
+
+Legenda: **A** aplica (texto da Cursor como está), **Ad** adapta (texto da Cursor sobre o texto local, que fica em volta), **N** não aplica (hunk fica fora, com o motivo), **P** pendente (aguarda a comparação autopilot × converge; lista completa no fim desta seção).
+
+Método: `git format-patch -1 <sha> --relative=pstack` e `git apply --include=<caminho>` para os hunks que entram como estão (todos aplicaram limpos sobre a árvore 0.4.17); substituição textual com âncora única para os hunks adaptados. Os caminhos que a fase 5 tirou do port (`.cursor-plugin/plugin.json`, `README.md`, `docs/guide/`) ficam fora dos três, como o digest já pré-veredita. Todas as trocas de plataforma locais ficam: skills `run`/`verify` no lugar de `control-cli`/`control-ui`, `AskUserQuestion`, `loop` do Claude Code, lease do converge, trailers `Pstack-Author`, caminho de transcrições `~/.claude/projects/<encoded-cwd>/`.
+
+## `70b2dc8` (#414) — port skill updates and default to Opus 5.5 and Grok 4.7
+
+| Arquivo | Veredito | O que entrou / o que ficou fora |
+| --- | --- | --- |
+| `skills/blast-radius/SKILL.md` | A | três ressalvas cortadas ("Any safety fact you can't get to step 4, say so...", "If you can't prove it cheaply, mark it unproven", "Only the real ones") |
+| `skills/figure-it-out/SKILL.md` | A | "Bias toward more rigor..." e o detalhe do TSV na Phase D cortados |
+| `skills/how/references/explorer-prompt.md` | A | "Gather facts. Trace code paths..." |
+| `skills/poteto-mode/playbooks/pause-safely.md` | A | "Never stop mid-edit in a known-broken state" cortado |
+| `skills/principle-prove-it-works/SKILL.md` | A | linha **Pattern** cortada |
+| `skills/principle-sequence-verifiable-units/SKILL.md` | A | bloco **Pattern** cortado |
+| `skills/show-me-your-work/SKILL.md` | A | "This is illustration only. Don't copy these rows..." e "One row is one decision or checkpoint" cortados |
+| `skills/show-me-your-work/scripts/log.sh` | A | bug real: `[ ! -f "$logfile" ]` vira `[ ! -s "$logfile" ]` e o cabeçalho é escrito com `>>`. Num disco de rede o teste podia falhar num log que existe, e o `>` apagava as linhas; agora o pior caso é um cabeçalho repetido |
+| `skills/tdd/SKILL.md` | A | passo 7 ("Run nearby validation") cortado |
+| `skills/technical-writing/SKILL.md` | A | seção "Review checklist" cortada |
+| `skills/unslop/SKILL.md` | A | passo 3 ("Self-audit") cortado |
+| `playbooks/feature.md`, passo 2 | A | "Skipping stays as `architect skipped: <reason>`. Do not fold the design decision silently into implementation." cortado |
+| `skills/poteto-mode/SKILL.md`, gatilho do `AskUserQuestion` | Ad | só as frases de autonomia total ("Under a full-autonomy grant, decide a call..." até "...still need the operator.") entram no fim da linha local, que segue citando `AskUserQuestion` |
+| `playbooks/bug-fix.md`, passo 1 | Ad | reescrita da Cursor ("even when a debug or instrumentation protocol says to ask the user to reproduce") mantendo "driver skill (`run` for CLIs/TUIs, `verify` for UIs)"; o `loop` do Claude Code no passo 2 não muda |
+| `playbooks/shipping.md`, passo 3 | Ad | a regra do patch-id com ruído de build entra (patches que diferem só em teste, docs ou lint: builds duas vezes no SHA do veredito e uma no head atual, diferença é ruído se aparece nas duas builds do veredito ou é SHA embutido; lane sem saída de build reroda); o passo 1 local (worktrees, `run`/`verify`) já estava certo e o passo 4 local (lease do converge) não muda |
+| `skills/swarm/SKILL.md` | Ad | passo 5 (o brief nomeia os SHAs exatos e, numa medição, o método; o worker registra os dois), parágrafo de relatório da Phase B ("lists every issue it can prove, not only the first") e regra de descarte da Phase C (resultado sem SHAs e método é descartado, o worker reroda uma vez, segunda falta vira gap); o passo 4 local, que cita o papel `swarm workers`, não muda |
+| `skills/architect/SKILL.md`, `arena/SKILL.md`, `how/SKILL.md`, `interrogate/SKILL.md`, `reflect/SKILL.md`, `setup-pstack/SKILL.md`, `why/SKILL.md`, `playbooks/hillclimb.md`, `perf-issue.md`, `scripts/check-plan.mjs`; as partes de modelo de `poteto-mode/SKILL.md` (parágrafo "Defaults for every `Task` call"), `feature.md` passo 4, `bug-fix.md` passo 3, `refactoring.md` passo 5 e `swarm` passo 4 | N | só trocam nome de modelo (Fable → Opus 5.5, Grok 4.6 → 4.7, painéis de quatro para três lanes). As skills daqui citam papéis e os defaults vivem em `model-matrix.json`, que não muda: decisão do Victor em CLI-191, os modelos padrão são nossos |
+| `playbooks/autopilot-full.md`, `autopilot-stack.md`, `multi-phase-plan.md`, e a linha "Autopilot-full." da lista de playbooks em `poteto-mode/SKILL.md` | P | aguarda a comparação autopilot × converge |
+
+## `b0b9c7a` (#419) — cut 19 more instructions Opus 5.5 does not need
+
+| Arquivo | Veredito | O que entrou / o que ficou fora |
+| --- | --- | --- |
+| `skills/figure-it-out/SKILL.md`, `interrogate/references/code-quality-review.md`, `reviewer-prompt.md`, `rubric.md`, `principle-guard-the-context-window`, `principle-never-block-on-the-human`, `principle-outcome-oriented-execution`, `principle-prove-it-works`, `reflect/references/divergent-reviewer.md`, `judgment-reviewer.md`, `tooling-reviewer.md`, `tdd/SKILL.md` | A | como está |
+| `playbooks/bug-fix.md` | Ad | o passo 3 perde "Review the diff." e mantém a frase do trailer `Pstack-Author`; a linha "Investigation fans out `how` + `why` as parallel subagents." sai |
+| `playbooks/feature.md`, passo 4 | Ad | perde "Review its diff yourself." e as frases "You can spawn a subagent even though you are one." e "\"The app is small\" and \"a subagent cannot spawn one\" are both wrong."; a frase do trailer ("check the trailer when you review the diff") fica |
+| `playbooks/refactoring.md` | Ad | perde "Review the diff yourself." (passo 5) e "Own the verification yourself. Do not trust a delegate's \"looks good\" summary." (passo 6); o resto das linhas locais (papel `feature, refactoring`, `run`/`verify`) fica |
+
+Nada deste commit fica pendente.
+
+## `12d587d` (#422) — resolve rule conflicts and read the model rule the same way
+
+| Arquivo | Veredito | O que entrou / o que ficou fora |
+| --- | --- | --- |
+| `skills/show-me-your-work/SKILL.md` | Ad | o parágrafo novo da linha `start` por run (uma run é uma conversa; a primeira linha de uma run num log que já tem linhas tem fase `start`, com a faixa de `ts` das linhas alheias e o id da run na evidência) e a seção "Audit the log against the transcript" nova (só as faixas desta run; nunca edita nem apaga linha; corrige com linha que substitui); o caminho local das transcrições fica. Fora o frontmatter, o arquivo é igual ao da Cursor em `12d587d` salvo essa linha |
+| `skills/architect/SKILL.md`, `arena/SKILL.md`, `how/SKILL.md`, `interrogate/SKILL.md`, `reflect/SKILL.md`, `swarm/SKILL.md`, `why/SKILL.md`, `poteto-mode/SKILL.md`, `scripts/check-plan.mjs`, `setup-pstack/SKILL.md`, e a parte de modelo de `playbooks/multi-phase-plan.md` (`<swarm workers model>`) | N | aqui a leitura do papel é central em `provider-dispatch.md`, e `inherit-parent`/`auto` já estão tratados lá; `check-plan.mjs` e `multi-phase-plan.md` já dizem "the configured `swarm workers` role". A regra nova "modelo recusado → outro da mesma família" contraria o desenho: o `/setup-pstack` testa cada família antes de gravar e o runner nunca troca de modelo. O papel `how critics` que a Cursor manda apagar nunca existiu nas planilhas daqui, e o script para num papel desconhecido |
+| `playbooks/autopilot-full.md`, `babysit.md`, `opening-a-pr.md` | P | aguarda a comparação autopilot × converge (os três hunks tratam do dono de um PR no Autopilot-full cuidando do próprio babysit e do próprio rebase) |
+
+## Pendente: aguarda a comparação autopilot × converge
+
+Hunks que ficaram de fora dos três commits e que o PR das partes de autopilot decide, para nada se perder:
+
+- `70b2dc8` (#414): `skills/poteto-mode/playbooks/autopilot-full.md`, `autopilot-stack.md`, `multi-phase-plan.md` (rodadas de verificação a cada push, `children.tsv`, regra de rebase, CI verde depois do último rebase, duas ou mais lanes de auditoria, texto do tick), e a linha "Autopilot-full." da lista de playbooks em `skills/poteto-mode/SKILL.md` ("each PR" no lugar de "each merge-ready head").
+- `b0b9c7a` (#419): nada.
+- `12d587d` (#422): `skills/poteto-mode/playbooks/autopilot-full.md` (o dono publica o próprio rebase com `--force-with-lease`; num repo com converge, pega o lease antes), `babysit.md` (o dono de um PR no Autopilot-full pode cuidar do próprio PR) e `opening-a-pr.md` (o subagente dono de um PR no Autopilot-full ou Autopilot-stack fica no babysit em vez de voltar ao pai).
+
+Esse PR avança o ponto de sync em `UPSTREAM.md` para `12d587d` e a linha de proveniência da Cursor em `NOTICE.md`.
+
+## Verificação
+
+- `npm test`: 986 testes, 0 falhas, os mesmos da 0.4.17. Nenhum teste fixava texto cortado (o único anchor de prosa em testes, `prompts.test.ts`, lê `pre-pr-prompts.md`, que não muda), então nenhum teste foi ajustado.
+- `npm run test:bun` e `npm run matrix:check` limpos.
+- Os hunks "como está" aplicaram sem fuzz por `git apply --include` sobre 0.4.17; `skills/show-me-your-work/SKILL.md` depois do terceiro commit difere do arquivo da Cursor em `12d587d` só no frontmatter (fase 4) e na linha do caminho das transcrições.
