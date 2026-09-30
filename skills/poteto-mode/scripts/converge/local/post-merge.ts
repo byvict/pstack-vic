@@ -129,7 +129,7 @@ function failureComment(ledger: PostMergeLedger, file: string): string {
 function runDirectory(repo: string, commit: string, n: number): string {
   return join(tmpdir(), 'converge-local', 'post-merge', `${slug(repo)}-${commit.slice(0, 8)}-${n}-${Math.floor(Date.now() / 1000)}`);
 }
-/** One attempt on a commit: readiness, its PR, a detached worktree of it, the runs, the ledger, and for a failure one comment on the merged PR and one notification. A checkout that fails records nothing: the machine, not the commit, is at fault, and the next pass tries again. */
+/** A checkout that fails records nothing: the machine, not the commit, is at fault, and the next pass tries again. */
 async function attempt(p: Pass, commit: string, ledger: PostMergeLedger | null): Promise<Handled> {
   const file = postMergeLedgerFile(p.config.stateDirectory, p.repo.repo, commit);
   const waiting = await notReady(p.t, p.postMerge, commit);

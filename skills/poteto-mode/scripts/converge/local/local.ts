@@ -25,7 +25,7 @@ function message(error: unknown): string { return error instanceof Error ? error
 function holdComment(ledger: Ledger, reason: string): string {
   return [`The local converge daemon stopped on head ${ledger.head}: ${reason}.`, '', 'Attempts:', ...ledger.attempts.map(a => `- ${a.n}. ${a.kind} ${a.outcome}: ${a.reason} (${a.runDirectory})`), '', 'Remove the hold label to let it try again.'].join('\n');
 }
-/** Label, then ledger, then comment, then notification. Once the label is on, classify skips the PR, so a failed write or comment never holds it twice; a failed comment or notification is reported and the hold stands. */
+/** Once the label is on, classify skips the PR, so a failed ledger write, comment or notification never holds it twice; each is reported and the hold stands. */
 async function hold(t: Trusted, file: string, ledger: Ledger, reason: string, now: number, report: TickReport): Promise<void> {
   await api(`repos/${t.repo}/issues/${ledger.pr}/labels`, { labels: [t.config.holdLabels[0]] });
   const held = markHeld(ledger, now);
