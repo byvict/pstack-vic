@@ -24,7 +24,7 @@ No shell, `claude plugin marketplace add byvict/pstack-vic` e `claude plugin ins
 ### Codex
 
 ```shell
-codex plugin marketplace add byvict/pstack-vic --ref v0.4.12
+codex plugin marketplace add byvict/pstack-vic --ref v0.4.13
 codex plugin add pstack@pstack-vic
 ```
 
@@ -56,7 +56,7 @@ codex plugin marketplace add ~/Dev/Skills/pstack-vic
 codex plugin add pstack@pstack-vic
 ```
 
-Rode `/setup-pstack` uma vez em cada pai para escrever o sheet de modelos (`~/.claude/pstack-models.md` e `~/.codex/pstack-models.md`). Depois, `/poteto-mode` é o ponto de entrada para qualquer tarefa que peça rigor.
+Rode `/setup-pstack` uma vez em cada pai para escrever o sheet de modelos (`~/.claude/pstack-models.md` e `~/.codex/pstack-models.md`). O último passo dele confere a [autorização permanente](#autorização-permanente) do Pré-PR. Depois, `/poteto-mode` é o ponto de entrada para qualquer tarefa que peça rigor.
 
 ### Publicar uma versão
 
@@ -75,7 +75,7 @@ A versão do pstack-vic é independente das versões dos upstreams ([`UPSTREAM.m
 │   ├── poteto-mode/agents/           # openai.yaml: no Codex, poteto-mode só por invocação explícita
 │   ├── poteto-mode/references/       # provider-dispatch.md (rota e papéis), codex-tools.md (mapa de tools), bugbot-triage.md
 │   ├── poteto-mode/scripts/          # runner externo (Node 24, com probe-lane.ts, a sonda de uma lane), watch-pr, orch, check-plan.mjs, worktree-audit.sh
-│   ├── setup-pstack/scripts/         # setup-pstack.ts: estado, plano, probe, atestado e escrita do sheet (Node 24)
+│   ├── setup-pstack/scripts/         # setup-pstack.ts: estado, plano, probe, atestado e escrita do sheet (Node 24); authorize.ts: a autorização permanente do Pré-PR
 │   └── update-clis/                  # scripts/update-clis.ts (check, notes, install, probe) e references/cli-touchpoints.json
 ├── agents/                           # poteto-agent, comment-sicko e as lanes nativas pstack-<família>-<effort> geradas da matriz
 ├── assets/                           # logo
@@ -188,6 +188,19 @@ O Varredor também roda o Pós-merge. Quando o `.cursor/converge.json` da `main`
 
 As notificações do Daemon aparecem na Central de Notificações deste Mac, com o título `Converge local` e o repositório embaixo, pelo `osascript`, que já vem no macOS. Saem uma vez por falha registrada do Pós-merge e uma vez por Hold, depois do registro e do comentário, e cada uma tem no máximo 10 segundos, então nunca atrasa o tick. O erro que se repete a cada tick não notifica de novo. Um commit adiado (saída 75) só notifica quando vira falha, depois de 24 horas. Os erros que se repetem sem registro de falha (CI de push vermelho, checkout que falha, mais de 50 commits acumulados, ponta que não descende, arquivo ilegível) ficam só no stderr, no `status` e no log, porque não há registro onde marcar que já avisaram. O macOS mostra o remetente como Script Editor, o app dono do `osascript`. Para desligar, ou para escolher o estilo Alertas, que fica na tela até você fechar, use Ajustes do Sistema > Notificações > Script Editor; a configuração do Daemon não tem campo para isso. Se a notificação falhar (`osascript` fora do `PATH`, erro, 10 segundos estourados), o tick reporta `notification failed` e segue; a falha ou o Hold continuam registrados do mesmo jeito. Fora do Mac, a notificação espera na Central; um Foco a segura até acabar.
 
+### Autorização permanente
+
+O pstack mergeia um PR que outra Família de modelo revisou e que nenhum humano aprovou. O modo automático do Claude Code bloqueia isso de fábrica (regras "Merge Without Review" e "Self-Approval"), e o verificador dele lê as mensagens do usuário e os comandos, não as perguntas do agente: um "ok" a uma pergunta não autoriza nada, e o Pré-PR parava no meio. O operador grava a decisão uma vez, numa entrada de `autoMode.allow` no `~/.claude/settings.json` dele. O Claude Code não lê essa lista de nenhum repositório nem de plugin, então o plugin não a entrega.
+
+```shell
+AUTHORIZE=~/.claude/plugins/cache/pstack-vic/pstack/<versão>/skills/setup-pstack/scripts/authorize.ts
+node $AUTHORIZE check --parent claude   # 0 autorizado, 1 não; o JSON traz o motivo, a entrada e o comando
+node $AUTHORIZE apply --parent claude   # num terminal: mostra a entrada, pede um "yes" digitado e grava
+node $AUTHORIZE check --parent codex    # 0 quando approval_policy = "never" no topo do ~/.codex/config.toml
+```
+
+A entrada vale em qualquer repositório: certificar a branch, publicar o `verdict`, armar e mergear um PR sem aprovação humana, lançar as lanes do pstack. Continuam bloqueados `--admin` e qualquer outro desvio de check obrigatório, mudança em proteção de branch e tudo o que as outras regras protegem (arquivos e branches destruídos, produção, segredos, dado que sai). O `apply` recusa sem terminal, porque a autorização é um ato do operador e não do agente. Ele mantém as regras de fábrica (`"$defaults"`) e todas as outras configurações, e copia o arquivo anterior para `settings.json.before-pstack-authorization`. Para retirar a autorização, apague a entrada. O Pré-PR roda o `check` antes da Posse; sem a autorização, para ali e pede uma vez. O Daemon não precisa dela: lança a Raiz sem etapa de aprovação.
+
 ## Skills
 
 Nomes curtos; no Claude Code cada uma aparece com o prefixo do plugin (`/pstack:poteto-mode`) e no Codex como `pstack:poteto-mode`.
@@ -213,7 +226,7 @@ Nomes curtos; no Claude Code cada uma aparece com o prefixo do plugin (`/pstack:
 | `blast-radius` | o que uma mudança pequena pode quebrar fora do diff, provado rodando código |
 | `recall` | reconstruir o contexto recente de um tema a partir do histórico e do registro compartilhado |
 | `update-clis` | atualizar `claude`, `codex` e `grok` só quando o plugin continua funcionando na versão nova: notas contra os pontos de contato, instalação, sonda real, volta e contraprova; o que não passa fica segurado numa issue do Linear |
-| `setup-pstack` | escolher modelo e effort por papel (a mesma família pode rodar em efforts diferentes em papéis diferentes); probe de cada par família+effort e escrita do sheet pelo `scripts/setup-pstack.ts` (rerun byte-idêntico, nada escrito se um probe falha) |
+| `setup-pstack` | escolher modelo e effort por papel (a mesma família pode rodar em efforts diferentes em papéis diferentes); probe de cada par família+effort e escrita do sheet pelo `scripts/setup-pstack.ts` (rerun byte-idêntico, nada escrito se um probe falha); o passo 10 confere a autorização permanente do Pré-PR pelo `scripts/authorize.ts` |
 | `unslop` | limpar marcas de IA de qualquer prosa |
 | `no-comments` | tirar comentários antes da revisão via o subagent `comment-sicko` |
 | `create-verification-skill` | gerar uma skill de verificação local ao projeto com mapa de features |
