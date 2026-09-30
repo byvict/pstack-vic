@@ -10,6 +10,7 @@ import { object } from '../contract.ts';
 import { writeJsonFile } from './ledger.ts';
 import { claimLinearEffect, planLinear, readLinearTargets, reconcileLinear, reconcileLinearEffects, type LinearCheckpoint } from './linear.ts';
 import { LINEAR_PREFIX, linearTrace, launchLinearSession, type NativeCall } from './linear-session.ts';
+import { proofCatalogue } from './linear-proof.ts';
 import { linearTarget } from '../linear-targets.ts';
 
 const root = fileURLToPath(new URL('../../../../../', import.meta.url));
@@ -27,6 +28,11 @@ function setup(t: { after(fn: () => void): void }) {
 function call(id: string, name: string, args: Record<string, unknown>, result: unknown): NativeCall { return { id, tool: LINEAR_PREFIX + name, args, result, error: false, line: 1, session: 'native-fixture' }; }
 function calls(): NativeCall[] {
   return [call('issue', 'get_issue', { id: issueUrl }, { id: 'ENG-1', url: issueUrl, description: 'Run the command and verify its output.', statusType: 'started', documents: [] }), call('comments', 'list_comments', { issueId: 'ENG-1' }, { comments: [], hasNextPage: false })];
+}
+function metadataAssessment(state: ReturnType<ReturnType<typeof setup>['read']>) {
+  const proof = proofCatalogue(merge(), [call('observed', 'get_issue', {}, state.issue)]).find(p => p.kind === 'structural' && p.field === 'labels');
+  assert.ok(proof);
+  return { targets: [{ url: issueUrl, coverage: 'complete', references: [{ key: 'https://linear.app/example/document/plan-doc-1', required: false, reason: 'Historical project plan unrelated to the requested labels.' }], obligations: [{ source: 'ENG-1', quote: state.issue.description, kind: 'acceptance', requiredClass: 'structural', status: 'met', outcome: { subject: issueUrl, field: 'labels', operator: 'includes', value: 'pstack' }, proofIds: [proof.id], relevance: 'The explicitly required pstack label is present on ENG-1.' }] }] };
 }
 test('native parser pairs direct calls and results; model JSON and shell tool output cannot forge MCP usage', () => {
   const tool = { type: 'tool_use', id: 'native-1', name: LINEAR_PREFIX + 'get_issue', input: { id: issueUrl } };
@@ -103,34 +109,34 @@ test('concurrent same-effect permission processes grant exactly one write, and u
   assert.throws(() => claimLinearEffect(f.ledger, 'Bash', {}, 'read'), /native Linear reads/);
 });
 test('a retry never reissues a sent completion after live acceptance or rollout scope changes', async t => {
-  const f = setup(t), s = f.read(); s.issue.description = 'Read this issue fully.';
-  s.assessment = { targets: [{ url: issueUrl, coverage: 'complete', obligations: [{ source: 'ENG-1', quote: s.issue.description, kind: 'acceptance', status: 'met', evidence: [{ reference: 'native:call-1', quote: '"tool":"mcp__claude_ai_Linear__get_issue"' }] }] }] }; writeJsonFile(f.remote, s);
+  const f = setup(t), s = f.read(); s.issue.description = 'ENG-1 labels must include pstack.'; s.issue.labels = ['pstack'];
+  s.assessment = metadataAssessment(s); writeJsonFile(f.remote, s);
   const original = await reconcileLinear(f.input(true)); assert.deepEqual(original.effects.map(e => e.kind), ['comment', 'complete']);
   const completion = original.effects[1]; completion.status = { kind: 'sent' };
   const checkpoint: LinearCheckpoint = { repo: f.m.repo, commit: f.m.commit, head: f.m.head, effects: original.effects, logPaths: original.logs }; f.save(checkpoint);
-  s.issue.description += ' Roll out the new release.'; s.assessment.targets[0].obligations.push({ source: 'ENG-1', quote: 'Roll out the new release.', kind: 'rollout', status: 'unknown', evidence: [] }); writeJsonFile(f.remote, s);
+  s.issue.description += ' Roll out the new release.'; s.assessment.targets[0].obligations.push({ source: 'ENG-1', quote: 'Roll out the new release.', kind: 'rollout', requiredClass: 'structural', status: 'unknown', outcome: { subject: issueUrl, field: 'labels', operator: 'includes', value: 'pstack' }, proofIds: [], relevance: 'Delivery has not been observed.' }); writeJsonFile(f.remote, s);
   const retry = await reconcileLinear(f.input(false, checkpoint)); assert.equal(retry.kind, 'done', retry.reason);
   assert.deepEqual(retry.effects.map(e => [e.kind, e.status.kind]), [['comment', 'confirmed'], ['complete', 'withheld']]); assert.equal(f.read().issue.statusType, 'started');
   assert.equal(f.read().mutations.length, 1); assert.match(f.read().comments[0].body, /Issue stays open/);
 });
 test('independent cited proof for every recorded obligation permits a native completion with readback', async t => {
-  const f = setup(t), s = f.read(); s.issue.description = 'Read this issue fully.';
-  s.assessment = { targets: [{ url: issueUrl, coverage: 'complete', obligations: [{ source: 'ENG-1', quote: s.issue.description, kind: 'acceptance', status: 'met', evidence: [{ reference: 'native:call-1', quote: '"tool":"mcp__claude_ai_Linear__get_issue"' }] }] }] }; writeJsonFile(f.remote, s);
+  const f = setup(t), s = f.read(); s.issue.description = 'ENG-1 labels must include pstack.'; s.issue.labels = ['pstack'];
+  s.assessment = metadataAssessment(s); writeJsonFile(f.remote, s);
   const result = await reconcileLinear(f.input()); assert.equal(result.kind, 'done', result.reason);
   assert.equal(f.read().issue.statusType, 'completed'); assert.equal(f.read().mutations.length, 2); assert.ok(result.effects.every(e => e.status.kind === 'confirmed'));
 });
 test('late scoped rollout proof adds the missing completion effect while keeping the original comment and dispatch history', async t => {
-  const f = setup(t), s = f.read(); s.issue.description = 'Verify full native issue coverage during rollout.';
-  s.assessment = { targets: [{ url: issueUrl, coverage: 'complete', obligations: [{ source: 'ENG-1', quote: s.issue.description, kind: 'rollout', status: 'unknown', evidence: [] }] }] }; writeJsonFile(f.remote, s);
+  const f = setup(t), s = f.read(); s.issue.description = 'ENG-1 labels must include pstack.'; s.issue.labels = ['pstack'];
+  s.assessment = metadataAssessment(s); s.assessment.targets[0].obligations[0].status = 'unknown'; writeJsonFile(f.remote, s);
   const first = await reconcileLinear(f.input()); assert.equal(first.kind, 'done'); assert.deepEqual(first.effects.map(e => e.kind), ['comment']);
   const checkpoint = JSON.parse(readFileSync(f.ledger, 'utf8')).checkpoint.linear, live = f.read();
-  live.assessment.targets[0].obligations[0].status = 'met'; live.assessment.targets[0].obligations[0].evidence = [{ reference: 'native:call-1', quote: '"tool":"mcp__claude_ai_Linear__get_issue"' }]; writeJsonFile(f.remote, live);
+  live.assessment = metadataAssessment(live); writeJsonFile(f.remote, live);
   const retry = await reconcileLinear(f.input(false, checkpoint)); assert.equal(retry.kind, 'done', retry.reason);
   assert.deepEqual(retry.effects.map(e => e.kind), ['comment', 'complete']); assert.equal(f.read().comments.length, 1); assert.equal(f.read().issue.statusType, 'completed');
 });
 test('a reopened issue requires current proof again, and a deleted confirmed comment defers without another create', async t => {
-  const f = setup(t), s = f.read(); s.issue.description = 'Read this issue fully.';
-  s.assessment = { targets: [{ url: issueUrl, coverage: 'complete', obligations: [{ source: 'ENG-1', quote: s.issue.description, kind: 'acceptance', status: 'met', evidence: [{ reference: 'native:call-1', quote: '"tool":"mcp__claude_ai_Linear__get_issue"' }] }] }] }; writeJsonFile(f.remote, s);
+  const f = setup(t), s = f.read(); s.issue.description = 'ENG-1 labels must include pstack.'; s.issue.labels = ['pstack'];
+  s.assessment = metadataAssessment(s); writeJsonFile(f.remote, s);
   assert.equal((await reconcileLinear(f.input())).kind, 'done');
   let checkpoint = JSON.parse(readFileSync(f.ledger, 'utf8')).checkpoint.linear, live = f.read(); live.issue.statusType = 'started'; live.assessment.targets[0].coverage = 'unknown'; writeJsonFile(f.remote, live);
   const reopened = await reconcileLinear(f.input(false, checkpoint)); assert.equal(reopened.kind, 'done'); assert.equal(reopened.effects[1].status.kind, 'withheld'); assert.equal(f.read().issue.statusType, 'started'); assert.equal(f.read().mutations.length, 2);
