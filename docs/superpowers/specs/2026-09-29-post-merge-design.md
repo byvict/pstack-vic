@@ -1,6 +1,6 @@
 # Pós-merge: o Varredor roda o que vem depois do merge (desenho, 2026-09-29)
 
-Desenho aprovado por Victor em 2026-09-29 ("ok, gera o chip que vai implantar"), a partir do relatório `~/Dev/Skills/pstack-vic-runs/2026-09-29-pos-merge/relatorio.md` e das evidências ao lado dele. Vocabulário em [CONTEXT.md](../../../CONTEXT.md). Estende o daemon de [2026-09-28-converge-local-design.md](2026-09-28-converge-local-design.md) e o [ADR 0003](../../adr/0003-converge-sem-nuvem.md); a referência normativa continua sendo a seção **Local daemon** de [`converge-contract.md`](../../../skills/poteto-mode/references/converge-contract.md). O [plano](../plans/2026-09-29-post-merge-0.4.8.md) registra na seção Rulings cada ajuste que o código obrigou.
+Desenho aprovado por Victor em 2026-09-29 ("ok, gera o chip que vai implantar"), a partir do relatório `~/Dev/Skills/pstack-vic-runs/2026-09-29-pos-merge/relatorio.md` e das evidências ao lado dele. Vocabulário em [CONTEXT.md](../../../CONTEXT.md). Estende o daemon de [2026-09-28-converge-local-design.md](2026-09-28-converge-local-design.md) e o [ADR 0003](../../adr/0003-converge-sem-nuvem.md); a referência normativa continua sendo a seção **Local daemon** de [`converge-contract.md`](../../../skills/poteto-mode/references/converge-contract.md). O [plano](../plans/2026-09-29-post-merge-0.4.10.md) registra na seção Rulings cada ajuste que o código obrigou.
 
 ## Objetivo
 
@@ -14,7 +14,7 @@ Dar dono ao trabalho que vem depois do merge. Hoje a sessão que abre o PR termi
 | Dono do trabalho pós-merge no Mac | **O Varredor**, no tick que já existe, sem modelo. |
 | Onde se declara | **Bloco opcional `postMerge` no `.cursor/converge.json` da `main`**, com a gramática de comando do `prePr.runs`. |
 | Trabalho que roda no GitHub | Continua em workflow de push na `main`; não passa pelo pstack. |
-| Primeiro caso | O script de release do pstack-vic, no mesmo PR (0.4.7 no pedido; sai como 0.4.8, ver Entrega). |
+| Primeiro caso | O script de release do pstack-vic, no mesmo PR (0.4.7 no pedido; sai como 0.4.10, ver Entrega). |
 | Prova real | Na release seguinte a esta. Esta ainda é tagueada e instalada à mão depois do merge. |
 | Descartado | Deixar como está; Raiz com modelo a cada merge (20 a 40 min de modelo para três comandos); runner self-hosted do GitHub no Mac (desaconselhado em repositório público, e seria um segundo daemon). |
 
@@ -118,7 +118,7 @@ O Daemon roda no Mac, com permissão total, os comandos que o contrato da `main`
 
 ## Entrega
 
-Um PR, certificado pelo Pré-PR com o plugin instalado. O pedido dizia 0.4.7, mas o #52 saiu como 0.4.7 enquanto este desenho era escrito; as sessões combinaram que quem mergeia depois refaz o rebase e renumera, então este PR leva a versão da `main` mais um, 0.4.8, e renumera se outro PR entrar antes (R94 no plano). Depois do merge, esta versão ainda é tagueada, instalada nos dois pais e recarregada no launchd à mão, uma vez; o primeiro tick dela grava a ponta da `main` e não roda nada. A release seguinte é a primeira que o Varredor faz sozinho. A 0.4.7 (#52) foi mergeada sem tag.
+Um PR, certificado pelo Pré-PR com o plugin instalado. O pedido dizia 0.4.7, mas o #52 saiu como 0.4.7 e o #53 como 0.4.9 enquanto este PR era feito, e a 0.4.8 fica reservada para o script `converge-certify certify`; as sessões combinaram que quem mergeia depois refaz o rebase e renumera, então este PR sai como 0.4.10 (R94 no plano). Depois do merge, esta versão ainda é tagueada, instalada nos dois pais e recarregada no launchd à mão, uma vez; o primeiro tick dela grava a ponta da `main` e não roda nada. A release seguinte é a primeira que o Varredor faz sozinho. A 0.4.7 (#52) foi mergeada sem tag.
 
 ## Fora de escopo
 
