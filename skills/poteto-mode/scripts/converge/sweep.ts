@@ -2,7 +2,9 @@ import { parseArgs } from 'node:util';
 import { integer, object, repoName, sha, string } from './contract.ts';
 import { api, pages, principal, pull, RequestError, timedChecks, trusted, verdictStatus, type Pull, type Trusted } from './github.ts';
 import { verdictGate, type Gate } from './gate.ts';
-import { arm, armCommand, disarm, passing, requiredChecks, MERGES_AT_ONCE } from './arm.ts';
+import { arm, armCommand, disarm, MERGES_AT_ONCE } from './arm.ts';
+import { passing, requiredChecks } from './protection.ts';
+import { queueState } from './queue.ts';
 
 export interface Swept { pr: number; head: string; outcome: 'armed' | 'disarmed' | 'merged' | 'dry-run' | 'skipped' | 'refused'; reason: string }
 /** GitHub merged 20 armed PRs 5 to 90 seconds after their last required check passed, and left one open for 18 minutes, green and `clean`, until a session read it (pstack-vic#59). Past this many minutes the merge was missed, not slow. */
@@ -39,7 +41,7 @@ async function observedDisarm(repo: string, pr: number, dryRun: boolean): Promis
   catch (error) { if (!(error instanceof RequestError)) throw error; }
   const after = await pull(repo, pr);
   if (after.state !== 'open') return 'closed';
-  if (after.autoMerge) return 'still armed';
+  if (after.autoMerge || (await queueState(repo, pr)).kind === 'queued') return 'still armed';
   return ran === false ? 'already off' : 'disarmed';
 }
 /** A trunk contract that does not load, for any reason, leaves no policy anyone can check an armed PR against, so the sweep fails safe and disarms. */
@@ -52,7 +54,7 @@ async function contract(repo: string, configPath?: string): Promise<Trusted | { 
 }
 async function withoutContract(repo: string, pr: number, failure: string, dryRun: boolean): Promise<Swept> {
   const p = await pull(repo, pr);
-  if (!p.autoMerge) return { pr, head: p.head, outcome: 'refused', reason: failure };
+  if (!p.autoMerge && (await queueState(repo, pr)).kind !== 'queued') return { pr, head: p.head, outcome: 'refused', reason: failure };
   return { pr, head: p.head, outcome: 'refused', reason: failure + ', ' + disarmed[await observedDisarm(repo, pr, dryRun)] };
 }
 async function judge(repo: string, pr: number, author: number, options: { configPath?: string; dryRun: boolean }): Promise<Swept> {
@@ -68,16 +70,18 @@ async function decideOne(t: Trusted, p: Pull, author: number, options: { configP
   const result = (outcome: Swept['outcome'], reason: string): Swept => ({ pr, head, outcome, reason });
   if (p.state !== 'open') return result('skipped', 'PR is no longer open');
   if (p.base !== t.config.trunk) return result('skipped', 'base is not trunk');
+  const queued = (await queueState(t.repo, pr)).kind === 'queued';
   const held = p.labels.some(label => t.config.holdLabels.includes(label));
-  if (held && p.autoMerge) {
+  if (held && (p.autoMerge || queued)) {
     const done = await observedDisarm(t.repo, pr, options.dryRun);
     const outcome = ({ 'would disarm': 'dry-run', disarmed: 'disarmed', 'already off': 'skipped', closed: 'refused', 'still armed': 'refused' } as const)[done];
     return result(outcome, done === 'disarmed' ? 'hold label' : 'hold label, ' + disarmed[done]);
   }
   if (held) return result('skipped', 'hold label');
-  if (p.autoMerge) {
+  if (p.autoMerge || queued) {
     const gate = await verdictGate(t, pr, head, author).catch((error: unknown): Gate => ({ kind: 'refused', reason: error instanceof Error ? error.message : 'Verdict gate failed' }));
     if (gate.kind !== 'certified') return result('refused', gate.reason + ', ' + disarmed[await observedDisarm(t.repo, pr, options.dryRun)]);
+    if (queued) return result('skipped', 'merge queue owns this candidate');
     const since = await stalledSince(t, p);
     if (since === null) return result('skipped', 'auto-merge already pending');
     const done = await unstick(t, p, since, options.dryRun);

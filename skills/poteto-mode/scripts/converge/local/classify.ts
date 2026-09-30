@@ -1,6 +1,7 @@
 import { checks, participants, verdictStatus, type Pull, type Trusted } from '../github.ts';
 import { verdictGate } from '../gate.ts';
-import { passing, requiredChecks, unfinished } from '../arm.ts';
+import { passing, requiredChecks, unfinished } from '../protection.ts';
+import { queueRetry, queueState } from '../queue.ts';
 import type { WorkKind } from './ledger.ts';
 import { ARMED_STALL_HOURS, REFUSAL_STALL_HOURS } from './stall.ts';
 
@@ -51,6 +52,12 @@ export async function classify(t: Trusted, p: Pull, author: number, options: Cla
     if (gate.dossier.round.execution !== 'pre-pr') return skipped('verdict from the retired cloud execution');
     // A stack child's conflict is with its parent branch, which the stack's owner resolves.
     if (p.base === t.config.trunk && p.mergeable === false) return pending('recertify', 'PR conflicts with trunk');
+    if (p.base === t.config.trunk) {
+      const queue = await queueState(t.repo, p.number);
+      const retry = queueRetry(queue, gate);
+      if (retry) return pending(queue.kind === 'removed' && queue.reason === 'failed_checks' ? 'repair' : 'recertify', retry);
+      if (queue.kind === 'queued') return queue.state === 'UNMERGEABLE' ? pending('repair', `Merge queue candidate ${queue.head ?? 'unavailable'} is UNMERGEABLE`) : { kind: 'idle', ...base, reason: `merge queue owns candidate ${queue.head ?? 'building'} (${queue.state})` };
+    }
     const required = await requiredChecks(t);
     const observed = await checks(t.repo, p.head);
     for (const c of required) {

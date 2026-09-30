@@ -1,0 +1,40 @@
+name: pstack merge queue
+description: Validate the exact native merge candidate, or dequeue a PR whose live certificate or holds refuse it.
+inputs:
+  mode:
+    description: candidate, verdict, hold, or invalidate
+    required: true
+  publisher-id:
+    description: Trusted certificate publisher's numeric GitHub account id, pinned in the protected workflow.
+    required: true
+  config:
+    description: Contract path on the protected default branch.
+    default: .cursor/converge.json
+outputs:
+  base-sha:
+    description: Current trunk at the root of this candidate's live queue prefix.
+    value: ${{ steps.validate.outputs.base-sha }}
+  head-sha:
+    description: Exact merge group head.
+    value: ${{ steps.validate.outputs.head-sha }}
+  members:
+    description: Ordered original PR numbers and head SHAs.
+    value: ${{ steps.validate.outputs.members }}
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      with:
+        node-version: '24'
+        package-manager-cache: false
+    - id: validate
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        QUEUE_MODE: ${{ inputs.mode }}
+        QUEUE_PUBLISHER: ${{ inputs.publisher-id }}
+        QUEUE_CONFIG: ${{ inputs.config }}
+      run: |
+        node "$GITHUB_ACTION_PATH/../../skills/poteto-mode/scripts/converge/converge-queue" "$QUEUE_MODE" \
+          --repo "$GITHUB_REPOSITORY" --event "$GITHUB_EVENT_PATH" --head "$GITHUB_SHA" --ref "$GITHUB_REF" \
+          --publisher "$QUEUE_PUBLISHER" --config "$QUEUE_CONFIG" --output "$GITHUB_OUTPUT" --wait

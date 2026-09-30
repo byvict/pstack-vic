@@ -52,7 +52,7 @@ else if (args[0] === 'api') {
     const body = JSON.parse(readFileSync(0, 'utf8'));
     if (endpoint === `${root}/issues/1/comments`) {
       const id = 100 + state.comments.length;
-      const comment = { id, body: body.body, user: { id: 7, login: 'converge' }, html_url: `https://github.com/${repo}/pull/1#issuecomment-${id}`, created_at: '2026-09-21T00:00:00Z', updated_at: '2026-09-21T00:00:00Z' };
+      const comment = { id, body: body.body, user: { id: 7, login: 'converge' }, html_url: `https://github.com/${repo}/pull/1#issuecomment-${id}`, created_at: state.publicationTime ?? '2026-09-21T00:00:00Z', updated_at: state.publicationTime ?? '2026-09-21T00:00:00Z' };
       state.comments.push(comment); save(); send(comment);
     } else if (endpoint === `${root}/statuses/${state.head}`) {
       const status = { ...body, id: 200 + state.statuses.length, creator: { id: 7 }, sha: state.head };
@@ -66,8 +66,18 @@ else if (args[0] === 'api') {
       save(); send(body.labels.map(name => ({ name })));
     } else fail();
   } else if (endpoint === 'graphql') {
-    const fields = Object.fromEntries(args.flatMap((arg, i) => args[i - 1] === '-f' ? [arg.split(/=(.*)/s).slice(0, 2)] : []));
-    if (!fields.query.includes('repository(')) send({ data: { viewer: { databaseId: 7, login: 'converge' } } });
+    const fields = Object.fromEntries(args.flatMap((arg, i) => ['-f', '-F'].includes(args[i - 1]) ? [arg.split(/=(.*)/s).slice(0, 2)] : []));
+    if (fields.query.includes('dequeuePullRequest')) {
+      const head = state.queueEntry?.headCommit ?? null;
+      state.queueEntry = null; state.queueEvent = { __typename: 'RemovedFromMergeQueueEvent', createdAt: state.removalTime ?? '2026-09-30T00:00:00Z', reason: 'manual', beforeCommit: head };
+      state.mutations.push(['dequeue', fields.pr]); save(); send({ data: { dequeuePullRequest: { clientMutationId: null } } });
+    }
+    else if (fields.query.includes('mergeQueue(branch:')) {
+      later('queue');
+      send({ data: { repository: { base: { target: { oid: state.trunk } }, head: { target: { oid: state.queueHead } }, mergeQueue: { entries: { pageInfo: { hasNextPage: state.queueTruncated ?? false }, nodes: state.queueEntries ?? [] } } } } });
+    }
+    else if (fields.query.includes('isMergeQueueEnabled')) send({ data: { repository: { pullRequest: { id: 'PR_1', isMergeQueueEnabled: state.queueEnabled ?? false, mergeQueueEntry: state.queueEntry ?? null, timelineItems: { nodes: state.queueEvent ? [state.queueEvent] : [] } } } } });
+    else if (!fields.query.includes('repository(')) send({ data: { viewer: { databaseId: state.viewerId ?? 7, login: 'converge' } } });
     else send({ data: { repository: Object.fromEntries(Object.entries(fields).filter(([key]) => /^p\d+$/.test(key)).map(([key, expression]) => {
       const text = expression.startsWith(state.trunk + ':') ? state.blobs[expression.slice(41)] : expression.startsWith(state.head + ':') ? state.headBlobs[expression.slice(41)] : undefined;
       return [key, text === undefined ? null : { byteSize: Buffer.byteLength(text), isBinary: false, isTruncated: false, text }];
@@ -103,24 +113,26 @@ else if (args[0] === 'api') {
   }
   else if (endpoint.startsWith(`${root}/compare/`) && args.some(a => a.includes('application/vnd.github.diff'))) {
     const [, head] = endpoint.slice(`${root}/compare/`.length).split('...');
-    if (head !== (state.pushedHead ?? state.head)) fail();
+    if (head !== (state.pushedHead ?? state.head) && !(state.memberHeads ?? []).includes(head)) fail();
     process.stdout.write(state.diff);
   }
   else if (endpoint.startsWith(`${root}/compare/`)) {
     const [, head] = endpoint.slice(`${root}/compare/`.length).split('...');
-    if (head !== (state.pushedHead ?? state.head)) fail();
+    if (head === state.queueHead) { send({ files: state.groupFiles ?? state.files }); process.exit(0); }
+    if (head !== (state.pushedHead ?? state.head) && !(state.memberHeads ?? []).includes(head)) fail();
     const commits = (state.commits ?? [{ message: 'head' }]).map(c => ({ sha: c.sha ?? state.head, commit: { message: c.message } }));
     send({ merge_base_commit: { sha: state.base }, files: listed(state.files), commits, total_commits: state.totalCommits ?? commits.length });
   }
   else if (endpoint === `${root}/pulls` && (query.get('base') === 'main' || query.get('state') === 'open')) send(state.pulls ?? []);
   else if (endpoint === `${root}/pulls/1/files`) send(listed(state.prFiles ?? state.files));
   else if (endpoint === `${root}/actions/workflows`) send({ workflows: [{ id: state.workflowId, name: 'Tests', path: '.github/workflows/tests.yml', state: 'active' }] });
+  else if (endpoint === `${root}/actions/runs/99`) send(state.reviewSignal);
   else if (/^repos\/Example\/app\/commits\/[a-f0-9]{40}\/pulls$/.test(endpoint)) send(state.commitPulls?.[endpoint.split('/')[4]] ?? []);
   else if (endpoint.includes('/check-runs')) {
-    if (state.requireInstallationChecks && (process.env.GH_TOKEN || process.env.GITHUB_TOKEN)) fail();
+    if (state.requireInstallationChecks && process.env.GITHUB_ACTIONS !== 'true' && (process.env.GH_TOKEN || process.env.GITHUB_TOKEN)) fail();
     // `state.refChecks` gives one commit, named by sha or branch as the endpoint names it, its own check runs.
     const ref = endpoint.split('/')[4];
-    send({ check_runs: (state.refChecks?.[ref] ?? state.checks).map(c => ({ ...c, head_sha: state.head })) });
+    send({ check_runs: (state.refChecks?.[ref] ?? state.checks).map(c => ({ ...c, head_sha: c.head_sha ?? (ref === state.queueHead ? ref : state.head) })) });
   }
   // `state.pushRuns` gives each trunk commit its own push run (`{ status, conclusion, jobConclusion? }`), none for a commit it lacks; its jobs answer under run id 1000 + the commit's position.
   else if (endpoint === `${root}/actions/workflows/${state.workflowId}/runs` && query.get('event') === 'push' && state.pushRuns) {
@@ -135,14 +147,15 @@ else if (args[0] === 'api') {
   }
   else if (endpoint === `${root}/actions/workflows/${state.workflowId}/runs`) send({ workflow_runs: [{ id: 8, workflow_id: state.workflowId, head_sha: query.get('head_sha'), event: query.get('event') ?? 'pull_request', head_branch: 'main', run_attempt: 1, status: 'completed', conclusion: state.trunkRed && query.get('event') === 'push' ? 'failure' : 'success', ...(query.get('event') === 'push' ? {} : state.runOverrides) }] });
   else if (endpoint === `${root}/actions/runs/${state.runOverrides.id ?? 8}/attempts/${state.runOverrides.run_attempt ?? 1}/jobs`) send({ jobs: state.jobs });
-  else if (/^repos\/Example\/app\/issues\/\d+\/comments$/.test(endpoint)) send(endpoint === `${root}/issues/1/comments` ? state.comments : []);
+  else if (/^repos\/Example\/app\/issues\/\d+\/comments$/.test(endpoint)) send(endpoint === `${root}/issues/1/comments` ? state.comments : state.memberComments?.[endpoint.split('/')[4]] ?? []);
   else if (/^repos\/Example\/app\/pulls\/\d+\/comments$/.test(endpoint)) send(endpoint === `${root}/pulls/1/comments` ? state.reviewComments ?? [] : []);
   else if (/^repos\/Example\/app\/pulls\/\d+\/reviews$/.test(endpoint)) send(endpoint === `${root}/pulls/1/reviews` ? state.reviews ?? [] : []);
   else if (endpoint.startsWith(`${root}/issues/comments/`)) { const found = state.comments.find(c => c.id === Number(endpoint.split('/').at(-1))); if (!found) fail(); send(found); }
   else if (endpoint.endsWith('/statuses')) send(state.statuses.filter(s => (s.sha ?? state.head) === endpoint.split('/')[4]));
-  else if (endpoint === `${root}/branches/main/protection`) {
-    if (state.classicProtection === false) { process.stdout.write(JSON.stringify({ message: state.protectionMessage, documentation_url: 'https://docs.github.com/rest/branches/branch-protection#get-branch-protection', status: '404' })); fail(); }
-    send({ required_status_checks: { contexts: state.protected, checks: state.protected.map(context => ({ context, app_id: context === 'verdict' ? null : 15368 })) } });
+  else if (endpoint === `${root}/branches/main`) {
+    if (state.protectionMessage !== 'Branch not protected') fail();
+    const checks = state.classicProtection === false ? [] : state.protected;
+    send({ protected: state.classicProtection !== false, protection: { required_status_checks: { contexts: checks, checks: checks.map(context => ({ context, app_id: context === 'verdict' ? null : 15368 })) } } });
   }
   else if (endpoint === `${root}/rules/branches/main`) send(state.classicProtection === false ? [{ type: 'required_status_checks', parameters: { strict_required_status_checks_policy: false, do_not_enforce_on_create: false, required_status_checks: state.protected.map(context => context === 'verdict' ? { context } : { context, integration_id: 15368 }) }, ruleset_source_type: 'Repository', ruleset_source: repo, ruleset_id: 1 }] : []);
   else fail();
