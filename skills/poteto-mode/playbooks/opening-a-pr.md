@@ -2,7 +2,7 @@
 
 Invoked at the end of every other playbook.
 
-**Worktree.** Work from a git worktree off main. Subagents inherit it. Multiple `Agent` calls on the same branch each get their own worktree, or `git fetch && git reset --hard origin/<branch>` between them. Dirty branch with unrelated work: patch out, fresh worktree, apply. Snarled worktree: reset from main, redo minimally.
+**Worktree.** Work from a git worktree off current trunk. Follow [Parallel PR delivery](../references/parallel-delivery.md): each independent writing task owns one branch and worktree; read-only helpers may share it, writing helpers use separate worktrees. Preserve unrelated work before starting a clean checkout. Never reset or clean another owner's checkout. Use the repository's local setup for isolated databases, ports and caches.
 
 **Commits.** Commit liberally. Rebase into small, ordered commits before opening PRs. Each commit is a future PR: landable, ordered to tell the story. Every commit that carries code a lane or you wrote keeps its `Pstack-Author` trailers through the rebase (the [Authorship trailer](../references/provider-dispatch.md#authorship-trailer) of provider dispatch); a squash that merges commits gathers every `Pstack-Author` line of the commits it merges into the trailer block (the last paragraph) of the squashed message, because git leaves the earlier ones mid-message, where they are a gap, and a fixup discards its message with its trailers. Amend when the fix belongs in a just-made commit. New commit when separable.
 

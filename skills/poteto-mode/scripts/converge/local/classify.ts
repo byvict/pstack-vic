@@ -1,6 +1,7 @@
 import { checks, participants, verdictStatus, type Pull, type Trusted } from '../github.ts';
 import { verdictGate } from '../gate.ts';
-import { passing, requiredChecks, unfinished } from '../arm.ts';
+import { passing, protectedObservations, protectedResult, requiredChecks, unfinished } from '../protection.ts';
+import { queueRetry, queueState } from '../queue.ts';
 import type { WorkKind } from './ledger.ts';
 import { ARMED_STALL_HOURS, REFUSAL_STALL_HOURS } from './stall.ts';
 
@@ -51,19 +52,25 @@ export async function classify(t: Trusted, p: Pull, author: number, options: Cla
     if (gate.dossier.round.execution !== 'pre-pr') return skipped('verdict from the retired cloud execution');
     // A stack child's conflict is with its parent branch, which the stack's owner resolves.
     if (p.base === t.config.trunk && p.mergeable === false) return pending('recertify', 'PR conflicts with trunk');
+    if (p.base === t.config.trunk) {
+      const queue = await queueState(t.repo, p.number);
+      const retry = queueRetry(queue, gate);
+      if (retry) return pending(queue.kind === 'removed' && queue.reason === 'failed_checks' ? 'repair' : 'recertify', retry);
+      if (queue.kind === 'queued') return queue.state === 'UNMERGEABLE' ? pending('repair', `Merge queue candidate ${queue.head ?? 'unavailable'} is UNMERGEABLE`) : { kind: 'idle', ...base, reason: `merge queue owns candidate ${queue.head ?? 'building'} (${queue.state})` };
+    }
     const required = await requiredChecks(t);
-    const observed = await checks(t.repo, p.head);
+    const observed = await protectedObservations(t.repo, p.head);
     for (const c of required) {
       if (c.context === 'verdict' || c.context === 'hold') continue;
-      const failed = observed.find(check => check.context === c.context && (c.appId === null || c.appId === check.appId) && !passing.includes(check.state) && !unfinished.includes(check.state));
+      const failed = protectedResult(c, observed).observations.find(check => !passing.includes(check.state) && !unfinished.includes(check.state));
       if (failed) return pending('repair', `Required protected check failed: ${c.context}`);
     }
     const idle: Idle = { kind: 'idle', ...base, reason: 'certified; checks green or pending' };
     if (!p.autoMerge) return idle;
     // Armed with every required check passing, GitHub merges within seconds; what it still waits on names the stall.
     const waits = new Set(required.filter(c => c.context !== 'verdict').flatMap(c => {
-      const latest = observed.find(check => check.context === c.context && (c.appId === null || c.appId === check.appId));
-      return !latest ? [`${c.context} has no run`] : unfinished.includes(latest.state) ? [`${c.context} has not finished`] : passing.includes(latest.state) ? [] : [`${c.context} concluded ${latest.state}`];
+      const result = protectedResult(c, observed);
+      return [...(result.found ? [] : [`${c.context} has no run`]), ...result.observations.flatMap(latest => unfinished.includes(latest.state) ? [`${c.context} has not finished`] : passing.includes(latest.state) ? [] : [`${c.context} concluded ${latest.state}`])];
     }));
     if (p.mergeable === null) waits.add('mergeability not computed');
     return { ...idle, stall: { key: 'armed', hours: ARMED_STALL_HOURS, hold: `auto-merge armed for ${hours(ARMED_STALL_HOURS)} without a merge; GitHub waits on: ${[...waits].join(', ') || 'nothing the daemon can see'}` } };

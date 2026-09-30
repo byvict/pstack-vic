@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { array, digest, integer, jsonHash, object, oneOf, parseFinding, parseReport, parseRound, parseObligation, riskObligation, sameObligation, string, strings, sha, parseExecutionId, type Decision, type Dossier, type Finding, type Report, type Role } from './contract.ts';
 import { admitPull, api, comments, isPublication, principal, pull, snapshot, statuses } from './github.ts';
+import { queueState } from './queue.ts';
 import { analyze } from './reconcile.ts';
 import { admitLane, type AdmittedLane } from './evidence.ts';
 import { admitCertificate, parseCertificate, type Certificate } from './certify.ts';
@@ -118,6 +119,7 @@ export async function publishVerdict(options: { reportFile: string; laneFiles: s
   const live = await pull(r.repo, r.pr);
   admitPull(live, current.trusted.config, r.head, r.execution);
   if (live.autoMerge && !prior.length) throw new Error('Auto-merge is pending on this PR; disarm it before publishing a verdict');
+  if (!prior.length && (await queueState(r.repo, r.pr)).kind === 'queued') throw new Error('PR is in the merge queue; dequeue it before publishing a verdict');
   const comment = found ?? object(await api(`repos/${r.repo}/issues/${r.pr}/comments`, { body }));
   const commentUrl = string(comment.html_url);
   if (!new RegExp(`^https://github\\.com/${r.repo}/pull/${r.pr}#issuecomment-[0-9]+$`, 'i').test(commentUrl)) throw new Error('Unexpected verdict comment URL');
