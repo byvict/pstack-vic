@@ -34,7 +34,7 @@ test('dry run executes the complete read chain and makes no merge mutation', t =
   const result = arm(f); assert.equal(result.status, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).steps.length, 4); assert.deepEqual(f.read().mutations, []);
   const calls = f.calls();
-  assert.ok(calls.some(a => a[1]?.includes('/protection'))); assert.ok(calls.some(a => a[1]?.includes('/rules/branches/')));
+  assert.ok(calls.some(a => a[1] === 'repos/Example/app/branches/main')); assert.ok(calls.some(a => a[1]?.includes('/rules/branches/')));
 });
 test('production arm uses exact head and squash auto-merge', t => {
   const f = fixture(); t.after(f.cleanup); publish(f);

@@ -9,7 +9,7 @@ function childEnvironment(binary: string, credential: 'writer' | 'installation' 
   const env: NodeJS.ProcessEnv = { ...process.env, NO_COLOR: '1', CLICOLOR: '0' };
   delete env.FORCE_COLOR;
   delete env.CLICOLOR_FORCE;
-  if (credential === 'installation') {
+  if (credential === 'installation' && process.env.GITHUB_ACTIONS !== 'true') {
     delete env.GH_TOKEN;
     delete env.GITHUB_TOKEN;
   }
@@ -19,12 +19,6 @@ function childEnvironment(binary: string, credential: 'writer' | 'installation' 
 export class RequestError extends Error {
   response: string;
   constructor(message: string, response = '') { super(message); this.response = response; }
-}
-/** GitHub answers the classic protection read of a branch without classic protection with this 404 body, which gh prints on stdout. A missing branch answers `Branch not found`. */
-export function branchNotProtected(error: unknown): boolean {
-  if (!(error instanceof RequestError)) return false;
-  try { const body = object(JSON.parse(error.response)); return body.status === '404' && body.message === 'Branch not protected'; }
-  catch { return false; }
 }
 export function command(binary: string, args: string[], input?: string): string {
   const result = spawnSync(binary, args, { input, encoding: 'utf8', env: childEnvironment(binary), maxBuffer: 24 * 1024 * 1024, timeout: 90_000 });
@@ -378,12 +372,15 @@ export async function verdictStatus(repo: string, pr: number, head: string, auth
 }
 /** `completedAt` is when GitHub says the run completed: null while it runs, and for a run GitHub gave no time. */
 export interface TimedCheck extends Check { completedAt: string | null }
-/** The latest run of each check on the head. */
-export async function timedChecks(repo: string, head: string): Promise<TimedCheck[]> {
-  const all = (await pages(`repos/${repo}/commits/${head}/check-runs?filter=all`, 'check_runs', 'installation')).map((value): TimedCheck => {
+export async function checkRuns(repo: string, head: string): Promise<TimedCheck[]> {
+  return (await pages(`repos/${repo}/commits/${head}/check-runs?filter=all`, 'check_runs', 'installation')).map((value): TimedCheck => {
     const c = object(value);
     return { context: string(c.name), id: integer(c.id), head: sha(c.head_sha), appId: integer(object(c.app).id), state: c.status === 'completed' ? string(c.conclusion) : string(c.status), runId: null, attempt: null, completedAt: c.completed_at === undefined || c.completed_at === null ? null : instant(c.completed_at, 'check completion time') };
   });
+}
+/** The latest run of each check on the head. */
+export async function timedChecks(repo: string, head: string): Promise<TimedCheck[]> {
+  const all = await checkRuns(repo, head);
   const latest = new Map<string, TimedCheck>();
   for (const c of all.sort((a, b) => b.id - a.id)) if (c.head === head && !latest.has(c.context)) latest.set(c.context, c);
   return [...latest.values()].sort((a, b) => a.context.localeCompare(b.context));
@@ -436,7 +433,7 @@ function testProvenance(run: Record<string, unknown>, jobs: Record<string, unkno
 }
 type TestSources = { kind: 'unused' | 'unavailable' } | { kind: 'ready'; provenance: ClinextProvenance; runnerSource: string; packageSource: string };
 /** Under pre-pr the snapshot reads no CI state (no Tests run, jobs, log or check runs): publication follows `gh pr create` while checks still move, so binding them would refuse it intermittently, and the CI runner sources stay out of the trusted files, so the PR's policy digest matches the branch snapshot the certificate was built from. It also reads the files and diff from the compare the branch snapshot reads, not from the PR, whose diff starts at its base: a stack child's base is its parent branch, and the compare with trunk still yields the patch id its certificate was built from. */
-export async function snapshot(repo: string, prNumber: number, configPath: string, execution: Execution): Promise<Snapshot> {
+export async function snapshot(repo: string, prNumber: number, configPath: string, execution: Execution, publisher?: number): Promise<Snapshot> {
   const ci = execution !== 'pre-pr';
   const [t, p] = await Promise.all([trusted(repo, configPath), pull(repo, prNumber)]);
   admitPull(p, t.config, p.head, execution);
@@ -453,7 +450,7 @@ export async function snapshot(repo: string, prNumber: number, configPath: strin
     return { base: sha(object(object(comparisonValue).merge_base_commit).sha), files: fillPatches(files, diff), diff, commits: [] as BranchCommit[] };
   });
   const prepared = await Promise.all([
-    changes, principal(), comments(repo, prNumber), ci ? checks(repo, p.head) : Promise.resolve<Check[]>([]), runPromise,
+    changes, publisher === undefined ? principal() : Promise.resolve(integer(publisher)), comments(repo, prNumber), ci ? checks(repo, p.head) : Promise.resolve<Check[]>([]), runPromise,
   ]).then(async ([{ base, files, diff, commits }, author, allComments, observedChecks, run]) => {
     const patch = command('git', ['patch-id', '--stable'], diff).trim().split(/\s+/)[0];
     if (!patch) throw new Error('Empty PR diff');

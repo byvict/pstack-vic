@@ -1,14 +1,14 @@
-import { integer, jsonHash, object, string, type Dossier } from './contract.ts';
+import { instant, integer, jsonHash, object, string, type Dossier } from './contract.ts';
 import { comments, isPublication, postedAfter, pull, snapshot, verdictStatus, type Trusted } from './github.ts';
 import { decide, dossierFromComment, retainedLanes } from './publish.ts';
 import { analyze } from './reconcile.ts';
 
-export type Gate = { kind: 'certified'; dossier: Dossier; url: string; fingerprint: string; rederived: string | null } | { kind: 'refused'; reason: string };
+export type Gate = { kind: 'certified'; dossier: Dossier; url: string; publishedAt: string; fingerprint: string; rederived: string | null } | { kind: 'refused'; reason: string };
 function refused(reason: string): Gate { return { kind: 'refused', reason }; }
 /** A pre-pr certificate is assembled at one trunk tip, and its publication decided over the PR text of that moment; its lanes never read PR text. So the gate re-derives it every time: the certificate authorizes merge only while the same patch under the same policy re-derives VERIFIED from its retained coverage, over the current text, at the tip the caller read. That binds the trunk tip at gate time, not the tip the merge lands on. */
-async function rederivePrePr(t: Trusted, pr: number, dossier: Dossier, url: string, fingerprint: string): Promise<string | null> {
+async function rederivePrePr(t: Trusted, pr: number, dossier: Dossier, url: string, fingerprint: string, author: number): Promise<string | null> {
   const r = dossier.round;
-  const current = await snapshot(t.repo, pr, r.configPath, 'pre-pr');
+  const current = await snapshot(t.repo, pr, r.configPath, 'pre-pr', author);
   if (current.trusted.sha !== t.sha) throw new Error('Trunk moved during re-derivation');
   if (current.inputFingerprint !== fingerprint) throw new Error('PR text changed during re-derivation');
   const report = analyze(current, { id: r.id, configPath: r.configPath, execution: 'pre-pr' });
@@ -39,13 +39,13 @@ export async function verdictGate(t: Trusted, pr: number, head: string, author: 
   if (r.execution === 'converge') {
     if (r.contract !== t.sha) return refused('Verdict identity or execution does not authorize merge');
     if (fingerprint !== dossier.inputFingerprint) return refused('PR text changed after verification');
-    return { kind: 'certified', dossier, url: status.url, fingerprint, rederived: null };
+    return { kind: 'certified', dossier, url: status.url, publishedAt: instant(comment.created_at), fingerprint, rederived: null };
   }
   // A re-derivation reads text only for injection and claims, so a request in a comment would merge unanswered; the Raiz answers it (`respond`) and certifies again.
   const unanswered = (await postedAfter(t.repo, pr, string(comment.created_at, 'verdict comment time'), author, all))[0];
   if (unanswered) return refused(`${unanswered.kind === 'review' ? 'Review' : 'Comment'} after the verdict by ${unanswered.login}`);
-  const refusal = await rederivePrePr(t, pr, dossier, status.url, fingerprint);
+  const refusal = await rederivePrePr(t, pr, dossier, status.url, fingerprint, author);
   if (refusal) return refused(refusal);
   const rederived = 'Re-derived the pre-pr verdict' + (r.contract === t.sha ? '' : ` from contract ${r.contract}`) + ` at trunk tip ${t.sha}` + (fingerprint === dossier.inputFingerprint ? '' : ' over changed PR text');
-  return { kind: 'certified', dossier, url: status.url, fingerprint, rederived };
+  return { kind: 'certified', dossier, url: status.url, publishedAt: instant(comment.created_at), fingerprint, rederived };
 }

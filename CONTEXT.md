@@ -75,8 +75,12 @@ O job que, a cada minuto, pergunta ao GitHub só com GET condicional se a lista 
 _Avoid_: watcher, poller, webhook
 
 **Varredor**:
-O job que roda o `converge-sweep` por script e arma o merge de todo PR certificado com base na `main` e sem hold; faz ele mesmo o merge do PR armado que o GitHub deixou aberto 5 minutos depois de todos os checks obrigatórios passarem; em seguida roda o Pós-merge de cada repositório.
+O job que roda o `converge-sweep` por script e arma o merge de todo PR certificado com base na `main` e sem hold; deixa os candidatos da fila nativa com o GitHub e, fora dela, faz o merge do PR armado que o GitHub deixou aberto 5 minutos depois de todos os checks obrigatórios passarem; em seguida roda o Pós-merge de cada repositório.
 _Avoid_: sweeper, cron
+
+**Grupo de merge**:
+O commit sintético que o GitHub constrói com o prefixo da fila nativa sobre a ponta atual da trunk; os checks obrigatórios provam a combinação, e o portão revalida os Certificados e os Holds dos heads originais.
+_Avoid_: certificado combinado, status copiado
 
 **Pós-merge**:
 O que o Varredor roda no Mac, sem modelo, uma vez por commit novo da `main`, depois que o CI de push daquele commit ficou verde: os comandos do bloco `postMerge` do contrato, num worktree descartável do commit. No pstack-vic, cria a tag, atualiza o plugin nos dois pais e reinstala os jobs.
@@ -87,7 +91,7 @@ Uma tentativa de uma Raiz sem supervisão sobre um PR que já existe: reparo, re
 _Avoid_: repair job, owner run
 
 **Reparo**:
-O catch-up de tipo `repair`: um PR certificado cujo check obrigatório ficou vermelho; conserta o head, obtém Certificado novo e arma.
+O catch-up de tipo `repair`: um PR certificado cujo check obrigatório, no head original ou no grupo de merge, ficou vermelho; conserta o head, obtém Certificado novo e arma.
 _Avoid_: fix, retry, hotfix
 
 **Resposta**:
@@ -107,5 +111,5 @@ O arquivo local que diz quem pode escrever numa branch por três horas, com pid 
 _Avoid_: lock, claim, mutex
 
 **Hold**:
-O rótulo `needs-victor` que para qualquer merge automático até Victor retirá-lo; o check obrigatório `hold` falha enquanto o rótulo está no PR, e assim segura até um auto-merge já armado. O Daemon o aplica, com comentário e notificação do macOS, quando esgota os tetos de um head, numa Trava, e na hora quando alguém fora da lista confiável comentou ou revisou um PR com trabalho.
+O rótulo `needs-victor` que para qualquer merge automático até Victor retirá-lo; o check obrigatório `hold` falha enquanto o rótulo está no PR, e assim segura até um auto-merge já armado. Na fila nativa, a invalidação também retira o PR para desfazer um `hold` verde já publicado no grupo. O Daemon o aplica, com comentário e notificação do macOS, quando esgota os tetos de um head, numa Trava, e na hora quando alguém fora da lista confiável comentou ou revisou um PR com trabalho.
 _Avoid_: bloqueio humano, pause

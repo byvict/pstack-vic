@@ -204,7 +204,7 @@ test('sweep counts a disarm whose command failed after taking effect as disarmed
 });
 test('sweep reports a refusal with the live head, not the listing head', t => {
   const f = fixture(); t.after(f.cleanup); published(f); listed(f);
-  const live = f.read(); live.pulls[0].head.sha = 'e'.repeat(40); live.failEndpoint = '/protection'; Object.assign(f.state, live); f.save();
+  const live = f.read(); live.pulls[0].head.sha = 'e'.repeat(40); live.failEndpoint = '/branches/main'; Object.assign(f.state, live); f.save();
   const result = f.run('converge-sweep', ['--repo', 'Example/app']);
   assert.equal(result.status, 1);
   assert.deepEqual(JSON.parse(result.stdout).swept, [{ pr: 1, head: f.state.head, outcome: 'refused', reason: 'gh request failed' }]);

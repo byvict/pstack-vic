@@ -1,7 +1,9 @@
 import { parseArgs } from 'node:util';
-import { array, integer, jsonHash, object, repoName, sha, string } from './contract.ts';
-import { admitPull, api, branchNotProtected, checks, command, pages, principal, pull, trusted, workflowRun, type Trusted } from './github.ts';
+import { integer, jsonHash, object, repoName, sha, string } from './contract.ts';
+import { admitPull, api, command, pages, principal, pull, trusted, workflowRun, type Trusted } from './github.ts';
 import { verdictGate } from './gate.ts';
+import { passing, protectedObservations, protectedResult, requiredChecks, unfinished } from './protection.ts';
+import { dequeue, queueRetry, queueState } from './queue.ts';
 
 /** How the contract's push Tests run and its test job stand at a trunk commit, read the way the arm reads a green trunk: `pending` while the latest run of the commit has not completed, or when there is none yet. */
 export async function trunkTests(t: Trusted, commit: string): Promise<'green' | 'pending' | 'run failed' | 'job failed'> {
@@ -11,51 +13,25 @@ export async function trunkTests(t: Trusted, commit: string): Promise<'green' | 
   const jobs = (await pages(`repos/${t.repo}/actions/runs/${integer(run.id)}/attempts/${integer(run.run_attempt)}/jobs`, 'jobs')).map(v => object(v));
   return jobs.some(j => j.name === t.config.tests.job && j.conclusion === 'success' && j.head_sha === commit) ? 'green' : 'job failed';
 }
-async function trunkHealth(t: Trusted): Promise<void> {
+async function trunkHealth(t: Trusted, queue: boolean): Promise<void> {
   const tip = sha(object(await api(`repos/${t.repo}/commits/${encodeURIComponent(t.config.trunk)}`)).sha);
   const tests = await trunkTests(t, tip);
+  if (queue && tests === 'pending') return;
   if (tests === 'job failed') throw new Error('Trunk test job is not successful at the current tip');
   if (tests !== 'green') throw new Error('Trunk Tests is not successful at the current tip');
 }
-export const unfinished = ['queued', 'in_progress', 'waiting', 'requested', 'pending'];
-/** GitHub counts a required check whose latest run concluded `neutral` or `skipped` as passing (a job an `if` skipped still merges), so the arm and the daemon count them the same way. */
-export const passing = ['success', 'neutral', 'skipped'];
-export interface RequiredCheck { context: string; appId: number | null }
-/** A trunk that only rulesets protect has no classic protection, so its required checks come from the branch rules alone. */
-async function classicChecks(t: Trusted): Promise<RequiredCheck[]> {
-  let protection: Record<string, unknown>;
-  try { protection = object(await api(`repos/${t.repo}/branches/${encodeURIComponent(t.config.trunk)}/protection`)); }
-  catch (error) { if (branchNotProtected(error)) return []; throw error; }
-  const statusChecks = object(protection.required_status_checks, 'required status checks');
-  const required = array(statusChecks.checks).map(v => { const c = object(v); return { context: string(c.context), appId: c.app_id === null || c.app_id === -1 ? null : integer(c.app_id) }; });
-  for (const context of array(statusChecks.contexts).map(v => string(v))) if (!required.some(c => c.context === context)) required.push({ context, appId: null });
-  return required;
-}
-/** Effective protection: classic protection plus branch rules; every contract context must be there. */
-export async function requiredChecks(t: Trusted): Promise<RequiredCheck[]> {
-  const required = await classicChecks(t);
-  const rules = array(await api(`repos/${t.repo}/rules/branches/${encodeURIComponent(t.config.trunk)}`)).map(v => object(v));
-  for (const rule of rules) if (rule.type === 'required_status_checks') {
-    for (const v of array(object(rule.parameters).required_status_checks)) {
-      const c = object(v);
-      required.push({ context: string(c.context), appId: c.integration_id === null || c.integration_id === undefined ? null : integer(c.integration_id) });
-    }
-  }
-  for (const context of t.config.requiredChecks) if (!required.some(c => c.context === context)) throw new Error('Branch protection missing required context: ' + context);
-  return required;
-}
 async function protection(t: Trusted, head: string, pending: boolean): Promise<void> {
   const required = await requiredChecks(t);
-  const observed = await checks(t.repo, head);
+  const observed = await protectedObservations(t.repo, head);
   if (!pending) {
     const latestTests = await workflowRun(t, head);
     if (!latestTests || latestTests.status !== 'completed' || latestTests.conclusion !== 'success') throw new Error('Latest exact-head Tests attempt is not successful');
   }
   for (const c of required) {
     if (c.context === 'verdict') { if (c.appId !== null) throw new Error('Verdict context has unsupported app binding'); continue; }
-    const match = observed.filter(check => check.context === c.context && check.head === head && (c.appId === null || c.appId === check.appId));
-    if (pending) { if (match.some(check => !passing.includes(check.state) && !unfinished.includes(check.state))) throw new Error('Required protected check failed: ' + c.context); continue; }
-    if (!match.some(check => passing.includes(check.state))) throw new Error('Required protected check is not successful: ' + c.context);
+    const result = protectedResult(c, observed);
+    if (pending) { if (result.observations.some(check => !passing.includes(check.state) && !unfinished.includes(check.state))) throw new Error('Required protected check failed: ' + c.context); continue; }
+    if (!result.found || !result.observations.every(check => passing.includes(check.state))) throw new Error('Required protected check is not successful: ' + c.context);
   }
 }
 /** The merge states in which `gh pr merge --auto` merges at once instead of enabling auto-merge (gh's `isImmediatelyMergeable`). */
@@ -65,7 +41,8 @@ export function armCommand(repo: string, pr: number, head: string): void {
   command('gh', ['pr', 'merge', String(pr), '--repo', repo, '--squash', '--auto', '--match-head-commit', head]);
 }
 export async function disarm(repo: string, pr: number): Promise<boolean> {
-  if (!(await pull(repo, pr)).autoMerge) return false;
+  const removed = await dequeue(repo, pr);
+  if (!(await pull(repo, pr)).autoMerge) return removed;
   command('gh', ['pr', 'merge', String(pr), '--repo', repo, '--disable-auto']);
   return true;
 }
@@ -77,14 +54,17 @@ export async function arm(options: { repo: string; pr: number; head: string; ver
     const t = await trusted(repo, options.configPath ?? '.cursor/converge.json');
     if (options.pending && !t.config.requiredChecks.includes('hold')) throw new Error('Pending arm requires "hold" in requiredChecks');
     admitPull(await pull(repo, options.pr), t.config, head);
-    await trunkHealth(t);
+    const queue = await queueState(repo, options.pr);
+    await trunkHealth(t, queue.kind !== 'disabled');
     await protection(t, head, options.pending === true);
     const author = await principal();
     const verified = await verdictGate(t, options.pr, head, author);
     if (verified.kind === 'refused') throw new Error(verified.reason);
+    const retry = queueRetry(queue, verified);
+    if (retry) throw new Error(retry);
     admitPull(await pull(repo, options.pr), t.config, head);
     if (sha(object(await api(`repos/${repo}/commits/${encodeURIComponent(t.config.trunk)}`)).sha) !== t.sha) throw new Error('Trunk moved before arm');
-    await trunkHealth(t);
+    await trunkHealth(t, queue.kind !== 'disabled');
     await protection(t, head, options.pending === true);
     const again = await verdictGate(t, options.pr, head, author);
     if (again.kind === 'refused') throw new Error(again.reason);
@@ -93,7 +73,10 @@ export async function arm(options: { repo: string; pr: number; head: string; ver
     const rederived = verified.rederived;
     const steps = ['Read latest push-to-trunk Tests', 'Read live protection and required checks', 'Read trusted exact-head verdict', ...(rederived ? [rederived] : []), 'gh pr merge --squash --auto --match-head-commit ' + head + (options.pending ? ' (checks pending)' : '')];
     if (options.dryRun) return { kind: 'dry-run', head, steps, rederived };
-    armCommand(repo, options.pr, head);
+    const currentQueue = await queueState(repo, options.pr);
+    const refusal = queueRetry(currentQueue, again);
+    if (refusal) throw new Error(refusal);
+    if (currentQueue.kind !== 'queued') armCommand(repo, options.pr, head);
     const after = await pull(repo, options.pr);
     if (after.state === 'open') admitPull(after, t.config, head);
     return { kind: 'armed', head, steps, rederived };

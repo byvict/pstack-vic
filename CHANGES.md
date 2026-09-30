@@ -1130,3 +1130,15 @@ Na tela de plugins do Claude Code, o pstack-vic aparecia como "pstack, por Laure
 
 - `npm test`: 934 testes, 0 falhas, os mesmos da 0.4.15; `manifests.test.ts` confere a versão nos quatro manifests e roda `claude plugin validate --strict`.
 - `npm run test:bun` e `npm run matrix:check` limpos.
+
+# 0.4.17 — PRs paralelos e fila nativa de merge (2026-09-30)
+
+Cada trabalho de escrita independente tem sua branch, worktree e dono. O pstack reúne essas regras em `parallel-delivery.md`, com isolamento de banco, portas e caches, dependências explícitas entre PRs e handoff no recibo de admissão. O playbook de abertura deixa de sugerir reset de um checkout compartilhado.
+
+- **Candidato combinado.** A action `actions/merge-queue`, presa a um commit revisado, resolve o prefixo pela fila viva do GitHub e pelos refs exatos. A base do evento pode ser o candidato anterior; os filtros recebem a raiz atual do prefixo.
+- **Portão.** `verdict` e `hold` esperam os demais checks obrigatórios do grupo, depois releem membros, Holds e Certificados reais dos heads originais. O publisher é um id numérico protegido, independente do bot de Actions. Nenhum status verde é copiado para provar integração.
+- **Invalidação.** Eventos confiáveis retiram um PR cuja autorização mudou. Reviews usam sinal sem permissões e uma ponte `workflow_run` na branch protegida, sem artefatos. Uma remoção exige Certificado posterior; falha combinada vira Reparo no SHA sintético, sem loop de readmissão.
+- **Posse da fila.** PR enfileirado pode ter `autoMergeRequest: null`. Publicação, desarme, classificação e Varredor consultam a fila explicitamente; um candidato válido fica com o GitHub e não recebe o retry de auto-merge. CI pendente da trunk permite admissão nativa; CI explicitamente vermelho continua recusado.
+- **Checks legados.** O portão lê os últimos checks por app e os últimos statuses por contexto. Quando compartilham um nome obrigatório, todos passam; um status sem app nunca satisfaz sozinho um vínculo de app. A leitura do Certificado mantém seu formato anterior.
+- **Leitura limitada.** Proteção clássica vem do resumo da branch e soma as regras efetivas; o token read-only de Actions não precisa de credencial de administrador. Somente a invalidação recebe `contents: write`, necessário para dequeue.
+- **Prova.** Testes cobrem identidade, política, Certificados, Holds, mudança de membros, remoção e dois PRs individualmente verdes cuja combinação falha sem conflito textual. A referência da fila registra a corrida não atômica entre validação final e merge.
