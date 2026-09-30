@@ -1130,3 +1130,13 @@ Na tela de plugins do Claude Code, o pstack-vic aparecia como "pstack, por Laure
 
 - `npm test`: 934 testes, 0 falhas, os mesmos da 0.4.15; `manifests.test.ts` confere a versão nos quatro manifests e roda `claude plugin validate --strict`.
 - `npm run test:bun` e `npm run matrix:check` limpos.
+
+# 0.4.17: Verify Why source consumption and reconcile Linear after merge, 2026-09-30
+
+Why checks investigator receipts against their native tool calls and complete relevant objects before synthesis. Coverage records found, empty, unavailable, and justified skipped sources. Partial reads and unverified consumption remain gaps.
+
+Converge adds opt-in `postMerge.linear: true` to the existing post-merge queue. Reconciliation requires the exact merged PR and head, a trusted `VERIFIED` publication, and immutable `Pstack-Linear` commit trailers. The native Claude session uses the account's existing Linear connector, `dontAsk`, and an isolated hook that permits only persisted planned effects. Each write requires native result and readback evidence. Leases, checkpoints, retries, and dry runs use the existing post-merge flow.
+
+The reconciler reads source acceptance and rollout requirements before it decides whether to complete an issue. Missing or unknown evidence keeps the issue open. Projects receive progress updates only. The Codex headless adapter remains deferred.
+
+Component evidence includes native parent and child Why reads, the local permission-hook fault matrix, and one comment on CLI-205. That comment was allowed once, a repeat was denied, and readback found one comment. This evidence covers those components. Release tagging, plugin updates, daemon activation, and the complete production post-merge flow remain pending.
