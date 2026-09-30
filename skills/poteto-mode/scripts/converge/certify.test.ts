@@ -85,6 +85,14 @@ test('report binds the pushed head with pr 0 and names the required lanes', t =>
   const { round } = prepared(f);
   assert.equal(round.pr, 0); assert.equal(round.execution, 'pre-pr'); assert.equal(round.head, f.state.head);
 });
+test('pre-pr report rejects malformed immutable Linear trailers before any lane can launch', t => {
+  const f = prePrFixture(false, false); t.after(f.cleanup);
+  f.state.commits = [{ message: 'lifecycle\n\nPstack-Linear: ENG-1' }]; f.save();
+  const run = join(f.directory, 'run');
+  const result = certify(f, ['report', '--repo', 'Example/app', '--head', f.state.head, '--directory', run]);
+  assert.notEqual(result.status, 0); assert.match(result.stderr, /Invalid URL/);
+  assert.equal(existsSync(join(run, 'report.json')), false); assert.deepEqual(f.read().mutations, []);
+});
 test('assemble writes a VERIFIED certificate from clean runs and admitted lanes', t => {
   const f = prePrFixture(); t.after(f.cleanup);
   const { run, round } = prepared(f);

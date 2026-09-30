@@ -1,7 +1,9 @@
 import { parseArgs } from 'node:util';
 import { array, integer, jsonHash, object, repoName, sha, string } from './contract.ts';
-import { admitPull, api, branchNotProtected, checks, command, pages, principal, pull, trusted, workflowRun, type Trusted } from './github.ts';
+import { admitPull, api, branchCommits, branchNotProtected, checks, command, pages, principal, pull, trusted, workflowRun, type Trusted } from './github.ts';
 import { verdictGate } from './gate.ts';
+import { linearTargets } from './linear-targets.ts';
+import { requireLinearPrBody } from './linear-pr-body.ts';
 
 /** How the contract's push Tests run and its test job stand at a trunk commit, read the way the arm reads a green trunk: `pending` while the latest run of the commit has not completed, or when there is none yet. */
 export async function trunkTests(t: Trusted, commit: string): Promise<'green' | 'pending' | 'run failed' | 'job failed'> {
@@ -76,7 +78,10 @@ export async function arm(options: { repo: string; pr: number; head: string; ver
   try {
     const t = await trusted(repo, options.configPath ?? '.cursor/converge.json');
     if (options.pending && !t.config.requiredChecks.includes('hold')) throw new Error('Pending arm requires "hold" in requiredChecks');
-    admitPull(await pull(repo, options.pr), t.config, head);
+    const initial = await pull(repo, options.pr);
+    admitPull(initial, t.config, head);
+    const targets = linearTargets((await branchCommits(repo, t.sha, head)).map(c => c.message));
+    requireLinearPrBody({ body: initial.body, targets });
     await trunkHealth(t);
     await protection(t, head, options.pending === true);
     const author = await principal();
@@ -89,7 +94,9 @@ export async function arm(options: { repo: string; pr: number; head: string; ver
     const again = await verdictGate(t, options.pr, head, author);
     if (again.kind === 'refused') throw new Error(again.reason);
     if (jsonHash(again) !== jsonHash(verified)) throw new Error('Verdict changed before arm');
-    admitPull(await pull(repo, options.pr), t.config, head);
+    const beforeArm = await pull(repo, options.pr);
+    admitPull(beforeArm, t.config, head);
+    requireLinearPrBody({ body: beforeArm.body, targets });
     const rederived = verified.rederived;
     const steps = ['Read latest push-to-trunk Tests', 'Read live protection and required checks', 'Read trusted exact-head verdict', ...(rederived ? [rederived] : []), 'gh pr merge --squash --auto --match-head-commit ' + head + (options.pending ? ' (checks pending)' : '')];
     if (options.dryRun) return { kind: 'dry-run', head, steps, rederived };
