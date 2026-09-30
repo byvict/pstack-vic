@@ -30,7 +30,7 @@ interface FakeScript {
   readonly pollStatus?: number;
   readonly pollReplies?: readonly { readonly status: number; readonly body: unknown }[];
   readonly cancelStatus?: number;
-  readonly cancelHang?: boolean;
+  readonly onCancelHeld?: () => void;
   readonly beforePoll?: () => void;
   /** Runs right before the fake answers FINISHED; the push cases push from the work clone here. */
   readonly beforeFinish?: () => void | Promise<void>;
@@ -200,7 +200,10 @@ async function fakeCursor(script: FakeScript = {}): Promise<FakeCursor> {
           });
         }
       } else if (method === "POST" && path === `${RUN_PATH}/cancel`) {
-        if (script.cancelHang) return;
+        if (script.onCancelHeld !== undefined) {
+          script.onCancelHeld();
+          return;
+        }
         answer(script.cancelStatus ?? 200, { id: "run_1" });
       } else {
         answer(404, { error: `no route for ${method} ${path}` });
@@ -1142,11 +1145,12 @@ describe("cursor http lane", () => {
   it("bounds cleanup with an independent ten-second request budget", async (t) => {
     const timeout = AbortSignal.timeout;
     const budgets: number[] = [];
+    const cancelBudget = new AbortController();
     t.mock.method(AbortSignal, "timeout", (duration: number) => {
       budgets.push(duration);
-      return timeout(duration === 10_000 ? 10 : duration);
+      return duration === 10_000 ? cancelBudget.signal : timeout(duration);
     });
-    const fake = await fakeCursor({ pollStatus: 500, cancelHang: true });
+    const fake = await fakeCursor({ pollStatus: 500, onCancelHeld: () => cancelBudget.abort() });
     const { receipt, outputPath } = await runHttpLane(fake);
     matchObject(receipt, { status: "child-failed", error: { message: "5 consecutive poll requests failed" } });
     assert.match(receipt.error?.evidence ?? "", /cancel request exceeded its budget$/);
