@@ -60,7 +60,7 @@ Capture this as seed context (file paths, symbols, commits, PR numbers, linked t
 
 ### Discovery
 
-Before spawning investigators, list the available MCPs in the Claude Code environment. Use the tool list at the top of the system prompt (every MCP appears as a tool with prefix `mcp__<server>__<name>`). Otherwise read `.mcp.json` in the plugin/project, or run `claude mcp list`.
+Before spawning investigators, discover callable MCP tools in the parent's live environment. Use its tool list and tool discovery. Configuration such as `.mcp.json` or `claude mcp list` can identify candidate servers, but cannot prove that a source was queried. Keep investigators on the inherited native route so they can consume the parent's MCP sources.
 
 Map each available MCP to one evidence category:
 
@@ -72,9 +72,9 @@ Map each available MCP to one evidence category:
 6. Error / exception tracking
 7. Product analytics warehouse
 
-Source control is always available through git and `gh`. For the other six, classify using the MCP name, server instructions, tool names, and resource descriptors. If an MCP could fit more than one category, choose the one matching its primary evidence. Record ambiguous cases in the coverage map.
+Investigate source control through git and `gh`. Record access failures as gaps. For the other six, classify using the MCP name, server instructions, tool names, and resource descriptors. If an MCP could fit more than one category, choose the one matching its primary evidence. Record ambiguous cases in the coverage map.
 
-Aim for a complete **coverage map**, not a minimal one. Document the null, don't skip the search.
+Account for all seven categories in the coverage map, including sources that are unavailable or skipped. Update the map from observed consumption at the gate in Step 4.
 
 Launch all matching investigators in one fan-out phase so they run concurrently. Don't ask one agent to cover multiple MCPs. Route each through your configured `why investigators` role (default `inherit-parent`, per the role table in `provider-dispatch.md`) with the assigned MCP available. Investigators still do not write files; that is a posture even when the MCP-capable execution mode is not mechanically read-only.
 
@@ -105,21 +105,31 @@ Each entry names the category and the kind of "why" it uniquely surfaces. Use it
 
 7. **Product analytics warehouse investigator** (e.g. Databricks, Snowflake, BigQuery, ClickHouse, dbt, Redshift MCP). Product/data view. Best at surfacing *product and data reality that shaped the code*. Strongest for flag-gated code, experiment-driven ships, data migrations, and "where did this number come from" questions.
 
-### When to skip an investigator
+### Unavailable sources and justified skips
 
-Only skip with an **explicit, written justification** that goes in the final "Sources Consulted" section. Two valid reasons:
+Record the reason in the coverage map and the final "Sources Consulted" section:
 
-- **No MCP is available for that category** in this environment. Flag this as a gap, not a choice. Example: "Real-time team chat skipped. No matching MCP available, so the conversational record was not searchable."
-- **The source is provably irrelevant**, not just "probably irrelevant." A high bar. Example: "Error / exception tracking skipped. Target is a build-time script with no runtime code path."
+- **Unavailable.** No matching MCP is callable, or access fails. Name the missing tool or the observed error. This is a coverage gap.
+- **Skipped.** The source is provably irrelevant. Give the evidence for that judgment. Example: "Error / exception tracking skipped. Target is a build-time script with no runtime code path."
 
-If your scope assessment suggests a single-commit trivial target where the PR description already contains the complete answer, you may answer inline **only after** confirming all seven available category searches would be redundant. Say so explicitly. This should be rare.
+An empty result requires a successful query with no matches. A failed call or an unqueried source is not empty.
 
-## Step 4. Synthesize
+For a single-commit trivial target, you may synthesize inline after the Step 4 consumption gate. Account for all categories through observed queries, unavailable sources, or justified skips.
+
+## Step 4. Verify source consumption, then synthesize
+
+Before dispatching the synthesizer, validate each investigator's receipt from [`references/investigator-prompt.md`](references/investigator-prompt.md) against native tool results or the host transcript for that investigator's runtime. Match the reported calls, returned results, and read coverage. A source has verified coverage only when this comparison confirms its searches and complete reads of relevant items, including comments, documents, and remaining pages.
+
+Tool availability, configured routes, and investigator self-report alone do not prove consumption. A replay proves consumption only in the replay runtime. Attribute recovered evidence to the runtime that actually read it.
+
+Recover missing queries or reads through a runtime with the required MCP access. If recovery cannot complete, mark the source unavailable or consumption unverified, and name partial reads as gaps. Synthesis can proceed with these limitations, but cannot claim verified coverage for them.
+
+Record the validation verdict and native call or transcript references beside each receipt in the existing findings. Pass the coverage map with found, empty, unavailable, or justified skipped outcomes, complete or partial reads, and verified or unverified consumption to the synthesizer.
 
 Dispatch one synthesizer through your configured `why synthesizer` role (default `inherit-parent`). Preserve relevant MCP access because the synthesizer's quality check spot-verifies citations. It does not write files.
 
 The synthesizer gets:
-1. The investigator findings, including any null results and any categories skipped with justification
+1. The investigator findings, receipts, and parent-validated coverage map
 2. The code anchor from Step 2 (file paths, symbols, commit hashes, PR numbers, ticket IDs)
 3. The user's original question
 4. The epistemics framework from `references/epistemics.md`
@@ -131,7 +141,7 @@ Take the synthesizer's output and present it to the user. You may lightly edit f
 
 ## Output Format
 
-The output structure is the one in `references/synthesizer-prompt.md`: The Question, The Code in Question, What We Found, What We Can Reasonably Infer, Competing Hypotheses, What We Don't Know, Sources Consulted, Confidence Summary. Adapt as needed, but keep the confidence separation intact, and keep Sources Consulted as one line per investigator, including the ones that returned nothing or were skipped, with the reason.
+The output structure is the one in `references/synthesizer-prompt.md`: The Question, The Code in Question, What We Found, What We Can Reasonably Infer, Competing Hypotheses, What We Don't Know, Sources Consulted, Confidence Summary. Adapt as needed, but keep the confidence separation intact, and keep Sources Consulted as one line per source, including unavailable or skipped categories. Preserve the validated outcome, read gaps, and consumption verdict.
 
 After the Sources Consulted block, if the user's `why` question is a precursor to actually changing this code, convert the lineage findings into a Preserve / Change / Avoid / Risk constraint set suitable for planning the change.
 
@@ -142,7 +152,7 @@ After the Sources Consulted block, if the user's `why` question is a precursor t
 ## Reference Files
 
 - `references/epistemics.md`. Confidence tiers and phrasing guide. The synthesizer must follow it.
-- `references/investigator-prompt.md`. Base prompt template for investigator subagents.
+- `references/investigator-prompt.md`. Base prompt and consumption receipt contract for investigator subagents. Validate each receipt before synthesis.
 - `references/source-playbook.md`. Index pointing at the category playbooks below.
 - `references/sources/*.md`. One self-contained example playbook per category, plus cross-cutting `incident-postmortem.md`. Give an investigator the single file that matches its category and adapt it to the available MCP.
-- `references/synthesizer-prompt.md`. Prompt template for the synthesizer subagent, including the output format.
+- `references/synthesizer-prompt.md`. Prompt template for the synthesizer, including its coverage check and output format.

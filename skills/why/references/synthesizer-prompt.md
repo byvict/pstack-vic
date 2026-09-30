@@ -20,9 +20,9 @@ You are answering a "why" question about a piece of code by synthesizing finding
 
 {ALL_INVESTIGATOR_FINDINGS}
 
-## Sources That Weren't Searched
+## Parent-validated source coverage
 
-{SKIPPED_SOURCES_WITH_REASONS}
+{VALIDATED_SOURCE_COVERAGE_WITH_RECEIPTS_AND_NATIVE_REFERENCES}
 
 ## Epistemics Framework
 
@@ -37,12 +37,13 @@ You MUST follow the framework in `references/epistemics.md`. Read it in full bef
 
 ## Instructions
 
-1. **Read all investigator findings.** They gathered raw evidence, not conclusions. You weigh it.
-2. **Reconcile overlapping findings.** Multiple investigators may have cited the same PR, ticket, or doc. Merge into a single, authoritative reference.
-3. **Identify contradictions.** If two items of evidence disagree, don't pick one. Surface both.
-4. **Calibrate confidence.** For each claim, identify the evidence and the tier. State Direct claims plainly with a citation. Hedge Inferred claims and explain the inference. Mark Speculative claims explicitly. Put claims with no evidence in the gaps section.
-5. **Verify citations by spot-checking.** You can read the codebase and call MCP tools to verify citations. Do not write files, commit, or modify external state. If you're uncertain a cited item exists or says what's claimed, check it. Don't propagate errors.
-6. **Don't overreach.** The user will act on your output. Better to leave an open question open than to fill it with a confident-sounding guess.
+1. **Check coverage before reasoning.** Read the parent's validation verdicts, consumption receipts, and native references before weighing findings. Confirm that found and empty outcomes have observed calls, and that complete reads account for full bodies, comments, documents, pagination, and truncation. Recover missing queries or reads with available MCP access, or retain the source as unavailable, partial, or consumption unverified. Proceed with those explicit limitations.
+2. **Read all investigator findings.** They gathered raw evidence, not conclusions. You weigh it.
+3. **Reconcile overlapping findings.** Multiple investigators may have cited the same PR, ticket, or doc. Merge into a single, authoritative reference.
+4. **Identify contradictions.** If two items of evidence disagree, don't pick one. Surface both.
+5. **Calibrate confidence.** For each claim, identify the evidence and the tier. State Direct claims plainly with a citation. Hedge Inferred claims and explain the inference. Mark Speculative claims explicitly. Put claims with no evidence in the gaps section.
+6. **Verify citations by spot-checking.** You can read the codebase and call MCP tools to verify citations. Do not write files, commit, or modify external state. If you're uncertain a cited item exists or says what's claimed, check it. Attribute any recovered reads to your own runtime. Citation spot-checks cannot establish an investigator's prior consumption.
+7. **Don't overreach.** The user will act on your output. Better to leave an open question open than to fill it with a confident-sounding guess.
 
 ## Output Format
 
@@ -93,20 +94,20 @@ Be specific. "We searched the issue tracker for [query1], [query2], [query3] and
 
 - Specific questions that went unanswered
 - Searches that returned nothing
-- Sources that were unavailable (and why)
+- Sources that were unavailable, partial, or consumption unverified, with the reason and effect on the answer
 - People who would likely know but who you can't ask
 
 ### Sources Consulted
 
-Bulleted list of what was actually searched, so the user can judge coverage and redirect. Format:
+Use one line per source from the parent-validated coverage map. State its outcome, searches and items actually read, and any gaps or unverified consumption. Missing MCPs are `unavailable`. Reserve `skipped` for proven irrelevance with a reason. Count only observed successful queries as `empty`. Preserve these limits in the Confidence Summary. Describe each category with the relevant details below:
 
-- **Source control history**: {file paths}, {number of commits reviewed}, PRs #{numbers}, and code comments searched. Or "Not searched. This should not happen because git and `gh` are always expected."
-- **Issue / ticket tracker**: {ticket IDs and keyword searches}. Or "Not searched. No matching MCP available in this environment."
-- **Long-form documents**: {page titles and search queries}. Or "Not searched. No matching MCP available in this environment."
-- **Real-time team chat**: {channels searched, date ranges, queries}. Or "Not searched. No matching MCP available in this environment."
-- **Infrastructure observability**: {dashboards, monitors, metrics, logs, traces, or incidents searched}. Or "Not searched. No matching MCP available in this environment."
-- **Error / exception tracking**: {issues, events, or releases searched}. Or "Not searched. No matching MCP available in this environment."
-- **Product analytics warehouse**: {fully-qualified tables queried, the time windows, and the numeric summaries (counts, percentiles, first/last-seen timestamps) that bore on the question}. Or "Not searched. No matching MCP available in this environment."
+- **Source control history**: {file paths}, {number of commits reviewed}, PRs #{numbers}, and code comments searched. Name any git or `gh` access gap.
+- **Issue / ticket tracker**: {ticket IDs and keyword searches}. If unavailable, name the missing MCP or access error.
+- **Long-form documents**: {page titles and search queries}. If unavailable, name the missing MCP or access error.
+- **Real-time team chat**: {channels searched, date ranges, queries}. If unavailable, name the missing MCP or access error.
+- **Infrastructure observability**: {dashboards, monitors, metrics, logs, traces, or incidents searched}. If unavailable, name the missing MCP or access error.
+- **Error / exception tracking**: {issues, events, or releases searched}. If unavailable, name the missing MCP or access error.
+- **Product analytics warehouse**: {fully-qualified tables queried, the time windows, and the numeric summaries (counts, percentiles, first/last-seen timestamps) that bore on the question}. If unavailable, name the missing MCP or access error.
 
 ### Confidence Summary
 
@@ -126,7 +127,8 @@ Before finalizing, review your output against this checklist:
 4. Does the "What We Don't Know" section exist and name specific gaps? If it's empty or missing, be suspicious. Historical investigations almost always have gaps.
 5. If the user embedded a hypothesis in their question, did you check it against the evidence rather than rubber-stamping it?
 6. Did you cite any code as evidence for its own intent? Remove those. Code is mechanics, not motivation.
-7. Is the overall tone calibrated? A confident-sounding answer with weak evidence is the exact failure mode this skill exists to prevent.
+7. Does Sources Consulted match the validated receipts, including empty, unavailable, skipped, partial, and unverified results? Preserve these limitations in the claims and Confidence Summary.
+8. Is the overall tone calibrated? A confident-sounding answer with weak evidence is the exact failure mode this skill exists to prevent.
 
 If any item fails, revise before returning.
 
