@@ -163,7 +163,8 @@ export async function redTrunkTip(stateDirectory: string, t: Trusted, dryRun: bo
 function retryCommand(repo: string, commit: string): string { return `converge-local post-merge --repo ${repo} --commit ${commit}`; }
 function failureComment(ledger: PostMergeLedger): string {
   const last = ledger.attempts[ledger.attempts.length - 1];
-  return [`The local converge daemon's post-merge stopped on commit ${ledger.commit}: ${last?.reason}.`, '', 'Runs:', ...(last?.runs ?? []).map(r => `- ${r.name} ${r.exitCode === null ? 'did not start' : `exited ${r.exitCode}`} (${r.logFile})`), '', `Later trunk commits wait. Retry with \`${retryCommand(ledger.repo, ledger.commit)}\`, retaining the ledger.`].join('\n');
+  const processed = ledger.attempts.some(a => a.outcome === 'done');
+  return [`${processed ? 'The manual post-merge replay' : "The local converge daemon's post-merge"} stopped on commit ${ledger.commit}: ${last?.reason}.`, '', 'Runs:', ...(last?.runs ?? []).map(r => `- ${r.name} ${r.exitCode === null ? 'did not start' : `exited ${r.exitCode}`} (${r.logFile})`), '', `${processed ? 'Automatic processing is already complete; later trunk commits continue.' : 'Later trunk commits wait.'} Retry with \`${retryCommand(ledger.repo, ledger.commit)}${processed ? ' --plan FILE' : ''}\`, retaining the ledger.`].join('\n');
 }
 function runDirectory(repo: string, commit: string, n: number): string {
   return join(tmpdir(), 'converge-local', 'post-merge', `${slug(repo)}-${commit.slice(0, 8)}-${n}-${Math.floor(Date.now() / 1000)}`);
@@ -185,6 +186,7 @@ async function attempt(p: Pass, commit: string, ledger: PostMergeLedger | null):
   if (p.options.dryRun) {
     const commands = p.postMerge.runs.map(r => `${r.name}: ${r.command}`).join('; ');
     const linear = p.postMerge.linear ? await linearStep(p, commit, file, p.repo.checkout, run, ledger?.checkpoint?.linear ?? null, () => undefined) : null;
+    if (linear?.kind === 'refused') { p.errors.push(`${commit} Linear plan refused: ${linear.reason}`); return { commit, pr, outcome: 'failed', reason: `linear: ${linear.reason}`, ledger: file, runDirectory: run }; }
     return { commit, pr, outcome: 'dry-run', reason: commands + (linear ? `${commands ? '; ' : ''}linear: ${JSON.stringify(linear)}` : ''), ledger: file, runDirectory: run };
   }
   mkdirSync(run, { recursive: true, mode: 0o700 });
@@ -224,16 +226,17 @@ async function attempt(p: Pass, commit: string, ledger: PostMergeLedger | null):
     catch (error) { p.errors.push(`${commit}: worktree not removed: ${message(error)}`); }
   }
   const endedAt = new Date().toISOString();
-  if (result.outcome === 'deferred' && Date.parse(endedAt) - Date.parse(firstAttemptAt) >= POST_MERGE_DEFER_HOURS * 3_600_000) result = { ...result, outcome: 'failed', reason: `${result.reason} for ${POST_MERGE_DEFER_HOURS} hours since ${firstAttemptAt}` };
+  if (result.outcome === 'deferred' && !ledger?.attempts.some(a => a.outcome === 'done') && Date.parse(endedAt) - Date.parse(firstAttemptAt) >= POST_MERGE_DEFER_HOURS * 3_600_000) result = { ...result, outcome: 'failed', reason: `${result.reason} for ${POST_MERGE_DEFER_HOURS} hours since ${firstAttemptAt}` };
   const updated: PostMergeLedger = { ...saved, attempts: [...(ledger?.attempts ?? []), { n, startedAt, endedAt, runs: result.runs, outcome: result.outcome, reason: result.reason, runDirectory: run }] };
   writeJsonFile(file, updated);
   if (result.outcome === 'failed') {
-    p.errors.push(`${commit} failed: ${result.reason}; retry with ${retryCommand(p.repo.repo, commit)}, retaining the ledger`);
+    const processed = ledger?.attempts.some(a => a.outcome === 'done');
+    p.errors.push(`${commit} ${processed ? 'manual replay failed' : 'failed'}: ${result.reason}; ${processed ? 'automatic processing is already complete; ' : ''}retry with ${retryCommand(p.repo.repo, commit)}${processed ? ' --plan FILE' : ''}, retaining the ledger`);
     if (pr !== null) {
       try { await api(`repos/${p.t.repo}/issues/${pr}/comments`, { body: failureComment(updated) }); }
       catch (error) { p.errors.push(`${commit}: failure comment failed: ${message(error)}`); }
     }
-    const cause = notify({ title: 'Converge local', subtitle: p.repo.repo, body: `Post-merge stopped on commit ${commit.slice(0, 8)}: ${result.reason}${pr === null ? '' : ` (PR #${pr})`}` });
+    const cause = notify({ title: 'Converge local', subtitle: p.repo.repo, body: `${processed ? 'Manual replay failed; automatic processing is complete' : 'Post-merge stopped'} on commit ${commit.slice(0, 8)}: ${result.reason}${pr === null ? '' : ` (PR #${pr})`}` });
     if (cause) p.errors.push(`${commit}: notification failed: ${cause}`);
   }
   return { commit, pr, outcome: result.outcome, reason: result.reason, ledger: file, runDirectory: run };
@@ -247,12 +250,13 @@ async function linearStep(p: Pass, commit: string, file: string, checkout: strin
     return await reconcileLinear({ merge: admission.merge, lane, checkout, pluginDir: p.config.pluginDir, runDirectory: join(runDirectory, 'linear'), ledgerFile: file, checkpoint, save, dryRun: p.options.dryRun, env: p.options.env, capMs: p.options.runCapMs ?? POST_MERGE_RUN_MINUTES * 60_000, planPath: p.options.planPath, manual: p.options.manual });
   } catch (error) { return result('deferred', `Linear admission or runtime unavailable: ${message(error)}`); }
 }
-/** The queue's next commit: a ledger that ends `done` only advances, one that ends `failed` stops the queue with its error again, anything else gets an attempt. */
+/** Successful processing stays settled even if a later manual completion replay fails. */
 async function next(p: Pass, commit: string): Promise<Handled> {
   const file = postMergeLedgerFile(p.config.stateDirectory, p.repo.repo, commit);
   const ledger = readPostMergeLedger(file);
   const last = ledger?.attempts[ledger.attempts.length - 1];
-  if (ledger && last?.outcome === 'done') return { commit, pr: ledger.pr, outcome: 'done', reason: 'done on an earlier pass', ledger: file, runDirectory: last.runDirectory };
+  const processed = ledger?.attempts.findLast(a => a.outcome === 'done');
+  if (ledger && processed) return { commit, pr: ledger.pr, outcome: 'done', reason: 'done on an earlier pass', ledger: file, runDirectory: processed.runDirectory };
   if (ledger && last?.outcome === 'failed') {
     p.errors.push(`${commit} failed: ${last.reason}; retry with ${retryCommand(p.repo.repo, commit)}, retaining the ledger`);
     return { commit, pr: ledger.pr, outcome: 'failed', reason: last.reason, ledger: file, runDirectory: last.runDirectory };
@@ -338,9 +342,9 @@ export async function postMergeOne(config: LocalConfig, repo: RepoConfig, t: Tru
   await leased(p, async () => { report.commits.push(await attempt(p, commit, readPostMergeLedger(postMergeLedgerFile(config.stateDirectory, repo.repo, commit)))); });
   return report;
 }
-interface Open { commit: string; pr: number | null; outcome: PostMergeOutcome; reason: string; attempts: number; file: string }
+interface Open { commit: string; pr: number | null; outcome: PostMergeOutcome; reason: string; attempts: number; file: string; pendingCompletion?: { targets: string[]; reason: string; processingComplete: boolean } }
 interface Unreadable { file: string; error: string }
-/** For `status`: each repository with a stored tip, that tip, and every commit whose latest attempt is `deferred` or `failed`; a file that does not parse shows up as its error. */
+/** Pending completion remains visible after progress settles; status never runs inference. */
 export function postMergeStatus(stateDirectory: string): unknown[] {
   const directory = join(stateDirectory, 'post-merge');
   const json = (path: string) => existsSync(path) ? readdirSync(path).filter(name => name.endsWith('.json')).sort() : [];
@@ -354,7 +358,11 @@ export function postMergeStatus(stateDirectory: string): unknown[] {
       try {
         const ledger = readPostMergeLedger(ledgerFile);
         const last = ledger?.attempts[ledger.attempts.length - 1];
-        return ledger && last && last.outcome !== 'done' ? [{ commit: ledger.commit, pr: ledger.pr, outcome: last.outcome, reason: last.reason, attempts: ledger.attempts.length, file: ledgerFile }] : [];
+        if (!ledger || !last) return [];
+        const withheld = ledger.checkpoint?.linear?.effects.filter(e => e.kind === 'complete' && e.status.kind === 'withheld') ?? [];
+        const processed = ledger.attempts.findLast(a => a.outcome === 'done');
+        const pendingCompletion = withheld.length ? { targets: withheld.map(e => e.target.url), reason: processed?.reason ?? last.reason, processingComplete: !!processed } : null;
+        return last.outcome !== 'done' || pendingCompletion ? [{ commit: ledger.commit, pr: ledger.pr, outcome: last.outcome, reason: last.reason, attempts: ledger.attempts.length, file: ledgerFile, ...(pendingCompletion ? { pendingCompletion } : {}) }] : [];
       } catch (error) { return [{ file: ledgerFile, error: message(error) }]; }
     });
     return { repo: state?.repo ?? name, tip: state?.tip ?? null, commits };

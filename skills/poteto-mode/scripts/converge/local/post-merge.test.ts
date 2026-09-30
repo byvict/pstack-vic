@@ -8,7 +8,7 @@ import { dossier, issueUrl, merge } from '../fixtures/linear.ts';
 import { linearTarget } from '../linear-targets.ts';
 import { loadConfig } from './config.ts';
 import { writeJsonFile } from './ledger.ts';
-import { parseLinearPlan, type LinearPlan } from './linear-plan.ts';
+import { createLinearPlan, parseLinearPlan, type LinearPlan } from './linear-plan.ts';
 import { proofCatalogue } from './linear-proof.ts';
 import { LINEAR_PREFIX, type NativeCall } from './linear-session.ts';
 import { tickSweep } from './local.ts';
@@ -395,8 +395,8 @@ test('a dry run prints what the pass would run and writes nothing', t => {
   assert.deepEqual(released(f), []);
 });
 const byHand = (f: F, file: string, args: string[]) => f.run('converge-local', ['post-merge', ...args, '--config', file], env(f));
-function manualLinear(f: F) {
-  const setup = trunk(f, 2, { runs: [{ name: 'release', command: 'fake-release' }], linear: true });
+function manualLinear(f: F, count = 2) {
+  const setup = trunk(f, count, { runs: [{ name: 'release', command: 'fake-release' }], linear: true });
   const commitSha = String(setup.commits[1]), remote = join(f.directory, 'linear-remote.json'), plan = join(f.directory, 'reviewed-plan.json');
   linearMergedPr(f, commitSha);
   edit(f, live => { live.trunk = commitSha; });
@@ -405,7 +405,7 @@ function manualLinear(f: F) {
   writeJsonFile(setup.file, config);
   writeFileSync(join(f.directory, 'sheet.md'), 'converge raiz: claude:fable@max\n');
   const cli = join(f.directory, 'claude');
-  writeFileSync(cli, readFileSync(new URL('../fixtures/linear.mjs', import.meta.url))); chmodSync(cli, 0o700);
+  writeFileSync(cli, readFileSync(new URL('../fixtures/linear.mjs', import.meta.url), 'utf8').replace('const prompt =', "if (process.env.LINEAR_ARGV) writeFileSync(process.env.LINEAR_ARGV + '.calls', 'call\\n', { flag: 'a' });\nconst prompt =")); chmodSync(cli, 0o700);
   const state = {
     mode: 'normal',
     issue: { id: 'ENG-1', uuid: 'issue-uuid', url: issueUrl, description: 'Retain retry behavior. Production rollout remains pending.', statusType: 'started', documents: [], projectId: 'project-1' },
@@ -416,11 +416,12 @@ function manualLinear(f: F) {
   const linearEnv = { ...env(f), LINEAR_REMOTE: remote, LINEAR_ARGV: join(f.directory, 'linear-argv.json') };
   const run = (args: string[]) => f.run('converge-local', ['post-merge', '--repo', 'Example/app', '--commit', commitSha, '--config', setup.file, ...args], linearEnv);
   const sweep = () => f.run('converge-local', ['tick', '--job', 'sweep', '--config', setup.file], linearEnv);
-  return { ...setup, commitSha, remote, plan, run, sweep, read: (): typeof state => JSON.parse(readFileSync(remote, 'utf8')) };
+  const sessions = () => existsSync(join(f.directory, 'linear-argv.json.calls')) ? readFileSync(join(f.directory, 'linear-argv.json.calls'), 'utf8').trim().split('\n').length : 0;
+  return { ...setup, commitSha, remote, plan, run, sweep, sessions, read: (): typeof state => JSON.parse(readFileSync(remote, 'utf8')) };
 }
-test('public sweep defers a mixed completion proposal until exact reviewed manual CLI application', t => {
+test('public sweep settles progress, exposes withheld completion, and advances after owner rejection without reassessment', t => {
   const f = fixture(); t.after(f.cleanup);
-  const s = manualLinear(f), criterion = 'ENG-1 labels must include pstack.';
+  const s = manualLinear(f, 3), criterion = 'ENG-1 labels must include pstack.';
   const issue = { ...s.read().issue, description: criterion + '\nPersist the release checkpoint before the next command.', labels: ['pstack'] };
   const observed = { id: 'observed', tool: LINEAR_PREFIX + 'get_issue', args: {}, result: issue, error: false, line: 1, session: 'fixture' } satisfies NativeCall;
   const proof = proofCatalogue(merge(), [observed]).find(p => p.kind === 'structural' && p.field === 'labels'); assert.ok(proof);
@@ -429,19 +430,33 @@ test('public sweep defers a mixed completion proposal until exact reviewed manua
   edit(f, live => { live.trunk = s.commits[0]; }); assert.equal(s.sweep().status, 0);
   edit(f, live => { live.trunk = s.commitSha; });
   const automatic = s.sweep(); assert.equal(automatic.status, 0, automatic.stderr);
-  const pending = pass(automatic.stdout).commits[0]; assert.equal(pending.outcome, 'deferred');
-  assert.match(pending.reason, /completion requires reviewed manual application/);
+  const pending = pass(automatic.stdout).commits[0]; assert.equal(pending.outcome, 'done');
+  assert.match(pending.reason, /completion awaits owner review/);
   const artifact = pending.reason.match(/Concrete Linear plan (.+) \(([a-f0-9]{64})\)/); assert.ok(artifact);
-  assert.equal(parseLinearPlan(JSON.parse(readFileSync(artifact[1], 'utf8'))).effects.filter(e => e.tool === LINEAR_PREFIX + 'save_issue').length, 1);
+  const reviewed = readFileSync(artifact[1], 'utf8'), approved = parseLinearPlan(JSON.parse(reviewed));
+  assert.equal(approved.effects.length, 1); assert.equal(approved.effects[0].tool, LINEAR_PREFIX + 'save_issue'); assert.ok(artifact[1].startsWith(s.state));
   assert.equal(ledgerOf(s.ledger(s.commitSha)).checkpoint?.linear?.effects.find(e => e.kind === 'complete')?.status.kind, 'withheld');
-  assert.deepEqual(s.read().mutations, []); assert.equal(s.read().issue.statusType, 'started'); assert.equal(released(f).length, 1);
-  const retry = s.sweep(); assert.equal(retry.status, 0, retry.stderr); assert.equal(pass(retry.stdout).commits[0].outcome, 'deferred'); assert.deepEqual(s.read().mutations, []); assert.equal(released(f).length, 1);
-  const dry = s.run(['--dry-run', '--plan', s.plan]); assert.equal(dry.status, 0, dry.stderr);
-  const reviewed = readFileSync(s.plan, 'utf8'), approved = parseLinearPlan(JSON.parse(reviewed));
-  const applied = s.run(['--plan', s.plan]); assert.equal(applied.status, 0, applied.stderr); assert.equal(JSON.parse(applied.stdout).commits[0].outcome, 'done');
-  assert.deepEqual(s.read().mutations.toSorted((a, b) => a.tool.localeCompare(b.tool)), approved.effects.map(({ tool, args }) => ({ tool, args })).toSorted((a, b) => a.tool.localeCompare(b.tool))); assert.equal(s.read().issue.statusType, 'completed'); assert.equal(readFileSync(s.plan, 'utf8'), reviewed);
-  assert.deepEqual(ledgerOf(s.ledger(s.commitSha)).attempts.map(a => a.outcome), ['deferred', 'deferred', 'done']); assert.equal(released(f).length, 1);
-  const settled = s.sweep(); assert.equal(settled.status, 0, settled.stderr); assert.equal(pass(settled.stdout).commits[0].reason, 'done on an earlier pass'); assert.equal(s.read().mutations.length, 2);
+  assert.equal(s.read().mutations.length, 1); assert.equal(s.read().mutations[0].tool, LINEAR_PREFIX + 'save_comment'); assert.equal(s.read().issue.statusType, 'started'); assert.equal(released(f).length, 1);
+  assert.match(s.read().comments[0].body, /completion awaits owner review/);
+  rmSync(pending.runDirectory, { recursive: true, force: true }); assert.equal(readFileSync(artifact[1], 'utf8'), reviewed);
+  const aged = ledgerOf(s.ledger(s.commitSha)); aged.firstAttemptAt = new Date(Date.now() - 26 * 3_600_000).toISOString(); writeJsonFile(s.ledger(s.commitSha), aged);
+  const declined = join(f.directory, 'declined-plan.json'); writeJsonFile(declined, createLinearPlan({ ...approved, effects: [] }));
+  // The ledger settled before a crash could store the handled tip.
+  writeJsonFile(s.stateFile, { schemaVersion: 1, repo: 'Example/app', tip: s.commits[0] });
+  const beforeRejection = readFileSync(s.stateFile, 'utf8'), rejected = s.run(['--plan', declined]); assert.equal(rejected.status, 1); assert.match(rejected.stderr, /effects changed/);
+  assert.equal(readFileSync(s.stateFile, 'utf8'), beforeRejection); assert.equal(s.read().mutations.length, 1); assert.deepEqual(ledgerOf(s.ledger(s.commitSha)).attempts.map(a => a.outcome), ['done', 'failed']);
+  assert.match(rejected.stderr, /automatic processing is already complete/);
+  const failure = f.read().comments.find((c: {body: string}) => c.body.includes('The manual post-merge replay')); assert.ok(failure); assert.match(failure.body, /Automatic processing is already complete; later trunk commits continue/); assert.ok(!failure.body.includes('Later trunk commits wait'));
+  assert.match(f.notices()[0], /automatic processing is complete/);
+  edit(f, live => { live.trunk = s.commits[2]; live.commitPulls[s.commits[2]] = []; });
+  const nativeCalls = s.sessions(), next = s.sweep(); assert.equal(next.status, 0, next.stderr); assert.deepEqual(pass(next.stdout).commits.map((c: Handled) => [c.commit, c.outcome]), [[s.commitSha, 'done'], [s.commits[2], 'done']]); assert.equal(released(f).length, 2); assert.equal(s.sessions(), nativeCalls);
+  const saved = readFileSync(s.ledger(s.commitSha), 'utf8'), repeat = s.sweep(); assert.equal(repeat.status, 0, repeat.stderr); assert.deepEqual(pass(repeat.stdout).commits, []); assert.equal(s.sessions(), nativeCalls); assert.equal(readFileSync(s.ledger(s.commitSha), 'utf8'), saved); assert.equal(s.read().mutations.length, 1);
+  const status = f.run('converge-local', ['status', '--config', s.file], env(f)); assert.equal(status.status, 0, status.stderr);
+  const visible = JSON.parse(status.stdout).postMerge[0].commits.find((c: {commit: string}) => c.commit === s.commitSha); assert.deepEqual(visible.pendingCompletion.targets, [issueUrl]); assert.equal(visible.pendingCompletion.processingComplete, true); assert.ok(visible.pendingCompletion.reason.includes(artifact[1])); assert.equal(s.sessions(), nativeCalls);
+  const dry = s.run(['--dry-run', '--plan', artifact[1]]); assert.equal(dry.status, 0, dry.stderr); assert.equal(readFileSync(artifact[1], 'utf8'), reviewed);
+  const applied = s.run(['--plan', artifact[1]]); assert.equal(applied.status, 0, applied.stderr); assert.equal(JSON.parse(applied.stdout).commits[0].outcome, 'done');
+  assert.deepEqual(s.read().mutations.slice(1), approved.effects.map(({ tool, args }) => ({ tool, args }))); assert.equal(s.read().issue.statusType, 'completed'); assert.equal(readFileSync(artifact[1], 'utf8'), reviewed); assert.equal(released(f).length, 2);
+  assert.deepEqual(ledgerOf(s.ledger(s.commitSha)).attempts.map(a => a.outcome), ['done', 'failed', 'done']);
 });
 test('manual CLI emits a concrete reviewed plan and applies exactly its effects without changing the artifact', t => {
   const f = fixture(); t.after(f.cleanup);
@@ -490,17 +505,19 @@ test('manual CLI refuses changed Linear sources, preserves the reviewed artifact
   assert.equal(ledgerOf(s.ledger(s.commitSha)).attempts[0].outcome, 'failed');
   assert.equal(readFileSync(s.plan, 'utf8'), reviewed);
   assert.deepEqual(s.read().mutations, []);
-  const fresh = s.run(['--dry-run', '--plan', s.plan]);
+  const overwritten = s.run(['--dry-run', '--plan', s.plan]); assert.equal(overwritten.status, 1); assert.match(overwritten.stderr, /new --plan path/); assert.equal(readFileSync(s.plan, 'utf8'), reviewed);
+  const newPlan = join(f.directory, 'new-reviewed-plan.json');
+  const fresh = s.run(['--dry-run', '--plan', newPlan]);
   assert.equal(fresh.status, 0, fresh.stderr);
-  const updated = readFileSync(s.plan, 'utf8');
+  const updated = readFileSync(newPlan, 'utf8');
   assert.notEqual(parseLinearPlan(JSON.parse(updated)).sourceDigest, parseLinearPlan(JSON.parse(reviewed)).sourceDigest);
   assert.equal(ledgerOf(s.ledger(s.commitSha)).attempts.length, 1);
-  const applied = s.run(['--plan', s.plan]);
+  const applied = s.run(['--plan', newPlan]);
   assert.equal(applied.status, 0, applied.stderr);
   assert.deepEqual(ledgerOf(s.ledger(s.commitSha)).attempts.map(a => a.outcome), ['failed', 'done']);
   assert.equal(s.read().mutations.length, 1);
   assert.equal(released(f).length, 1, 'the successful repository command is not repeated after refusal');
-  assert.equal(readFileSync(s.plan, 'utf8'), updated);
+  assert.equal(readFileSync(newPlan, 'utf8'), updated); assert.equal(readFileSync(s.plan, 'utf8'), reviewed);
 });
 for (const linear of [false, true]) test(`manual --plan leaves repository commands unchanged when Linear is ${linear ? 'enabled without targets' : 'disabled'}`, t => {
   const f = fixture(); t.after(f.cleanup);

@@ -1,6 +1,7 @@
 import { assessmentFormat, completionEvidence, proofCatalogue, latestLinearReads, linearReferenceIdentity } from './linear-proof.ts';
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { existsSync, linkSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { assertLinearPlan, createLinearPlan, parseLinearPlan } from './linear-plan.ts';
 import { array, hash, jsonHash, object, oneOf, repoName, sha, string } from '../contract.ts';
 import { writeJsonFile } from './ledger.ts';
@@ -12,6 +13,18 @@ export type EffectStatus = { kind: 'planned' | 'sent' | 'withheld' } | { kind: '
 export interface LinearEffect { key: string; target: LinearTarget; kind: 'comment' | 'complete'; tool: string; args: Record<string, unknown>; marker: string; status: EffectStatus }
 export interface LinearCheckpoint { repo: string; commit: string; head: string; effects: LinearEffect[]; logPaths: string[] }
 class LinearRefusal extends Error {}
+function persistPlan(file: string, plan: ReturnType<typeof createLinearPlan>): void {
+  if (!existsSync(file)) {
+    const staged = `${file}.${randomUUID()}.tmp`;
+    try {
+      writeJsonFile(staged, plan);
+      try { linkSync(staged, file); return; }
+      catch (error) { if (!existsSync(file)) throw error; }
+    } finally { rmSync(staged, { force: true }); }
+  }
+  try { assertLinearPlan(parseLinearPlan(JSON.parse(readFileSync(file, 'utf8'))), plan); }
+  catch (error) { throw new LinearRefusal(`Plan file ${file} already exists; generate and review a new --plan path. ${error instanceof Error ? error.message : String(error)}`); }
+}
 export interface LinearResult { kind: 'done' | 'deferred' | 'refused' | 'failed' | 'dry-run'; reason: string; effects: LinearEffect[]; logs: string[] }
 export function parseLinearCheckpoint(value: unknown): LinearCheckpoint {
   const v = object(value, 'Linear checkpoint');
@@ -223,7 +236,7 @@ export function planLinear(merge: LinearMerge, reads: TargetRead[], answers: [un
     const proof = read.target.kind === 'issue' ? completionEvidence(read, answers, proofCatalogue(merge, calls)) : { complete: false, remaining: [] };
     const remaining = proof.remaining;
     const complete = read.target.kind === 'issue' && proof.complete && ['backlog', 'unstarted', 'started'].includes(read.state);
-    const body = [`Verified merge https://github.com/${merge.repo}/pull/${merge.pr}`, `Head: ${merge.head}`, `Merge: ${merge.commit}`, `Verdict: ${merge.verdictUrl}`, `Evidence snapshot: ${linearSourceDigest([read], proofCatalogue(merge, calls))}`, '', read.target.kind === 'project' ? 'Progress only. This merge does not complete the project.' : remaining.length ? 'Completion is unproved at this evidence snapshot. Acceptance or rollout still needs proof:\n' + remaining.map(c => `- ${c}`).join('\n') : 'At this evidence snapshot, independent assessments mapped each scoped acceptance and rollout obligation to cited native or certified evidence.', '', `pstack-linear ${merge.repo} ${merge.commit} ${targetIdentity(read.target)} comment`, ...(read.target.kind === 'issue' ? [`Completion effect identity: pstack-linear ${merge.repo} ${merge.commit} ${targetIdentity(read.target)} complete`] : [])].join('\n');
+    const body = [`Verified merge https://github.com/${merge.repo}/pull/${merge.pr}`, `Head: ${merge.head}`, `Merge: ${merge.commit}`, `Verdict: ${merge.verdictUrl}`, `Evidence snapshot: ${linearSourceDigest([read], proofCatalogue(merge, calls))}`, '', read.target.kind === 'project' ? 'Progress only. This merge does not complete the project.' : remaining.length ? 'Completion is unproved at this evidence snapshot. Acceptance or rollout still needs proof:\n' + remaining.map(c => `- ${c}`).join('\n') : complete ? 'At this evidence snapshot, assessments propose completion from their listed obligations. The inventory may omit criteria. Issue completion awaits owner review of every acceptance and rollout criterion.' : 'Progress only. This comment does not certify complete acceptance or owner approval.', '', `pstack-linear ${merge.repo} ${merge.commit} ${targetIdentity(read.target)} comment`, ...(read.target.kind === 'issue' ? [`Completion effect identity: pstack-linear ${merge.repo} ${merge.commit} ${targetIdentity(read.target)} complete`] : [])].join('\n');
     const marker = `pstack-linear ${merge.repo} ${merge.commit} ${targetIdentity(read.target)} comment`, existing = markedComment(read, marker);
     const comment = effect(merge, read, 'comment', existing ? { id: existing.id, body } : { [read.target.kind === 'issue' ? 'issueId' : 'projectId']: read.id, body });
     return complete ? [comment, effect(merge, read, 'complete', { id: read.id, state: 'completed' })] : [comment];
@@ -291,23 +304,28 @@ export async function reconcileLinear(input: ReconcileLinearInput): Promise<Line
     const proposedCompletions = completions.filter(e => plan.some(p => p.key === e.key));
     const { repo, pr, head, commit } = input.merge;
     const currentPlan = createLinearPlan({ merge: { repo, pr, head, commit }, sourceDigest: linearSourceDigest(reads, catalogue), effects: checkpoint.effects.filter(e => e.status.kind === 'planned' || proposedCompletions.includes(e)).map(({ key, tool, args }) => ({ key, tool, args })) });
-    const planFile = resolve(input.planPath ?? join(input.runDirectory, `plan-${currentPlan.digest}.json`));
+    const durablePlan = (digest: string) => join(dirname(input.ledgerFile), 'linear-plans', commit, `plan-${digest}.json`);
+    const planFile = resolve(input.planPath ?? durablePlan(currentPlan.digest));
     if (planFile === resolve(input.ledgerFile) || checkpoint.logPaths.some(path => resolve(path) === planFile)) throw new LinearRefusal('The plan file must differ from the ledger and native transcript files');
-    if (input.dryRun) { writeJsonFile(planFile, currentPlan); return result('dry-run', `Concrete Linear plan ${planFile} (${currentPlan.digest}); no mutations`); }
+    if (input.dryRun) { persistPlan(planFile, currentPlan); return result('dry-run', `Concrete Linear plan ${planFile} (${currentPlan.digest}); no mutations`); }
     if (input.planPath) {
       try { assertLinearPlan(parseLinearPlan(JSON.parse(readFileSync(planFile, 'utf8'))), currentPlan); }
       catch (error) { throw new LinearRefusal(error instanceof Error ? error.message : String(error)); }
     }
-    if (proposedCompletions.length && !(input.manual && input.planPath)) {
-      if (!input.planPath && !existsSync(planFile)) writeJsonFile(planFile, currentPlan);
-      input.save(checkpoint);
-      return result('deferred', `Issue completion requires reviewed manual application; the mixed proposal is deferred without Linear mutations. Concrete Linear plan ${planFile} (${currentPlan.digest})`);
-    }
-    for (const effect of proposedCompletions) effect.status = { kind: 'planned' };
+    if (input.manual && input.planPath) for (const effect of proposedCompletions) effect.status = { kind: 'planned' };
+    const completionKeys = new Set(proposedCompletions.map(e => e.key));
+    const settled = () => {
+      const pending = checkpoint.effects.filter(e => e.status.kind === 'withheld' && completionKeys.has(e.key));
+      if (!pending.length) return result('done', 'Linear effects confirmed; completion without current proof is withheld');
+      const candidate = createLinearPlan({ merge: currentPlan.merge, sourceDigest: currentPlan.sourceDigest, effects: pending.map(({ key, tool, args }) => ({ key, tool, args })) });
+      const candidateFile = durablePlan(candidate.digest);
+      persistPlan(candidateFile, candidate);
+      return result('done', `Linear progress comments confirmed; issue completion awaits owner review. Concrete Linear plan ${candidateFile} (${candidate.digest}); only remaining completion effects, no automatic completion`);
+    };
     input.save(checkpoint);
     if (checkpoint.effects.some(e => e.status.kind === 'sent')) return result('deferred', 'A dispatched Linear create has no confirmed readback; no blind retry');
     const planned = checkpoint.effects.filter(e => e.status.kind === 'planned');
-    if (!planned.length) return result('done', 'Linear effects confirmed; completion without current proof is withheld');
+    if (!planned.length) return settled();
     const writePath = join(input.runDirectory, 'write.jsonl');
     checkpoint.logPaths.push(writePath); input.save(checkpoint);
     rmSync(`${input.ledgerFile}.linear-permission`, { recursive: true, force: true });
@@ -322,7 +340,6 @@ export async function reconcileLinear(input: ReconcileLinearInput): Promise<Line
     if (readback.parseError || readback.timedOut || readback.exitCode !== 0) { input.save(checkpoint); return result('deferred', 'Linear readback is unavailable'); }
     reconcileLinearEffects(checkpoint.effects, readLinearTargets(input.merge, readback.trace.calls), storedLinearCalls(checkpoint.logPaths));
     input.save(checkpoint);
-    const settled = checkpoint.effects.every(e => ['confirmed', 'withheld'].includes(e.status.kind));
-    return result(settled ? 'done' : 'deferred', settled ? 'Linear effects confirmed; completion without current proof is withheld' : 'Linear effects need native readback');
+    return checkpoint.effects.every(e => ['confirmed', 'withheld'].includes(e.status.kind)) ? settled() : result('deferred', 'Linear effects need native readback');
   } catch (error) { return result(error instanceof LinearRefusal ? 'refused' : 'deferred', error instanceof Error ? error.message : String(error)); }
 }
