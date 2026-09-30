@@ -19,7 +19,7 @@ if (plan.dirty?.[manifest.laneId]?.includes(attempt)) writeFileSync(join(args.cw
 if (plan.moved?.[manifest.laneId]?.includes(attempt)) {
   const tracked = join(args.cwd, 'client', 'Login.jsx');
   writeFileSync(tracked, 'committed\n');
-  const committed = spawnSync('git', ['-C', args.cwd, '-c', 'user.name=fake', '-c', 'user.email=fake@example.invalid', 'commit', '-am', 'moved'], { encoding: 'utf8' });
+  const committed = spawnSync('git', ['-C', args.cwd, '-c', 'user.name=fake', '-c', 'user.email=fake@example.invalid', 'commit', '-am', 'moved'], { encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } });
   if (committed.status !== 0) throw new Error((committed.stderr || 'git commit failed').trim());
   writeFileSync(tracked, 'edited again\n');
 }
