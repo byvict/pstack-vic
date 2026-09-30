@@ -25,6 +25,9 @@ export function proofCatalogue(merge: LinearMerge, calls: NativeCall[]): LinearP
     if (!call.tool.startsWith(LINEAR_PREFIX)) continue;
     let v: Record<string, unknown>;
     try { v = object(call.result); } catch { continue; }
+    if (typeof v.url === 'string' && ['get_issue', 'get_project', 'get_initiative', 'get_document', 'get_status_updates'].some(name => call.tool === LINEAR_PREFIX + name)) {
+      for (let index = records.length - 1; index >= 0; index--) if (records[index].subject === v.url && records[index].kind !== 'verification') records.splice(index, 1);
+    }
     if (!bounded(v)) continue;
     if (['get_issue', 'get_project', 'get_initiative'].some(n => call.tool === LINEAR_PREFIX + n) && typeof v.url === 'string') {
       for (const field of fields) {
@@ -36,6 +39,7 @@ export function proofCatalogue(merge: LinearMerge, calls: NativeCall[]): LinearP
     if (call.tool === LINEAR_PREFIX + 'get_status_updates' && v.updates !== undefined && v.hasNextPage !== false && !(v.pageInfo && object(v.pageInfo).hasNextPage === false)) continue;
     const outputs = call.tool === LINEAR_PREFIX + 'get_status_updates' ? v.updates === undefined ? [v] : array(v.updates).map(raw => object(raw)) : call.tool === LINEAR_PREFIX + 'get_document' ? [v] : [];
     for (const output of outputs) {
+      for (let index = records.length - 1; index >= 0; index--) if (records[index].kind === 'publication' && records[index].subject === output.url) records.splice(index, 1);
       const content = output.body ?? output.content;
       if (!bounded(output) || typeof output.url !== 'string' || typeof output.id !== 'string' || typeof content !== 'string' || !content.trim()) continue;
       const fact = { kind: 'publication' as const, subject: output.url, content, digest: jsonHash(content) };

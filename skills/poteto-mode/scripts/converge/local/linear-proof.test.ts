@@ -96,3 +96,20 @@ test('required unread references remain open while independently justified unrel
   a.targets[0].references[0].required = false; a.targets[0].references[0].reason = 'Independent work outside this metadata change.';
   assert.equal(completionEvidence(f.read, [a, a], f.catalogue).complete, true);
 });
+
+test('only the final authoritative native values and publication content may prove the current outcome', () => {
+  const quote = 'ENG-1 labels must include pstack.', f = fixture(quote), old = structural(f);
+  f.calls.push(call('new-issue', 'get_issue', { id: 'ENG-1', url: issueUrl, description: quote, labels: [], statusType: 'started', documents: [] }));
+  const catalogue = proofCatalogue(f.m, f.calls), a = assessment(quote, old, { field: 'labels', operator: 'includes', value: 'pstack' });
+  assert.equal(completionEvidence(readLinearTargets(f.m, f.calls)[0], [a, a], catalogue).complete, false);
+  const url = 'https://linear.app/example/document/weekly';
+  const publications = proofCatalogue(f.m, [call('old', 'get_document', { id: 'doc', url, content: 'Old published content.' }), call('new', 'get_document', { id: 'doc', url, content: 'Corrected published content.' })]);
+  const artifactUrl = 'https://linear.app/example/initiative/weekly/activity#initiative-update-weekly', publicationQuote = `Publish the weekly update at ${artifactUrl}.`;
+  const g = fixture(publicationQuote, [call('old-update', 'get_status_updates', { id: 'weekly', url: artifactUrl, body: 'Old published content.' })]);
+  const oldPublication = g.catalogue.find(p => p.kind === 'publication'); assert.ok(oldPublication);
+  g.calls.push(call('new-update', 'get_status_updates', { id: 'weekly', url: artifactUrl, body: 'Corrected published content.' }));
+  const forged = assessment(publicationQuote, oldPublication, { content: 'Old published content.' }); forged.targets[0].references.push({ key: artifactUrl, required: true, reason: 'The requested publication.' });
+  assert.equal(completionEvidence(readLinearTargets(g.m, g.calls)[0], [forged, forged], proofCatalogue(g.m, g.calls)).complete, false);
+  assert.equal(publications.length, 1); assert.equal(publications[0].kind === 'publication' && publications[0].content, 'Corrected published content.');
+  assert.deepEqual(proofCatalogue(f.m, [call('old', 'get_document', { id: 'doc', url, content: 'Old content.' }), call('partial', 'get_document', { id: 'doc', url, content: 'Partial', truncated: true })]), []);
+});
