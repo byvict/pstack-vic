@@ -7,7 +7,7 @@ import type { TargetRead } from './linear.ts';
 type ProofClass = 'structural' | 'publication' | 'verification';
 interface Origin { callId: string; session: string; line: number }
 interface FieldProof { kind: 'structural'; id: string; subject: string; names: string[]; field: string; value: string | string[] | number | null; origin: Origin }
-interface PublicationProof { kind: 'publication'; id: string; subject: string; content: string; digest: string; origin: Origin }
+interface PublicationProof { sourceId: string; kind: 'publication'; id: string; subject: string; content: string; digest: string; origin: Origin }
 interface VerificationProof { kind: 'verification'; id: string; subject: string; command: string; head: string; logDigest: string; publication: string }
 export type LinearProof = FieldProof | PublicationProof | VerificationProof;
 export interface CompletionEvidence { complete: boolean; remaining: string[]; proofIds: string[] }
@@ -19,6 +19,8 @@ function values(raw: unknown): string | string[] | number | null | undefined {
   return undefined;
 }
 function bounded(v: Record<string, unknown>): boolean { return v.truncated !== true && v.isTruncated !== true && v.hasNextPage !== true && !(v.pageInfo && object(v.pageInfo).hasNextPage === true); }
+function entityIdentity(url: string): string { try { return targetIdentity(linearTarget(url)); } catch { return url; } }
+function nativeUrl(value: string): boolean { try { const url = new URL(value); return url.protocol === 'https:' && url.hostname === 'linear.app'; } catch { return false; } }
 export function proofCatalogue(merge: LinearMerge, calls: NativeCall[]): LinearProof[] {
   const records: LinearProof[] = [];
   for (const call of calls.filter(c => !c.error && c.result !== null)) {
@@ -26,23 +28,28 @@ export function proofCatalogue(merge: LinearMerge, calls: NativeCall[]): LinearP
     let v: Record<string, unknown>;
     try { v = object(call.result); } catch { continue; }
     if (typeof v.url === 'string' && ['get_issue', 'get_project', 'get_initiative', 'get_document', 'get_status_updates'].some(name => call.tool === LINEAR_PREFIX + name)) {
-      for (let index = records.length - 1; index >= 0; index--) if (records[index].subject === v.url && records[index].kind !== 'verification') records.splice(index, 1);
+      for (let index = records.length - 1; index >= 0; index--) if (entityIdentity(records[index].subject) === entityIdentity(v.url) && records[index].kind !== 'verification') records.splice(index, 1);
+    }
+    if (['get_document', 'get_status_updates'].some(name => call.tool === LINEAR_PREFIX + name) && typeof v.url === 'string') {
+      for (let index = records.length - 1; index >= 0; index--) {
+        const previous = records[index];
+        if (previous.kind === 'publication' && previous.sourceId === v.id && new URL(previous.subject).pathname.split('/')[1] === new URL(v.url).pathname.split('/')[1]) records.splice(index, 1);
+      }
     }
     if (!bounded(v)) continue;
     if (['get_issue', 'get_project', 'get_initiative'].some(n => call.tool === LINEAR_PREFIX + n) && typeof v.url === 'string') {
       for (const field of fields) {
         const value = values(v[field]); if (value === undefined) continue;
-        const fact = { kind: 'structural' as const, subject: v.url, names: [v.id, v.uuid, v.title, v.name, v.url].filter(v => typeof v === 'string'), field, value };
+        const fact = { kind: 'structural' as const, subject: v.url, names: [v.id, v.uuid, v.url].filter(v => typeof v === 'string'), field, value };
         records.push({ ...fact, id: jsonHash(fact), origin: origin(call) });
       }
     }
-    if (call.tool === LINEAR_PREFIX + 'get_status_updates' && v.updates !== undefined && v.hasNextPage !== false && !(v.pageInfo && object(v.pageInfo).hasNextPage === false)) continue;
-    const outputs = call.tool === LINEAR_PREFIX + 'get_status_updates' ? v.updates === undefined ? [v] : array(v.updates).map(raw => object(raw)) : call.tool === LINEAR_PREFIX + 'get_document' ? [v] : [];
+    const outputs = ['get_status_updates', 'get_document'].some(name => call.tool === LINEAR_PREFIX + name) ? [v] : [];
     for (const output of outputs) {
       for (let index = records.length - 1; index >= 0; index--) if (records[index].kind === 'publication' && records[index].subject === output.url) records.splice(index, 1);
       const content = output.body ?? output.content;
-      if (!bounded(output) || typeof output.url !== 'string' || typeof output.id !== 'string' || typeof content !== 'string' || !content.trim()) continue;
-      const fact = { kind: 'publication' as const, subject: output.url, content, digest: jsonHash(content) };
+      if (!bounded(output) || typeof output.url !== 'string' || !nativeUrl(output.url) || typeof output.id !== 'string' || typeof content !== 'string' || !content.trim()) continue;
+      const fact = { kind: 'publication' as const, sourceId: output.id, subject: output.url, content, digest: jsonHash(content) };
       records.push({ ...fact, id: jsonHash(fact), origin: origin(call) });
     }
   }
@@ -56,9 +63,12 @@ export function proofCatalogue(merge: LinearMerge, calls: NativeCall[]): LinearP
 export const assessmentFormat = 'Return JSON {"targets":[{"url":"explicit target URL","coverage":"complete|unknown","references":[{"key":"advertised source reference","required":true,"reason":"scope reason"}],"obligations":[{"source":"live source object ID","quote":"verbatim recorded obligation","kind":"acceptance|rollout","requiredClass":"structural|publication|verification","status":"met|unknown|unmet","outcome":{"subject":"exact entity URL or verification run name","field":"exact structural field","operator":"equals|includes","value":"required structural value","content":"required published-content excerpt","command":"required verification command"},"proofIds":["host catalogue ID"],"relevance":"how this concrete outcome meets this obligation"}]}]}. Source assertions and comment bodies are criteria/index data, not outcome evidence. A structural proof is valid only for the explicitly requested named field/value; a done state cannot stand for implemented or deployed behavior. A publication proves only a recorded publication/content obligation naming its exact URL, never deployment claims inside it. A structural obligation must literally name the field, entity and required value; unsupported natural-language equivalents remain unknown. A head-bound verification proves only a recorded check naming its exact command, never rollout from a generic exit code. Artifact metadata is not artifact content. Identify every advertised attachment/child/relation as required or irrelevant with a concrete scope reason; required unread sources mean unknown. No generic relabeling of proof classes. Ambiguous scope or relevance remains unknown.';
 function answerObject(answer: unknown): Record<string, unknown> { return object(typeof answer === 'string' ? JSON.parse(answer.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/, '$1')) : answer); }
 interface Obligation { identity: string; met: boolean; text: string; proofIds: string[] }
-const deployment = /\b(?:deploy(?:ment|ed)?|roll(?:out| out)|production|released|installed|implantação|implantado|produção)\b/i;
+const deployment = /\b(?:deploy(?:ment|ed)?|roll(?:out| out)|production|release(?:d)?|installed|implement(?:ed|ation)?|behavior|delivery|deliver(?:ed)?|after|before|when|once|unless|until|if|implantação|implantado|produção|após|quando)\b/i;
 const publication = /\b(?:publish(?:ed)?|publication|posted|publica(?:ção|do|da)|publicar)\b/i;
 const verification = /\b(?:verify|verification|check|test(?:s)?|pass(?:es)?|verific(?:ar|ação)|teste(?:s)?)\b/i;
+function requestContext(quote: string, literals: string[]): string {
+  return literals.reduce((text, value) => value ? text.split(value.toLowerCase()).join('') : text, quote.toLowerCase());
+}
 function literal(quote: string, value: unknown): boolean {
   const q = quote.toLocaleLowerCase();
   return typeof value === 'string' ? !!value.trim() && q.includes(value.toLocaleLowerCase()) : typeof value === 'number' ? q.includes(String(value)) || value === 0 && /\bzero\b/i.test(quote) : Array.isArray(value) ? value.length > 0 && value.every(v => literal(quote, v)) : value === null && /\b(?:none|null|no |without)\b/i.test(quote);
@@ -83,10 +93,11 @@ function assess(answer: unknown, read: TargetRead, catalogue: LinearProof[]): Ob
         if (proof.kind === 'structural') {
           const operation = oneOf(outcome.operator, ['equals', 'includes']);
           const matching = operation === 'equals' ? jsonHash(outcome.value) === jsonHash(proof.value) : Array.isArray(proof.value) && proof.value.includes(string(outcome.value));
-          return !deployment.test(quote) && matching && outcome.field === proof.field && quote.toLowerCase().includes(proof.field.toLowerCase()) && literal(quote, outcome.value) && proof.names.some(name => quote.includes(name));
+          const requestedValues = Array.isArray(outcome.value) ? outcome.value.map(v => string(v)) : typeof outcome.value === 'string' ? [outcome.value] : [];
+          return !deployment.test(requestContext(quote, [...proof.names, proof.field, ...requestedValues])) && matching && outcome.field === proof.field && quote.toLowerCase().includes(proof.field.toLowerCase()) && literal(quote, outcome.value) && proof.names.some(name => quote.includes(name));
         }
-        if (proof.kind === 'publication') return !deployment.test(quote) && publication.test(quote) && quote.includes(proof.subject) && proof.subject !== read.target.url && !read.texts.some(t => t.id === source && t.body === proof.content) && typeof outcome.content === 'string' && outcome.content.trim().length > 0 && proof.content.includes(outcome.content) && outcome.content !== quote;
-        return o.kind !== 'rollout' && !deployment.test(quote) && verification.test(quote) && quote.includes(proof.command) && outcome.command === proof.command;
+        if (proof.kind === 'publication') return !deployment.test(requestContext(quote, [proof.subject])) && publication.test(quote) && quote.includes(proof.subject) && proof.subject !== read.target.url && !read.texts.some(t => t.id === source && t.body === proof.content) && typeof outcome.content === 'string' && outcome.content.trim().length > 0 && proof.content.includes(outcome.content) && outcome.content !== quote;
+        return o.kind !== 'rollout' && !deployment.test(requestContext(quote, [proof.command])) && verification.test(quote) && quote.includes(proof.command) && outcome.command === proof.command;
       });
       return { identity: jsonHash({ scope, source, quote, kind: oneOf(o.kind, ['acceptance', 'rollout']), requiredClass, outcome }), met, text: `${o.kind}: ${quote}`, proofIds };
     });

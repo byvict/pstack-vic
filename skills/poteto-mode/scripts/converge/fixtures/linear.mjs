@@ -24,14 +24,18 @@ if (state.mode === 'no-mcp' || state.mode === 'forged') {
     const decision = spawnSync(hook, { shell: true, input: JSON.stringify({ tool_name: e.tool, tool_input: e.args }), encoding: 'utf8' });
     if (decision.status !== 0) { use(e.tool.slice(prefix.length), e.args, { denied: decision.stderr }, true); continue; }
     if (state.mode === 'ambiguous') process.exit(1);
-    if (e.tool.endsWith('save_comment')) state.comments.push({ id: `comment-${state.comments.length + 1}`, body: e.args.body });
+    if (e.tool.endsWith('save_comment')) {
+      if (e.args.id) { const c = state.comments.find(c => c.id === e.args.id); if (!c) throw new Error('Missing fixture comment'); c.body = e.args.body; }
+      else state.comments.push({ id: `comment-${state.comments.length + 1}`, body: e.args.body });
+    }
     if (e.tool.endsWith('save_issue')) state.issue.statusType = 'completed';
     state.mutations.push(e); writeFileSync(file, JSON.stringify(state));
     if (state.mode === 'crash-after-effect') process.exit(1);
-    use(e.tool.slice(prefix.length), e.args, e.tool.endsWith('save_comment') ? state.comments.at(-1) : state.issue);
+    use(e.tool.slice(prefix.length), e.args, e.tool.endsWith('save_comment') ? state.comments.find(c => c.id === e.args.id) ?? state.comments.at(-1) : state.issue);
   }
   emit({ type: 'result', result: 'done' });
 } else if (prompt.startsWith('Independently')) {
+  if (state.assessmentDelayMs) await new Promise(resolve => setTimeout(resolve, state.assessmentDelayMs));
   emit({ type: 'result', result: JSON.stringify(state.review ?? state.assessment ?? { targets: [] }) });
 } else {
   use('get_issue', { id: state.issue.id }, state.issue);

@@ -7,6 +7,7 @@ import { LINEAR_PREFIX, type NativeCall } from './linear-session.ts';
 import { readLinearTargets } from './linear.ts';
 function call(id: string, name: string, result: unknown): NativeCall { return { id, tool: LINEAR_PREFIX + name, args: {}, result, error: false, line: 1, session: 's' }; }
 function fixture(quote: string, extra: NativeCall[] = []) {
+  extra = extra.flatMap(c => c.tool === LINEAR_PREFIX + 'get_status_updates' ? [{ ...c, result: { ...object(c.result), type: 'initiative' } }, { ...call(c.id + '-comments', 'list_comments', { comments: [], hasNextPage: false }), args: { statusUpdateId: object(c.result).id, statusUpdateType: 'initiative' } }] : [c]);
   const m = merge(), calls = [call('issue', 'get_issue', { id: 'ENG-1', url: issueUrl, description: quote, statusType: 'started', labels: ['pstack'], documents: [] }), { ...call('comments', 'list_comments', { comments: [], hasNextPage: false }), args: { issueId: 'ENG-1' } }, ...extra];
   return { m, calls, read: readLinearTargets(m, calls)[0], catalogue: proofCatalogue(m, calls) };
 }
@@ -107,9 +108,32 @@ test('only the final authoritative native values and publication content may pro
   const artifactUrl = 'https://linear.app/example/initiative/weekly/activity#initiative-update-weekly', publicationQuote = `Publish the weekly update at ${artifactUrl}.`;
   const g = fixture(publicationQuote, [call('old-update', 'get_status_updates', { id: 'weekly', url: artifactUrl, body: 'Old published content.' })]);
   const oldPublication = g.catalogue.find(p => p.kind === 'publication'); assert.ok(oldPublication);
-  g.calls.push(call('new-update', 'get_status_updates', { id: 'weekly', url: artifactUrl, body: 'Corrected published content.' }));
+  g.calls.push(call('new-update', 'get_status_updates', { id: 'weekly', url: artifactUrl, type: 'initiative', body: 'Corrected published content.' }));
   const forged = assessment(publicationQuote, oldPublication, { content: 'Old published content.' }); forged.targets[0].references.push({ key: artifactUrl, required: true, reason: 'The requested publication.' });
   assert.equal(completionEvidence(readLinearTargets(g.m, g.calls)[0], [forged, forged], proofCatalogue(g.m, g.calls)).complete, false);
   assert.equal(publications.length, 1); assert.equal(publications[0].kind === 'publication' && publications[0].content, 'Corrected published content.');
   assert.deepEqual(proofCatalogue(f.m, [call('old', 'get_document', { id: 'doc', url, content: 'Old content.' }), call('partial', 'get_document', { id: 'doc', url, content: 'Partial', truncated: true })]), []);
+});
+
+test('a deployment word that is the exact required metadata value remains an administrative proof', () => {
+  const quote = 'ENG-1 labels must include production.', f = fixture(quote); f.calls[0].result = { ...object(f.calls[0].result), labels: ['production'] };
+  const catalogue = proofCatalogue(f.m, f.calls), p = catalogue.find(p => p.kind === 'structural' && p.field === 'labels'); assert.ok(p);
+  const a = assessment(quote, p, { field: 'labels', operator: 'includes', value: 'production' });
+  assert.equal(completionEvidence(f.read, [a, a], catalogue).complete, true);
+});
+test('required publication coverage needs its full comments and individually opened content, not a list', () => {
+  const url = 'https://linear.app/example/initiative/weekly/activity#initiative-update-weekly', quote = `Publish the update at ${url}.`;
+  const f = fixture(quote, [call('artifact', 'get_status_updates', { id: 'weekly', url, body: 'Actual weekly output.' })]);
+  const p = f.catalogue.find(p => p.kind === 'publication'); assert.ok(p); const a = assessment(quote, p, { content: 'Actual weekly output.' }); a.targets[0].references.push({ key: url, required: true, reason: 'Required output.' });
+  f.calls = f.calls.filter(c => !('statusUpdateId' in c.args)); const missing = readLinearTargets(f.m, f.calls)[0];
+  assert.equal(missing.references[0].read, false); assert.equal(completionEvidence(missing, [a, a], f.catalogue).complete, false);
+  assert.deepEqual(proofCatalogue(f.m, [call('listing', 'get_status_updates', { updates: [{ id: 'weekly', url, body: 'Actual weekly output.' }], hasNextPage: false })]), []);
+});
+
+test('renaming an issue URL does not preserve an older field or criterion as current evidence', () => {
+  const quote = 'ENG-1 labels must include pstack.', f = fixture(quote), old = structural(f);
+  f.calls.push(call('renamed', 'get_issue', { id: 'ENG-1', url: issueUrl.replace('/test', '/new-title'), description: 'ENG-1 labels must include other.', labels: [], statusType: 'started', documents: [] }));
+  const catalogue = proofCatalogue(f.m, f.calls), read = readLinearTargets(f.m, f.calls)[0], forged = assessment(quote, old, { field: 'labels', operator: 'includes', value: 'pstack' });
+  assert.equal(read.texts.some(t => t.id === 'ENG-1' && t.body === quote), false);
+  assert.equal(completionEvidence(read, [forged, forged], catalogue).complete, false);
 });
