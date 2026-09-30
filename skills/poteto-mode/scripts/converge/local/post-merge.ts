@@ -98,10 +98,10 @@ function runCommand(argv: string[], options: { cwd: string; env: NodeJS.ProcessE
   });
 }
 /** The runs in order; the first that does not exit 0 ends the attempt. */
-async function runAll(runs: Run[], options: { cwd: string; runDirectory: string; env: NodeJS.ProcessEnv; capMs: number; checkpoint?: PostMergeCheckpoint; onSuccess?: () => void }): Promise<{ runs: PostMergeRun[]; outcome: PostMergeOutcome; reason: string }> {
+async function runAll(runs: Run[], options: { cwd: string; runDirectory: string; env: NodeJS.ProcessEnv; capMs: number; checkpoint: PostMergeCheckpoint; onSuccess: () => void }): Promise<{ runs: PostMergeRun[]; outcome: PostMergeOutcome; reason: string }> {
   const done: PostMergeRun[] = [];
   for (const run of runs) {
-    const prior = options.checkpoint?.commands.find(r => r.name === run.name && r.command === run.command);
+    const prior = options.checkpoint.commands.find(r => r.name === run.name && r.command === run.command);
     if (prior) { done.push({ name: run.name, exitCode: 0, logFile: prior.logFile }); continue; }
     const logFile = join(options.runDirectory, `${run.name}.log`);
     const exit = await runCommand(run.command.split(' '), { cwd: options.cwd, env: options.env, logFile, capMs: options.capMs });
@@ -110,8 +110,8 @@ async function runAll(runs: Run[], options: { cwd: string; runDirectory: string;
     if (exit.exitCode === null) return { runs: done, outcome: 'failed', reason: `${run.name} did not start` };
     if (exit.exitCode === TEMPFAIL) return { runs: done, outcome: 'deferred', reason: `${run.name} exited ${TEMPFAIL}` };
     if (exit.exitCode !== 0) return { runs: done, outcome: 'failed', reason: `${run.name} exited ${exit.exitCode}` };
-    options.checkpoint?.commands.push({ ...run, logFile });
-    options.onSuccess?.();
+    options.checkpoint.commands.push({ ...run, logFile });
+    options.onSuccess();
   }
   return { runs: done, outcome: 'done', reason: '' };
 }
@@ -198,18 +198,25 @@ async function attempt(p: Pass, commit: string, ledger: PostMergeLedger | null):
   }
   const startedAt = new Date().toISOString();
   const env = { ...(p.options.env ?? process.env), PSTACK_REPO: p.repo.repo, PSTACK_COMMIT: commit, PSTACK_PR: pr === null ? '' : String(pr), PSTACK_CHECKOUT: p.repo.checkout, PSTACK_PLUGIN_DIR: p.config.pluginDir };
-  const checkpoint = p.postMerge.linear ? ledger?.checkpoint ?? { commands: [], linear: null } : undefined;
+  const checkpoint = ledger?.checkpoint ?? { commands: [], linear: null };
   const firstAttemptAt = ledger?.firstAttemptAt ?? startedAt;
-  const saved: PostMergeLedger = { schemaVersion: 1, repo: p.repo.repo, commit, pr, firstAttemptAt, attempts: ledger?.attempts ?? [], ...(checkpoint ? { checkpoint } : {}) };
+  const saved: PostMergeLedger = { schemaVersion: 1, repo: p.repo.repo, commit, pr, firstAttemptAt, attempts: ledger?.attempts ?? [], checkpoint };
   const save = () => writeJsonFile(file, saved);
   let result: Awaited<ReturnType<typeof runAll>>;
   try {
-    result = await runAll(p.postMerge.runs, { cwd: checkout, runDirectory: run, env, capMs: p.options.runCapMs ?? POST_MERGE_RUN_MINUTES * 60_000, ...(checkpoint ? { checkpoint, onSuccess: save } : {}) });
-    if (result.outcome === 'done' && checkpoint) {
+    result = await runAll(p.postMerge.runs, { cwd: checkout, runDirectory: run, env, capMs: p.options.runCapMs ?? POST_MERGE_RUN_MINUTES * 60_000, checkpoint, onSuccess: save });
+    if (result.outcome === 'done' && p.postMerge.linear) {
       const linear = await linearStep(p, commit, file, checkout, run, checkpoint.linear, value => { checkpoint.linear = value; save(); });
       const logFile = linear.logs.at(-1) ?? join(run, 'linear.json');
       writeJsonFile(join(run, 'linear.json'), linear);
-      result = { runs: [...result.runs, { name: 'linear', exitCode: linear.kind === 'deferred' ? TEMPFAIL : linear.kind === 'failed' ? 1 : 0, logFile }], outcome: linear.kind === 'deferred' ? 'deferred' : linear.kind === 'failed' ? 'failed' : 'done', reason: `linear: ${linear.reason}` };
+      let outcome: PostMergeOutcome;
+      switch (linear.kind) {
+        case 'deferred': outcome = 'deferred'; break;
+        case 'failed': case 'refused': outcome = 'failed'; break;
+        case 'done': case 'dry-run': outcome = 'done'; break;
+        default: { const exhaustive: never = linear.kind; outcome = exhaustive; }
+      }
+      result = { runs: [...result.runs, { name: 'linear', exitCode: outcome === 'deferred' ? TEMPFAIL : outcome === 'failed' ? 1 : 0, logFile }], outcome, reason: `linear: ${linear.reason}` };
     }
   }
   finally {
