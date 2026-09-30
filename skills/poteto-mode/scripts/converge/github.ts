@@ -1,6 +1,6 @@
 import { spawnSync, execFile } from 'node:child_process';
 import { posix } from 'node:path';
-import { array, integer, matches, object, parseContract, relativePath, repoName, sha, string, jsonHash, hash, testOnly, type Contract, type Check, type Execution, type Feature } from './contract.ts';
+import { array, instant, integer, matches, object, parseContract, relativePath, repoName, sha, string, jsonHash, hash, testOnly, type Contract, type Check, type Execution, type Feature } from './contract.ts';
 import { dependencyOnly } from './dependencies.ts';
 import { parseClinextTests, type TestEvidence, type ClinextProvenance, type StepWindow } from './claims.ts';
 
@@ -63,15 +63,20 @@ export async function pages(endpoint: string, key?: string, credential: 'writer'
   const output = JSON.parse(await commandAsync('gh', ['api', endpoint + (endpoint.includes('?') ? '&' : '?') + 'per_page=100', '--paginate', '--slurp'], credential));
   return array(output).flatMap(page => key ? array(object(page)[key]) : array(page));
 }
-/** `mergeable` is GitHub's answer to whether the head merges into the base: null while GitHub computes it, which the read itself starts, and whenever the endpoint omits it. */
+/** `mergeable` is GitHub's answer to whether the head merges into the base: null while GitHub computes it, which the read itself starts, and whenever the endpoint omits it. `mergeState` is GitHub's `mergeable_state`, its own answer to whether the PR can merge now (`clean`, `blocked`, `unstable`, ...): `unknown` while GitHub computes it and whenever the endpoint omits it. `merged` is false for a PR closed without a merge and whenever the endpoint omits it. */
 export interface Pull {
   number: number; head: string; base: string; branch: string; state: string; draft: boolean;
   body: string; labels: string[]; authorId: number; authorLogin: string; authorType: string; autoMerge: boolean;
-  createdAt: string; fork: boolean; mergeable: boolean | null;
+  createdAt: string; fork: boolean; mergeable: boolean | null; mergeState: string; merged: boolean;
 }
 function mergeable(value: unknown): boolean | null {
   if (value === undefined || value === null) return null;
   if (typeof value !== 'boolean') throw new Error('Invalid PR mergeable state');
+  return value;
+}
+function mergeState(value: unknown): string {
+  if (value === undefined || value === null) return 'unknown';
+  if (typeof value !== 'string') throw new Error('Invalid PR merge state');
   return value;
 }
 export async function pull(repo: string, pr: number): Promise<Pull> {
@@ -83,7 +88,7 @@ export async function pull(repo: string, pr: number): Promise<Pull> {
   return { number: integer(p.number), head: sha(head.sha), base: string(object(p.base).ref), branch: string(head.ref),
     state: string(p.state), draft: p.draft, body: p.body === null ? '' : string(p.body),
     labels: array(p.labels).map(l => string(object(l).name)), authorId: integer(user.id), authorLogin: string(user.login), authorType: string(user.type), autoMerge: p.auto_merge !== null,
-    createdAt: string(p.created_at), fork: headRepo === null || string(headRepo.full_name).toLowerCase() !== repo.toLowerCase(), mergeable: mergeable(p.mergeable) };
+    createdAt: string(p.created_at), fork: headRepo === null || string(headRepo.full_name).toLowerCase() !== repo.toLowerCase(), mergeable: mergeable(p.mergeable), mergeState: mergeState(p.mergeable_state), merged: p.merged === true };
 }
 /** Every open PR of the repository, whatever its base, lowest number first. */
 export async function openPulls(repo: string): Promise<number[]> {
@@ -371,14 +376,21 @@ export async function verdictStatus(repo: string, pr: number, head: string, auth
   if (!url.startsWith(prefix) || !/^\d+$/.test(url.slice(prefix.length))) return { kind: 'none', reason: 'Verdict status does not link to this PR' };
   return { kind: 'trusted', url, commentId: url.slice(prefix.length) };
 }
-export async function checks(repo: string, head: string): Promise<Check[]> {
-  const all = (await pages(`repos/${repo}/commits/${head}/check-runs?filter=all`, 'check_runs', 'installation')).map(value => {
+/** `completedAt` is when GitHub says the run completed: null while it runs, and for a run GitHub gave no time. */
+export interface TimedCheck extends Check { completedAt: string | null }
+/** The latest run of each check on the head. */
+export async function timedChecks(repo: string, head: string): Promise<TimedCheck[]> {
+  const all = (await pages(`repos/${repo}/commits/${head}/check-runs?filter=all`, 'check_runs', 'installation')).map((value): TimedCheck => {
     const c = object(value);
-    return { context: string(c.name), id: integer(c.id), head: sha(c.head_sha), appId: integer(object(c.app).id), state: c.status === 'completed' ? string(c.conclusion) : string(c.status), runId: null, attempt: null };
+    return { context: string(c.name), id: integer(c.id), head: sha(c.head_sha), appId: integer(object(c.app).id), state: c.status === 'completed' ? string(c.conclusion) : string(c.status), runId: null, attempt: null, completedAt: c.completed_at === undefined || c.completed_at === null ? null : instant(c.completed_at, 'check completion time') };
   });
-  const latest = new Map<string, Check>();
+  const latest = new Map<string, TimedCheck>();
   for (const c of all.sort((a, b) => b.id - a.id)) if (c.head === head && !latest.has(c.context)) latest.set(c.context, c);
   return [...latest.values()].sort((a, b) => a.context.localeCompare(b.context));
+}
+/** Without the completion time: a snapshot hashes its checks, and a report holds them. */
+export async function checks(repo: string, head: string): Promise<Check[]> {
+  return (await timedChecks(repo, head)).map(({ completedAt: _, ...check }) => check);
 }
 export async function workflowRun(t: Trusted, head: string, event?: 'push'): Promise<Record<string, unknown> | null> {
   const suffix = event ? `&event=${event}&branch=${encodeURIComponent(t.config.trunk)}` : '';
@@ -521,7 +533,7 @@ export async function branchSnapshot(repo: string, head: string, configPath: str
   if (!patch) throw new Error('Empty branch diff');
   const selection = await features(t, target, files);
   const gaps = files.filter(f => f.patch === null && ![f.path, f.previous ?? f.path].every(path => /(?:^|\/)__screenshots__\/.+\.png$/.test(path))).map(() => 'Changed file has no readable patch');
-  const pull: Pull = { number: 0, head: target, base: t.config.trunk, branch: '', state: 'open', draft: false, body: '', labels: [], authorId: 0, authorLogin: '', authorType: 'User', autoMerge: false, createdAt: '', fork: false, mergeable: null };
+  const pull: Pull = { number: 0, head: target, base: t.config.trunk, branch: '', state: 'open', draft: false, body: '', labels: [], authorId: 0, authorLogin: '', authorType: 'User', autoMerge: false, createdAt: '', fork: false, mergeable: null, mergeState: 'unknown', merged: false };
   const verificationDigest = jsonHash([...t.files].sort(([a], [b]) => a.localeCompare(b)));
   const inputFingerprint = jsonHash({ body: '', comments: [] });
   const inputDigest = jsonHash({ head: target, base, contract: t.sha, files, diff, sources: [], checks: [], gaps, inputFingerprint, verificationDigest, testEvidence: { kind: 'unavailable' } });

@@ -58,6 +58,12 @@ async function protection(t: Trusted, head: string, pending: boolean): Promise<v
     if (!match.some(check => passing.includes(check.state))) throw new Error('Required protected check is not successful: ' + c.context);
   }
 }
+/** The merge states in which `gh pr merge --auto` merges at once instead of enabling auto-merge (gh's `isImmediatelyMergeable`). */
+export const MERGES_AT_ONCE = ['clean', 'unstable', 'has_hooks'];
+/** The one command that arms. The head pin refuses a head that moved, whether gh enables auto-merge or merges. */
+export function armCommand(repo: string, pr: number, head: string): void {
+  command('gh', ['pr', 'merge', String(pr), '--repo', repo, '--squash', '--auto', '--match-head-commit', head]);
+}
 export async function disarm(repo: string, pr: number): Promise<boolean> {
   if (!(await pull(repo, pr)).autoMerge) return false;
   command('gh', ['pr', 'merge', String(pr), '--repo', repo, '--disable-auto']);
@@ -87,7 +93,7 @@ export async function arm(options: { repo: string; pr: number; head: string; ver
     const rederived = verified.rederived;
     const steps = ['Read latest push-to-trunk Tests', 'Read live protection and required checks', 'Read trusted exact-head verdict', ...(rederived ? [rederived] : []), 'gh pr merge --squash --auto --match-head-commit ' + head + (options.pending ? ' (checks pending)' : '')];
     if (options.dryRun) return { kind: 'dry-run', head, steps, rederived };
-    command('gh', ['pr', 'merge', String(options.pr), '--repo', repo, '--squash', '--auto', '--match-head-commit', head]);
+    armCommand(repo, options.pr, head);
     const after = await pull(repo, options.pr);
     if (after.state === 'open') admitPull(after, t.config, head);
     return { kind: 'armed', head, steps, rederived };

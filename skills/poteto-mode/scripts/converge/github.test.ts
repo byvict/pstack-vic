@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fillPatches, isNote, NOTE_MARKER, postedAfter, pull, type ChangedFile } from './github.ts';
+import { checks, fillPatches, isNote, NOTE_MARKER, postedAfter, pull, timedChecks, type ChangedFile } from './github.ts';
 import { fixture } from './fixtures/setup.ts';
 
 const diff = [
@@ -74,6 +74,43 @@ test('pull refuses a mergeable state that is neither a boolean nor null', async 
   const f = fixture(); t.after(f.cleanup);
   edit(f, live => { live.mergeable = 'unknown'; });
   await assert.rejects(withFixture(f, () => pull('Example/app', 1)), /^Error: Invalid PR mergeable state$/);
+});
+for (const [name, value, expected] of [['clean', 'clean', 'clean'], ['blocked', 'blocked', 'blocked'], ['absent', undefined, 'unknown']] as const) {
+  test(`pull reads the merge state ${name} as ${expected}`, async t => {
+    const f = fixture(); t.after(f.cleanup);
+    edit(f, live => { live.mergeState = value; });
+    assert.equal((await withFixture(f, () => pull('Example/app', 1))).mergeState, expected);
+  });
+}
+for (const [name, value, expected] of [['true', true, true], ['false', false, false], ['absent', undefined, false]] as const) {
+  test(`pull reads merged ${name} as ${expected}`, async t => {
+    const f = fixture(); t.after(f.cleanup);
+    edit(f, live => { live.merged = value; });
+    assert.equal((await withFixture(f, () => pull('Example/app', 1))).merged, expected);
+  });
+}
+test('pull refuses a merge state that is not a string', async t => {
+  const f = fixture(); t.after(f.cleanup);
+  edit(f, live => { live.mergeState = 3; });
+  await assert.rejects(withFixture(f, () => pull('Example/app', 1)), /^Error: Invalid PR merge state$/);
+});
+test('timedChecks gives the latest run of each check with when it completed, and checks gives the same runs without the time', async t => {
+  const f = fixture(); t.after(f.cleanup);
+  edit(f, live => { live.checks = [
+    { id: 11, name: 'Run test suite', status: 'completed', conclusion: 'failure', completed_at: '2026-09-21T00:00:00Z', app: { id: 15368 } },
+    { id: 14, name: 'Run test suite', status: 'completed', conclusion: 'success', completed_at: '2026-09-21T00:10:00Z', app: { id: 15368 } },
+    { id: 12, name: 'Secrets scan', status: 'in_progress', conclusion: null, completed_at: null, app: { id: 15368 } },
+    { id: 10, name: 'hold', status: 'completed', conclusion: 'success', app: { id: 15368 } },
+  ]; });
+  const head = f.state.head;
+  const timed = await withFixture(f, () => timedChecks('Example/app', head));
+  assert.deepEqual(timed.map(c => [c.context, c.state, c.completedAt]), [['hold', 'success', null], ['Run test suite', 'success', '2026-09-21T00:10:00Z'], ['Secrets scan', 'in_progress', null]]);
+  assert.deepEqual(await withFixture(f, () => checks('Example/app', head)), timed.map(c => ({ context: c.context, id: c.id, head: c.head, appId: c.appId, state: c.state, runId: null, attempt: null })));
+});
+test('timedChecks refuses a completion time that is not an instant', async t => {
+  const f = fixture(); t.after(f.cleanup);
+  edit(f, live => { live.checks[0].completed_at = 'soon'; });
+  await assert.rejects(withFixture(f, () => timedChecks('Example/app', f.state.head)), /^Error: Invalid check completion time$/);
 });
 const account = 7;
 const posted = (id: number, body: string, at: string, user = { id: 10, login: 'author' }) => ({ id, body, user, created_at: at, updated_at: at, html_url: `https://github.com/Example/app/pull/1#issuecomment-${id}` });

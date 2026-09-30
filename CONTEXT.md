@@ -75,7 +75,7 @@ O job que, a cada minuto, pergunta ao GitHub só com GET condicional se a lista 
 _Avoid_: watcher, poller, webhook
 
 **Varredor**:
-O job que roda o `converge-sweep` por script e arma o merge de todo PR certificado com base na `main` e sem hold; em seguida roda o Pós-merge de cada repositório.
+O job que roda o `converge-sweep` por script e arma o merge de todo PR certificado com base na `main` e sem hold; faz ele mesmo o merge do PR armado que o GitHub deixou aberto 5 minutos depois de todos os checks obrigatórios passarem; em seguida roda o Pós-merge de cada repositório.
 _Avoid_: sweeper, cron
 
 **Pós-merge**:
@@ -99,7 +99,7 @@ Comentário que o fluxo posta pela conta autenticada, a mesma de Victor, fora a 
 _Avoid_: comentário do bot, comentário de sistema
 
 **Trava**:
-Um PR sem trabalho para o Daemon que também não anda: armado há 2 h sem merge, ou recusado pelo portão pelo mesmo motivo há 1 h. Vira Hold com aviso.
+Um PR sem trabalho para o Daemon que também não anda: armado há 2 h sem merge, ou recusado pelo portão pelo mesmo motivo há 1 h. Vira Hold com aviso. O PR armado com tudo verde que o GitHub não mergeou não chega a ser Trava: o Varredor o mergeia depois de 5 minutos.
 _Avoid_: stuck, deadlock, hang
 
 **Posse**:
