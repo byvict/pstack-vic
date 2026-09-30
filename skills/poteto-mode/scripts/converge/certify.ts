@@ -1,13 +1,15 @@
-import { spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { parseArgs } from 'node:util';
 import { resolve, join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { array, boolean, digest, executionId, hash, integer, jsonHash, object, oneOf, parseExecutionId, parseReport, parseRound, providerName, relativePath, roles, sha, string, strings, type Contract, type Decision, type Report, type Role, type Round } from './contract.ts';
 import { branchSnapshot } from './github.ts';
 import { analyze } from './reconcile.ts';
 import { admitLane, type AdmittedLane } from './evidence.ts';
 import { decide } from './publish.ts';
+import { LEASE_TTL_HOURS } from './local/lease.ts';
 import { checkReviewerRow, sheetRow } from './sheet.ts';
 import { loadMatrix, resolveDescriptor, type ModelMatrix } from '../../../../scripts/model-matrix.ts';
 
@@ -149,14 +151,17 @@ export function recordRun(directory: string, name: string, argv: string[], cwd =
   writeFileSync(join(runs, name + '.json'), JSON.stringify(record, null, 2) + '\n', { mode: 0o600 });
   return exitCode;
 }
-export async function localReport(options: { repo: string; head: string; directory: string; configPath?: string }): Promise<Report> {
+async function writeReport(options: { repo: string; head: string; directory: string; configPath?: string }): Promise<{ report: Report; contract: Contract }> {
   const configPath = options.configPath ?? '.cursor/converge.json';
   const snapshot = await branchSnapshot(options.repo, options.head, configPath);
   if (!snapshot.trusted.config.prePr) throw new Error('Repository does not accept local certification');
   const report = analyze(snapshot, { id: executionId(), configPath, execution: 'pre-pr' });
   mkdirSync(options.directory, { recursive: true, mode: 0o700 });
   writeFileSync(join(options.directory, 'report.json'), JSON.stringify(report, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
-  return report;
+  return { report, contract: snapshot.trusted.config };
+}
+export async function localReport(options: { repo: string; head: string; directory: string; configPath?: string }): Promise<Report> {
+  return (await writeReport(options)).report;
 }
 function readRuns(directory: string): Run[] {
   const runs = join(directory, 'runs');
@@ -283,6 +288,158 @@ export async function admitCertificate(file: string, report: Report, evidenceDir
   if (jsonHash(decide(branch, admitted)) !== jsonHash(certificate.decision)) throw new Error('Certificate decision differs from the admitted evidence');
   return { certificate, lanes: admitted };
 }
+export type CertifyStep = 'report' | 'runs' | 'reviewer' | 'certifier' | 'assemble';
+export type Certified = { certificate: Certificate } | { refused: { step: CertifyStep; reason: string } };
+export interface CertifyOptions {
+  repo: string; head: string; directory: string; worktree: string; parent: 'claude' | 'codex'; sheet: string;
+  authorProviders: string[]; adjustRounds: number; certifierWorktree: string | null; lease: { by: string; pid: number | null; branch: string } | null; configPath?: string;
+}
+const RUNNER = fileURLToPath(new URL('../runner/pstack-runner', import.meta.url));
+const SELF = fileURLToPath(new URL('./converge-certify', import.meta.url));
+const LOCAL = fileURLToPath(new URL('./converge-local', import.meta.url));
+const PROMPTS = fileURLToPath(new URL('../../references/pre-pr-prompts.md', import.meta.url));
+const LANE_TIMEOUT_SECONDS = 1800;
+class Refused extends Error {
+  readonly step: CertifyStep;
+  constructor(step: CertifyStep, reason: string) { super(reason); this.step = step; }
+}
+async function step<T>(name: CertifyStep, work: () => T | Promise<T>): Promise<T> {
+  try { return await work(); }
+  catch (error) { throw error instanceof Refused ? error : new Refused(name, error instanceof Error ? error.message : String(error)); }
+}
+function atHead(cwd: string, head: string, what: string): void {
+  const state = checkoutState(cwd);
+  if (state.head !== head) throw new Error(`${what} is not at the head`);
+  if (!state.clean) throw new Error(`${what} has changes`);
+}
+interface LanePlan { role: Role; id: string; descriptor: string; provider: string; model: string; effort: string; mode: 'read-only' | 'unsandboxed'; cwd: string; block: string; values: Record<string, string> }
+function lanePrompt(block: string, values: Record<string, string>): string {
+  const template = readFileSync(PROMPTS, 'utf8').split(/^## /m).find(chunk => chunk.startsWith(block + '\n'))?.match(/^```text\n([\s\S]*?)\n```$/m)?.[1];
+  if (template === undefined) throw new Error(`No ${block} block in pre-pr-prompts.md`);
+  return template.replace(/\{\{([a-zA-Z]+)\}\}/g, (_, key: string) => {
+    const value = values[key];
+    if (value === undefined) throw new Error(`No value for {{${key}}} in the ${block} block`);
+    return value;
+  });
+}
+function planLane(role: Role, report: Report, contract: Contract, options: CertifyOptions): LanePlan {
+  const r = report.round;
+  const round = { repo: r.repo, head: r.head, roundId: r.id, contract: r.contract };
+  if (role === 'pre-pr reviewer') {
+    const choice = chooseReviewer({ directory: options.directory, parent: options.parent, sheetPath: options.sheet, authorProviders: options.authorProviders });
+    if (choice.provider !== 'grok' && report.hardList.some(f => f.severity === 'requires-proof')) throw new Error(`Reviewer risk proof unavailable: the hard list asks for a risk proof, and only a Grok reviewer writes one in this version (chose ${choice.descriptor})`);
+    return { role, id: 'pre-pr-reviewer', descriptor: choice.descriptor, provider: choice.provider, model: choice.model, effort: choice.effort, mode: 'read-only', cwd: options.worktree, block: report.mode === 'full' ? 'Reviewer' : 'Reviewer (light)',
+      values: { ...round, reportPath: join(options.directory, 'report.json'), runsDirectory: join(options.directory, 'runs'), worktree: options.worktree, irreversible: JSON.stringify(contract.riskClasses.irreversible), contained: JSON.stringify(contract.riskClasses.contained) } };
+  }
+  if (role !== 'pre-pr certifier') throw new Error(`Role ${role} does not belong to a pre-pr round`);
+  const row = sheetRow(readSheet(options.sheet), role);
+  if (row.length !== 1) throw new Error('pre-pr certifier takes one lane');
+  const descriptor = row[0] ?? '';
+  const matrix = loadMatrix();
+  if (matrix.aliases.includes(descriptor)) throw new Error(`The ${role} row cannot be an alias (${descriptor}); a pre-PR lane runs through pstack-runner`);
+  const { descriptor: parsed, family } = resolveDescriptor(matrix, descriptor);
+  const worktree = options.certifierWorktree;
+  if (worktree === null) throw new Error('The report asks for the pre-pr certifier; pass --certifier-worktree');
+  atHead(worktree, r.head, 'Certifier worktree');
+  return { role, id: 'pre-pr-certifier', descriptor, provider: family.provider, model: family.model, effort: parsed.effort, mode: 'unsandboxed', cwd: worktree, block: 'Certifier',
+    values: { ...round, worktree, verifySkill: join(worktree, contract.verifySkill ?? ''), features: report.touchedFeatures.map(f => `${f.id}, ${f.page}, ${f.recipe}`).join('\n') } };
+}
+function renewLease(options: CertifyOptions): void {
+  if (!options.lease) return;
+  const { by, pid, branch } = options.lease;
+  const renewed = spawnSync(process.execPath, [LOCAL, 'lease', '--repo', options.repo, '--branch', branch, '--by', by, ...(pid === null ? [] : ['--pid', String(pid)]), '--ttl', String(LEASE_TTL_HOURS)], { encoding: 'utf8' });
+  if (renewed.status !== 0) throw new Error(renewed.stderr.trim() || 'Lease renewal failed');
+}
+function laneStatus(directory: string, lane: LanePlan, head: string): string {
+  let receipt: Record<string, unknown>;
+  try { receipt = object(JSON.parse(readFileSync(join(directory, 'receipt.json'), 'utf8'))); }
+  catch { return 'missing'; }
+  const status = typeof receipt.status === 'string' ? receipt.status : 'invalid';
+  if (status !== 'complete' || lane.role !== 'pre-pr certifier') return status;
+  return leftAtHeadAndClean(receipt.checkout, head) ? status : 'complete with a moved or changed worktree';
+}
+function leftAtHeadAndClean(value: unknown, head: string): boolean {
+  const checkout = value && typeof value === 'object' ? object(value) : {};
+  return checkout.headBefore === head && checkout.headAfter === head && Array.isArray(checkout.statusAfter) && checkout.statusAfter.length === 0;
+}
+class RoundProcesses {
+  stopped = false;
+  private readonly processes = new Map<ChildProcess, { killOnStop: boolean; closed: Promise<number> }>();
+  start(args: string[], killOnStop: boolean, log: string | null = null): Promise<number> {
+    if (this.stopped) throw new Error('The round was stopped');
+    const fd = log === null ? null : openSync(log, 'a', 0o600);
+    const child = spawn(process.execPath, args, { stdio: ['ignore', fd ?? 'ignore', fd ?? 'ignore'] });
+    if (fd !== null) closeSync(fd);
+    const closed = new Promise<number>(done => {
+      child.on('error', () => done(128));
+      child.on('close', code => done(code ?? 128));
+    }).finally(() => this.processes.delete(child));
+    this.processes.set(child, { killOnStop, closed });
+    return closed;
+  }
+  async stop(): Promise<void> {
+    this.stopped = true;
+    for (const [child, { killOnStop }] of this.processes) if (killOnStop) child.kill('SIGTERM');
+    await Promise.all([...this.processes.values()].map(p => p.closed));
+  }
+}
+async function launchLane(flight: RoundProcesses, runner: string, lane: LanePlan, report: Report, options: CertifyOptions): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    if (flight.stopped) throw new Error('The round was stopped');
+    if (lane.role === 'pre-pr certifier') atHead(lane.cwd, report.round.head, 'Certifier worktree');
+    renewLease(options);
+    const directory = join(options.directory, 'lanes', lane.id);
+    const artifactPrefix = join(directory, 'artifacts', 'converge', report.round.id, lane.id) + '/';
+    mkdirSync(artifactPrefix, { recursive: true, mode: 0o700 });
+    const prompt = lanePrompt(lane.block, { ...lane.values, laneDirectory: directory, artifactPrefix });
+    writeFileSync(join(directory, 'prompt.txt'), prompt, { flag: 'wx', mode: 0o600 });
+    writeFileSync(join(directory, 'manifest.json'), JSON.stringify({ schemaVersion: 1, round: report.round, laneId: lane.id, role: lane.role, descriptor: lane.descriptor, prompt: 'prompt.txt', promptDigest: hash(prompt), output: 'output.json', receipt: 'receipt.json', createdAt: Date.now() }, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+    await flight.start([runner, '--parent', options.parent, '--provider', lane.provider, '--model', lane.model, '--effort', lane.effort, '--mode', lane.mode, '--prompt', join(directory, 'prompt.txt'), '--cwd', lane.cwd, '--output', join(directory, 'output.json'), '--receipt', join(directory, 'receipt.json'), '--timeout', String(LANE_TIMEOUT_SECONDS)], true, join(directory, 'runner.log'));
+    const status = laneStatus(directory, lane, report.round.head);
+    if (status === 'complete') return;
+    if (flight.stopped) throw new Error('The round was stopped');
+    if (attempt === 2) throw new Error(`Lane ${lane.id} receipt is ${status} after its relaunch`);
+    mkdirSync(join(options.directory, 'attempts'), { recursive: true, mode: 0o700 });
+    renameSync(directory, join(options.directory, 'attempts', `${lane.id}-${attempt}`));
+    rmSync(join(options.directory, 'evidence'), { recursive: true, force: true });
+  }
+}
+function laneStep(role: Role): CertifyStep { return role === 'pre-pr certifier' ? 'certifier' : 'reviewer'; }
+export async function certifyHead(options: CertifyOptions, runner = RUNNER): Promise<Certified> {
+  adjustRounds(options.adjustRounds);
+  const declared = authorProviders(options.authorProviders);
+  knownAuthors(declared, loadMatrix());
+  const flight = new RoundProcesses();
+  try {
+    const { report, contract } = await step('report', async () => {
+      const written = await writeReport(options);
+      if (written.report.unmappedSurfaces.length) throw new Error('Changed user surface lacks a trusted feature recipe: ' + written.report.unmappedSurfaces.join(', '));
+      if (written.report.gaps.length) throw new Error('The report has gaps: ' + written.report.gaps.join('; '));
+      return written;
+    });
+    const lanes = await Promise.all(report.lanes.map(role => step(laneStep(role), () => planLane(role, report, contract, options))));
+    const runs = report.mode === 'ci-only' ? [] : contract.prePr?.runs ?? [];
+    if (runs.length) await step('runs', () => atHead(options.worktree, report.round.head, 'Worktree'));
+    const certifier = lanes.find(lane => lane.role === 'pre-pr certifier');
+    const reviewer = lanes.find(lane => lane.role === 'pre-pr reviewer');
+    await Promise.all([
+      certifier && step('certifier', () => launchLane(flight, runner, certifier, report, options)),
+      (async () => {
+        await step('runs', async () => {
+          const codes = await Promise.all(runs.map(run => flight.start([SELF, 'run', '--directory', options.directory, '--name', run.name, '--cwd', options.worktree, '--', ...run.command.split(' ')], false)));
+          const failed = runs.findIndex((_, n) => codes[n] !== 0);
+          if (failed >= 0) throw new Error(`Run ${runs[failed]?.name} exited ${codes[failed]}`);
+        });
+        if (reviewer) await step('reviewer', () => launchLane(flight, runner, reviewer, report, options));
+      })(),
+    ]);
+    return { certificate: await step('assemble', () => assemble({ directory: options.directory, authorProviders: declared, output: join(options.directory, 'certificate.json'), adjustRounds: options.adjustRounds })) };
+  } catch (error) {
+    await flight.stop();
+    if (error instanceof Refused) return { refused: { step: error.step, reason: error.message } };
+    throw error;
+  }
+}
 export async function main(args: string[]): Promise<number> {
   try {
     const [command, ...rest] = args;
@@ -311,6 +468,18 @@ export async function main(args: string[]): Promise<number> {
       process.stdout.write(JSON.stringify(await assemble({ directory: resolve(values.directory), authorProviders: values['author-provider'].split(',').map(s => s.trim()).filter(Boolean), output: resolve(values.output), adjustRounds: /^\d+$/.test(rounds) ? Number(rounds) : NaN }), null, 2) + '\n');
       return 0;
     }
-    throw new Error('Usage: converge-certify <run|report|reviewer|assemble> ...');
+    if (command === 'certify') {
+      const { values } = parseArgs({ args: rest, options: { repo: { type: 'string' }, head: { type: 'string' }, directory: { type: 'string' }, worktree: { type: 'string' }, parent: { type: 'string' }, sheet: { type: 'string' }, 'author-provider': { type: 'string' }, 'adjust-rounds': { type: 'string' }, 'certifier-worktree': { type: 'string' }, 'lease-by': { type: 'string' }, 'lease-pid': { type: 'string' }, branch: { type: 'string' }, config: { type: 'string' } } });
+      const { parent, 'lease-by': by, 'lease-pid': pid } = values;
+      const rounds = values['adjust-rounds'];
+      if (!values.repo || !values.head || !values.directory || !values.worktree || (parent !== 'claude' && parent !== 'codex') || !values['author-provider'] || rounds === undefined || (by !== undefined && !values.branch) || (pid !== undefined && (by === undefined || !/^\d+$/.test(pid)))) throw new Error('Usage: converge-certify certify --repo owner/repo --head SHA --directory RUN --worktree W --parent claude|codex [--sheet PATH] --author-provider PROVIDER[,PROVIDER...] --adjust-rounds N [--certifier-worktree RUN/certify] [--lease-by NAME [--lease-pid N] --branch B] [--config path]');
+      const result = await certifyHead({ repo: values.repo, head: values.head, directory: resolve(values.directory), worktree: resolve(values.worktree), parent,
+        sheet: resolve(values.sheet ?? defaultSheetPath(parent)), authorProviders: values['author-provider'].split(',').map(s => s.trim()).filter(Boolean),
+        adjustRounds: /^\d+$/.test(rounds) ? Number(rounds) : NaN, certifierWorktree: values['certifier-worktree'] === undefined ? null : resolve(values['certifier-worktree']),
+        lease: by === undefined ? null : { by, pid: pid === undefined ? null : Number(pid), branch: values.branch ?? '' }, configPath: values.config });
+      process.stdout.write(JSON.stringify('certificate' in result ? result.certificate : result, null, 2) + '\n');
+      return 'certificate' in result ? 0 : 1;
+    }
+    throw new Error('Usage: converge-certify <run|report|reviewer|assemble|certify> ...');
   } catch (error) { process.stderr.write((error instanceof SyntaxError ? 'Malformed JSON input' : error instanceof Error ? error.message : 'Certification failed') + '\n'); return 1; }
 }

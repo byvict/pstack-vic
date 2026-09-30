@@ -2,7 +2,7 @@
 
 Desenho fechado com Victor em 2026-09-29, opção B da investigação. Vocabulário em [CONTEXT.md](../../../CONTEXT.md). Parte da 0.4.5 ([#49](https://github.com/byvict/pstack-vic/pull/49)), que já tirou a espera fixa de 30 minutos do daemon: este desenho cuida de quanto trabalho o Pré-PR faz depois que a Raiz acorda, não de quando ela acorda. Complementa o [desenho do Converge local](2026-09-28-converge-local-design.md); a referência de código continua sendo a seção **Certificado** de [`converge-contract.md`](../../../skills/poteto-mode/references/converge-contract.md).
 
-Numeração: o vigia de 60 s saiu como 0.4.6 ([#50](https://github.com/byvict/pstack-vic/pull/50)) antes desta entrega, então as duas releases daqui são 0.4.7 e 0.4.8.
+Numeração: o vigia de 60 s saiu como 0.4.6 ([#50](https://github.com/byvict/pstack-vic/pull/50)) e a troca automática do Revisor como 0.4.9 ([#53](https://github.com/byvict/pstack-vic/pull/53)), então as duas releases daqui são 0.4.7 e 0.4.10; o texto abaixo ainda diz 0.4.8 para o script.
 
 ## Objetivo
 
