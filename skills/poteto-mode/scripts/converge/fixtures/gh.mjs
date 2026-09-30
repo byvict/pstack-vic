@@ -155,8 +155,8 @@ else if (args[0] === 'api') {
   else if (endpoint === `${root}/branches/main`) {
     if (state.protectionMessage !== 'Branch not protected') fail();
     const checks = state.classicProtection === false ? [] : state.protected;
-    send({ protected: state.classicProtection !== false, protection: { required_status_checks: { contexts: checks, checks: checks.map(context => ({ context, app_id: context === 'verdict' ? null : 15368 })) } } });
+    send({ protected: state.classicProtection !== false, protection: { required_status_checks: { contexts: checks, checks: checks.map(context => ({ context, app_id: context === 'verdict' || (state.statusContexts ?? []).includes(context) ? null : 15368 })) } } });
   }
-  else if (endpoint === `${root}/rules/branches/main`) send(state.classicProtection === false ? [{ type: 'required_status_checks', parameters: { strict_required_status_checks_policy: false, do_not_enforce_on_create: false, required_status_checks: state.protected.map(context => context === 'verdict' ? { context } : { context, integration_id: 15368 }) }, ruleset_source_type: 'Repository', ruleset_source: repo, ruleset_id: 1 }] : []);
+  else if (endpoint === `${root}/rules/branches/main`) send(state.classicProtection === false ? [{ type: 'required_status_checks', parameters: { strict_required_status_checks_policy: false, do_not_enforce_on_create: false, required_status_checks: state.protected.map(context => context === 'verdict' || (state.statusContexts ?? []).includes(context) ? { context } : { context, integration_id: 15368 }) }, ruleset_source_type: 'Repository', ruleset_source: repo, ruleset_id: 1 }] : []);
   else fail();
 } else fail();

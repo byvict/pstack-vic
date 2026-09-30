@@ -1,9 +1,9 @@
 import { parseArgs } from 'node:util';
 import { integer, object, repoName, sha, string } from './contract.ts';
-import { api, pages, principal, pull, RequestError, timedChecks, trusted, verdictStatus, type Pull, type Trusted } from './github.ts';
+import { api, pages, principal, pull, RequestError, trusted, verdictStatus, type Pull, type Trusted } from './github.ts';
 import { verdictGate, type Gate } from './gate.ts';
 import { arm, armCommand, disarm, MERGES_AT_ONCE } from './arm.ts';
-import { passing, requiredChecks } from './protection.ts';
+import { passing, protectedObservations, protectedResult, requiredChecks } from './protection.ts';
 import { queueState } from './queue.ts';
 
 export interface Swept { pr: number; head: string; outcome: 'armed' | 'disarmed' | 'merged' | 'dry-run' | 'skipped' | 'refused'; reason: string }
@@ -12,13 +12,16 @@ export const STALL_MINUTES = 5;
 /** When the last required check run passed, for a PR that GitHub reports as mergeable now and whose required check runs all passed at least STALL_MINUTES ago; null for any other. The `verdict` status has no run: the gate certified it, and it precedes every arm. */
 async function stalledSince(t: Trusted, p: Pull): Promise<string | null> {
   if (!MERGES_AT_ONCE.includes(p.mergeState)) return null;
-  const observed = await timedChecks(t.repo, p.head);
+  const observed = await protectedObservations(t.repo, p.head);
   let last: string | null = null;
   for (const c of await requiredChecks(t)) {
     if (c.context === 'verdict') continue;
-    const run = observed.find(check => check.context === c.context && (c.appId === null || c.appId === check.appId));
-    if (!run || !passing.includes(run.state) || run.completedAt === null) return null;
-    if (last === null || Date.parse(run.completedAt) > Date.parse(last)) last = run.completedAt;
+    const result = protectedResult(c, observed);
+    if (!result.found) return null;
+    for (const run of result.observations) {
+      if (!passing.includes(run.state) || run.completedAt === null) return null;
+      if (last === null || Date.parse(run.completedAt) > Date.parse(last)) last = run.completedAt;
+    }
   }
   return last !== null && Date.now() - Date.parse(last) >= STALL_MINUTES * 60_000 ? last : null;
 }

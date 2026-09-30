@@ -2,9 +2,9 @@ import { appendFileSync, readFileSync } from 'node:fs';
 import { posix } from 'node:path';
 import { parseArgs } from 'node:util';
 import { array, boolean, instant, integer, jsonHash, object, oneOf, relativePath, repoName, sha, string } from './contract.ts';
-import { admitPull, api, checks, commandAsync, pages, pull, trusted, type Trusted } from './github.ts';
+import { admitPull, api, commandAsync, pages, pull, trusted, type Trusted } from './github.ts';
 import { verdictGate, type Gate } from './gate.ts';
-import { requiredChecks, unfinished } from './protection.ts';
+import { protectedObservations, protectedResult, requiredChecks, unfinished } from './protection.ts';
 
 export interface QueueCandidate { repo: string; baseSha: string; headSha: string; baseRef: string; headRef: string }
 export interface MergeGroup extends QueueCandidate { members: { pr: number; head: string }[] }
@@ -154,12 +154,12 @@ export async function waitForGroupChecks(candidate: QueueCandidate, configPath: 
   let required = (await requiredChecks(t)).filter(c => c.context !== 'verdict' && c.context !== 'hold');
   for (;;) {
     mergeGroup(candidate, await queueSnapshot(candidate));
-    const observed = await checks(candidate.repo, candidate.headSha);
+    const observed = await protectedObservations(candidate.repo, candidate.headSha);
     const waiting: string[] = [];
     for (const c of required) {
-      const check = observed.find(o => o.head === candidate.headSha && o.context === c.context && (c.appId === null || o.appId === c.appId));
-      if (!check || unfinished.includes(check.state)) waiting.push(c.context);
-      else if (check.state !== 'success') throw new Error('Combined protected check failed or skipped: ' + c.context);
+      const result = protectedResult(c, observed);
+      if (result.observations.some(o => !unfinished.includes(o.state) && o.state !== 'success')) throw new Error('Combined protected check failed or skipped: ' + c.context);
+      if (!result.found || result.observations.some(o => unfinished.includes(o.state))) waiting.push(c.context);
     }
     if (!waiting.length) {
       t = await trusted(candidate.repo, configPath);

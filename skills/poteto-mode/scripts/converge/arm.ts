@@ -1,8 +1,8 @@
 import { parseArgs } from 'node:util';
 import { integer, jsonHash, object, repoName, sha, string } from './contract.ts';
-import { admitPull, api, checks, command, pages, principal, pull, trusted, workflowRun, type Trusted } from './github.ts';
+import { admitPull, api, command, pages, principal, pull, trusted, workflowRun, type Trusted } from './github.ts';
 import { verdictGate } from './gate.ts';
-import { passing, requiredChecks, unfinished } from './protection.ts';
+import { passing, protectedObservations, protectedResult, requiredChecks, unfinished } from './protection.ts';
 import { dequeue, queueRetry, queueState } from './queue.ts';
 
 /** How the contract's push Tests run and its test job stand at a trunk commit, read the way the arm reads a green trunk: `pending` while the latest run of the commit has not completed, or when there is none yet. */
@@ -22,16 +22,16 @@ async function trunkHealth(t: Trusted, queue: boolean): Promise<void> {
 }
 async function protection(t: Trusted, head: string, pending: boolean): Promise<void> {
   const required = await requiredChecks(t);
-  const observed = await checks(t.repo, head);
+  const observed = await protectedObservations(t.repo, head);
   if (!pending) {
     const latestTests = await workflowRun(t, head);
     if (!latestTests || latestTests.status !== 'completed' || latestTests.conclusion !== 'success') throw new Error('Latest exact-head Tests attempt is not successful');
   }
   for (const c of required) {
     if (c.context === 'verdict') { if (c.appId !== null) throw new Error('Verdict context has unsupported app binding'); continue; }
-    const match = observed.filter(check => check.context === c.context && check.head === head && (c.appId === null || c.appId === check.appId));
-    if (pending) { if (match.some(check => !passing.includes(check.state) && !unfinished.includes(check.state))) throw new Error('Required protected check failed: ' + c.context); continue; }
-    if (!match.some(check => passing.includes(check.state))) throw new Error('Required protected check is not successful: ' + c.context);
+    const result = protectedResult(c, observed);
+    if (pending) { if (result.observations.some(check => !passing.includes(check.state) && !unfinished.includes(check.state))) throw new Error('Required protected check failed: ' + c.context); continue; }
+    if (!result.found || !result.observations.every(check => passing.includes(check.state))) throw new Error('Required protected check is not successful: ' + c.context);
   }
 }
 /** The merge states in which `gh pr merge --auto` merges at once instead of enabling auto-merge (gh's `isImmediatelyMergeable`). */

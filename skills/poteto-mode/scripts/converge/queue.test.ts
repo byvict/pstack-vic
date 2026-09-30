@@ -8,6 +8,7 @@ import { dossierFromComment } from './publish.ts';
 import { fixture, git, commit, publishCertificate, certifiedPr, prReport } from './fixtures/setup.ts';
 import { pull, trusted } from './github.ts';
 import { classify } from './local/classify.ts';
+import { protectedObservations, protectedResult } from './protection.ts';
 
 const trunk = 'a'.repeat(40), first = 'd'.repeat(40), combined = 'e'.repeat(40);
 const candidate: QueueCandidate = { repo: 'Example/app', baseSha: first, headSha: combined, baseRef: 'refs/heads/main', headRef: 'refs/heads/gh-readonly-queue/main/pr-2-generated' };
@@ -117,6 +118,54 @@ test('a ready exact-head group uses the read-only Actions token and branch-summa
   assert.equal(result.status, 0, result.stderr);
   assert.ok(f.calls().some(a => a[1] === 'repos/Example/app/branches/main'));
   assert.ok(!f.calls().some(a => a[1]?.endsWith('/protection')));
+});
+for (const [state, strict, pending] of [['success', 0, 0], ['failure', 1, 1], ['error', 1, 1], ['pending', 1, 0]] as const) test(`legacy required status ${state} admits strict=${strict === 0} and pending=${pending === 0}`, t => {
+  const f = fixture(); t.after(f.cleanup); publishCertificate(f);
+  edit(f, live => {
+    live.protected.push('Legacy build'); live.statusContexts = ['Legacy build'];
+    live.statuses.push({ id: 900, context: 'Legacy build', state, sha: live.head, updated_at: '2026-09-30T00:00:00Z' });
+  });
+  const args = ['--repo', 'Example/app', '--pr', '1', '--head', f.state.head, '--verdict', 'VERIFIED', '--dry-run'];
+  assert.equal(f.run('converge-arm', args).status, strict);
+  assert.equal(f.run('converge-arm', [...args, '--pending']).status, pending);
+  assert.equal(f.read().mutations.length, 0);
+});
+test('an exact group accepts a latest successful legacy status after an earlier failed one', t => {
+  const f = fixture(); t.after(f.cleanup); publishCertificate(f); const c = queued(f);
+  edit(f, live => {
+    live.protected.push('Legacy build'); live.statusContexts = ['Legacy build'];
+    live.statuses.push({ id: 800, context: 'Legacy build', state: 'failure', sha: c.headSha }, { id: 900, context: 'Legacy build', state: 'success', sha: c.headSha });
+  });
+  const result = run(f, 'verdict', c, ['--wait']);
+  assert.equal(result.status, 0, result.stderr); assert.equal(f.read().mutations.length, 0);
+});
+for (const pair of [['success', 'failure'], ['failure', 'success']] as const) test(`same-name check=${pair[0]} and legacy status=${pair[1]} both have to pass arm and group validation`, t => {
+  const f = fixture(); t.after(f.cleanup); publishCertificate(f);
+  edit(f, live => {
+    live.checks[1].conclusion = pair[0];
+    live.statuses.push({ id: 900, context: 'Secrets scan', state: pair[1], sha: live.head });
+  });
+  const args = ['--repo', 'Example/app', '--pr', '1', '--head', f.state.head, '--verdict', 'VERIFIED', '--dry-run'];
+  assert.notEqual(f.run('converge-arm', args).status, 0);
+  assert.notEqual(f.run('converge-arm', [...args, '--pending']).status, 0);
+  const c = queued(f); edit(f, live => { live.statuses.push({ id: 901, context: 'Secrets scan', state: pair[1], sha: c.headSha }); });
+  const result = run(f, 'verdict', c, ['--wait']); assert.notEqual(result.status, 0); assert.match(result.stderr, /Combined protected check failed/);
+});
+test('an unbound legacy status cannot satisfy an app-bound requirement, and original-head green cannot prove a group', async t => {
+  const f = fixture(); t.after(f.cleanup); const c = queued(f);
+  edit(f, live => {
+    live.checks = live.checks.filter((check: { name: string }) => check.name !== 'Secrets scan');
+    live.statuses.push({ id: 900, context: 'Secrets scan', state: 'success', sha: c.headSha, creator: { id: 15368 } }, { id: 901, context: 'Original only', state: 'success', sha: live.head });
+  });
+  const observed = await withFixture(f, () => protectedObservations('Example/app', c.headSha));
+  assert.equal(protectedResult({ context: 'Secrets scan', appId: 15368 }, observed).found, false);
+  assert.equal(protectedResult({ context: 'Original only', appId: null }, observed).found, false);
+});
+test('a foreign newer run never hides failure from the app protection actually requires', t => {
+  const f = fixture(); t.after(f.cleanup); publishCertificate(f);
+  edit(f, live => { live.checks[1].conclusion = 'failure'; live.checks.push({ id: 900, name: 'Secrets scan', status: 'completed', conclusion: 'success', app: { id: 99 } }); });
+  const result = f.run('converge-arm', ['--repo', 'Example/app', '--pr', '1', '--head', f.state.head, '--verdict', 'VERIFIED', '--pending', '--dry-run']);
+  assert.notEqual(result.status, 0); assert.match(result.stderr, /Required protected check failed: Secrets scan/);
 });
 test('a live hold dequeues a PR even when native queue admission left autoMerge null', t => {
   const f = fixture(); t.after(f.cleanup); publishCertificate(f); queued(f); edit(f, live => { live.hold = true; });

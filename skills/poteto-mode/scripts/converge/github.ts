@@ -372,12 +372,15 @@ export async function verdictStatus(repo: string, pr: number, head: string, auth
 }
 /** `completedAt` is when GitHub says the run completed: null while it runs, and for a run GitHub gave no time. */
 export interface TimedCheck extends Check { completedAt: string | null }
-/** The latest run of each check on the head. */
-export async function timedChecks(repo: string, head: string): Promise<TimedCheck[]> {
-  const all = (await pages(`repos/${repo}/commits/${head}/check-runs?filter=all`, 'check_runs', 'installation')).map((value): TimedCheck => {
+export async function checkRuns(repo: string, head: string): Promise<TimedCheck[]> {
+  return (await pages(`repos/${repo}/commits/${head}/check-runs?filter=all`, 'check_runs', 'installation')).map((value): TimedCheck => {
     const c = object(value);
     return { context: string(c.name), id: integer(c.id), head: sha(c.head_sha), appId: integer(object(c.app).id), state: c.status === 'completed' ? string(c.conclusion) : string(c.status), runId: null, attempt: null, completedAt: c.completed_at === undefined || c.completed_at === null ? null : instant(c.completed_at, 'check completion time') };
   });
+}
+/** The latest run of each check on the head. */
+export async function timedChecks(repo: string, head: string): Promise<TimedCheck[]> {
+  const all = await checkRuns(repo, head);
   const latest = new Map<string, TimedCheck>();
   for (const c of all.sort((a, b) => b.id - a.id)) if (c.head === head && !latest.has(c.context)) latest.set(c.context, c);
   return [...latest.values()].sort((a, b) => a.context.localeCompare(b.context));
