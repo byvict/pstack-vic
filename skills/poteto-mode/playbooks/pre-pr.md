@@ -4,7 +4,7 @@
 
 Two halves. **Certify a pushed head** produces `certificate.json` for one exact head. **Deliver** turns it into a certified PR. The interactive flow runs both; the [Catch-up](catch-up.md) playbook runs both on a PR that already exists.
 
-When the trunk contract enables `postMerge.linear`, record intended issue or project targets as `Pstack-Linear: https://linear.app/WORKSPACE/issue/KEY/title` or `Pstack-Linear: https://linear.app/WORKSPACE/project/SLUG` in the final commit trailer paragraph before certifying. Targets are optional; PR titles and bodies do not select them. The author handoff names the PR/head, outstanding acceptance or rollout obligations, and the post-merge owner; the author ends at the arm receipt. The post-merge owner records the actual merge SHA, installed plugin version/path, `converge-local post-merge --repo OWNER/REPO --commit FULL_MERGE_SHA --dry-run`, native criterion evidence and effect readback. A source-only component probe does not establish installed-daemon delivery.
+When the trunk contract enables `postMerge.linear`, record intended issue or project targets as `Pstack-Linear: https://linear.app/WORKSPACE/issue/KEY/title` or `Pstack-Linear: https://linear.app/WORKSPACE/project/SLUG` in the final commit trailer paragraph before certifying. Targets are optional; PR titles and bodies do not select them. The report rejects malformed or misplaced target trailers before launching lanes. Every immutable issue target also requires the PR-body preparation in [Opening a PR](opening-a-pr.md), even when `postMerge.linear` is disabled. The author handoff names the PR/head, reciprocal PR and Linear URLs, outstanding acceptance or rollout obligations, and the post-merge owner; the author ends at the arm receipt. The post-merge owner records the actual merge SHA, installed plugin version/path, `converge-local post-merge --repo OWNER/REPO --commit FULL_MERGE_SHA --dry-run`, native criterion evidence and effect readback. A source-only component probe does not establish installed-daemon delivery.
 
 #### Certify a pushed head
 
@@ -62,9 +62,11 @@ The argv is the contract command split on single spaces, one word per argument, 
 
 #### Deliver
 
-**7. PR.** When the PR does not exist, run **Opening a PR** on the same head: no commit after step 6, and a new commit restarts at step 1. Never write `check:`, `test:` or `artifact:` claims in the body; publication refuses them while CI is pending (note N1). A stack child targets its parent branch. When the PR exists (catch-up), skip to 8.
+**7. PR.** When the PR does not exist, run **Opening a PR** on the same head: no commit after step 6, and a new commit restarts at step 1. Complete its Linear body preparation and `--check` before creation. Never write `check:`, `test:` or `artifact:` claims in the body; publication refuses them while CI is pending (note N1). A stack child targets its parent branch. When the PR exists (catch-up), prepare its current body with the same helper. Disarm before any PR body edit and apply any changes before step 8.
 
 **8. Publish and arm.** With the PR number:
+
+If the current PR body lacks an issue override, disarm it, prepare its body, and publish again. `converge-arm` validates every immutable issue target against the initial and final live PR body. A body edit after preparation cannot bypass that check.
 
     node <plugin>/skills/poteto-mode/scripts/converge/converge-reconcile --repo OWNER/REPO --pr N --output $RUN/pr-report.json --execution pre-pr
     node <plugin>/skills/poteto-mode/scripts/converge/publish.ts --report $RUN/pr-report.json --certificate $RUN/certificate.json --evidence $RUN/evidence

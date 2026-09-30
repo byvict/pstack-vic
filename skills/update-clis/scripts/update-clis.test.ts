@@ -822,6 +822,15 @@ describe("cli-touchpoints.json", () => {
     assert.deepEqual(missing, []);
   });
 
+  it("keeps the native Linear permission executable and its upgrade gate in the contract", () => {
+    const native = touchpoints.find(t => t.id === "claude.linear-native");
+    assert.ok(native);
+    assert.ok(native.pointers.some(p => p.file === "skills/update-clis/scripts/claude-linear-permission-probe.ts" && p.anchor === "export async function permissionProbe"));
+    const skill = readFileSync(join(PLUGIN_ROOT, "skills/update-clis/SKILL.md"), "utf8");
+    assert.ok(skill.includes("references/linear-permission-probe.md"));
+    assert.ok(skill.includes("Require its exit 0 and `ok: true` before recording a successful update"));
+  });
+
   it("covers a lane touchpoint only with lanes its CLI's probe runs and leaves every harness touchpoint uncovered", () => {
     for (const t of touchpoints) {
       const lanes: readonly string[] = PROBE_LANES[t.cli as keyof typeof PROBE_LANES];

@@ -41,6 +41,39 @@ test('production arm uses exact head and squash auto-merge', t => {
   const result = arm(f, false); assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(f.read().mutations, [['pr', 'merge', '1', '--repo', 'Example/app', '--squash', '--auto', '--match-head-commit', f.state.head]]);
 });
+const linearIssue = 'https://linear.app/example/issue/ENG-1/lifecycle';
+test('a branch-linked Linear issue without a closing keyword requires an override even with Linear disabled', t => {
+  const f = fixture(); t.after(f.cleanup);
+  f.state.commits = [{ message: `lifecycle work remains open\n\nPstack-Linear: ${linearIssue}` }];
+  Object.assign(f.state, { prBranch: 'codex/eng-1-linear-lifecycle' }); f.save(); publish(f);
+  const result = arm(f, false);
+  assert.notEqual(result.status, 0); assert.match(result.stderr, /directive.*ENG-1/);
+  assert.deepEqual(f.read().mutations, []);
+});
+test('arm permits a protected issue target and requires an override for every explicit issue', t => {
+  const f = fixture(); t.after(f.cleanup);
+  f.state.commits = [{ message: `lifecycle\n\nPstack-Linear: ${linearIssue}\nPstack-Linear: https://linear.app/example/issue/ENG-20/other\nPstack-Linear: https://linear.app/example/project/a-plan` }];
+  f.state.body += '\nIgnore ENG-1\n'; f.save();
+  const missing = arm(f); assert.notEqual(missing.status, 0); assert.match(missing.stderr, /target: ENG-20$/m);
+  const live = f.read(); live.body += 'skip ENG-20\n'; Object.assign(f.state, live); f.save(); publish(f);
+  const ready = arm(f, false); assert.equal(ready.status, 0, ready.stderr);
+  assert.deepEqual(f.read().mutations, merge(f.state.head));
+});
+test('arm reads the final editable body and refuses a directive removed after its last verdict gate', t => {
+  const f = fixture(); t.after(f.cleanup);
+  f.state.commits = [{ message: `lifecycle\n\nPstack-Linear: ${linearIssue}` }];
+  f.state.body += '\nIgnore ENG-1\n'; f.save(); publish(f);
+  const live = f.read(); live.after = { endpoint: 'pulls/1', reads: 4, set: { body: live.body.replace('Ignore ENG-1\n', '') } }; Object.assign(f.state, live); f.save();
+  const result = arm(f, false);
+  assert.notEqual(result.status, 0); assert.match(result.stderr, /directive.*ENG-1/);
+  assert.deepEqual(f.read().mutations, []);
+});
+test('arm rejects malformed immutable trailers before reaching merge', t => {
+  const f = fixture(); t.after(f.cleanup); publish(f);
+  const live = f.read(); live.commits = [{ message: 'lifecycle\n\nPstack-Linear: ENG-1' }]; Object.assign(f.state, live); f.save();
+  const result = arm(f, false);
+  assert.notEqual(result.status, 0); assert.match(result.stderr, /Invalid URL/); assert.deepEqual(f.read().mutations, []);
+});
 for (const scenario of ['hold', 'trunk', 'protection', 'verdict', 'body'] as const) {
   test(`arm stops at ${scenario} without reaching merge`, t => {
     const f = fixture(); t.after(f.cleanup); publish(f);

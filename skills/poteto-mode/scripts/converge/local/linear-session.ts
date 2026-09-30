@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { array, object, string } from '../contract.ts';
-import { exitStatus, KILL_GRACE_MS, raizCommand, type RaizLane } from './raiz.ts';
+import { exitStatus, KILL_GRACE_MS, type RaizLane } from './raiz.ts';
 
 export const LINEAR_PREFIX = 'mcp__claude_ai_Linear__';
 export interface NativeCall { id: string; tool: string; args: Record<string, unknown>; result: unknown; error: boolean; line: number; session: string }
@@ -49,14 +49,14 @@ export function linearTrace(stdout: string): LinearTrace {
 export interface LinearSession { trace: LinearTrace; logPath: string; exitCode: number | null; timedOut: boolean; parseError: string | null }
 export interface LinearSessionInput { lane: RaizLane; checkout: string; pluginDir: string; runDirectory: string; phase: 'read' | 'write'; ledgerFile: string; prompt: string; env?: NodeJS.ProcessEnv; capMs: number }
 function quote(value: string): string { return "'" + value.replace(/'/g, "'\\''") + "'"; }
+export function linearSessionCommand(lane: RaizLane, options: { pluginDir: string; settings: string }): { command: string; args: string[] } {
+  if (lane.provider !== 'claude') throw new Error('Linear native trace and scoped writer are unavailable for this provider');
+  return { command: 'claude', args: ['-p', '--model', lane.model, '--effort', lane.effort, '--permission-mode', 'dontAsk', '--permission-prompts', 'none', '--plugin-dir', options.pluginDir, '--setting-sources', '', '--output-format', 'stream-json', '--verbose', '--include-hook-events', '--disable-slash-commands', '--tools', 'ToolSearch', '--settings', options.settings] };
+}
 export async function launchLinearSession(input: LinearSessionInput): Promise<LinearSession> {
-  if (input.lane.provider !== 'claude') throw new Error('Linear native trace and scoped writer are unavailable for this provider');
-  const command = raizCommand(input.lane, input);
   const hook = [process.execPath, join(input.pluginDir, 'skills/poteto-mode/scripts/converge/local/linear-permission.ts'), input.phase, input.ledgerFile].map(quote).join(' ');
   const settings = { hooks: { PreToolUse: [{ matcher: '.*', hooks: [{ type: 'command', command: hook }] }] } };
-  const base = command.args.slice(0, -2);
-  base[base.indexOf('--permission-mode') + 1] = 'dontAsk';
-  const args = [...base, '--setting-sources', '', '--output-format', 'stream-json', '--verbose', '--include-hook-events', '--disable-slash-commands', '--tools', 'ToolSearch', '--settings', JSON.stringify(settings)];
+  const { command, args } = linearSessionCommand(input.lane, { pluginDir: input.pluginDir, settings: JSON.stringify(settings) });
   mkdirSync(input.runDirectory, { recursive: true, mode: 0o700 });
   const logPath = join(input.runDirectory, `${input.phase}.jsonl`);
   writeFileSync(logPath, '', { mode: 0o600 });
@@ -65,7 +65,7 @@ export async function launchLinearSession(input: LinearSessionInput): Promise<Li
   // A setup-token grants model access but suppresses the account's existing claude.ai connectors.
   delete env.CLAUDE_CODE_OAUTH_TOKEN;
   return new Promise(resolve => {
-    const child = spawn(command.command, args, { cwd: input.checkout, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(command, args, { cwd: input.checkout, env, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '', stderr = '', timedOut = false;
     let escalation: NodeJS.Timeout | undefined;
     const timer = setTimeout(() => { timedOut = true; child.kill('SIGTERM'); escalation = setTimeout(() => child.kill('SIGKILL'), KILL_GRACE_MS); escalation.unref(); }, input.capMs);
