@@ -11,7 +11,7 @@ export const ATTEMPT_CAP_HOURS = 2;
 /** A Raiz that fails to launch (see `LAUNCH_FAILURE_MINUTES` in raiz.ts) records no attempt; without this bound the lowest pending PR would relaunch on every tick and starve the others. */
 export const MAX_LAUNCH_FAILURES = 3;
 export const LAUNCH_FAILURE_BACKOFF_MINUTES = 60;
-export const workKinds = ['repair', 'recertify', 'certify'] as const;
+export const workKinds = ['repair', 'recertify', 'certify', 'respond'] as const;
 export type WorkKind = typeof workKinds[number];
 export const outcomes = ['certified', 'deferred', 'failed', 'skipped'] as const;
 export type Outcome = typeof outcomes[number];

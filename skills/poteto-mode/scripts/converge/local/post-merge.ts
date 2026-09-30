@@ -114,13 +114,40 @@ async function mergedPull(t: Trusted, commit: string): Promise<number | null> {
   const found = (await pages(`repos/${t.repo}/commits/${commit}/pulls`)).map(v => object(v, 'pull')).find(p => typeof p.merged_at === 'string' && object(p.base, 'pull base').ref === t.config.trunk);
   return found ? integer(found.number) : null;
 }
+function red(t: Trusted, tests: 'run failed' | 'job failed'): string { return `${tests === 'run failed' ? t.config.tests.workflow : t.config.tests.job} did not succeed on the commit`; }
 /** Why the commit cannot run yet, or null when it can. `error` marks a wait the tick reports: a finished run or test job without success, which only a rerun ends. */
 async function notReady(t: Trusted, postMerge: PostMerge, commit: string): Promise<{ reason: string; error: boolean } | null> {
   if (postMerge.after === 'none') return null;
   const tests = await trunkTests(t, commit);
   if (tests === 'green') return null;
   if (tests === 'pending') return { reason: `${t.config.tests.workflow} has not completed on the commit`, error: false };
-  return { reason: `${tests === 'run failed' ? t.config.tests.workflow : t.config.tests.job} did not succeed on the commit`, error: true };
+  return { reason: red(t, tests), error: true };
+}
+export function redTrunkFile(stateDirectory: string, repo: string, commit: string): string { return join(stateDirectory, 'red-trunk', slug(repo), `${sha(commit)}.json`); }
+/** One notification per red trunk commit. The record goes first: a write that fails leaves the notification to the next tick, where a notification sent first would ring on every tick. */
+async function notifyRedTrunk(stateDirectory: string, t: Trusted, commit: string, reason: string, errors: string[]): Promise<void> {
+  const file = redTrunkFile(stateDirectory, t.repo, commit);
+  if (existsSync(file)) return;
+  let pr: number | null;
+  try {
+    pr = await mergedPull(t, commit);
+    writeJsonFile(file, { schemaVersion: 1, repo: t.repo, commit, pr, reason, notifiedAt: new Date().toISOString() });
+  } catch (error) { errors.push(`${commit}: red trunk not recorded: ${message(error)}`); return; }
+  const cause = notify({ title: 'Converge local', subtitle: t.repo, body: `Trunk red at ${commit.slice(0, 8)}: ${reason}${pr === null ? '' : ` (PR #${pr})`}` });
+  if (cause) errors.push(`${commit}: notification failed: ${cause}`);
+}
+/** `reason` is null while the tip is green or pending. */
+export interface RedTrunk { commit: string; reason: string | null; errors: string[] }
+/** The sweep tick's look at the trunk tip of a repository whose contract has no `postMerge`, where no pass reads trunk's push Tests: a red tip notifies once, and adds no error, since the sweep already refuses every arm on a red trunk. */
+export async function redTrunkTip(stateDirectory: string, t: Trusted, dryRun: boolean): Promise<RedTrunk> {
+  const report: RedTrunk = { commit: t.sha, reason: null, errors: [] };
+  try {
+    const tests = await trunkTests(t, t.sha);
+    if (tests !== 'run failed' && tests !== 'job failed') return report;
+    report.reason = red(t, tests);
+    if (!dryRun) await notifyRedTrunk(stateDirectory, t, t.sha, report.reason, report.errors);
+  } catch (error) { report.errors.push(`red trunk: ${message(error)}`); }
+  return report;
 }
 function failureComment(ledger: PostMergeLedger, file: string): string {
   const last = ledger.attempts[ledger.attempts.length - 1];
@@ -134,7 +161,10 @@ async function attempt(p: Pass, commit: string, ledger: PostMergeLedger | null):
   const file = postMergeLedgerFile(p.config.stateDirectory, p.repo.repo, commit);
   const waiting = await notReady(p.t, p.postMerge, commit);
   if (waiting) {
-    if (waiting.error) p.errors.push(`${commit} waits: ${waiting.reason}`);
+    if (waiting.error) {
+      p.errors.push(`${commit} waits: ${waiting.reason}`);
+      if (!p.options.dryRun) await notifyRedTrunk(p.config.stateDirectory, p.t, commit, waiting.reason, p.errors);
+    }
     return { commit, pr: ledger?.pr ?? null, outcome: 'waiting', reason: waiting.reason, ledger: file, runDirectory: null };
   }
   const pr = ledger ? ledger.pr : await mergedPull(p.t, commit);

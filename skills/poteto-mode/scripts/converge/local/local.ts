@@ -3,18 +3,19 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { oneOf, sha } from '../contract.ts';
-import { api, command, openPulls, pull, trusted as trustedContract, viewer, type Account, type Trusted } from '../github.ts';
+import { api, command, openPulls, pull, trusted as trustedContract, viewer, NOTE_MARKER, type Account, type Trusted } from '../github.ts';
 import { sweep, type Swept } from '../sweep.ts';
-import { classify, skipCause, type Classified } from './classify.ts';
+import { classify, skipCause, type Classified, type Stall } from './classify.ts';
 import { defaultConfigFile, defaultStateDirectory, loadConfig, type LocalConfig, type RepoConfig } from './config.ts';
 import { install, installWhenIdle, uninstall, JOBS, WAKEABLE, type InstallOptions, type Job, type Wakeable } from './launchd.ts';
 import { consumeWakes, nudge } from './wake.ts';
 import { notify } from './notify.ts';
-import { forgetPostMerge, postMergeOne, postMergePass, postMergeStatus, type PostMergeReport } from './post-merge.ts';
+import { forgetPostMerge, postMergeOne, postMergePass, postMergeStatus, redTrunkTip, type PostMergeReport, type RedTrunk } from './post-merge.ts';
 import { tickWatch, watchErrors } from './watch.ts';
 import { currentLedger, deferredBackoffUntil, exhausted, launchBackoffUntil, ledgerFile, markHeld, readLedger, withAttempt, withLaunchFailure, workKinds, writeLedger, DEFERRED_BACKOFF_MINUTES, LAUNCH_FAILURE_BACKOFF_MINUTES, type Attempt, type Ledger, type WorkKind } from './ledger.ts';
 import { LEASE_TTL_HOURS, leaseFile, readLease, releaseLease, takeLease, type Lease } from './lease.ts';
 import { attemptFrom, launchRaiz, raizLane, LaunchFailure, type RaizInput } from './raiz.ts';
+import { clearWaiting, pruneWaiting, readWaiting, waitingFile, writeWaiting, type Waiting } from './stall.ts';
 
 const CONTRACT_PATH = '.cursor/converge.json';
 export interface Launch { repo: string; pr: number; work: WorkKind; runDirectory: string; attempt: Omit<Attempt, 'n'> | null }
@@ -22,16 +23,18 @@ export interface TickReport { job: 'raiz'; trustedAuthors: string[]; classified:
 /** `capMs` and `launchFailureMs` replace the attempt cap and `LAUNCH_FAILURE_MINUTES` in tests. */
 export interface RaizTickOptions { dryRun: boolean; now?: number; only?: { repo: string; pr: number; kind?: WorkKind }; capMs?: number; launchFailureMs?: number; env?: NodeJS.ProcessEnv }
 function message(error: unknown): string { return error instanceof Error ? error.message : String(error); }
-function holdComment(ledger: Ledger, reason: string): string {
-  return [`The local converge daemon stopped on head ${ledger.head}: ${reason}.`, '', 'Attempts:', ...ledger.attempts.map(a => `- ${a.n}. ${a.kind} ${a.outcome}: ${a.reason} (${a.runDirectory})`), '', 'Remove the hold label to let it try again.'].join('\n');
+/** A note, so the verdict gate never counts it as text a Raiz must answer. */
+function holdComment(ledger: Ledger, reason: string, advice = 'Remove the hold label to let it try again.'): string {
+  const attempts = ledger.attempts.length ? ['Attempts:', ...ledger.attempts.map(a => `- ${a.n}. ${a.kind} ${a.outcome}: ${a.reason} (${a.runDirectory})`)] : ['Attempts: none'];
+  return [NOTE_MARKER, `The local converge daemon stopped on head ${ledger.head}: ${reason}.`, '', ...attempts, '', advice].join('\n');
 }
 /** Once the label is on, classify skips the PR, so a failed ledger write, comment or notification never holds it twice; each is reported and the hold stands. */
-async function hold(t: Trusted, file: string, ledger: Ledger, reason: string, now: number, report: TickReport): Promise<void> {
+async function hold(t: Trusted, file: string, ledger: Ledger, reason: string, now: number, report: TickReport, advice?: string): Promise<void> {
   await api(`repos/${t.repo}/issues/${ledger.pr}/labels`, { labels: [t.config.holdLabels[0]] });
   const held = markHeld(ledger, now);
   writeLedger(file, held);
   report.held.push({ repo: t.repo, pr: ledger.pr, reason });
-  try { await api(`repos/${t.repo}/issues/${ledger.pr}/comments`, { body: holdComment(held, reason) }); }
+  try { await api(`repos/${t.repo}/issues/${ledger.pr}/comments`, { body: holdComment(held, reason, advice) }); }
   catch (error) { report.errors.push(`${t.repo}#${ledger.pr}: hold comment failed: ${message(error)}`); }
   const cause = notify({ title: 'Converge local', subtitle: t.repo, body: `Held ${t.repo}#${ledger.pr}: ${reason}` });
   if (cause) report.errors.push(`${t.repo}#${ledger.pr}: notification failed: ${cause}`);
@@ -48,10 +51,27 @@ export async function tickRaiz(config: LocalConfig, options: RaizTickOptions): P
   const only = options.only;
   if (only && !config.repos.some(r => r.repo === only.repo)) throw new Error(`${only.repo} is not in the configuration ${config.file}`);
   const leaseBy = `daemon:${process.pid}`;
+  /** Starts or keeps the PR's clock for `stall.key` on its head, and holds the PR once the clock reaches `stall.hours`. */
+  async function stalled(t: Trusted, pr: number, head: string, stall: Stall, clock: string): Promise<void> {
+    const record = readWaiting(clock);
+    const kept = record !== null && record.head === head && record.key === stall.key;
+    const since = kept ? Date.parse(record.since) : now;
+    if (now - since < stall.hours * 3_600_000) {
+      if (!kept && !options.dryRun) writeWaiting(clock, { schemaVersion: 1, repo: t.repo, pr, head, key: stall.key, since: new Date(now).toISOString() } satisfies Waiting);
+      return;
+    }
+    if (options.dryRun) { report.held.push({ repo: t.repo, pr, reason: stall.hold }); return; }
+    const file = ledgerFile(config.stateDirectory, t.repo, pr);
+    await hold(t, file, currentLedger(readLedger(file), t.repo, pr, head, false), stall.hold, now, report, stall.advice);
+    clearWaiting(clock);
+  }
   async function visit(repo: RepoConfig, t: Trusted, author: number, trusted: string[], number: number): Promise<void> {
     const p = await pull(repo.repo, number);
     const classified = await classify(t, p, author, { now, leased: branch => readLease(leaseFile(config.stateDirectory, repo.repo, branch), now) !== null, trusted, force: only?.kind });
     const entry = report.classified.push(classified) - 1;
+    const clock = waitingFile(config.stateDirectory, repo.repo, number);
+    if (classified.kind !== 'pending' && classified.stall) return stalled(t, number, classified.head, classified.stall, clock);
+    if (!options.dryRun) clearWaiting(clock);
     if (classified.kind !== 'pending') return;
     const file = ledgerFile(config.stateDirectory, repo.repo, number);
     const ledger = currentLedger(readLedger(file), repo.repo, number, classified.head, p.labels.some(label => t.config.holdLabels.includes(label)));
@@ -120,6 +140,7 @@ export async function tickRaiz(config: LocalConfig, options: RaizTickOptions): P
     let t: Trusted, numbers: number[];
     try { t = await trustedContract(repo.repo, CONTRACT_PATH); numbers = only ? [only.pr] : await openPulls(repo.repo); }
     catch (error) { report.errors.push(`${repo.repo}: ${message(error)}`); continue; }
+    if (!only && !options.dryRun) pruneWaiting(config.stateDirectory, repo.repo, numbers);
     for (const number of numbers) {
       try { await visit(repo, t, account.id, trusted, number); }
       catch (error) { report.errors.push(`${repo.repo}#${number}: ${message(error)}`); }
@@ -131,23 +152,25 @@ export async function tickRaiz(config: LocalConfig, options: RaizTickOptions): P
   }
   return report;
 }
-export interface SweepReport { job: 'sweep'; repos: { repo: string; swept: Swept[]; failure: string | null; postMerge: PostMergeReport | null }[] }
-/** After each repository's sweep, the post-merge pass of a trunk contract that has `postMerge`, with the contract the sweep read; a contract that loaded without the block forgets the stored tip. `runCapMs` and `env` reach the pass for tests. */
+export interface SweepReport { job: 'sweep'; repos: { repo: string; swept: Swept[]; failure: string | null; postMerge: PostMergeReport | null; redTrunk: RedTrunk | null }[] }
+/** After each repository's sweep, the post-merge pass of a trunk contract that has `postMerge`, with the contract the sweep read; a contract that loaded without the block forgets the stored tip and gets the red-trunk look at its tip instead. `runCapMs` and `env` reach the pass for tests. */
 export async function tickSweep(config: LocalConfig, options: { dryRun: boolean; runCapMs?: number; env?: NodeJS.ProcessEnv }): Promise<SweepReport> {
   const repos: SweepReport['repos'] = [];
   for (const repo of config.repos) {
     let result: Awaited<ReturnType<typeof sweep>>;
     try { result = await sweep({ repo: repo.repo, dryRun: options.dryRun }); }
-    catch (error) { repos.push({ repo: repo.repo, swept: [], failure: message(error), postMerge: null }); continue; }
+    catch (error) { repos.push({ repo: repo.repo, swept: [], failure: message(error), postMerge: null, redTrunk: null }); continue; }
     const postMerge = result.trusted?.config.postMerge ?? null;
     if (result.trusted && !postMerge && !options.dryRun) forgetPostMerge(config.stateDirectory, repo.repo);
-    repos.push({ repo: repo.repo, swept: result.swept, failure: result.failure, postMerge: result.trusted && postMerge ? await postMergePass(config, repo, result.trusted, postMerge, { dryRun: options.dryRun, leaseBy: `daemon:${process.pid}`, runCapMs: options.runCapMs, env: options.env }) : null });
+    repos.push({ repo: repo.repo, swept: result.swept, failure: result.failure,
+      postMerge: result.trusted && postMerge ? await postMergePass(config, repo, result.trusted, postMerge, { dryRun: options.dryRun, leaseBy: `daemon:${process.pid}`, runCapMs: options.runCapMs, env: options.env }) : null,
+      redTrunk: result.trusted && !postMerge ? await redTrunkTip(config.stateDirectory, result.trusted, options.dryRun) : null });
   }
   return { job: 'sweep', repos };
 }
-/** The sweep tick's errors: each repository whose sweep failed, each PR it refused, and each post-merge error. */
+/** The sweep tick's errors: each repository whose sweep failed, each PR it refused, each post-merge error and each error of the red-trunk look. */
 function sweepErrors(report: SweepReport): string[] {
-  return report.repos.flatMap(r => [...(r.failure ? [`${r.repo}: ${r.failure}`] : []), ...r.swept.filter(s => s.outcome === 'refused').map(s => `${r.repo}#${s.pr}: refused: ${s.reason}`), ...(r.postMerge?.errors ?? []).map(error => `${r.repo}: post-merge: ${error}`)]);
+  return report.repos.flatMap(r => [...(r.failure ? [`${r.repo}: ${r.failure}`] : []), ...r.swept.filter(s => s.outcome === 'refused').map(s => `${r.repo}#${s.pr}: refused: ${s.reason}`), ...(r.postMerge?.errors ?? []).map(error => `${r.repo}: post-merge: ${error}`), ...(r.redTrunk?.errors ?? []).map(error => `${r.repo}: ${error}`)]);
 }
 interface Unreadable { file: string; error: string }
 /** The watch job has no wake queue, so its `wakes` is 0; it records instead how many reads it made, which resources changed and which jobs it woke. */
@@ -215,8 +238,15 @@ export function status(config: LocalConfig, now = Date.now()): Record<string, un
     try { const ledger = readLedger(file); return ledger ? [ledger] : []; }
     catch (error) { return [{ file, error: message(error) }]; }
   }));
+  const waitingDirectory = join(config.stateDirectory, 'waiting');
+  const waitingRepos = existsSync(waitingDirectory) ? readdirSync(waitingDirectory, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name).sort() : [];
+  const waiting = waitingRepos.flatMap(repo => jsonFiles(join(waitingDirectory, repo)).flatMap((name): (Waiting | Unreadable)[] => {
+    const file = join(waitingDirectory, repo, name);
+    try { const clock = readWaiting(file); return clock ? [clock] : []; }
+    catch (error) { return [{ file, error: message(error) }]; }
+  }));
   const lastTick = Object.fromEntries(JOBS.map(job => [job, readLastTick(config.stateDirectory, job)]));
-  return { config, raiz, gh: probe('gh', ['auth', 'status']), parent: config.parent === 'claude' ? probe('claude', ['auth', 'status', '--json']) : probe('codex', ['login', 'status']), leases, ledgers, postMerge: postMergeStatus(config.stateDirectory), lastTick };
+  return { config, raiz, gh: probe('gh', ['auth', 'status']), parent: config.parent === 'claude' ? probe('claude', ['auth', 'status', '--json']) : probe('codex', ['login', 'status']), leases, ledgers, waiting, postMerge: postMergeStatus(config.stateDirectory), lastTick };
 }
 const USAGE = 'Usage: converge-local <install [--when-idle]|uninstall|status|tick --job sweep|raiz|watch [--dry-run]|nudge [--job sweep|raiz]|lease --repo R --branch B [--by NAME] [--ttl H] [--pid N]|release --repo R --branch B [--by NAME]|run --repo R --pr N [--kind K] [--dry-run]|post-merge --repo R --commit SHA [--dry-run]> [--config FILE]';
 export async function main(args: string[]): Promise<number> {

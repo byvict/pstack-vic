@@ -63,10 +63,16 @@ export async function pages(endpoint: string, key?: string, credential: 'writer'
   const output = JSON.parse(await commandAsync('gh', ['api', endpoint + (endpoint.includes('?') ? '&' : '?') + 'per_page=100', '--paginate', '--slurp'], credential));
   return array(output).flatMap(page => key ? array(object(page)[key]) : array(page));
 }
+/** `mergeable` is GitHub's answer to whether the head merges into the base: null while GitHub computes it, which the read itself starts, and whenever the endpoint omits it. */
 export interface Pull {
   number: number; head: string; base: string; branch: string; state: string; draft: boolean;
   body: string; labels: string[]; authorId: number; authorLogin: string; authorType: string; autoMerge: boolean;
-  createdAt: string; fork: boolean;
+  createdAt: string; fork: boolean; mergeable: boolean | null;
+}
+function mergeable(value: unknown): boolean | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'boolean') throw new Error('Invalid PR mergeable state');
+  return value;
 }
 export async function pull(repo: string, pr: number): Promise<Pull> {
   const p = object(await api(`repos/${repo}/pulls/${pr}`));
@@ -77,7 +83,7 @@ export async function pull(repo: string, pr: number): Promise<Pull> {
   return { number: integer(p.number), head: sha(head.sha), base: string(object(p.base).ref), branch: string(head.ref),
     state: string(p.state), draft: p.draft, body: p.body === null ? '' : string(p.body),
     labels: array(p.labels).map(l => string(object(l).name)), authorId: integer(user.id), authorLogin: string(user.login), authorType: string(user.type), autoMerge: p.auto_merge !== null,
-    createdAt: string(p.created_at), fork: headRepo === null || string(headRepo.full_name).toLowerCase() !== repo.toLowerCase() };
+    createdAt: string(p.created_at), fork: headRepo === null || string(headRepo.full_name).toLowerCase() !== repo.toLowerCase(), mergeable: mergeable(p.mergeable) };
 }
 /** Every open PR of the repository, whatever its base, lowest number first. */
 export async function openPulls(repo: string): Promise<number[]> {
@@ -329,6 +335,27 @@ export function isPublication(comment: Record<string, unknown>, author: number):
   const body = typeof comment.body === 'string' ? comment.body : '';
   return integer(object(comment.user).id) === author && /^<!-- converge:v1 [a-f0-9-]{36} -->\n```json\n/.test(body);
 }
+/** The first line of every comment the flow posts under the authenticated account besides a publication: the hold comment and the Raiz's replies. */
+export const NOTE_MARKER = '<!-- converge:note -->';
+/** The flow and Victor comment under the same account. Only the account's comments that start with the marker, with the daemon's comment prefix from before the marker, or with a command to Dependabot (whose parser wants the command first) are the flow's; any other text of the account is Victor's. */
+export function isNote(comment: Record<string, unknown>, author: number): boolean {
+  const body = typeof comment.body === 'string' ? comment.body : '';
+  return integer(object(comment.user).id) === author && (body.startsWith(NOTE_MARKER) || body.startsWith('The local converge daemon ') || body.startsWith('@dependabot '));
+}
+export interface Posted { kind: 'comment' | 'review'; id: number; login: string; at: string }
+/** The text a Raiz has not answered: every issue and review comment created, and every review submitted with a body or a change request, at or after `since`, oldest first, except publications and the flow's notes. GitHub's timestamps have one-second resolution, so a tie with `since` counts. */
+export async function postedAfter(repo: string, pr: number, since: string, author: number, all: Record<string, unknown>[]): Promise<Posted[]> {
+  const from = Date.parse(since);
+  if (Number.isNaN(from)) throw new Error(`Invalid verdict comment time: ${since}`);
+  const login = (value: Record<string, unknown>) => string(object(value.user, 'participant user').login, 'participant login');
+  const reviews = (await pages(`repos/${repo}/pulls/${pr}/reviews`)).map(v => object(v));
+  const found: Posted[] = [
+    ...all.filter(c => !isPublication(c, author) && !isNote(c, author)).map(c => ({ kind: 'comment' as const, id: integer(c.id), login: login(c), at: string(c.created_at, 'comment time') })),
+    ...reviews.filter(r => r.submitted_at !== undefined && r.submitted_at !== null && (r.state === 'CHANGES_REQUESTED' || (typeof r.body === 'string' && r.body.trim() !== '')) && !isNote(r, author))
+      .map(r => ({ kind: 'review' as const, id: integer(r.id), login: login(r), at: string(r.submitted_at, 'review time') })),
+  ];
+  return found.filter(x => Date.parse(x.at) >= from).sort((a, b) => Date.parse(a.at) - Date.parse(b.at) || a.id - b.id);
+}
 export async function statuses(repo: string, head: string): Promise<Record<string, unknown>[]> {
   return (await pages(`repos/${repo}/commits/${head}/statuses`)).map(v => object(v)).sort((a, b) => integer(b.id) - integer(a.id));
 }
@@ -494,7 +521,7 @@ export async function branchSnapshot(repo: string, head: string, configPath: str
   if (!patch) throw new Error('Empty branch diff');
   const selection = await features(t, target, files);
   const gaps = files.filter(f => f.patch === null && ![f.path, f.previous ?? f.path].every(path => /(?:^|\/)__screenshots__\/.+\.png$/.test(path))).map(() => 'Changed file has no readable patch');
-  const pull: Pull = { number: 0, head: target, base: t.config.trunk, branch: '', state: 'open', draft: false, body: '', labels: [], authorId: 0, authorLogin: '', authorType: 'User', autoMerge: false, createdAt: '', fork: false };
+  const pull: Pull = { number: 0, head: target, base: t.config.trunk, branch: '', state: 'open', draft: false, body: '', labels: [], authorId: 0, authorLogin: '', authorType: 'User', autoMerge: false, createdAt: '', fork: false, mergeable: null };
   const verificationDigest = jsonHash([...t.files].sort(([a], [b]) => a.localeCompare(b)));
   const inputFingerprint = jsonHash({ body: '', comments: [] });
   const inputDigest = jsonHash({ head: target, base, contract: t.sha, files, diff, sources: [], checks: [], gaps, inputFingerprint, verificationDigest, testEvidence: { kind: 'unavailable' } });

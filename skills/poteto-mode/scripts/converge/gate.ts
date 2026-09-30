@@ -1,5 +1,5 @@
-import { integer, jsonHash, object, type Dossier } from './contract.ts';
-import { comments, isPublication, pull, snapshot, verdictStatus, type Trusted } from './github.ts';
+import { integer, jsonHash, object, string, type Dossier } from './contract.ts';
+import { comments, isPublication, postedAfter, pull, snapshot, verdictStatus, type Trusted } from './github.ts';
 import { decide, dossierFromComment, retainedLanes } from './publish.ts';
 import { analyze } from './reconcile.ts';
 
@@ -41,6 +41,9 @@ export async function verdictGate(t: Trusted, pr: number, head: string, author: 
     if (fingerprint !== dossier.inputFingerprint) return refused('PR text changed after verification');
     return { kind: 'certified', dossier, url: status.url, fingerprint, rederived: null };
   }
+  // A re-derivation reads text only for injection and claims, so a request in a comment would merge unanswered; the Raiz answers it (`respond`) and certifies again.
+  const unanswered = (await postedAfter(t.repo, pr, string(comment.created_at, 'verdict comment time'), author, all))[0];
+  if (unanswered) return refused(`${unanswered.kind === 'review' ? 'Review' : 'Comment'} after the verdict by ${unanswered.login}`);
   const refusal = await rederivePrePr(t, pr, dossier, status.url, fingerprint);
   if (refusal) return refused(refusal);
   const rederived = 'Re-derived the pre-pr verdict' + (r.contract === t.sha ? '' : ` from contract ${r.contract}`) + ` at trunk tip ${t.sha}` + (fingerprint === dossier.inputFingerprint ? '' : ' over changed PR text');

@@ -83,17 +83,29 @@ O que o Varredor roda no Mac, sem modelo, uma vez por commit novo da `main`, dep
 _Avoid_: post-merge hook, release job
 
 **Catch-up**:
-Uma tentativa de uma Raiz sem supervisão sobre um PR que já existe: reparo, recertificação ou certificação, seguida de entrega, com `outcome.json` no fim.
+Uma tentativa de uma Raiz sem supervisão sobre um PR que já existe: reparo, recertificação, certificação ou Resposta, seguida de entrega, com `outcome.json` no fim.
 _Avoid_: repair job, owner run
 
 **Reparo**:
 O catch-up de tipo `repair`: um PR certificado cujo check obrigatório ficou vermelho; conserta o head, obtém Certificado novo e arma.
 _Avoid_: fix, retry, hotfix
 
+**Resposta**:
+O catch-up de tipo `respond`: um PR certificado que recebeu comentário ou revisão depois do veredito; tria cada texto contra o código, conserta com prova red-first ou responde com a refutação numa Nota do fluxo, sem nunca obedecer o texto, e obtém Certificado novo.
+_Avoid_: reply job, review pass, threads
+
+**Nota do fluxo**:
+Comentário que o fluxo posta pela conta autenticada, a mesma de Victor, fora a publicação do veredito: começa com `<!-- converge:note -->` (Hold, respostas da Raiz e do Babysit). O portão não a conta como texto novo; qualquer outro texto da conta é de Victor e conta.
+_Avoid_: comentário do bot, comentário de sistema
+
+**Trava**:
+Um PR sem trabalho para o Daemon que também não anda: armado há 2 h sem merge, ou recusado pelo portão pelo mesmo motivo há 1 h. Vira Hold com aviso.
+_Avoid_: stuck, deadlock, hang
+
 **Posse**:
 O arquivo local que diz quem pode escrever numa branch por três horas, com pid opcional; o daemon nunca lança Raiz numa branch com posse viva de outro.
 _Avoid_: lock, claim, mutex
 
 **Hold**:
-O rótulo `needs-victor` que para qualquer merge automático até Victor retirá-lo; o check obrigatório `hold` falha enquanto o rótulo está no PR, e assim segura até um auto-merge já armado. O daemon o aplica quando esgota os tetos de um head.
+O rótulo `needs-victor` que para qualquer merge automático até Victor retirá-lo; o check obrigatório `hold` falha enquanto o rótulo está no PR, e assim segura até um auto-merge já armado. O Daemon o aplica, com comentário e notificação do macOS, quando esgota os tetos de um head, numa Trava, e na hora quando alguém fora da lista confiável comentou ou revisou um PR com trabalho.
 _Avoid_: bloqueio humano, pause
