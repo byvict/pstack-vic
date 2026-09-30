@@ -86,7 +86,7 @@ for (const [name, change, changed, woken] of [
     assert.deepEqual(lastTick(state).woken, []);
   });
 }
-test('a head seen for the first time is stored without counting as a change; a closed PR drops its head, and with no open PR the tick reads only the PR list', t => {
+test('a head seen for the first time is stored without counting as a change; a closed PR drops its head, and trunk stays watched with no PR open', t => {
   const f = fixture(); t.after(f.cleanup);
   const { file, saved } = configured(f);
   edit(f, live => { live.pulls = [pr(1, headA)]; });
@@ -103,10 +103,25 @@ test('a head seen for the first time is stored without counting as a change; a c
   assert.equal(closed.status, 0, closed.stderr);
   assert.deepEqual(JSON.parse(closed.stdout).woken, ['sweep', 'raiz']);
   const watched = JSON.parse(readFileSync(saved, 'utf8'));
-  assert.deepEqual([watched.trunk, watched.heads, Object.keys(watched.etags)], [null, [], [pulls]]);
+  assert.deepEqual([watched.trunk, watched.heads, Object.keys(watched.etags).sort()], ['main', [], [pulls, trunkChecks].sort()]);
   const after = f.calls().length;
   assert.equal(watch(f, file).status, 0);
-  assert.deepEqual(reads(f, after).map(([endpoint]) => endpoint), [pulls], 'nothing to arm, so the trunk goes unwatched');
+  assert.deepEqual(reads(f, after).map(([endpoint]) => endpoint), [pulls, trunkChecks].sort(), 'the sweep wakes within a minute of trunk turning green after a merge');
+});
+test('with no PR ever listed, the Vigia reads the trunk name from the repository once, keeps it, and wakes the sweep when the trunk check runs change', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const { file, saved } = configured(f);
+  const first = watch(f, file);
+  assert.equal(first.status, 0, first.stderr);
+  assert.deepEqual(reads(f), [[pulls, null], ['repos/Example/app', null], [trunkChecks, null]].sort());
+  assert.equal(JSON.parse(readFileSync(saved, 'utf8')).trunk, 'main');
+  const before = f.calls().length;
+  assert.equal(watch(f, file).status, 0);
+  assert.deepEqual(reads(f, before).map(([endpoint]) => endpoint), [pulls, trunkChecks].sort(), 'the stored name spares the repository read');
+  edit(f, live => { live.refChecks = { main: red }; });
+  const changed = watch(f, file);
+  assert.equal(changed.status, 0, changed.stderr);
+  assert.deepEqual(JSON.parse(changed.stdout), { job: 'watch', repos: [{ repo: 'Example/app', reads: 2, changed: [trunkChecks], failure: null }], woken: ['sweep'] });
 });
 test('a repository whose read fails is an error for that repository only: no ETag and no wake for it, exit 1, and the other repository still wakes', t => {
   const f = fixture(); t.after(f.cleanup);

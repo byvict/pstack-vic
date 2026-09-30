@@ -2,13 +2,14 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, w
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
-import { oneOf } from '../contract.ts';
+import { oneOf, sha } from '../contract.ts';
 import { api, command, openPulls, pull, trusted as trustedContract, viewer, type Account, type Trusted } from '../github.ts';
 import { sweep, type Swept } from '../sweep.ts';
 import { classify, skipCause, type Classified } from './classify.ts';
 import { defaultConfigFile, defaultStateDirectory, loadConfig, type LocalConfig, type RepoConfig } from './config.ts';
-import { install, uninstall, JOBS, WAKEABLE, type Job, type Wakeable } from './launchd.ts';
+import { install, installWhenIdle, uninstall, JOBS, WAKEABLE, type InstallOptions, type Job, type Wakeable } from './launchd.ts';
 import { consumeWakes, nudge } from './wake.ts';
+import { forgetPostMerge, postMergeOne, postMergePass, postMergeStatus, type PostMergeReport } from './post-merge.ts';
 import { tickWatch, watchErrors } from './watch.ts';
 import { currentLedger, deferredBackoffUntil, exhausted, launchBackoffUntil, ledgerFile, markHeld, readLedger, withAttempt, withLaunchFailure, workKinds, writeLedger, DEFERRED_BACKOFF_MINUTES, LAUNCH_FAILURE_BACKOFF_MINUTES, type Attempt, type Ledger, type WorkKind } from './ledger.ts';
 import { LEASE_TTL_HOURS, leaseFile, readLease, releaseLease, takeLease, type Lease } from './lease.ts';
@@ -127,18 +128,23 @@ export async function tickRaiz(config: LocalConfig, options: RaizTickOptions): P
   }
   return report;
 }
-export interface SweepReport { job: 'sweep'; repos: { repo: string; swept: Swept[]; failure: string | null }[] }
-export async function tickSweep(config: LocalConfig, options: { dryRun: boolean }): Promise<SweepReport> {
-  const repos = [];
+export interface SweepReport { job: 'sweep'; repos: { repo: string; swept: Swept[]; failure: string | null; postMerge: PostMergeReport | null }[] }
+/** After each repository's sweep, the post-merge pass of a trunk contract that has `postMerge`, with the contract the sweep read; a contract that loaded without the block forgets the stored tip. `runCapMs` and `env` reach the pass for tests. */
+export async function tickSweep(config: LocalConfig, options: { dryRun: boolean; runCapMs?: number; env?: NodeJS.ProcessEnv }): Promise<SweepReport> {
+  const repos: SweepReport['repos'] = [];
   for (const repo of config.repos) {
-    try { const result = await sweep({ repo: repo.repo, dryRun: options.dryRun }); repos.push({ repo: repo.repo, swept: result.swept, failure: result.failure }); }
-    catch (error) { repos.push({ repo: repo.repo, swept: [], failure: message(error) }); }
+    let result: Awaited<ReturnType<typeof sweep>>;
+    try { result = await sweep({ repo: repo.repo, dryRun: options.dryRun }); }
+    catch (error) { repos.push({ repo: repo.repo, swept: [], failure: message(error), postMerge: null }); continue; }
+    const postMerge = result.trusted?.config.postMerge ?? null;
+    if (result.trusted && !postMerge && !options.dryRun) forgetPostMerge(config.stateDirectory, repo.repo);
+    repos.push({ repo: repo.repo, swept: result.swept, failure: result.failure, postMerge: result.trusted && postMerge ? await postMergePass(config, repo, result.trusted, postMerge, { dryRun: options.dryRun, leaseBy: `daemon:${process.pid}`, runCapMs: options.runCapMs, env: options.env }) : null });
   }
   return { job: 'sweep', repos };
 }
-/** The sweep tick's errors: each repository whose sweep failed and each PR it refused. */
+/** The sweep tick's errors: each repository whose sweep failed, each PR it refused, and each post-merge error. */
 function sweepErrors(report: SweepReport): string[] {
-  return report.repos.flatMap(r => [...(r.failure ? [`${r.repo}: ${r.failure}`] : []), ...r.swept.filter(s => s.outcome === 'refused').map(s => `${r.repo}#${s.pr}: refused: ${s.reason}`)]);
+  return report.repos.flatMap(r => [...(r.failure ? [`${r.repo}: ${r.failure}`] : []), ...r.swept.filter(s => s.outcome === 'refused').map(s => `${r.repo}#${s.pr}: refused: ${s.reason}`), ...(r.postMerge?.errors ?? []).map(error => `${r.repo}: post-merge: ${error}`)]);
 }
 interface Unreadable { file: string; error: string }
 /** The watch job has no wake queue, so its `wakes` is 0; it records instead how many reads it made, which resources changed and which jobs it woke. */
@@ -207,13 +213,13 @@ export function status(config: LocalConfig, now = Date.now()): Record<string, un
     catch (error) { return [{ file, error: message(error) }]; }
   }));
   const lastTick = Object.fromEntries(JOBS.map(job => [job, readLastTick(config.stateDirectory, job)]));
-  return { config, raiz, gh: probe('gh', ['auth', 'status']), parent: config.parent === 'claude' ? probe('claude', ['auth', 'status', '--json']) : probe('codex', ['login', 'status']), leases, ledgers, lastTick };
+  return { config, raiz, gh: probe('gh', ['auth', 'status']), parent: config.parent === 'claude' ? probe('claude', ['auth', 'status', '--json']) : probe('codex', ['login', 'status']), leases, ledgers, postMerge: postMergeStatus(config.stateDirectory), lastTick };
 }
-const USAGE = 'Usage: converge-local <install|uninstall|status|tick --job sweep|raiz|watch [--dry-run]|nudge [--job sweep|raiz]|lease --repo R --branch B [--by NAME] [--ttl H] [--pid N]|release --repo R --branch B [--by NAME]|run --repo R --pr N [--kind K] [--dry-run]> [--config FILE]';
+const USAGE = 'Usage: converge-local <install [--when-idle]|uninstall|status|tick --job sweep|raiz|watch [--dry-run]|nudge [--job sweep|raiz]|lease --repo R --branch B [--by NAME] [--ttl H] [--pid N]|release --repo R --branch B [--by NAME]|run --repo R --pr N [--kind K] [--dry-run]|post-merge --repo R --commit SHA [--dry-run]> [--config FILE]';
 export async function main(args: string[]): Promise<number> {
   const [subcommand, ...rest] = args;
   try {
-    const { values } = parseArgs({ args: rest, options: { config: { type: 'string' }, job: { type: 'string' }, 'dry-run': { type: 'boolean', default: false }, repo: { type: 'string' }, branch: { type: 'string' }, by: { type: 'string', default: 'interactive' }, ttl: { type: 'string', default: String(LEASE_TTL_HOURS) }, pid: { type: 'string' }, pr: { type: 'string' }, kind: { type: 'string' }, now: { type: 'string' } } });
+    const { values } = parseArgs({ args: rest, options: { config: { type: 'string' }, job: { type: 'string' }, 'dry-run': { type: 'boolean', default: false }, repo: { type: 'string' }, branch: { type: 'string' }, by: { type: 'string', default: 'interactive' }, ttl: { type: 'string', default: String(LEASE_TTL_HOURS) }, pid: { type: 'string' }, pr: { type: 'string' }, kind: { type: 'string' }, commit: { type: 'string' }, 'when-idle': { type: 'boolean', default: false }, now: { type: 'string' } } });
     const configFile = values.config ?? defaultConfigFile();
     const config = () => loadConfig(configFile);
     // An interactive session takes the lease whether or not the daemon is configured; a configuration that exists names where the daemon looks.
@@ -221,7 +227,11 @@ export async function main(args: string[]): Promise<number> {
     const now = values.now === undefined ? undefined : Number(values.now);
     if (now !== undefined && !Number.isFinite(now)) throw new Error('--now takes milliseconds since the epoch');
     switch (subcommand) {
-      case 'install': { const c = config(); print(install({ pluginDir: c.pluginDir, configFile: c.file, intervalMinutes: c.intervalMinutes, logDirectory: c.logDirectory, stateDirectory: c.stateDirectory, path: process.env.PATH ?? '', nodePath: process.execPath, parent: c.parent, sheetPath: c.sheetPath })); return 0; }
+      case 'install': {
+        const c = config();
+        const options: InstallOptions = { pluginDir: c.pluginDir, configFile: c.file, intervalMinutes: c.intervalMinutes, logDirectory: c.logDirectory, stateDirectory: c.stateDirectory, path: process.env.PATH ?? '', nodePath: process.execPath, parent: c.parent, sheetPath: c.sheetPath };
+        print(values['when-idle'] ? await installWhenIdle(options) : install(options)); return 0;
+      }
       case 'nudge': {
         // Like lease: a session wakes the daemon whether or not it is configured, and a file that exists names where the jobs watch.
         const jobs = values.job === undefined ? WAKEABLE : WAKEABLE.filter(name => name === values.job);
@@ -240,6 +250,16 @@ export async function main(args: string[]): Promise<number> {
         const kind = values.kind === undefined ? undefined : oneOf(values.kind, workKinds);
         const result = await tickRaiz(config(), { dryRun: values['dry-run'], now, only: { repo: values.repo, pr: Number(values.pr), kind } });
         print(result); printErrors(result.errors); return result.errors.length ? 1 : 0;
+      }
+      case 'post-merge': {
+        if (!values.repo || !values.commit) throw new Error(USAGE);
+        const c = config();
+        const repo = c.repos.find(r => r.repo === values.repo);
+        if (!repo) throw new Error(`${values.repo} is not in the configuration ${c.file}`);
+        const commit = sha(values.commit);
+        const report = await postMergeOne(c, repo, await trustedContract(repo.repo, CONTRACT_PATH), commit, { dryRun: values['dry-run'], leaseBy: `post-merge:${process.pid}` });
+        print({ job: 'post-merge', repo: repo.repo, ...report }); printErrors(report.errors);
+        return report.errors.length || report.commits.some(entry => entry.outcome === 'failed' || entry.outcome === 'waiting') ? 1 : 0;
       }
       case 'lease': {
         if (!values.repo || !values.branch) throw new Error(USAGE);

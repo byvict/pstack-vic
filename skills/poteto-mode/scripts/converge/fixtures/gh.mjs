@@ -52,6 +52,9 @@ else if (args[0] === 'api') {
     } else if (endpoint === `${root}/statuses/${state.head}`) {
       const status = { ...body, id: 200 + state.statuses.length, creator: { id: 7 }, sha: state.head };
       state.statuses.unshift(status); save(); send(status);
+    } else if (/^repos\/Example\/app\/issues\/\d+\/comments$/.test(endpoint)) {
+      const posted = { pr: Number(endpoint.split('/')[4]), body: body.body };
+      (state.posted ??= []).push(posted); save(); send({ id: 900 + state.posted.length, ...posted });
     } else if (endpoint === `${root}/issues/1/labels`) {
       state.mutations.push(['labels', ...body.labels]);
       if (body.labels.includes('needs-victor')) state.hold = true;
@@ -83,6 +86,16 @@ else if (args[0] === 'api') {
     if (content === undefined) fail();
     send({ type: 'file', encoding: 'base64', size: Buffer.byteLength(content), content: Buffer.from(content).toString('base64') });
   }
+  // `state.trunkHistory` is the trunk's history, oldest first, as `{ sha, parents }`: a compare of a trunk commit with the tip lists the commits after it up to the tip, oldest first, at most `state.compareLimit` of them.
+  else if (endpoint.startsWith(`${root}/compare/`) && state.trunkHistory && endpoint.endsWith(`...${state.trunk}`)) {
+    const [from] = endpoint.slice(`${root}/compare/`.length).split('...');
+    const index = state.trunkHistory.findIndex(c => c.sha === from);
+    if (index < 0) send({ status: 'diverged', total_commits: 1, commits: [] });
+    else {
+      const after = state.trunkHistory.slice(index + 1, state.trunkHistory.findIndex(c => c.sha === state.trunk) + 1);
+      send({ status: after.length ? 'ahead' : 'identical', total_commits: after.length, commits: after.slice(0, state.compareLimit ?? 100).map(c => ({ sha: c.sha, parents: c.parents.map(sha => ({ sha })) })) });
+    }
+  }
   else if (endpoint.startsWith(`${root}/compare/`) && args.some(a => a.includes('application/vnd.github.diff'))) {
     const [, head] = endpoint.slice(`${root}/compare/`.length).split('...');
     if (head !== (state.pushedHead ?? state.head)) fail();
@@ -97,11 +110,23 @@ else if (args[0] === 'api') {
   else if (endpoint === `${root}/pulls` && (query.get('base') === 'main' || query.get('state') === 'open')) send(state.pulls ?? []);
   else if (endpoint === `${root}/pulls/1/files`) send(listed(state.prFiles ?? state.files));
   else if (endpoint === `${root}/actions/workflows`) send({ workflows: [{ id: state.workflowId, name: 'Tests', path: '.github/workflows/tests.yml', state: 'active' }] });
+  else if (/^repos\/Example\/app\/commits\/[a-f0-9]{40}\/pulls$/.test(endpoint)) send(state.commitPulls?.[endpoint.split('/')[4]] ?? []);
   else if (endpoint.includes('/check-runs')) {
     if (state.requireInstallationChecks && (process.env.GH_TOKEN || process.env.GITHUB_TOKEN)) fail();
     // `state.refChecks` gives one commit, named by sha or branch as the endpoint names it, its own check runs.
     const ref = endpoint.split('/')[4];
     send({ check_runs: (state.refChecks?.[ref] ?? state.checks).map(c => ({ ...c, head_sha: state.head })) });
+  }
+  // `state.pushRuns` gives each trunk commit its own push run (`{ status, conclusion, jobConclusion? }`), none for a commit it lacks; its jobs answer under run id 1000 + the commit's position.
+  else if (endpoint === `${root}/actions/workflows/${state.workflowId}/runs` && query.get('event') === 'push' && state.pushRuns) {
+    const commit = query.get('head_sha');
+    const run = state.pushRuns[commit];
+    send({ workflow_runs: run ? [{ id: 1000 + Object.keys(state.pushRuns).indexOf(commit), workflow_id: state.workflowId, head_sha: commit, event: 'push', head_branch: 'main', run_attempt: 1, status: run.status, conclusion: run.conclusion }] : [] });
+  }
+  else if (/^repos\/Example\/app\/actions\/runs\/1\d{3}\/attempts\/1\/jobs$/.test(endpoint) && state.pushRuns) {
+    const commit = Object.keys(state.pushRuns)[Number(endpoint.split('/')[5]) - 1000];
+    const run = state.pushRuns[commit];
+    send({ jobs: [{ name: 'Run test suite', head_sha: commit, status: run.status, conclusion: run.jobConclusion ?? run.conclusion }] });
   }
   else if (endpoint === `${root}/actions/workflows/${state.workflowId}/runs`) send({ workflow_runs: [{ id: 8, workflow_id: state.workflowId, head_sha: query.get('head_sha'), event: query.get('event') ?? 'pull_request', head_branch: 'main', run_attempt: 1, status: 'completed', conclusion: state.trunkRed && query.get('event') === 'push' ? 'failure' : 'success', ...(query.get('event') === 'push' ? {} : state.runOverrides) }] });
   else if (endpoint === `${root}/actions/runs/${state.runOverrides.id ?? 8}/attempts/${state.runOverrides.run_attempt ?? 1}/jobs`) send({ jobs: state.jobs });

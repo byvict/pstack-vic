@@ -71,15 +71,16 @@ async function eachOpen(repo: string, base: string, one: (pr: number) => Promise
   }
   return { swept };
 }
-export async function sweep(options: { repo: string; configPath?: string; dryRun: boolean }): Promise<{ swept: Swept[]; failure: string | null }> {
+/** `trusted` is the trunk contract the sweep judged against, read at the trunk tip, or null when it did not load; the daemon's post-merge pass reuses it. */
+export async function sweep(options: { repo: string; configPath?: string; dryRun: boolean }): Promise<{ swept: Swept[]; failure: string | null; trusted: Trusted | null }> {
   const repo = repoName(options.repo);
   const t = await contract(repo, options.configPath);
   if ('failure' in t) {
     const { swept } = await eachOpen(repo, string(object(await api(`repos/${repo}`)).default_branch), pr => withoutContract(repo, pr, t.failure, options.dryRun));
-    return { swept, failure: t.failure };
+    return { swept, failure: t.failure, trusted: null };
   }
   const author = await principal();
-  return { ...(await eachOpen(t.repo, t.config.trunk, pr => judge(t.repo, pr, author, options))), failure: null };
+  return { ...(await eachOpen(t.repo, t.config.trunk, pr => judge(t.repo, pr, author, options))), failure: null, trusted: t };
 }
 export async function main(args: string[]): Promise<number> {
   try {

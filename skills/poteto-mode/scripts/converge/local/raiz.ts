@@ -39,7 +39,7 @@ export function raizPrompt(input: RaizInput): string {
   ].join('\n') + '\n';
 }
 /** How long a Raiz past the cap has between SIGTERM and SIGKILL. */
-const KILL_GRACE_MS = 10_000;
+export const KILL_GRACE_MS = 10_000;
 /** A Raiz that did not start, or that ended without an accepted outcome (not by the cap) sooner than this after its start, never ran the playbook: a login, a quota or a moved CLI looks like this. */
 export const LAUNCH_FAILURE_MINUTES = 2;
 /** `rejected` is why an outcome file that exists did not count; null when it counted or is absent. */
@@ -57,7 +57,7 @@ function launchedOutcome(input: RaizInput): Pick<Launched, 'outcome' | 'rejected
   return other ? { outcome: null, rejected: `outcome for another ${other}` } : { outcome, rejected: null };
 }
 /** A signal death reports the shell's 128 + signal number, as the runner does; null means the CLI never started. */
-function exitStatus(code: number | null, signal: NodeJS.Signals | null): number {
+export function exitStatus(code: number | null, signal: NodeJS.Signals | null): number {
   return code ?? 128 + (signal === null ? 0 : (constants.signals[signal] ?? 0));
 }
 export async function launchRaiz(input: RaizInput, lane: RaizLane, options: { capMs?: number; env?: NodeJS.ProcessEnv } = {}): Promise<Launched> {
