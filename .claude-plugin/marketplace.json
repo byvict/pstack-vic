@@ -3,19 +3,19 @@
   "owner": {
     "name": "Victor Baccega"
   },
-  "description": "Port autoral do pstack da Cursor para Claude Code e Codex, acompanhando os upstreams cursor/plugins e open-pstack.",
+  "description": "Port autoral do pstack de Lauren Tan (Cursor) para Claude Code e Codex, acompanhando os upstreams cursor/plugins e open-pstack.",
   "plugins": [
     {
       "name": "pstack",
       "source": {
         "source": "github",
         "repo": "byvict/pstack-vic",
-        "ref": "v0.4.15"
+        "ref": "v0.4.16"
       },
       "description": "if you want to go fast, go deep first. pstack helps you write less, but higher quality code. rigorous agent workflows you can parallelize with confidence.",
-      "version": "0.4.15",
+      "version": "0.4.16",
       "author": {
-        "name": "Lauren Tan"
+        "name": "byvict"
       },
       "homepage": "https://github.com/byvict/pstack-vic",
       "license": "MIT",

@@ -1,10 +1,10 @@
 {
   "name": "pstack",
   "displayName": "pstack",
-  "version": "0.4.15",
-  "description": "if you want to go fast, go deep first. pstack helps you write less, but higher quality code. rigorous agent workflows you can parallelize with confidence. Port autoral do pstack da Cursor para Claude Code e Codex.",
+  "version": "0.4.16",
+  "description": "if you want to go fast, go deep first. pstack helps you write less, but higher quality code. rigorous agent workflows you can parallelize with confidence. Port autoral do pstack de Lauren Tan (Cursor) para Claude Code e Codex.",
   "author": {
-    "name": "Lauren Tan"
+    "name": "byvict"
   },
   "homepage": "https://github.com/byvict/pstack-vic",
   "repository": "https://github.com/byvict/pstack-vic",
