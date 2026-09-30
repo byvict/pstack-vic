@@ -331,3 +331,22 @@ test('while another holder runs a repository\'s pass, the tick skips it and post
   assert.match(manual.stderr, /^post-merge of Example\/app is leased by post-merge:1 until /);
   assert.deepEqual(released(f), []);
 });
+test('a trunk contract without the block forgets the handled tip, so a block added back starts with a first pass instead of a replay', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const { commits, file, stateFile } = trunk(f, 3);
+  assert.equal(sweepTick(f, file).status, 0);
+  const block = (on: boolean) => edit(f, live => { const config = JSON.parse(live.blobs['.cursor/converge.json']); if (on) config.postMerge = { runs: [{ name: 'release', command: 'fake-release' }] }; else delete config.postMerge; live.blobs['.cursor/converge.json'] = JSON.stringify(config); });
+  block(false); edit(f, live => { live.trunk = commits[1]; });
+  const dry = sweepTick(f, file, ['--dry-run']);
+  assert.equal(pass(dry.stdout), null);
+  assert.equal(existsSync(stateFile), true, 'a dry run forgets nothing');
+  const without = sweepTick(f, file);
+  assert.equal(without.status, 0, without.stderr);
+  assert.equal(pass(without.stdout), null);
+  assert.equal(existsSync(stateFile), false);
+  block(true); edit(f, live => { live.trunk = commits[2]; });
+  const back = sweepTick(f, file);
+  assert.equal(back.status, 0, back.stderr);
+  assert.deepEqual([pass(back.stdout).note, pass(back.stdout).commits, pass(back.stdout).handled], ['first pass: stored the trunk tip and ran nothing', [], commits[2]]);
+  assert.deepEqual(released(f), []);
+});

@@ -1,5 +1,5 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { trunkTests } from '../arm.ts';
@@ -218,6 +218,8 @@ async function leased(p: Pass, work: () => Promise<void>): Promise<void> {
     catch (error) { p.errors.push(message(error)); }
   }
 }
+/** A trunk contract that loaded without `postMerge` drops the stored tip, so a block added back later starts with a first pass instead of replaying every commit since. The ledgers stay as history. */
+export function forgetPostMerge(stateDirectory: string, repo: string): void { rmSync(postMergeStateFile(stateDirectory, repo), { force: true }); }
 /** The sweep tick's pass over one repository whose trunk contract has `postMerge`. It never throws: a failure lands in `errors`, and the stored tip stays where it was. */
 export async function postMergePass(config: LocalConfig, repo: RepoConfig, t: Trusted, postMerge: PostMerge, options: PostMergeOptions): Promise<PostMergeReport> {
   const report: PostMergeReport = { tip: t.sha, handled: null, note: null, commits: [], errors: [] };

@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const script = fileURLToPath(new URL('./after-merge.ts', import.meta.url));
+const contract = fileURLToPath(new URL('../.cursor/converge.json', import.meta.url));
 const commit = 'c'.repeat(40);
 const other = 'd'.repeat(40);
 const labels = ['com.pstack.converge-sweep', 'com.pstack.converge-raiz', 'com.pstack.converge-watch'];
@@ -25,6 +26,7 @@ const save = () => writeFileSync(file, JSON.stringify(state));
 const is = (...words) => args.length === words.length && words.every((word, i) => args[i] === word);
 const fail = text => { process.stderr.write(text + '\\n'); process.exit(1); };
 const tagOf = ref => ref.slice('refs/tags/'.length).replace('^{commit}', '');
+if ((state.failing ?? []).some(prefix => [name, ...args].join(' ').startsWith(prefix))) fail('fake ' + name + ': unable to access remote');
 if (name === 'git') {
   if (is('rev-parse', 'HEAD')) out(state.head + '\\n');
   else if (args[0] === 'ls-remote' && args[1] === '--tags') { const tag = tagOf(args[3]); if (state.remoteTags[tag]) out(state.remoteTags[tag] + '\\trefs/tags/' + tag + '\\n'); }
@@ -50,7 +52,7 @@ if (name === 'git') {
   const job = args[0] === 'list' ? state.jobs[args[1]] : undefined;
   if (!job) { process.stderr.write('Could not find service "' + args[1] + '" in domain for port\\n'); process.exit(113); }
   out('{\\n\\t"Label" = "' + args[1] + '";\\n' + (job.pid ? '\\t"PID" = ' + job.pid + ';\\n' : '') + '\\t"ProgramArguments" = (\\n\\t\\t"/bin/zsh";\\n\\t\\t"-c";\\n\\t\\t"exec "/n/node" "' + job.script + '" tick --job x --config "/c.json"";\\n\\t);\\n};\\n');
-} else if (name === 'converge-local') writeFileSync(join(root, 'installed.json'), JSON.stringify(args));
+} else if (name === 'converge-local') { writeFileSync(join(root, 'installed-path.txt'), process.env.PATH); writeFileSync(join(root, 'installed.json'), JSON.stringify(args)); }
 else fail('fake: ' + name);
 `;
 /** A merge commit of 0.4.8 at the trunk tip, with v0.4.8 on no remote, both parents on 0.4.7, the three jobs loaded from the 0.4.7 cache and idle. */
@@ -67,7 +69,7 @@ function setup(t: { after: (fn: () => void) => void }, change: (state: Record<st
   change(state, { newScript: scriptOf('0.4.8') });
   writeFileSync(join(root, 'state.json'), JSON.stringify(state));
   return {
-    root, home,
+    root, home, bin,
     run: () => spawnSync(process.execPath, [script], { cwd: work, encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, FAKE_ROOT: root } }),
     calls: (): string[][] => existsSync(join(root, 'calls.jsonl')) ? readFileSync(join(root, 'calls.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line)) : [],
     state: () => JSON.parse(readFileSync(join(root, 'state.json'), 'utf8')),
@@ -140,9 +142,28 @@ test('a local tag on another commit refuses before any push', t => {
   assert.equal(result.stderr, `local tag v0.4.8 points at ${other}, not ${commit}\n`);
   assert.deepEqual(s.calls().filter(call => call[1] === 'push'), []);
 });
-test('a plugin update that lands on another version fails', t => {
+test('a plugin update that lands on another version defers: trunk may have moved, and the next run stops at the tip check', t => {
   const s = setup(t, state => { state.claude.latest.version = '0.4.9'; });
   const result = s.run();
-  assert.equal(result.status, 1);
+  assert.equal(result.status, 75);
   assert.equal(result.stderr, 'Claude Code reports pstack@pstack-vic 0.4.9, not 0.4.8\n');
+});
+test('a command that fails, such as a push without network, defers, and the next run finishes from where it stopped', async t => {
+  const s = setup(t, state => { state.failing = ['git push']; });
+  const failed = s.run();
+  assert.equal(failed.status, 75);
+  assert.equal(failed.stderr, 'git push origin refs/tags/v0.4.8 failed: fake git: unable to access remote\n');
+  assert.deepEqual([s.state().localTags['v0.4.8'], s.state().remoteTags['v0.4.8'], s.state().claude.version], [commit, undefined, '0.4.7'], 'nothing after the push ran');
+  const state = s.state(); state.failing = []; writeFileSync(join(s.root, 'state.json'), JSON.stringify(state));
+  assert.equal(s.run().status, 75, 'the rerun reaches the reinstall');
+  assert.deepEqual(s.calls().filter(call => call[0] === 'git' && call[1] === 'tag'), [['git', 'tag', 'v0.4.8', commit]], 'the local tag is reused, not made twice');
+  assert.equal(s.state().remoteTags['v0.4.8'], commit);
+  assert.deepEqual(await installed(s.root), ['install', '--when-idle']);
+});
+test('the daemon runs the script with node, not npm, so install --when-idle records the tick\'s PATH in the plists', async t => {
+  assert.deepEqual(JSON.parse(readFileSync(contract, 'utf8')).postMerge, { runs: [{ name: 'release', command: 'node scripts/after-merge.ts' }], after: 'tests' }, 'npm run would put its node_modules/.bin entries ahead of the PATH, and each release would add them again');
+  const s = setup(t);
+  assert.equal(s.run().status, 75);
+  assert.deepEqual(await installed(s.root), ['install', '--when-idle']);
+  assert.equal(readFileSync(join(s.root, 'installed-path.txt'), 'utf8'), `${s.bin}:${process.env.PATH}`, 'the installer gets the PATH the script got');
 });

@@ -12,10 +12,12 @@ const SWEEP = 'com.pstack.converge-sweep';
 const RAIZ = 'com.pstack.converge-raiz';
 const JOBS = [SWEEP, RAIZ, 'com.pstack.converge-watch'];
 
+/** A step that may pass on a later tick: a CLI that failed (no network, GitHub down) or a plugin on another version (trunk moved). The run exits 75, and every step reads what is done before it acts. */
+class Retry extends Error {}
 function say(line: string): void { process.stdout.write(line + '\n'); }
 function run(binary: string, args: string[]): string {
   const result = spawnSync(binary, args, { encoding: 'utf8', timeout: 300_000 });
-  if (result.error || result.status !== 0) throw new Error(`${binary} ${args.join(' ')} failed: ${(result.stderr || result.error?.message || `exit ${result.status}`).trim()}`);
+  if (result.error || result.status !== 0) throw new Retry(`${binary} ${args.join(' ')} failed: ${(result.stderr || result.error?.message || `exit ${result.status}`).trim()}`);
   return result.stdout;
 }
 /** Tags the commit `v<version>` and pushes only that tag, unless origin has it already; a local tag on another commit refuses. */
@@ -38,7 +40,7 @@ function updateClaude(version: string): string {
     run('claude', ['plugin', 'update', PLUGIN]);
     plugin = claudePlugin();
   }
-  if (plugin?.version !== version) throw new Error(`Claude Code reports ${PLUGIN} ${plugin?.version ?? 'not installed'}, not ${version}`);
+  if (plugin?.version !== version) throw new Retry(`Claude Code reports ${PLUGIN} ${plugin?.version ?? 'not installed'}, not ${version}`);
   say(`Claude Code on ${PLUGIN} ${version}`);
   return plugin.installPath;
 }
@@ -60,7 +62,7 @@ function updateCodex(version: string, home: string): void {
     run('codex', ['plugin', 'add', PLUGIN]);
   }
   const installed = codexVersion();
-  if (installed !== version) throw new Error(`Codex reports ${PLUGIN} ${installed ?? 'not installed'}, not ${version}`);
+  if (installed !== version) throw new Retry(`Codex reports ${PLUGIN} ${installed ?? 'not installed'}, not ${version}`);
   say(`Codex on ${PLUGIN} ${version}`);
 }
 function job(label: string): { loaded: boolean; running: boolean; listing: string } {
@@ -93,4 +95,4 @@ function main(): number {
   return reinstall(installPath, homedir());
 }
 try { process.exitCode = main(); }
-catch (error) { process.stderr.write((error instanceof Error ? error.message : String(error)) + '\n'); process.exitCode = 1; }
+catch (error) { process.stderr.write((error instanceof Error ? error.message : String(error)) + '\n'); process.exitCode = error instanceof Retry ? TEMPFAIL : 1; }

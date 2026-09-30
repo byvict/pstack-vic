@@ -9,7 +9,7 @@ import { classify, skipCause, type Classified } from './classify.ts';
 import { defaultConfigFile, defaultStateDirectory, loadConfig, type LocalConfig, type RepoConfig } from './config.ts';
 import { install, installWhenIdle, uninstall, JOBS, WAKEABLE, type InstallOptions, type Job, type Wakeable } from './launchd.ts';
 import { consumeWakes, nudge } from './wake.ts';
-import { postMergeOne, postMergePass, postMergeStatus, type PostMergeReport } from './post-merge.ts';
+import { forgetPostMerge, postMergeOne, postMergePass, postMergeStatus, type PostMergeReport } from './post-merge.ts';
 import { tickWatch, watchErrors } from './watch.ts';
 import { currentLedger, deferredBackoffUntil, exhausted, launchBackoffUntil, ledgerFile, markHeld, readLedger, withAttempt, withLaunchFailure, workKinds, writeLedger, DEFERRED_BACKOFF_MINUTES, LAUNCH_FAILURE_BACKOFF_MINUTES, type Attempt, type Ledger, type WorkKind } from './ledger.ts';
 import { LEASE_TTL_HOURS, leaseFile, readLease, releaseLease, takeLease, type Lease } from './lease.ts';
@@ -129,7 +129,7 @@ export async function tickRaiz(config: LocalConfig, options: RaizTickOptions): P
   return report;
 }
 export interface SweepReport { job: 'sweep'; repos: { repo: string; swept: Swept[]; failure: string | null; postMerge: PostMergeReport | null }[] }
-/** After each repository's sweep, the post-merge pass of a trunk contract that has `postMerge`, with the contract the sweep read. `runCapMs` and `env` reach the pass for tests. */
+/** After each repository's sweep, the post-merge pass of a trunk contract that has `postMerge`, with the contract the sweep read; a contract that loaded without the block forgets the stored tip. `runCapMs` and `env` reach the pass for tests. */
 export async function tickSweep(config: LocalConfig, options: { dryRun: boolean; runCapMs?: number; env?: NodeJS.ProcessEnv }): Promise<SweepReport> {
   const repos: SweepReport['repos'] = [];
   for (const repo of config.repos) {
@@ -137,6 +137,7 @@ export async function tickSweep(config: LocalConfig, options: { dryRun: boolean;
     try { result = await sweep({ repo: repo.repo, dryRun: options.dryRun }); }
     catch (error) { repos.push({ repo: repo.repo, swept: [], failure: message(error), postMerge: null }); continue; }
     const postMerge = result.trusted?.config.postMerge ?? null;
+    if (result.trusted && !postMerge && !options.dryRun) forgetPostMerge(config.stateDirectory, repo.repo);
     repos.push({ repo: repo.repo, swept: result.swept, failure: result.failure, postMerge: result.trusted && postMerge ? await postMergePass(config, repo, result.trusted, postMerge, { dryRun: options.dryRun, leaseBy: `daemon:${process.pid}`, runCapMs: options.runCapMs, env: options.env }) : null });
   }
   return { job: 'sweep', repos };
