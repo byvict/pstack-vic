@@ -41,8 +41,8 @@ One line per decision, then its cost if wrong. The numbering continues the post-
 
 ### Task 1: `local/notify.ts`
 
-- [x] `Notice { title, subtitle, body }`, `NOTIFY_TIMEOUT_MS = 10_000`, `appleScriptString(text)` (escapes a backslash and a double quote), and `notify(notice, { env?, timeoutMs? }): string | null`. Results: `null` on exit 0; `osascript did not start: MESSAGE`; `osascript did not finish within N s`; `osascript ended by SIGNAL`; `osascript exited CODE[: STDERR]`.
-- [x] `notify.test.ts`: the exact `-e` script for a text with quotes and backslashes, recorded by a fake; on macOS, the real `osascript` returns the escaped string unchanged; exit 2 with stderr, a 0.3-second cap and an empty `PATH` each return their cause.
+- [x] `Notice { title, subtitle, body }`, `NOTIFY_TIMEOUT_MS = 10_000`, `appleScriptString(text)` (escapes a backslash and a double quote), and `notify(notice, { env?, timeoutMs? }): string | null`. Results: `null` on exit 0; `osascript did not start: MESSAGE`, for a spawn error or an argument Node refuses to pass, such as one with a NUL byte; `osascript did not finish within N s`; `osascript ended by SIGNAL`; `osascript exited CODE[: STDERR]`.
+- [x] `notify.test.ts`: the exact `-e` script for a text with quotes and backslashes, recorded by a fake; on macOS, the real `osascript` returns the escaped string unchanged; exit 2 with stderr, a 0.3-second cap on a fake that ignores `SIGTERM`, an empty `PATH` and a NUL byte each return their cause.
 
 ### Task 2: the hooks
 
