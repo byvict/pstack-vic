@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,6 +25,9 @@ export function fixture() {
   const statePath = join(directory, 'state.json');
   const gh = join(directory, 'gh');
   writeFileSync(gh, readFileSync(new URL('./gh.mjs', import.meta.url))); chmodSync(gh, 0o700);
+  // Shadows the real osascript: a notice lands in osascript.calls instead of Notification Center, and an osascript-exit file makes it fail with that code. Builtins only, so it runs under any PATH.
+  const osascript = join(directory, 'osascript');
+  writeFileSync(osascript, ['#!/bin/sh', 'printf \'%s\\n\' "$*" >> "${0%/*}/osascript.calls"', 'if [ -f "${0%/*}/osascript-exit" ]; then read code < "${0%/*}/osascript-exit"; echo "fake osascript failed" >&2; exit "$code"; fi', ''].join('\n')); chmodSync(osascript, 0o700);
   const config = { repo: 'Example/app', trunk: 'main', requiredChecks: ['Run test suite', 'Secrets scan', 'verdict', 'hold'], holdLabels: ['needs-victor'], surfaces: ['client/**', 'server/routes/**'], riskClasses: { irreversible: ['migrations/**'], contained: ['server/domain/**'] }, verifySkill: 'verify/SKILL.md', featureMap: 'features/README.md', evidenceRoot: 'evidence', deployWindow: '04:00 America/Sao_Paulo', bugbot: 'never' };
   const runOverrides: Record<string, unknown> = {};
   const files: { filename: string; status: string; patch: string; previous_filename?: string }[] = [{ filename: 'docs/guide.md', status: 'modified', patch: '@@ -1 +1 @@\n-old\n+new' }];
@@ -58,6 +61,7 @@ export function fixture() {
     },
     read() { return JSON.parse(readFileSync(statePath, 'utf8')); },
     calls(): string[][] { return readFileSync(statePath + '.calls', 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)); },
+    notices(): string[] { const calls = join(directory, 'osascript.calls'); return existsSync(calls) ? readFileSync(calls, 'utf8').split('\n').slice(0, -1) : []; },
     run(script: string, args: string[] = [], env: NodeJS.ProcessEnv = {}) { return spawnSync(process.execPath, [resolve(scriptDirectory, script), ...args], { encoding: 'utf8', timeout: 60_000, env: { ...process.env, ...env, PATH: directory + ':' + process.env.PATH, CONVERGE_FIXTURE: statePath } }); },
     cleanup() { rmSync(directory, { recursive: true, force: true }); },
   };
