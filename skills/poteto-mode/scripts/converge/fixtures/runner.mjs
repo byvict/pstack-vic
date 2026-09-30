@@ -15,6 +15,7 @@ const startedAt = new Date().toISOString();
 const lease = plan.lease && existsSync(plan.lease) ? JSON.parse(readFileSync(plan.lease, 'utf8')) : null;
 appendFileSync(plan.log, JSON.stringify({ lane: manifest.laneId, event: 'start', at: Date.now(), argv: process.argv.slice(2), leaseExpiresAt: lease?.expiresAt ?? null, leaseBy: lease?.by ?? null }) + '\n');
 await new Promise(done => setTimeout(done, plan.delays?.[manifest.laneId] ?? 0));
+if (plan.dirty?.[manifest.laneId]?.includes(attempt)) writeFileSync(join(args.cwd, 'left-behind.txt'), 'left behind\n');
 const git = (...command) => spawnSync('git', ['-C', args.cwd, ...command], { encoding: 'utf8' }).stdout;
 const round = manifest.round;
 const certifier = manifest.role === 'pre-pr certifier';

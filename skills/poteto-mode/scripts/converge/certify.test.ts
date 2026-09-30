@@ -492,14 +492,14 @@ test('assemble refuses a round whose commit carries an unreadable Pstack-Author 
   assert.equal(result.status, 1); assert.match(result.stderr, /INCONCLUSIVE: Unreadable Pstack-Author trailer in commit/);
 });
 const fakeRunner = fileURLToPath(new URL('./fixtures/runner.mjs', import.meta.url));
-interface RunnerPlan { statuses?: Record<string, string[]>; delays?: Record<string, number>; findings?: Record<string, unknown[]> }
+interface RunnerPlan { statuses?: Record<string, string[]>; delays?: Record<string, number>; findings?: Record<string, unknown[]>; dirty?: Record<string, number[]> }
 interface RunnerEvent { lane: string; event: 'start' | 'end'; at: number; leaseExpiresAt: string | null; leaseBy: string | null; status?: string }
 function worktree(from: string, path: string): void {
   const added = spawnSync('git', ['-C', from, 'worktree', 'add', '-q', '--detach', path, 'HEAD'], { encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } });
   assert.equal(added.status, 0, added.stderr);
 }
-function certifySetup(t: TestContext, options: { runs?: string[]; plan?: RunnerPlan; light?: boolean; reviewer?: string } = {}) {
-  const f = options.light ? lightFixture() : prePrFixture();
+function certifySetup(t: TestContext, options: { runs?: string[]; plan?: RunnerPlan; light?: boolean; docs?: boolean; reviewer?: string } = {}) {
+  const f = options.light ? lightFixture() : prePrFixture(true, options.docs !== true);
   t.after(f.cleanup);
   const config = JSON.parse(f.state.blobs['.cursor/converge.json']);
   config.prePr.runs = (options.runs ?? ['sleep 1', 'sleep 1']).map((command, n) => ({ name: `run-${n}`, command }));
@@ -548,6 +548,15 @@ test('certify relaunches a lane once when its receipt is not complete', async t 
   assert.equal(s.events().filter(e => e.lane === 'pre-pr-reviewer' && e.event === 'start').length, 2);
   assert.equal(JSON.parse(readFileSync(join(s.run, 'attempts', 'pre-pr-reviewer-1', 'receipt.json'), 'utf8')).status, 'timed-out');
 });
+test('certify relaunches a certifier once when its first attempt fails and leaves an untracked file', async t => {
+  const s = certifySetup(t, { plan: { statuses: { 'pre-pr-certifier': ['timed-out'] }, dirty: { 'pre-pr-certifier': [0] } } });
+  const result = await certifyHead(s.options, fakeRunner);
+  assert.ok('certificate' in result, JSON.stringify(result));
+  assert.equal(s.events().filter(e => e.lane === 'pre-pr-certifier' && e.event === 'start').length, 2);
+  const attempt = join(s.run, 'attempts', 'pre-pr-certifier-1');
+  assert.equal(readFileSync(join(attempt, 'worktree-status.txt'), 'utf8'), '?? left-behind.txt\n');
+  assert.equal(readFileSync(join(attempt, 'worktree.diff'), 'utf8'), '');
+});
 test('certify refuses at the reviewer step when the relaunched lane fails again', async t => {
   const s = certifySetup(t, { plan: { statuses: { 'pre-pr-reviewer': ['timed-out', 'rate-limited'] } } });
   assert.deepEqual(await certifyHead(s.options, fakeRunner), { refused: { step: 'reviewer', reason: 'Lane pre-pr-reviewer receipt is rate-limited after its relaunch' } });
@@ -577,6 +586,14 @@ test('certify refuses at the certifier step when its worktree has changes, befor
   const s = certifySetup(t);
   writeFileSync(join(s.certifier, 'client', 'New.jsx'), 'new\n');
   assert.deepEqual(await certifyHead(s.options, fakeRunner), { refused: { step: 'certifier', reason: 'Certifier worktree has changes' } });
+  assert.deepEqual(s.events(), []);
+});
+test('certify refuses a ci-only round at the reviewer step when its worktree has an untracked file, before any launch', async t => {
+  const s = certifySetup(t, { docs: true });
+  writeFileSync(join(s.checkout, 'notes.txt'), 'notes\n');
+  const result = await certifyHead(s.options, fakeRunner);
+  assert.equal(JSON.parse(readFileSync(join(s.run, 'report.json'), 'utf8')).mode, 'ci-only');
+  assert.deepEqual(result, { refused: { step: 'reviewer', reason: 'Worktree has changes' } });
   assert.deepEqual(s.events(), []);
 });
 test('certify refuses at the runs step when a run exits non-zero, launches no reviewer and stops the certifier', async t => {

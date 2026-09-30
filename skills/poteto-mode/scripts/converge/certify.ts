@@ -383,6 +383,18 @@ class RoundProcesses {
     await Promise.all([...this.processes.values()].map(p => p.closed));
   }
 }
+function restoreCertifierWorktree(cwd: string, directory: string, head: string): void {
+  const git = (args: string[]): string => {
+    const result = spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+    if (result.status !== 0) throw new Error((result.stderr || result.error?.message || `git ${args[0]} failed`).trim());
+    return result.stdout;
+  };
+  writeFileSync(join(directory, 'worktree-status.txt'), git(['status', '--porcelain', '--untracked-files=all']), { mode: 0o600 });
+  writeFileSync(join(directory, 'worktree.diff'), git(['diff', 'HEAD']), { mode: 0o600 });
+  git(['checkout', '--detach', head]);
+  git(['reset', '--hard', head]);
+  git(['clean', '-fd']);
+}
 async function launchLane(flight: RoundProcesses, runner: string, lane: LanePlan, report: Report, options: CertifyOptions): Promise<void> {
   for (let attempt = 1; ; attempt++) {
     if (flight.stopped) throw new Error('The round was stopped');
@@ -400,7 +412,9 @@ async function launchLane(flight: RoundProcesses, runner: string, lane: LanePlan
     if (flight.stopped) throw new Error('The round was stopped');
     if (attempt === 2) throw new Error(`Lane ${lane.id} receipt is ${status} after its relaunch`);
     mkdirSync(join(options.directory, 'attempts'), { recursive: true, mode: 0o700 });
-    renameSync(directory, join(options.directory, 'attempts', `${lane.id}-${attempt}`));
+    const kept = join(options.directory, 'attempts', `${lane.id}-${attempt}`);
+    renameSync(directory, kept);
+    if (lane.role === 'pre-pr certifier') restoreCertifierWorktree(lane.cwd, kept, report.round.head);
     rmSync(join(options.directory, 'evidence'), { recursive: true, force: true });
   }
 }
@@ -419,9 +433,9 @@ export async function certifyHead(options: CertifyOptions, runner = RUNNER): Pro
     });
     const lanes = await Promise.all(report.lanes.map(role => step(laneStep(role), () => planLane(role, report, contract, options))));
     const runs = report.mode === 'ci-only' ? [] : contract.prePr?.runs ?? [];
-    if (runs.length) await step('runs', () => atHead(options.worktree, report.round.head, 'Worktree'));
     const certifier = lanes.find(lane => lane.role === 'pre-pr certifier');
     const reviewer = lanes.find(lane => lane.role === 'pre-pr reviewer');
+    if (runs.length || reviewer) await step(runs.length ? 'runs' : 'reviewer', () => atHead(options.worktree, report.round.head, 'Worktree'));
     await Promise.all([
       certifier && step('certifier', () => launchLane(flight, runner, certifier, report, options)),
       (async () => {
