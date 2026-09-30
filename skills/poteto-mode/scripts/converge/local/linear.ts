@@ -122,7 +122,7 @@ function sourceReferences(calls: NativeCall[], texts: TextRead[], publicationUrl
         if (typeof count === 'number' && count !== raw.length) record(`${text.id}:${field}:coverage-unknown`);
       }
     }
-    for (const url of text.body.match(/https?:\/\/[^\s<>)\]\"']+/g) ?? []) record(url.replace(/[.,;]+$/, ''));
+    for (const url of text.body.match(/https?:\/\/[^\s<>)\]\"'`]+/g) ?? []) record(url.replace(/[.,;]+$/, ''));
   }
   return [...references.values()].sort((a, b) => a.key.localeCompare(b.key));
 }
