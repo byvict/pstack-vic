@@ -8,6 +8,7 @@ import { api, pages, type Trusted } from '../github.ts';
 import type { LocalConfig, RepoConfig } from './config.ts';
 import { writeJsonFile } from './ledger.ts';
 import { LEASE_TTL_HOURS, readLease, releaseLease, takeLease } from './lease.ts';
+import { notify } from './notify.ts';
 import { exitStatus, KILL_GRACE_MS } from './raiz.ts';
 
 /** More new trunk commits than this since the handled tip fail the pass instead of replaying them: the daemon was off or stuck, and someone should look. */
@@ -128,7 +129,7 @@ function failureComment(ledger: PostMergeLedger, file: string): string {
 function runDirectory(repo: string, commit: string, n: number): string {
   return join(tmpdir(), 'converge-local', 'post-merge', `${slug(repo)}-${commit.slice(0, 8)}-${n}-${Math.floor(Date.now() / 1000)}`);
 }
-/** One attempt on a commit: readiness, its PR, a detached worktree of it, the runs, the ledger, and for a failure one comment on the merged PR. A checkout that fails records nothing: the machine, not the commit, is at fault, and the next pass tries again. */
+/** One attempt on a commit: readiness, its PR, a detached worktree of it, the runs, the ledger, and for a failure one comment on the merged PR and one notification. A checkout that fails records nothing: the machine, not the commit, is at fault, and the next pass tries again. */
 async function attempt(p: Pass, commit: string, ledger: PostMergeLedger | null): Promise<Handled> {
   const file = postMergeLedgerFile(p.config.stateDirectory, p.repo.repo, commit);
   const waiting = await notReady(p.t, p.postMerge, commit);
@@ -168,6 +169,8 @@ async function attempt(p: Pass, commit: string, ledger: PostMergeLedger | null):
       try { await api(`repos/${p.t.repo}/issues/${pr}/comments`, { body: failureComment(updated, file) }); }
       catch (error) { p.errors.push(`${commit}: failure comment failed: ${message(error)}`); }
     }
+    const cause = notify({ title: 'Converge local', subtitle: p.repo.repo, body: `Post-merge stopped on commit ${commit.slice(0, 8)}: ${result.reason}${pr === null ? '' : ` (PR #${pr})`}` });
+    if (cause) p.errors.push(`${commit}: notification failed: ${cause}`);
   }
   return { commit, pr, outcome: result.outcome, reason: result.reason, ledger: file, runDirectory: run };
 }
