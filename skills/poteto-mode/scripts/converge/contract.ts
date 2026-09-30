@@ -81,7 +81,7 @@ export interface Light { paths: string[]; reviewer: 'narrow' | 'none' }
 export interface Run { name: string; command: string }
 export interface PrePr { runs: Run[]; certifier: boolean; light: Light | null }
 /** What the local daemon's sweep runs on each new trunk commit, in a detached worktree of it. `after: 'tests'` waits until the contract's push Tests run and test job succeeded on the commit. */
-export interface PostMerge { runs: Run[]; after: 'tests' | 'none' }
+export interface PostMerge { runs: Run[]; after: 'tests' | 'none'; linear?: boolean }
 export interface Contract {
   repo: string; trunk: string; requiredChecks: string[]; holdLabels: string[];
   surfaces: string[]; riskClasses: { irreversible: string[]; contained: string[] };
@@ -116,7 +116,8 @@ export function parseContract(value: unknown): Contract {
   let postMerge: PostMerge | null = null;
   if (v.postMerge !== undefined && v.postMerge !== null) {
     const p = object(v.postMerge, 'postMerge');
-    postMerge = { runs: runs(p.runs), after: p.after === undefined ? 'tests' : oneOf(p.after, ['tests', 'none']) };
+    postMerge = { runs: runs(p.runs), after: p.after === undefined ? 'tests' : oneOf(p.after, ['tests', 'none']), ...(p.linear === undefined ? {} : { linear: boolean(p.linear) }) };
+    if (postMerge.linear && postMerge.runs.some(r => r.name === 'linear')) throw new Error('The postMerge run name linear is reserved when linear is enabled');
   }
   const result: Contract = {
     repo: repoName(v.repo), trunk: relativePath(v.trunk), requiredChecks: strings(v.requiredChecks), holdLabels: strings(v.holdLabels),

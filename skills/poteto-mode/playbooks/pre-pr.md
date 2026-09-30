@@ -4,6 +4,8 @@
 
 Two halves. **Certify a pushed head** produces `certificate.json` for one exact head. **Deliver** turns it into a certified PR. The interactive flow runs both; the [Catch-up](catch-up.md) playbook runs both on a PR that already exists.
 
+When the trunk contract enables `postMerge.linear`, record intended issue or project targets as `Pstack-Linear: https://linear.app/WORKSPACE/issue/KEY/title` or `Pstack-Linear: https://linear.app/WORKSPACE/project/SLUG` in the final commit trailer paragraph before certifying. Targets are optional; PR titles and bodies do not select them. The author handoff names the PR/head, outstanding acceptance or rollout obligations, and the post-merge owner; the author ends at the arm receipt. The post-merge owner records the actual merge SHA, installed plugin version/path, `converge-local post-merge --repo OWNER/REPO --commit FULL_MERGE_SHA --dry-run`, native criterion evidence and effect readback. A source-only component probe does not establish installed-daemon delivery.
+
 #### Certify a pushed head
 
 **Authorization.** In an interactive session, before the lease, check that the parent runs this flow without a stop for approval:

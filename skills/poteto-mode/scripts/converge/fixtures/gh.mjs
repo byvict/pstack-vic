@@ -80,7 +80,7 @@ else if (args[0] === 'api') {
   else if (endpoint === root) send({ default_branch: 'main' });
   else if (endpoint === `${root}/pulls/1`) {
     later('pulls/1');
-    send({ number: 1, head: { sha: state.head, ref: 'change', repo: { full_name: repo } }, base: { ref: state.prBase }, state: state.prState, draft: state.prDraft, body: state.body, labels: state.hold ? [{ name: 'needs-victor' }] : [], user: state.prUser ?? { id: 10, login: 'author', type: 'User' }, auto_merge: state.autoMerge ? {} : null, created_at: state.createdAt ?? '2026-09-21T00:00:00Z', ...(state.omitMergeable ? {} : { mergeable: state.mergeable === undefined ? true : state.mergeable }), ...(state.mergeState === undefined ? {} : { mergeable_state: state.mergeState }), ...(state.merged === undefined ? {} : { merged: state.merged }) });
+    send({ number: 1, head: { sha: state.head, ref: 'change', repo: { full_name: repo } }, base: { ref: state.prBase }, state: state.prState, draft: state.prDraft, body: state.body, labels: state.hold ? [{ name: 'needs-victor' }] : [], user: state.prUser ?? { id: 10, login: 'author', type: 'User' }, auto_merge: state.autoMerge ? {} : null, created_at: state.createdAt ?? '2026-09-21T00:00:00Z', ...(state.omitMergeable ? {} : { mergeable: state.mergeable === undefined ? true : state.mergeable }), ...(state.mergeState === undefined ? {} : { mergeable_state: state.mergeState }), ...(state.merged === undefined ? {} : { merged: state.merged }), ...(state.mergeCommit === undefined ? {} : { merge_commit_sha: state.mergeCommit, merged_at: state.mergedAt, commits: state.prCommits.length }) });
   }
   else if (/^repos\/Example\/app\/pulls\/\d+$/.test(endpoint) && state.pulls.some(p => p.number === Number(endpoint.split('/').at(-1)))) send(state.pulls.find(p => p.number === Number(endpoint.split('/').at(-1))));
   else if (endpoint === `${root}/commits/main`) { later('commits/main'); send({ sha: state.trunk }); }
@@ -113,6 +113,7 @@ else if (args[0] === 'api') {
     send({ merge_base_commit: { sha: state.base }, files: listed(state.files), commits, total_commits: state.totalCommits ?? commits.length });
   }
   else if (endpoint === `${root}/pulls` && (query.get('base') === 'main' || query.get('state') === 'open')) send(state.pulls ?? []);
+  else if (endpoint === `${root}/pulls/1/commits`) send(state.prCommits ?? []);
   else if (endpoint === `${root}/pulls/1/files`) send(listed(state.prFiles ?? state.files));
   else if (endpoint === `${root}/actions/workflows`) send({ workflows: [{ id: state.workflowId, name: 'Tests', path: '.github/workflows/tests.yml', state: 'active' }] });
   else if (/^repos\/Example\/app\/commits\/[a-f0-9]{40}\/pulls$/.test(endpoint)) send(state.commitPulls?.[endpoint.split('/')[4]] ?? []);

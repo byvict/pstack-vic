@@ -279,6 +279,19 @@
       "measuredOn": "2.1.283"
     },
     {
+      "id": "claude.linear-native",
+      "cli": "claude",
+      "kind": "lane",
+      "contract": "The optional post-merge Linear child reuses the native Raiz model/plugin with --permission-mode dontAsk --setting-sources '' --tools ToolSearch --settings <PreToolUse hook> --disable-slash-commands --output-format stream-json --verbose --include-hook-events. Empty setting sources isolate ambient allow rules; hook failures fall back to denied permission. The child omits CLAUDE_CODE_OAUTH_TOKEN to use existing claude.ai account connectors. Only top-level native assistant tool_use/user tool_result pairs for mcp__claude_ai_Linear__ count as reads or effects; init session identity and hook lifecycle events remain in host logs. MCP JSON results arrive in text content blocks.",
+      "pointers": [
+        { "file": "skills/poteto-mode/scripts/converge/local/linear-session.ts", "anchor": "export async function launchLinearSession" },
+        { "file": "skills/poteto-mode/scripts/converge/local/linear-session.ts", "anchor": "export function linearTrace" },
+        { "file": "skills/poteto-mode/scripts/converge/local/linear-permission.ts", "anchor": "claimLinearEffect" }
+      ],
+      "coveredBy": [],
+      "measuredOn": "2.1.285"
+    },
+    {
       "id": "claude.result-json",
       "cli": "claude",
       "kind": "lane",

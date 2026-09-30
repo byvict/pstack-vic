@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { commit, fixture, git } from '../fixtures/setup.ts';
+import { dossier, issueUrl } from '../fixtures/linear.ts';
 import { loadConfig } from './config.ts';
 import { writeJsonFile } from './ledger.ts';
 import { tickSweep } from './local.ts';
@@ -204,7 +205,7 @@ test('exit 75 defers the commit: the tip stays, the next tick tries again, and a
   assert.equal(failed.status, 1);
   assert.deepEqual(outcomes(failed.stdout), [[commits[1], 'failed', `release exited 75 for 24 hours since ${aged.firstAttemptAt}`]]);
 });
-test('a failed commit stops the queue, comments once on its merged PR, notifies once, shows in status, repeats the error on every tick, and runs again once its ledger is deleted', t => {
+test('a failed commit stops the queue, comments once on its merged PR, notifies once, shows in status, repeats the error on every tick, and manual retry retains its ledger', t => {
   const f = fixture(); t.after(f.cleanup);
   const { commits, file, ledger } = trunk(f, 3);
   assert.equal(sweepTick(f, file).status, 0);
@@ -212,10 +213,10 @@ test('a failed commit stops the queue, comments once on its merged PR, notifies 
   writeFileSync(join(f.directory, 'exits', String(commits[1])), '1');
   const failed = sweepTick(f, file);
   assert.equal(failed.status, 1);
-  const error = `Example/app: post-merge: ${commits[1]} failed: release exited 1; delete ${ledger(commits[1])} to retry`;
+  const error = `Example/app: post-merge: ${commits[1]} failed: release exited 1; retry with converge-local post-merge --repo Example/app --commit ${commits[1]}, retaining the ledger`;
   assert.equal(failed.stderr, error + '\n');
   const logFile = ledgerOf(ledger(commits[1])).attempts[0]?.runs[0]?.logFile;
-  assert.deepEqual(f.read().posted, [{ pr: 41, body: [`The local converge daemon's post-merge stopped on commit ${commits[1]}: release exited 1.`, '', 'Runs:', `- release exited 1 (${logFile})`, '', `Later trunk commits wait. Delete \`${ledger(commits[1])}\` to retry.`].join('\n') }]);
+  assert.deepEqual(f.read().posted, [{ pr: 41, body: [`The local converge daemon's post-merge stopped on commit ${commits[1]}: release exited 1.`, '', 'Runs:', `- release exited 1 (${logFile})`, '', `Later trunk commits wait. Retry with \`converge-local post-merge --repo Example/app --commit ${commits[1]}\`, retaining the ledger.`].join('\n') }]);
   assert.deepEqual(f.notices(), [`-e display notification "Post-merge stopped on commit ${commits[1]?.slice(0, 8)}: release exited 1 (PR #41)" with title "Converge local" subtitle "Example/app" sound name "Basso"`]);
   assert.deepEqual(released(f).map(l => l[1]), [commits[1]], 'the later commit waits');
   const status = JSON.parse(f.run('converge-local', ['status', '--config', file], env(f)).stdout);
@@ -225,7 +226,9 @@ test('a failed commit stops the queue, comments once on its merged PR, notifies 
   assert.equal(f.read().posted.length, 1, 'one comment per recorded failure');
   assert.equal(f.notices().length, 1, 'one notification per recorded failure');
   assert.equal(released(f).length, 1, 'a failed commit never runs again on its own');
-  rmSync(ledger(commits[1])); rmSync(join(f.directory, 'exits', String(commits[1])));
+  rmSync(join(f.directory, 'exits', String(commits[1])));
+  assert.equal(byHand(f, file, ['--repo', 'Example/app', '--commit', String(commits[1])]).status, 0);
+  assert.equal(ledgerOf(ledger(commits[1])).attempts.length, 2);
   const retried = sweepTick(f, file);
   assert.equal(retried.status, 0, retried.stderr);
   assert.deepEqual(outcomes(retried.stdout).map((o: string[]) => o[1]), ['done', 'done']);
@@ -238,7 +241,7 @@ test('a failure comment that cannot be posted leaves the failure standing and na
   writeFileSync(join(f.directory, 'exits', String(commits[1])), '1');
   const failed = sweepTick(f, file);
   assert.equal(failed.status, 1);
-  assert.equal(failed.stderr, `Example/app: post-merge: ${commits[1]} failed: release exited 1; delete ${ledger(commits[1])} to retry\nExample/app: post-merge: ${commits[1]}: failure comment failed: gh request failed\n`);
+  assert.equal(failed.stderr, `Example/app: post-merge: ${commits[1]} failed: release exited 1; retry with converge-local post-merge --repo Example/app --commit ${commits[1]}, retaining the ledger\nExample/app: post-merge: ${commits[1]}: failure comment failed: gh request failed\n`);
   assert.equal(ledgerOf(ledger(commits[1])).attempts[0]?.outcome, 'failed');
 });
 test('a notification that cannot be shown leaves the failure and its comment standing and names the notification', t => {
@@ -250,7 +253,7 @@ test('a notification that cannot be shown leaves the failure and its comment sta
   writeFileSync(join(f.directory, 'osascript-exit'), '1');
   const failed = sweepTick(f, file);
   assert.equal(failed.status, 1);
-  assert.equal(failed.stderr, `Example/app: post-merge: ${commits[1]} failed: release exited 1; delete ${ledger(commits[1])} to retry\nExample/app: post-merge: ${commits[1]}: notification failed: osascript exited 1: fake osascript failed\n`);
+  assert.equal(failed.stderr, `Example/app: post-merge: ${commits[1]} failed: release exited 1; retry with converge-local post-merge --repo Example/app --commit ${commits[1]}, retaining the ledger\nExample/app: post-merge: ${commits[1]}: notification failed: osascript exited 1: fake osascript failed\n`);
   assert.equal(ledgerOf(ledger(commits[1])).attempts[0]?.outcome, 'failed');
   assert.deepEqual(f.read().posted.map((comment: { pr: number }) => comment.pr), [41]);
 });
@@ -420,4 +423,20 @@ test('a trunk contract without the block forgets the handled tip, so a block add
   assert.equal(back.status, 0, back.stderr);
   assert.deepEqual([pass(back.stdout).note, pass(back.stdout).commits, pass(back.stdout).handled], ['first pass: stored the trunk tip and ran nothing', [], commits[2]]);
   assert.deepEqual(released(f), []);
+});
+test('a successful local command checkpoints before native Linear unavailability, and manual retry reuses that success', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const { commits, file, ledger } = trunk(f, 2, { runs: [{ name: 'release', command: 'fake-release' }], linear: true });
+  const commitSha = String(commits[1]), d = dossier(); d.round.head = f.state.head;
+  edit(f, live => {
+    Object.assign(live, { trunk: commitSha, merged: true, prState: 'closed', mergeCommit: commitSha, mergedAt: '2026-09-30T01:00:00Z', prCommits: [{ sha: f.state.head, commit: { message: `change\n\nPstack-Linear: ${issueUrl}` } }], commitPulls: { [commitSha]: [{ ...merged(1), merge_commit_sha: commitSha }] }, comments: [{ id: 100, body: `<!-- converge:v1 ${d.round.id} -->\n\`\`\`json\n${JSON.stringify(d)}\n\`\`\``, user: { id: 7 }, created_at: '2026-09-30T00:00:00Z', updated_at: '2026-09-30T00:00:00Z' }], statuses: [{ id: 200, context: 'verdict', state: 'success', description: 'VERIFIED by converge', creator: { id: 7 }, target_url: 'https://github.com/Example/app/pull/1#issuecomment-100' }] });
+  });
+  writeFileSync(join(f.directory, 'sheet.md'), 'converge raiz: claude:fable@max\n');
+  const cli = join(f.directory, 'claude'), remote = join(f.directory, 'linear-remote.json');
+  writeFileSync(cli, readFileSync(new URL('../fixtures/linear.mjs', import.meta.url))); chmodSync(cli, 0o700);
+  writeJsonFile(remote, { mode: 'no-mcp', issue: { id: 'ENG-1' } });
+  const run = () => f.run('converge-local', ['post-merge', '--config', file, '--repo', 'Example/app', '--commit', commitSha], { ...env(f), LINEAR_REMOTE: remote, LINEAR_ARGV: join(f.directory, 'linear-argv.json') });
+  for (let n = 0; n < 2; n++) { const result = run(); assert.equal(result.status, 0, result.stderr); assert.equal(JSON.parse(result.stdout).commits[0].outcome, 'deferred', result.stdout); }
+  const saved = ledgerOf(ledger(commitSha)); assert.equal(saved.checkpoint?.commands.length, 1); assert.equal(saved.attempts.length, 2);
+  assert.equal(released(f).length, 1); assert.deepEqual(saved.attempts[1].runs.map(r => [r.name, r.exitCode]), [['release', 0], ['linear', 75]]);
 });

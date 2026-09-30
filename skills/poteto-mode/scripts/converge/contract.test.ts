@@ -62,3 +62,8 @@ test('a postMerge block refuses what prePr refuses, and an after other than test
   assert.throws(() => postMerge({ runs: [], after: 'merge' }), /Invalid enum value/);
   assert.throws(() => postMerge({ after: 'tests' }), /Invalid array/);
 });
+test('optional Linear reconciliation accepts no local commands and reserves its own run name', () => {
+  assert.deepEqual(parseContract({ ...bare, postMerge: { runs: [], linear: true } }).postMerge, { runs: [], after: 'tests', linear: true });
+  assert.throws(() => parseContract({ ...bare, postMerge: { runs: [], linear: 'true' } }), /boolean/);
+  assert.throws(() => parseContract({ ...bare, postMerge: { runs: [{ name: 'linear', command: 'npm test' }], linear: true } }), /reserved/);
+});

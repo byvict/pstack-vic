@@ -9,7 +9,9 @@ import type { LocalConfig, RepoConfig } from './config.ts';
 import { writeJsonFile } from './ledger.ts';
 import { LEASE_TTL_HOURS, readLease, releaseLease, takeLease } from './lease.ts';
 import { notify } from './notify.ts';
-import { exitStatus, KILL_GRACE_MS } from './raiz.ts';
+import { exitStatus, KILL_GRACE_MS, raizLane } from './raiz.ts';
+import { parseLinearCheckpoint, reconcileLinear, type LinearCheckpoint, type LinearResult } from './linear.ts';
+import { admitLinearMerge } from './linear-trust.ts';
 
 /** More new trunk commits than this since the handled tip fail the pass instead of replaying them: the daemon was off or stuck, and someone should look. */
 export const POST_MERGE_MAX_COMMITS = 50;
@@ -21,7 +23,8 @@ export const postMergeOutcomes = ['done', 'deferred', 'failed'] as const;
 export type PostMergeOutcome = typeof postMergeOutcomes[number];
 export interface PostMergeRun { name: string; exitCode: number | null; logFile: string }
 export interface PostMergeAttempt { n: number; startedAt: string; endedAt: string; runs: PostMergeRun[]; outcome: PostMergeOutcome; reason: string; runDirectory: string }
-export interface PostMergeLedger { schemaVersion: 1; repo: string; commit: string; pr: number | null; firstAttemptAt: string; attempts: PostMergeAttempt[] }
+export interface PostMergeCheckpoint { commands: { name: string; command: string; logFile: string }[]; linear: LinearCheckpoint | null }
+export interface PostMergeLedger { schemaVersion: 1; repo: string; commit: string; pr: number | null; firstAttemptAt: string; attempts: PostMergeAttempt[]; checkpoint?: PostMergeCheckpoint }
 export interface PostMergeState { schemaVersion: 1; repo: string; tip: string }
 /** One commit as a pass left it: `waiting` started nothing this pass (not ready, or no checkout), `dry-run` names the runs it would start. */
 export interface Handled { commit: string; pr: number | null; outcome: PostMergeOutcome | 'waiting' | 'dry-run'; reason: string; ledger: string; runDirectory: string | null }
@@ -58,7 +61,11 @@ function parseAttempt(value: unknown): PostMergeAttempt {
 function parseLedger(value: unknown): PostMergeLedger {
   const v = object(value, 'post-merge ledger');
   if (v.schemaVersion !== 1) throw new Error('Unknown post-merge ledger schema');
-  return { schemaVersion: 1, repo: repoName(v.repo), commit: sha(v.commit), pr: v.pr === null ? null : integer(v.pr), firstAttemptAt: instant(v.firstAttemptAt, 'first attempt'), attempts: array(v.attempts).map(parseAttempt) };
+  return { schemaVersion: 1, repo: repoName(v.repo), commit: sha(v.commit), pr: v.pr === null ? null : integer(v.pr), firstAttemptAt: instant(v.firstAttemptAt, 'first attempt'), attempts: array(v.attempts).map(parseAttempt), ...(v.checkpoint === undefined ? {} : { checkpoint: parseCheckpoint(v.checkpoint) }) };
+}
+function parseCheckpoint(value: unknown): PostMergeCheckpoint {
+  const v = object(value, 'post-merge checkpoint');
+  return { commands: array(v.commands).map(raw => { const r = object(raw); return { name: string(r.name), command: string(r.command), logFile: string(r.logFile) }; }), linear: v.linear === null ? null : parseLinearCheckpoint(v.linear) };
 }
 export function readPostMergeState(file: string): PostMergeState | null { return readJson(file, parseState, 'post-merge state file'); }
 export function readPostMergeLedger(file: string): PostMergeLedger | null { return readJson(file, parseLedger, 'post-merge ledger'); }
@@ -91,9 +98,11 @@ function runCommand(argv: string[], options: { cwd: string; env: NodeJS.ProcessE
   });
 }
 /** The runs in order; the first that does not exit 0 ends the attempt. */
-async function runAll(runs: Run[], options: { cwd: string; runDirectory: string; env: NodeJS.ProcessEnv; capMs: number }): Promise<{ runs: PostMergeRun[]; outcome: PostMergeOutcome; reason: string }> {
+async function runAll(runs: Run[], options: { cwd: string; runDirectory: string; env: NodeJS.ProcessEnv; capMs: number; checkpoint?: PostMergeCheckpoint; onSuccess?: () => void }): Promise<{ runs: PostMergeRun[]; outcome: PostMergeOutcome; reason: string }> {
   const done: PostMergeRun[] = [];
   for (const run of runs) {
+    const prior = options.checkpoint?.commands.find(r => r.name === run.name && r.command === run.command);
+    if (prior) { done.push({ name: run.name, exitCode: 0, logFile: prior.logFile }); continue; }
     const logFile = join(options.runDirectory, `${run.name}.log`);
     const exit = await runCommand(run.command.split(' '), { cwd: options.cwd, env: options.env, logFile, capMs: options.capMs });
     done.push({ name: run.name, exitCode: exit.exitCode, logFile });
@@ -101,6 +110,8 @@ async function runAll(runs: Run[], options: { cwd: string; runDirectory: string;
     if (exit.exitCode === null) return { runs: done, outcome: 'failed', reason: `${run.name} did not start` };
     if (exit.exitCode === TEMPFAIL) return { runs: done, outcome: 'deferred', reason: `${run.name} exited ${TEMPFAIL}` };
     if (exit.exitCode !== 0) return { runs: done, outcome: 'failed', reason: `${run.name} exited ${exit.exitCode}` };
+    options.checkpoint?.commands.push({ ...run, logFile });
+    options.onSuccess?.();
   }
   return { runs: done, outcome: 'done', reason: '' };
 }
@@ -149,9 +160,10 @@ export async function redTrunkTip(stateDirectory: string, t: Trusted, dryRun: bo
   } catch (error) { report.errors.push(`red trunk: ${message(error)}`); }
   return report;
 }
-function failureComment(ledger: PostMergeLedger, file: string): string {
+function retryCommand(repo: string, commit: string): string { return `converge-local post-merge --repo ${repo} --commit ${commit}`; }
+function failureComment(ledger: PostMergeLedger): string {
   const last = ledger.attempts[ledger.attempts.length - 1];
-  return [`The local converge daemon's post-merge stopped on commit ${ledger.commit}: ${last?.reason}.`, '', 'Runs:', ...(last?.runs ?? []).map(r => `- ${r.name} ${r.exitCode === null ? 'did not start' : `exited ${r.exitCode}`} (${r.logFile})`), '', `Later trunk commits wait. Delete \`${file}\` to retry.`].join('\n');
+  return [`The local converge daemon's post-merge stopped on commit ${ledger.commit}: ${last?.reason}.`, '', 'Runs:', ...(last?.runs ?? []).map(r => `- ${r.name} ${r.exitCode === null ? 'did not start' : `exited ${r.exitCode}`} (${r.logFile})`), '', `Later trunk commits wait. Retry with \`${retryCommand(ledger.repo, ledger.commit)}\`, retaining the ledger.`].join('\n');
 }
 function runDirectory(repo: string, commit: string, n: number): string {
   return join(tmpdir(), 'converge-local', 'post-merge', `${slug(repo)}-${commit.slice(0, 8)}-${n}-${Math.floor(Date.now() / 1000)}`);
@@ -170,7 +182,11 @@ async function attempt(p: Pass, commit: string, ledger: PostMergeLedger | null):
   const pr = ledger ? ledger.pr : await mergedPull(p.t, commit);
   const n = (ledger?.attempts.length ?? 0) + 1;
   const run = runDirectory(p.repo.repo, commit, n);
-  if (p.options.dryRun) return { commit, pr, outcome: 'dry-run', reason: p.postMerge.runs.map(r => `${r.name}: ${r.command}`).join('; '), ledger: file, runDirectory: run };
+  if (p.options.dryRun) {
+    const commands = p.postMerge.runs.map(r => `${r.name}: ${r.command}`).join('; ');
+    const linear = p.postMerge.linear ? await linearStep(p, commit, file, p.repo.checkout, run, ledger?.checkpoint?.linear ?? null, () => undefined) : null;
+    return { commit, pr, outcome: 'dry-run', reason: commands + (linear ? `${commands ? '; ' : ''}linear: ${JSON.stringify(linear)}` : ''), ledger: file, runDirectory: run };
+  }
   mkdirSync(run, { recursive: true, mode: 0o700 });
   const checkout = join(run, 'checkout');
   try {
@@ -182,27 +198,47 @@ async function attempt(p: Pass, commit: string, ledger: PostMergeLedger | null):
   }
   const startedAt = new Date().toISOString();
   const env = { ...(p.options.env ?? process.env), PSTACK_REPO: p.repo.repo, PSTACK_COMMIT: commit, PSTACK_PR: pr === null ? '' : String(pr), PSTACK_CHECKOUT: p.repo.checkout, PSTACK_PLUGIN_DIR: p.config.pluginDir };
+  const checkpoint = p.postMerge.linear ? ledger?.checkpoint ?? { commands: [], linear: null } : undefined;
+  const firstAttemptAt = ledger?.firstAttemptAt ?? startedAt;
+  const saved: PostMergeLedger = { schemaVersion: 1, repo: p.repo.repo, commit, pr, firstAttemptAt, attempts: ledger?.attempts ?? [], ...(checkpoint ? { checkpoint } : {}) };
+  const save = () => writeJsonFile(file, saved);
   let result: Awaited<ReturnType<typeof runAll>>;
-  try { result = await runAll(p.postMerge.runs, { cwd: checkout, runDirectory: run, env, capMs: p.options.runCapMs ?? POST_MERGE_RUN_MINUTES * 60_000 }); }
+  try {
+    result = await runAll(p.postMerge.runs, { cwd: checkout, runDirectory: run, env, capMs: p.options.runCapMs ?? POST_MERGE_RUN_MINUTES * 60_000, ...(checkpoint ? { checkpoint, onSuccess: save } : {}) });
+    if (result.outcome === 'done' && checkpoint) {
+      const linear = await linearStep(p, commit, file, checkout, run, checkpoint.linear, value => { checkpoint.linear = value; save(); });
+      const logFile = linear.logs.at(-1) ?? join(run, 'linear.json');
+      writeJsonFile(join(run, 'linear.json'), linear);
+      result = { runs: [...result.runs, { name: 'linear', exitCode: linear.kind === 'deferred' ? TEMPFAIL : linear.kind === 'failed' ? 1 : 0, logFile }], outcome: linear.kind === 'deferred' ? 'deferred' : linear.kind === 'failed' ? 'failed' : 'done', reason: `linear: ${linear.reason}` };
+    }
+  }
   finally {
     try { git(p.repo.checkout, ['worktree', 'remove', '--force', checkout]); }
     catch (error) { p.errors.push(`${commit}: worktree not removed: ${message(error)}`); }
   }
   const endedAt = new Date().toISOString();
-  const firstAttemptAt = ledger?.firstAttemptAt ?? startedAt;
   if (result.outcome === 'deferred' && Date.parse(endedAt) - Date.parse(firstAttemptAt) >= POST_MERGE_DEFER_HOURS * 3_600_000) result = { ...result, outcome: 'failed', reason: `${result.reason} for ${POST_MERGE_DEFER_HOURS} hours since ${firstAttemptAt}` };
-  const updated: PostMergeLedger = { schemaVersion: 1, repo: p.repo.repo, commit, pr, firstAttemptAt, attempts: [...(ledger?.attempts ?? []), { n, startedAt, endedAt, runs: result.runs, outcome: result.outcome, reason: result.reason, runDirectory: run }] };
+  const updated: PostMergeLedger = { ...saved, attempts: [...(ledger?.attempts ?? []), { n, startedAt, endedAt, runs: result.runs, outcome: result.outcome, reason: result.reason, runDirectory: run }] };
   writeJsonFile(file, updated);
   if (result.outcome === 'failed') {
-    p.errors.push(`${commit} failed: ${result.reason}; delete ${file} to retry`);
+    p.errors.push(`${commit} failed: ${result.reason}; retry with ${retryCommand(p.repo.repo, commit)}, retaining the ledger`);
     if (pr !== null) {
-      try { await api(`repos/${p.t.repo}/issues/${pr}/comments`, { body: failureComment(updated, file) }); }
+      try { await api(`repos/${p.t.repo}/issues/${pr}/comments`, { body: failureComment(updated) }); }
       catch (error) { p.errors.push(`${commit}: failure comment failed: ${message(error)}`); }
     }
     const cause = notify({ title: 'Converge local', subtitle: p.repo.repo, body: `Post-merge stopped on commit ${commit.slice(0, 8)}: ${result.reason}${pr === null ? '' : ` (PR #${pr})`}` });
     if (cause) p.errors.push(`${commit}: notification failed: ${cause}`);
   }
   return { commit, pr, outcome: result.outcome, reason: result.reason, ledger: file, runDirectory: run };
+}
+async function linearStep(p: Pass, commit: string, file: string, checkout: string, runDirectory: string, checkpoint: LinearCheckpoint | null, save: (value: LinearCheckpoint) => void): Promise<LinearResult> {
+  const result = (kind: LinearResult['kind'], reason: string): LinearResult => ({ kind, reason, effects: checkpoint?.effects ?? [], logs: checkpoint?.logPaths ?? [] });
+  try {
+    const admission = await admitLinearMerge(p.t, commit);
+    if (admission.kind !== 'admitted') return result(admission.kind === 'noop' ? 'done' : 'refused', admission.reason);
+    const lane = raizLane(readFileSync(p.config.sheetPath, 'utf8'), p.config.parent);
+    return await reconcileLinear({ merge: admission.merge, lane, checkout, pluginDir: p.config.pluginDir, runDirectory: join(runDirectory, 'linear'), ledgerFile: file, checkpoint, save, dryRun: p.options.dryRun, env: p.options.env, capMs: p.options.runCapMs ?? POST_MERGE_RUN_MINUTES * 60_000 });
+  } catch (error) { return result('deferred', `Linear admission or runtime unavailable: ${message(error)}`); }
 }
 /** The queue's next commit: a ledger that ends `done` only advances, one that ends `failed` stops the queue with its error again, anything else gets an attempt. */
 async function next(p: Pass, commit: string): Promise<Handled> {
@@ -211,7 +247,7 @@ async function next(p: Pass, commit: string): Promise<Handled> {
   const last = ledger?.attempts[ledger.attempts.length - 1];
   if (ledger && last?.outcome === 'done') return { commit, pr: ledger.pr, outcome: 'done', reason: 'done on an earlier pass', ledger: file, runDirectory: last.runDirectory };
   if (ledger && last?.outcome === 'failed') {
-    p.errors.push(`${commit} failed: ${last.reason}; delete ${file} to retry`);
+    p.errors.push(`${commit} failed: ${last.reason}; retry with ${retryCommand(p.repo.repo, commit)}, retaining the ledger`);
     return { commit, pr: ledger.pr, outcome: 'failed', reason: last.reason, ledger: file, runDirectory: last.runDirectory };
   }
   return attempt(p, commit, ledger);
