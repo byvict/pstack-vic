@@ -54,7 +54,7 @@ test('conditional Done after rollout cannot be relabeled as a structural adminis
 test('an exact opened publication proves only the named publication, not a deployment assertion or unrelated content', () => {
   const url = 'https://linear.app/example/initiative/maintenance/activity#initiative-update-weekly', content = 'Weekly maintenance: 28 open records, all assigned to projects.';
   const output = call('artifact', 'get_status_updates', { id: 'weekly', url, body: content });
-  const quote = `Publish the weekly update at ${url}.`, f = fixture(quote, [output]); assert.deepEqual(f.read.references, [{ key: url, read: true }]);
+  const quote = `Publish the weekly update at \`${url}\`.`, f = fixture(quote, [output]); assert.deepEqual(f.read.references, [{ key: url, read: true }]);
   const p = f.catalogue.find(p => p.kind === 'publication'); assert.ok(p);
   const a = assessment(quote, p, { content }); a.targets[0].references.push({ key: url, required: true, reason: 'The requested weekly output.' });
   assert.equal(completionEvidence(f.read, [a, a], f.catalogue).complete, true);
@@ -65,7 +65,7 @@ test('an exact opened publication proves only the named publication, not a deplo
   }
 });
 test('a clean head-bound check proves its exact requested command, never generic acceptance or relabeled rollout', () => {
-  const f = fixture('Verify node check-retry.mjs passes.'), d = f.m.dossier;
+  const f = fixture('Verify `node check-retry.mjs` passes.'), d = f.m.dossier;
   d.certificate = { schemaVersion: 2, round: d.round, authorProviders: ['codex'], runs: [{ name: 'retry', command: 'node check-retry.mjs', exitCode: 0, clean: true, head: f.m.head, logDigest: 'a'.repeat(64), startedAt: '2026-09-30T00:00:00Z', completedAt: '2026-09-30T00:01:00Z' }], lanes: [], artifacts: [], decision: d.decision, reconcileDigest: d.reconcileDigest, evidenceDigest: d.evidenceDigest, coverage: [], adjustRounds: 0, toolingRef: f.m.head };
   const catalogue = proofCatalogue(f.m, f.calls), p = catalogue.find(p => p.kind === 'verification'); assert.ok(p);
   const a = assessment(f.read.texts[0].body, p, { command: 'node check-retry.mjs' });
@@ -105,7 +105,7 @@ test('only the final authoritative native values and publication content may pro
   assert.equal(completionEvidence(readLinearTargets(f.m, f.calls)[0], [a, a], catalogue).complete, false);
   const url = 'https://linear.app/example/document/weekly';
   const publications = proofCatalogue(f.m, [call('old', 'get_document', { id: 'doc', url, content: 'Old published content.' }), call('new', 'get_document', { id: 'doc', url, content: 'Corrected published content.' })]);
-  const artifactUrl = 'https://linear.app/example/initiative/weekly/activity#initiative-update-weekly', publicationQuote = `Publish the weekly update at ${artifactUrl}.`;
+  const artifactUrl = 'https://linear.app/example/initiative/weekly/activity#initiative-update-weekly', publicationQuote = `Publish the weekly update at \`${artifactUrl}\`.`;
   const g = fixture(publicationQuote, [call('old-update', 'get_status_updates', { id: 'weekly', url: artifactUrl, body: 'Old published content.' })]);
   const oldPublication = g.catalogue.find(p => p.kind === 'publication'); assert.ok(oldPublication);
   g.calls.push(call('new-update', 'get_status_updates', { id: 'weekly', url: artifactUrl, type: 'initiative', body: 'Corrected published content.' }));
@@ -122,7 +122,7 @@ test('a deployment word that is the exact required metadata value remains an adm
   assert.equal(completionEvidence(f.read, [a, a], catalogue).complete, true);
 });
 test('required publication coverage needs its full comments and individually opened content, not a list', () => {
-  const url = 'https://linear.app/example/initiative/weekly/activity#initiative-update-weekly', quote = `Publish the update at ${url}.`;
+  const url = 'https://linear.app/example/initiative/weekly/activity#initiative-update-weekly', quote = `Publish the update at \`${url}\`.`;
   const f = fixture(quote, [call('artifact', 'get_status_updates', { id: 'weekly', url, body: 'Actual weekly output.' })]);
   const p = f.catalogue.find(p => p.kind === 'publication'); assert.ok(p); const a = assessment(quote, p, { content: 'Actual weekly output.' }); a.targets[0].references.push({ key: url, required: true, reason: 'Required output.' });
   f.calls = f.calls.filter(c => !('statusUpdateId' in c.args)); const missing = readLinearTargets(f.m, f.calls)[0];
@@ -171,7 +171,7 @@ test('independent assessments can omit irrelevant outcome fields and choose diff
   const quote = 'ENG-1 labels must include pstack.', f = fixture(quote), a = assessment(quote, structural(f), { field: 'labels', operator: 'includes', value: 'pstack' });
   const b = assessment(quote, structural(f), { field: 'labels', operator: 'includes', value: 'pstack', content: '', command: '' });
   assert.equal(completionEvidence(f.read, [a, b], f.catalogue).complete, true);
-  const url = 'https://linear.app/example/initiative/weekly/activity#initiative-update-weekly', publicationQuote = `Publish the weekly update at ${url}.`, g = fixture(publicationQuote, [call('output', 'get_status_updates', { id: 'weekly', url, body: 'Weekly results recorded. Maintenance owners listed.' })]);
+  const url = 'https://linear.app/example/initiative/weekly/activity#initiative-update-weekly', publicationQuote = `Publish the weekly update at \`${url}\`.`, g = fixture(publicationQuote, [call('output', 'get_status_updates', { id: 'weekly', url, body: 'Weekly results recorded. Maintenance owners listed.' })]);
   const p = g.catalogue.find(p => p.kind === 'publication'); assert.ok(p);
   const first = assessment(publicationQuote, p, { content: 'Weekly results recorded.' }), second = assessment(publicationQuote, p, { content: 'Maintenance owners listed.', field: '', command: '' });
   for (const answer of [first, second]) answer.targets[0].references.push({ key: url, required: true, reason: 'Required publication.' });
@@ -202,4 +202,55 @@ test('a failed final native read invalidates prior source coverage rather than r
   f.calls[0].result = { ...object(f.calls[0].result), parentId: 'ENG-2' };
   f.calls.push(parent, { ...call('parent-comments', 'list_comments', { comments: [], hasNextPage: false }), args: { issueId: 'ENG-2' } }, { ...call('failed-parent', 'get_issue', { error: 'Unavailable' }), args: { id: 'ENG-2' }, error: true });
   assert.throws(() => readLinearTargets(f.m, f.calls), /parent issue read/);
+});
+
+test('whole structural literals reject punctuation suffixes and atomic longer quoted values', () => {
+  for (const value of ['pstack.vic', 'pstack/other', 'pstack:other', '`pstack extra`', '`pstack.vic`', '"pstack extra"', "'pstack/other'"]) {
+    const quote = `ENG-1 labels must include ${value}.`, f = fixture(quote), a = assessment(quote, structural(f), { field: 'labels', operator: 'includes', value: 'pstack' });
+    const result = completionEvidence(f.read, [a, a], f.catalogue); assert.equal(result.complete, false, value); assert.ok(result.remaining.includes(`acceptance: ${quote}`));
+  }
+  for (const entity of ['ENG-1.other', 'ENG-1/other', 'ENG-1:other', '`ENG-1 extra`']) {
+    const quote = `${entity} labels must include pstack.`, f = fixture(quote), a = assessment(quote, structural(f), { field: 'labels', operator: 'includes', value: 'pstack' });
+    assert.equal(completionEvidence(f.read, [a, a], f.catalogue).complete, false, entity);
+  }
+  for (const field of ['labels.extra', 'labels/other', 'labels:other', '`labels extra`']) {
+    const quote = `ENG-1 ${field} must include pstack.`, f = fixture(quote), a = assessment(quote, structural(f), { field: 'labels', operator: 'includes', value: 'pstack' });
+    assert.equal(completionEvidence(f.read, [a, a], f.catalogue).complete, false, field);
+  }
+});
+test('explicit full structural literals preserve punctuation and spaces', () => {
+  for (const value of ['pstack.vic', 'pstack/other', 'pstack extra']) {
+    const quote = `\`ENG-1\` \`labels\` must include \`${value}\`.`, f = fixture(quote); f.calls[0].result = { ...object(f.calls[0].result), labels: [value] };
+    const catalogue = proofCatalogue(f.m, f.calls), proof = catalogue.find(p => p.kind === 'structural' && p.field === 'labels'); assert.ok(proof);
+    const a = assessment(quote, proof, { field: 'labels', operator: 'includes', value });
+    assert.equal(completionEvidence(f.read, [a, a], catalogue).complete, true, value);
+  }
+});
+test('a publication criterion binds the whole URL with its path, query, fragment and case', () => {
+  const url = 'https://linear.app/example/initiative/weekly/activity#initiative-update-weekly';
+  const output = call('output', 'get_status_updates', { id: 'weekly', url, body: 'Weekly results recorded.' });
+  for (const literal of [url + '/extra', url + '?other=1', url + '#extra', url.replace('/activity#', '/activity/extra#'), url.replace('/activity#', '/activity?other=1#'), url.replace('/example/', '/EXAMPLE/'), '`' + url + '/extra`']) {
+    const quote = `Publish the weekly update at ${literal}.`, f = fixture(quote, [output]), proof = f.catalogue.find(p => p.kind === 'publication'); assert.ok(proof);
+    const a = assessment(quote, proof, { content: 'Weekly results recorded.' }); a.targets[0].references = f.read.references.map(r => ({ key: r.key, required: false, reason: 'The different URL cannot be proved by this opened publication.' }));
+    assert.equal(completionEvidence(f.read, [a, a], f.catalogue).complete, false, literal);
+  }
+  for (const quote of [`Publish the weekly update at ${url}`, `Publish the weekly update at \`${url}\`.`]) {
+    const f = fixture(quote, [output]), proof = f.catalogue.find(p => p.kind === 'publication'); assert.ok(proof);
+    const a = assessment(quote, proof, { content: 'Weekly results recorded.' }); a.targets[0].references = f.read.references.map(r => ({ key: r.key, required: true, reason: 'The exact requested publication is fully read.' }));
+    assert.equal(completionEvidence(f.read, [a, a], f.catalogue).complete, true, quote);
+  }
+});
+test('verification commands are atomic delimited literals, including every argument', () => {
+  for (const command of ['npm test:extra', 'npm test --ci', '`npm test:extra`', '`npm test --ci`', '"npm test --ci"', "'npm test:extra'", 'npm test', '`npm test`', '"npm test"', "'npm test'"]) {
+    const quote = `Verify ${command} passes.`, f = fixture(quote), d = f.m.dossier;
+    d.certificate = { schemaVersion: 2, round: d.round, authorProviders: ['codex'], runs: [{ name: 'tests', command: 'npm test', exitCode: 0, clean: true, head: f.m.head, logDigest: 'a'.repeat(64), startedAt: '2026-09-30T00:00:00Z', completedAt: '2026-09-30T00:01:00Z' }], lanes: [], artifacts: [], decision: d.decision, reconcileDigest: d.reconcileDigest, evidenceDigest: d.evidenceDigest, coverage: [], adjustRounds: 0, toolingRef: f.m.head };
+    const catalogue = proofCatalogue(f.m, f.calls), proof = catalogue.find(p => p.kind === 'verification'); assert.ok(proof); const a = assessment(quote, proof, { command: 'npm test' });
+    const expected = ['`npm test`', '"npm test"', "'npm test'"].includes(command), result = completionEvidence(f.read, [a, a], catalogue);
+    assert.equal(result.complete, expected, command); if (!expected) assert.ok(result.remaining.includes(`acceptance: ${quote}`));
+  }
+});
+for (const suffix of ['and the retry ships to prod.', 'and the fix is rolled out.', 'and the retry deploys.']) test(`a combined delivery requirement cannot relabel Done: ${suffix}`, () => {
+  const quote = `ENG-2 status must be Done ${suffix}`, f = fixture(quote, [call('related', 'get_issue', { id: 'ENG-2', url: 'https://linear.app/example/issue/ENG-2/related', status: 'Done' })]);
+  const proof = f.catalogue.find(p => p.kind === 'structural' && p.field === 'status'); assert.ok(proof); const a = assessment(quote, proof, { field: 'status', operator: 'equals', value: 'Done' });
+  assert.equal(completionEvidence(f.read, [a, a], f.catalogue).complete, false);
 });

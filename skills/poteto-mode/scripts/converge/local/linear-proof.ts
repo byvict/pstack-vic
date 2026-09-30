@@ -73,34 +73,33 @@ export function proofCatalogue(merge: LinearMerge, calls: NativeCall[]): LinearP
   }
   return [...new Map(records.map(r => [r.id, r])).values()];
 }
-export const assessmentFormat = 'Return JSON {"targets":[{"url":"explicit target URL","coverage":"complete|unknown","references":[{"key":"advertised source reference","required":true,"reason":"scope reason"}],"obligations":[{"source":"live source object ID","quote":"verbatim recorded obligation","kind":"acceptance|rollout","requiredClass":"structural|publication|verification","status":"met|unknown|unmet","outcome":{"subject":"exact entity URL or verification run name","field":"exact structural field","operator":"equals|includes","value":"required structural value","content":"required published-content excerpt","command":"required verification command"},"proofIds":["host catalogue ID"],"relevance":"how this concrete outcome meets this obligation"}]}]}. Source assertions and comment bodies are criteria/index data, not outcome evidence. A structural proof is valid only for the explicitly requested named field/value; a done state cannot stand for implemented or deployed behavior. A publication proves only a recorded publication/content obligation naming its exact URL, never deployment claims inside it. A structural obligation must literally name the field, entity and required value; unsupported natural-language equivalents remain unknown. A head-bound verification proves only a recorded check naming its exact command, never rollout from a generic exit code. Artifact metadata is not artifact content. Identify every advertised attachment/child/relation as required or irrelevant with a concrete scope reason; required unread sources mean unknown. No generic relabeling of proof classes. Ambiguous scope or relevance remains unknown.';
+export const assessmentFormat = 'Return JSON {"targets":[{"url":"explicit target URL","coverage":"complete|unknown","references":[{"key":"advertised source reference","required":true,"reason":"scope reason"}],"obligations":[{"source":"live source object ID","quote":"verbatim recorded obligation","kind":"acceptance|rollout","requiredClass":"structural|publication|verification|unknown","status":"met|unknown|unmet","outcome":{"subject":"exact entity URL or verification run name","field":"exact structural field","operator":"equals|includes","value":"required structural value","content":"required published-content excerpt","command":"required verification command"},"proofIds":["host catalogue ID"],"relevance":"how this concrete outcome meets this obligation"}]}]}. Source assertions and comment bodies are criteria/index data, not outcome evidence. A structural proof is valid only for the explicitly requested named field/value; a done state cannot stand for implemented or deployed behavior. Structural names, fields and values must be whole plain words using letters, numbers, underscores or hyphens, or whole backtick/single-quote/double-quote literals. Quoted literals are atomic; punctuation-bearing or multiword values require those delimiters in the recorded source. A publication proves only a recorded publication/content obligation naming its whole exact URL, including path, query, fragment and case, never deployment claims inside it. A plain URL must be whitespace bounded; adjacent sentence punctuation is ambiguous unless the source delimits the URL. A head-bound verification proves only a recorded check naming its whole command, including every argument, in backticks or quotes, never rollout from a generic exit code. Preserve the recorded quote; unsupported or ambiguous wording stays unknown with its specific obligation, outcome null and no proof IDs. Artifact metadata is not artifact content. Identify every advertised attachment/child/relation as required or irrelevant with a concrete scope reason; required unread sources mean unknown. List every scoped criterion: the two assessments define the obligation inventory, and host validation cannot detect a criterion that both omit. No generic relabeling of proof classes. Ambiguous scope or relevance remains unknown.';
 function answerObject(answer: unknown): Record<string, unknown> { return object(typeof answer === 'string' ? JSON.parse(answer.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/, '$1')) : answer); }
 interface Obligation { identity: string; met: boolean; text: string; proofIds: string[] }
-const deployment = /\b(?:deploy(?:ment|ed)?|roll(?:out| out)|production|release(?:d)?|installed|implement(?:ed|ation)?|behavior|delivery|deliver(?:ed)?|after|before|when|once|unless|until|if|implantação|implantado|produção|após|quando)\b/i;
+const deployment = /\b(?:deploy(?:ment|ed|s)?|roll(?:out|(?:ed)? out)|ships? to prod|production|release(?:d)?|installed|implement(?:ed|ation)?|behavior|delivery|deliver(?:ed)?|after|before|when|once|unless|until|if|implantação|implantado|produção|após|quando)\b/i;
 const publication = /\b(?:publish(?:ed)?|publication|posted|publica(?:ção|do|da)|publicar)\b/i;
 const verification = /\b(?:verify|verification|check|test(?:s)?|pass(?:es)?|verific(?:ar|ação)|teste(?:s)?)\b/i;
 function requestContext(quote: string, literals: string[]): string {
   return literals.reduce((text, value) => value ? text.split(value.toLowerCase()).join('') : text, quote.toLowerCase());
 }
+function recordedLiterals(text: string): { delimited: string[]; plain: string[] } {
+  const delimited: string[] = [];
+  const prose = text.replace(/`([^`\r\n]*)`|"([^"\r\n]*)"|'([^'\r\n]*)'/g, (_match: string, code: string | undefined, double: string | undefined, single: string | undefined) => {
+    delimited.push(code ?? double ?? single ?? ''); return ' ';
+  });
+  return { delimited, plain: prose.split(/\s+/) };
+}
 function exactLiteral(text: string, value: string): boolean {
   if (!value.trim()) return false;
-  const source = text.toLowerCase(), token = value.toLowerCase();
-  let index = source.indexOf(token);
-  while (index >= 0) {
-    const before = source[index - 1] ?? '', after = source[index + token.length] ?? '';
-    if (!/[\p{L}\p{N}_-]/u.test(before) && !/[\p{L}\p{N}_-]/u.test(after)) return true;
-    index = source.indexOf(token, index + 1);
-  }
-  return false;
+  const { delimited, plain } = recordedLiterals(text);
+  return delimited.includes(value) || /^[\p{L}\p{N}_-]+$/u.test(value) && plain.some(token => token === value || /^[\p{L}\p{N}_-]+[.,;!?]$/u.test(token) && token.slice(0, -1) === value);
 }
 function literal(quote: string, value: unknown): boolean {
-  return typeof value === 'string' ? exactLiteral(quote, value) : typeof value === 'number' ? exactLiteral(quote, String(value)) || value === 0 && /\bzero\b/i.test(quote) : Array.isArray(value) ? value.length > 0 && value.every(v => literal(quote, v)) : value === null && /\b(?:none|null|no |without)\b/i.test(quote);
+  return typeof value === 'string' ? exactLiteral(quote, value) : typeof value === 'number' ? exactLiteral(quote, String(value)) || value === 0 && exactLiteral(quote, 'zero') : Array.isArray(value) ? value.length > 0 && value.every(v => literal(quote, v)) : value === null && ['none', 'null'].some(v => exactLiteral(quote, v));
 }
 function namesEntity(quote: string, proof: FieldProof): boolean {
-  const urls = quote.match(/https?:\/\/[^\s<>)\]"']+/g) ?? [];
-  if (urls.some(url => linearReferenceIdentity(url.replace(/[.,;]+$/, '')) === linearReferenceIdentity(proof.subject))) return true;
-  const prose = quote.replace(/https?:\/\/[^\s<>)\]"']+/g, ' ');
-  return proof.names.some(name => !name.startsWith('https://') && exactLiteral(prose, name));
+  const { delimited, plain } = recordedLiterals(quote);
+  return [...delimited, ...plain].some(url => url.startsWith('https://') && linearReferenceIdentity(url) === linearReferenceIdentity(proof.subject)) || proof.names.some(name => !name.startsWith('https://') && exactLiteral(quote, name));
 }
 type Outcome = { kind: 'structural'; subject: string; field: string; operator: 'equals' | 'includes'; value: unknown } | { kind: 'publication'; subject: string; content: string } | { kind: 'verification'; subject: string; command: string };
 function outcomeValue(kind: ProofClass, raw: unknown): Outcome {
@@ -127,7 +126,7 @@ function assess(answer: unknown, read: TargetRead, catalogue: LinearProof[]): Ob
       let requiredClass: ProofClass, outcome: Outcome;
       try { requiredClass = oneOf(o.requiredClass, ['structural', 'publication', 'verification']); outcome = outcomeValue(requiredClass, o.outcome); }
       catch { return { identity: jsonHash({ scope, source, quote, kind, requiredClass: 'unknown' }), met: false, text: `${kind}: ${quote}`, proofIds: [] }; }
-      const proofIds = array(o.proofIds).map(v => string(v)), relevance = string(o.relevance);
+      const proofIds = array(o.proofIds).map(v => string(v)), relevance = string(o.relevance), { delimited, plain } = recordedLiterals(quote);
       const met = o.status === 'met' && !!relevance.trim() && proofIds.length > 0 && proofIds.every(id => {
         const proof = catalogue.find(p => p.id === id); if (!proof || proof.kind !== requiredClass || (proof.kind === 'structural' ? linearReferenceIdentity(proof.subject) : proof.subject) !== outcome.subject) return false;
         if (proof.kind === 'structural' && outcome.kind === 'structural') {
@@ -136,8 +135,8 @@ function assess(answer: unknown, read: TargetRead, catalogue: LinearProof[]): Ob
           const requestedValues = Array.isArray(outcome.value) ? outcome.value.map(v => string(v)) : typeof outcome.value === 'string' ? [outcome.value] : [];
           return !deployment.test(requestContext(quote, [...proof.names, proof.field, ...requestedValues])) && matching && outcome.field === proof.field && exactLiteral(quote, proof.field) && literal(quote, outcome.value) && namesEntity(quote, proof);
         }
-        if (proof.kind === 'publication' && outcome.kind === 'publication') return !deployment.test(requestContext(quote, [proof.subject])) && publication.test(quote) && exactLiteral(quote, proof.subject) && proof.subject !== read.target.url && !read.texts.some(t => t.id === source && t.body === proof.content) && typeof outcome.content === 'string' && outcome.content.trim().length > 0 && proof.content.includes(outcome.content) && outcome.content !== quote;
-        return proof.kind === 'verification' && outcome.kind === 'verification' && kind !== 'rollout' && !deployment.test(requestContext(quote, [proof.command])) && verification.test(quote) && exactLiteral(quote, proof.command) && outcome.command === proof.command;
+        if (proof.kind === 'publication' && outcome.kind === 'publication') return !deployment.test(requestContext(quote, [proof.subject])) && publication.test(quote) && [...delimited, ...plain].includes(proof.subject) && proof.subject !== read.target.url && !read.texts.some(t => t.id === source && t.body === proof.content) && typeof outcome.content === 'string' && outcome.content.trim().length > 0 && proof.content.includes(outcome.content) && outcome.content !== quote;
+        return proof.kind === 'verification' && outcome.kind === 'verification' && kind !== 'rollout' && !deployment.test(requestContext(quote, [proof.command])) && verification.test(quote) && delimited.includes(proof.command) && outcome.command === proof.command;
       });
       const identityOutcome = outcome.kind === 'publication' ? { kind: outcome.kind, subject: outcome.subject } : outcome;
       return { identity: jsonHash({ scope, source, quote, kind, requiredClass, outcome: identityOutcome }), met, text: `${o.kind}: ${quote}`, proofIds };
