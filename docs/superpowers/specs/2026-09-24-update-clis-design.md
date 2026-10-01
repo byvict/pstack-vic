@@ -1,5 +1,7 @@
 # `update-clis`: versão das CLIs com trava de impacto (desenho, 2026-09-24)
 
+> Nota de 2026-10-01 (versão 0.5.0): o provider `cursor` e o campo `transport` saíram de `model-matrix.json`. O que este documento diz sobre o Cursor por HTTP e sobre `transport` descreve o estado de 2026-09-24.
+
 ## Objetivo
 
 Uma skill nova do pstack-vic, `update-clis`, cuida das três CLIs que o runner chama: `claude`, `codex` e `grok`. O Cursor fica de fora, porque entra por HTTP (`transport: http` em `model-matrix.json`) e não tem CLI.

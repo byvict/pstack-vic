@@ -117,11 +117,11 @@ Nada é gerado nem bifurcado por pai. Duas referências fazem a tradução em te
 
 Nada é declarado em manifest. O que as skills usam:
 
-- **Node 24** — the external runner, the matrix scripts, `check-plan.mjs`, and `npm test` run TypeScript directly, with no build step and no Bun.
+- **Node 24** — o runner externo, os scripts da matriz, o `check-plan.mjs` e o `npm test` rodam TypeScript direto, sem build e sem Bun.
 - **CLIs `claude`, `codex` e `grok`** — autenticados, só os que o sheet de modelos usa. O runner recusa provider igual ao do pai (essa lane é nativa). A versão delas muda só pela skill `update-clis` (seção [Versões das CLIs](#versões-das-clis)).
 - **`gh`** — forge padrão dos playbooks de PR e da skill `babysit`; `origin` é usado quando resolve o repositório; `gt` só no playbook Orchestrate. A skill `update-clis` também o usa para ler as releases do codex.
 - **`lsof`** — só para `update-clis`, que o usa para saber se alguém está rodando a CLI que ela trocaria.
-- **`bun`** — only for `watch-pr` and `orch`, which came from Cursor unchanged, and for their tests and the `watch-pr` typecheck (`npm run test:bun`).
+- **`bun`** — só para `watch-pr` e `orch`, que vieram da Cursor sem mudança, e para os testes deles e o typecheck do `watch-pr` (`npm run test:bun`).
 - **`jq` e `rg`** — só para `worktree-audit.sh` (playbook Worktree cleanup); sem eles o audit avisa e deixa colunas em branco.
 - **`run`, `verify`, `loop`** — built-ins do Claude Code; **`skill-creator`** — skill oficial da Anthropic para autoria de SKILL.md. Os quatro têm substituto em `codex-tools.md`.
 
@@ -307,7 +307,7 @@ Vinte e três skills de um princípio cada. `poteto-mode` indexa todas inline e 
 
 ```shell
 npm test               # matriz, gerador de agents, runner, setup-pstack, update-clis, referência de skills, manifests e hook, digest dos upstreams, release, invariantes do pacote
-npm run test:bun       # orch and watch-pr under Bun: bun install --frozen-lockfile, bun test, then the watch-pr typecheck (needs bun on PATH)
+npm run test:bun       # orch e watch-pr no Bun: bun install --frozen-lockfile, bun test e o typecheck do watch-pr (precisa do bun no PATH)
 npm run matrix:check   # blocos gerados de provider-dispatch.md e setup-pstack em dia
 npm run agents:check   # agents/pstack-*.md em dia com a matriz
 npm run collision:check
