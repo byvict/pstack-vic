@@ -28,7 +28,7 @@
   "rows": [
     {
       "id": "T2",
-      "reason": "There is no remote worker environment. An owner or a lane is a background subagent isolated by its own worktree. The tool parameters (`Agent`, `subagent_type: poteto-agent`, `isolation: worktree`, `run_in_background: true`, the model of the authoring row; `spawn_agent` on Codex) live in the Subagents section of SKILL.md and in codex-tools.md, not in the playbook sentence.",
+      "reason": "There is no remote worker environment. An owner or a lane is a background subagent isolated by its own worktree. The tool parameters (`Agent`, `subagent_type: poteto-agent`, `isolation: worktree`, `run_in_background: true`, the family alias of the authoring row as `model`; `spawn_agent` on Codex) live in the Subagents section of SKILL.md and in codex-tools.md, not in the playbook sentence.",
       "pairs": [
         {
           "file": "skills/poteto-mode/playbooks/autopilot-full.md",
