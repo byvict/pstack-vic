@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 ## Platform Adaptation
 
-These skills share one tree across Claude Code and Codex. Read [`references/provider-dispatch.md`](references/provider-dispatch.md) whenever a configured role launches. It defines the provider-qualified model descriptors, native/external route table, launcher, isolation, receipts, and dropout policy. Children never choose routes. When a skill names a Claude tool or built-in skill (`run`, `verify`, `skill-creator`), read [`references/codex-tools.md`](references/codex-tools.md) for the Codex equivalent.
+These skills share one tree across Claude Code and Codex. Read [`references/provider-dispatch.md`](references/provider-dispatch.md) whenever a configured role launches. It defines the provider-qualified model descriptors, native/external route table, launcher, isolation, receipts, and dropout policy. Children never choose routes. When a skill names a Claude tool or built-in skill (`run`, `verify`, `skill-creator`), read [`references/codex-tools.md`](references/codex-tools.md) for the Codex equivalent. Six playbooks (`autopilot-full`, `autopilot-stack`, `babysit`, `opening-a-pr`, `shipping`, `multi-phase-plan`) are the upstream text plus the harness substitutions of [`references/upstream-substitutions.json`](references/upstream-substitutions.json), each with its reason, and nothing else.
 
 ## Non-negotiables
 

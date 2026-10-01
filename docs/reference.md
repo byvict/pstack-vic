@@ -83,10 +83,10 @@ Cada passo confere o que já foi feito, então rodar o script duas vezes não es
 ├── .codex-plugin/plugin.json         # manifest do Codex (skills: ./skills/, interface com logo)
 ├── .agents/plugins/marketplace.json  # marketplace do Codex (fonte local ./)
 ├── model-matrix.json                 # famílias, efforts, pais, rota por pai, papéis (dado canônico)
-├── scripts/                          # loader/validação da matriz, render dos blocos gerados, gerador de agents, digest semanal dos upstreams, release.ts (troca o plugin nos dois pais depois do merge), testes (inclui manifests.test.ts)
+├── scripts/                          # loader/validação da matriz, render dos blocos gerados, gerador de agents, digest semanal dos upstreams, upstream-parity.ts (a guarda dos seis playbooks do autopilot), release.ts (troca o plugin nos dois pais depois do merge), testes (inclui manifests.test.ts)
 ├── skills/                           # 55 skills compartilhadas por Claude Code e Codex
 │   ├── poteto-mode/agents/           # openai.yaml: no Codex, poteto-mode só por invocação explícita
-│   ├── poteto-mode/references/       # provider-dispatch.md (rota e papéis), codex-tools.md (mapa de tools), bugbot-triage.md
+│   ├── poteto-mode/references/       # provider-dispatch.md (rota e papéis), codex-tools.md (mapa de tools), bugbot-triage.md, upstream-substitutions.json (as trocas de harness dos seis playbooks do autopilot)
 │   ├── poteto-mode/scripts/          # runner externo (Node 24, com probe-lane.ts, a sonda de uma lane), watch-pr, orch, check-plan.mjs, worktree-audit.sh
 │   ├── setup-pstack/scripts/         # setup-pstack.ts: estado, plano, probe, atestado e escrita do sheet (Node 24); authorize.ts: a autorização permanente (autopilot e Shipping)
 │   └── update-clis/                  # scripts/update-clis.ts (check, notes, install, probe) e references/cli-touchpoints.json
@@ -160,6 +160,8 @@ Faça a execução semanal da skill `pstack:update-clis` (plugin pstack instalad
 O autopilot leva uma fila de PRs até o merge dentro de uma sessão sua. Uma execução dessas se chama programa. Você abre a sessão, pede o programa e dá o "go". Essa sessão é a Raiz. Ela cria um Dono para cada PR. O Dono é um subagente que cuida daquele PR do começo ao fim. A Raiz confere o trabalho de cada Dono com verificadores que não escreveram o código e só então libera o merge. Nada roda fora dessa sessão. Se ela fecha, o programa para.
 
 O autopilot tem dois playbooks, e os dois vêm do pstack da Cursor. No [Autopilot-full](../skills/poteto-mode/playbooks/autopilot-full.md), cada Dono mergeia o próprio PR depois do Veredito limpo da Raiz. No [Autopilot-stack](../skills/poteto-mode/playbooks/autopilot-stack.md), nenhum agente mergeia. A Raiz monta uma pilha de PRs verificados, e você revisa e mergeia. Use o Autopilot-full quando os PRs são independentes e você deu a autoridade de merge. Quando você quer revisar antes do merge, ou quando o trabalho é encadeado, use o Autopilot-stack. As palavras Raiz, Dono, Enxame, Veredito, Rodada e Tick estão definidas no [`CONTEXT.md`](../CONTEXT.md).
+
+Seis playbooks são o texto da Cursor mais uma lista de trocas: `autopilot-full`, `autopilot-stack`, `babysit`, `opening-a-pr`, `shipping` e `multi-phase-plan`. Cada troca tira um termo que só existe na Cursor e põe o equivalente do Claude Code ou do Codex. A lista está em [`upstream-substitutions.json`](../skills/poteto-mode/references/upstream-substitutions.json), com o motivo de cada linha. Ninguém edita esses seis arquivos à mão. Para mudar uma frase, mude uma troca na lista e rode `node scripts/upstream-parity.ts --write`, que gera os seis de novo. O `npm test` roda `node scripts/upstream-parity.ts check`. Esse comando refaz os seis a partir do commit da Cursor anotado em [`UPSTREAM.md`](../UPSTREAM.md) e compara com o que está no repositório. Ele falha em dois casos: quando um arquivo tem uma frase que não é da Cursor nem da lista, e quando uma troca da lista não encontra mais o texto dela na Cursor.
 
 ### Como um programa começa
 
@@ -306,18 +308,21 @@ Vinte e três skills de um princípio cada. `poteto-mode` indexa todas inline e 
 ## Verificação
 
 ```shell
-npm test               # matriz, gerador de agents, runner, setup-pstack, update-clis, referência de skills, manifests e hook, digest dos upstreams, release, invariantes do pacote
+npm test               # matriz, gerador de agents, runner, setup-pstack, update-clis, referência de skills, manifests e hook, digest dos upstreams, paridade dos playbooks do autopilot com a Cursor, release, invariantes do pacote
 npm run test:bun       # orch e watch-pr no Bun: bun install --frozen-lockfile, bun test e o typecheck do watch-pr (precisa do bun no PATH)
 npm run matrix:check   # blocos gerados de provider-dispatch.md e setup-pstack em dia
 npm run agents:check   # agents/pstack-*.md em dia com a matriz
 npm run collision:check
 npm run upstream:digest -- --no-fetch   # digest dos dois upstreams desde o ponto de sync (UPSTREAM.md, seção Digest semanal)
+node scripts/upstream-parity.ts check   # os seis playbooks do autopilot são o texto da Cursor mais as trocas de upstream-substitutions.json
 npm run setup-pstack -- --help   # subcomandos do setup: state, plan, probe, attest, write
 npm run update-clis -- --help    # subcomandos da atualização das CLIs: start, check, notes, install, probe, finish
 claude plugin validate --strict .   # manifest do plugin e do marketplace pelo validador do Claude Code
 ```
 
 `tests/skill-collision-repro.sh` verifica os invariantes estáticos do pacote (sem camada `commands/`, `principle-*` ocultos e legíveis pelo modelo, skills de fluxo sem `disable-model-invocation`, nome do diretório igual ao `name`, versão única entre manifests, tag do marketplace e `package.json`, logo do Codex resolvendo, aliases móveis de Fable e Opus, vínculo do Bugbot entre a skill `babysit` e o playbook, playbooks sem comandos Graphite, conteúdo Cursor-only ausente). Com `PSTACK_BEHAVIORAL=1` ele também monta um plugin de uma skill e prova, com `claude -p`, que a invocação pela tool `Skill` e pelo `/comando` chegam à skill.
+
+O teste de paridade lê o commit da Cursor anotado em `UPSTREAM.md`, e esse commit precisa estar no clone. O CI busca o remote `cursor` antes do `npm test`. Num clone sem o commit, o teste falha com a mensagem `fetch the cursor remote first: git fetch --no-tags cursor main`. Ele falha em vez de pular, porque um teste pulado esconderia uma frase fora da lista. Para resolver, registre o remote uma vez (`git remote add cursor https://github.com/cursor/plugins.git`; a seção *Checar mudanças* do `UPSTREAM.md` tem os quatro comandos) e rode `git fetch --no-tags cursor main`.
 
 ## O que ficou de fora
 
