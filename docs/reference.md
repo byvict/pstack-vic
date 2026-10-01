@@ -168,7 +168,7 @@ A Raiz não começa por conta própria. A execução só começa com o seu "go" 
 1. Abra uma sessão no repositório e entre com `/poteto-mode`.
 2. Peça o programa e diga a fila, por exemplo `autopilot this queue` seguido dos itens. Para a pilha, peça `autopilot-stack`.
 3. Se algum item da fila for seu, diga qual ("esse PR fica comigo").
-4. Peça o protocolo, que é a descrição de como a Raiz vai conduzir o programa. Ela entrega o protocolo e para. O playbook chama isso de *state-then-wait*: declarar e esperar. Pedir o protocolo, ou um plano, não é dar o "go".
+4. Peça o protocolo, que é a descrição de como a Raiz vai conduzir o programa. Ela entrega o protocolo e para. O playbook chama isso de *state-then-wait*, que quer dizer declarar e esperar. Pedir o protocolo, ou um plano, não é dar o "go".
 5. Confira a [autorização permanente](#autorização-permanente). Rode este comando num terminal. Ele tem de sair com código 0:
 
    ```shell
@@ -177,16 +177,16 @@ A Raiz não começa por conta própria. A execução só começa com o seu "go" 
    ```
 
    Troque `<versão>` pela versão instalada, que `claude plugin list` mostra. Com 1, o JSON que o comando imprime diz o motivo e traz o comando que concede a autorização. Sem ela, o modo automático do Claude Code nega o merge quando o Dono chega nele. Nenhum playbook roda essa conferência. Ela existe aqui e no passo 10 do `/setup-pstack`. Você também pode pedir à Raiz que rode o `check` e mostre o resultado junto com o protocolo.
-6. Dê o "go". A Raiz grava o objetivo do programa nas ordens permanentes dela, que são as instruções que valem até o fim do programa, e o repete na lista de tarefas. O objetivo vale até a fila acabar. Depois ela cria um Dono por PR.
+6. Dê o "go". A Raiz grava o objetivo do programa nas ordens permanentes dela, que são as instruções que valem até o fim do programa, e o repete na todolist, que é a lista de afazeres da sessão. O objetivo vale até a fila acabar. Depois ela cria um Dono por PR.
 
-Para um trabalho de várias fases, peça antes um plano. O playbook [Multi-phase plan](../skills/poteto-mode/playbooks/multi-phase-plan.md) escreve o plano como uma lista de caixas, com uma seção por PR, e o plano diz qual playbook vai executá-lo. A sessão roda o verificador do plano (`check-plan.mjs`), entrega o caminho do arquivo e para. A execução também só começa com o seu "go".
+Para um trabalho de várias fases, peça antes um plano. O playbook [Multi-phase plan](../skills/poteto-mode/playbooks/multi-phase-plan.md) escreve o plano como uma lista de itens com caixas de marcar, com uma seção por PR, e o plano diz qual playbook vai executá-lo. A sessão roda o verificador do plano (`check-plan.mjs`), entrega o caminho do arquivo e para. A execução também só começa com o seu "go".
 
 ### O que o Dono faz
 
 O Dono leva um PR do build ao merge. Cada Dono trabalha num worktree próprio, que é uma cópia de trabalho separada do repositório. Vários Donos trabalham ao mesmo tempo quando os PRs não dependem um do outro.
 
 - **Abre o PR cedo.** Em cerca de 15 minutos ele começa uma trilha de decisões (`decisions.tsv`), empurra a primeira versão da branch e abre o PR pronto, nunca como rascunho. O PR abre antes da prova, para que o endereço, as decisões e os checks fiquem registrados desde o começo. A trilha não entra no commit. Ela volta para a Raiz junto com os avisos.
-- **Constrói, prova e limpa.** Ele prova a mudança no artefato real. Tria com ceticismo os comentários do robô de revisão, limpa o diff com `/deslop` e tira os comentários do código com `/no-comments`.
+- **Constrói, prova e limpa.** Ele prova a mudança no artefato real. Avalia com ceticismo cada comentário do robô de revisão, limpa o diff com `/deslop` e tira os comentários do código com `/no-comments`.
 - **Rebaseia na hora certa, no Autopilot-full.** Rebasear é reaplicar os commits da branch sobre a trunk atual, e a trunk é a `main`. O primeiro rebase vem antes do aviso de Code-ready. Nos consertos que a Raiz pede, a base não muda. Ele só rebaseia de novo no preparo do merge, num conflito com a trunk ou numa falha de CI causada por uma mudança na trunk. Para publicar um rebase, ele empurra a própria branch com `git push --force-with-lease`. Uma branch compartilhada ele nunca força.
 - **Avisa a Raiz em dois momentos.** No Code-ready, o código a entregar está final, e o aviso leva o head, que é o último commit da branch. No Merge-ready, terminaram a prova dele, o CI (os testes automáticos do GitHub) e o babysit, que é acompanhar o PR até o CI ficar verde. Entre um aviso e outro, essas três coisas correm em paralelo com a verificação da Raiz. Ele também avisa o head de cada push posterior que muda o patch, que é o conteúdo da mudança.
 - **Anota os subagentes que cria.** O arquivo `children.tsv` guarda o ID, o tempo esperado e o estado de cada um. O tempo esperado é, no mínimo, o da execução mais longa já vista daquele tipo.
@@ -198,11 +198,11 @@ O Dono leva um PR do build ao merge. Cada Dono trabalha num worktree próprio, q
 A Raiz é dona dos Vereditos, nunca dos PRs. Ela verifica cada Rodada. Uma Rodada começa no head Code-ready do Dono e em cada push posterior que muda o patch do PR. Em cada Rodada a Raiz lança o Enxame pela skill `swarm`. O Enxame é um grupo de verificadores independentes que rodam em paralelo. Cada um é uma lane, isto é, uma execução de modelo com uma tarefa só. As lanes fazem quatro coisas:
 
 - Rodam de novo os gates, que são as checagens do repositório, naquele head.
-- Provam ao vivo o comportamento principal da mudança, na superfície real que ela toca. Para isso usam a skill que dirige aquela superfície, como `run` em CLIs e `verify` em telas.
+- Provam ao vivo o comportamento principal da mudança, usando de verdade o programa que ela muda. Para isso usam a skill que opera esse tipo de programa, como `run` em CLIs e `verify` em telas.
 - Auditam o diff sem confiar no texto do PR. São duas ou mais lanes de revisão, cada uma com um foco.
 - Rodam o mesmo cenário na trunk, para comparar. É a lane de regressão.
 
-A Raiz junta os resultados num Veredito. Sem a lane ao vivo, o Veredito não é limpo. Sem Veredito limpo, não há merge. Os achados provados voltam ao Dono num pedido só de conserto. Para cada achado de comportamento, a Raiz pede um teste vermelho, isto é, um teste que falha enquanto o defeito existe. Onde nenhum teste mostra o defeito, ela pede um recibo de reprodução. O head novo ganha Enxame e Veredito novos. A exceção são os resultados que continuam válidos pela regra do patch-id do playbook [Shipping](../skills/poteto-mode/playbooks/shipping.md).
+A Raiz junta os resultados num Veredito. Sem a lane ao vivo, o Veredito não é limpo. Sem Veredito limpo, não há merge. Os achados provados voltam ao Dono num só pedido de conserto. Para cada achado de comportamento, a Raiz pede um teste vermelho, isto é, um teste que falha enquanto o defeito existe. Onde nenhum teste mostra o defeito, ela pede um recibo de reprodução. O head novo ganha Enxame e Veredito novos. A exceção são os resultados que continuam válidos pela regra do patch-id do playbook [Shipping](../skills/poteto-mode/playbooks/shipping.md).
 
 ### O que a Raiz faz a cada 30 minutos
 
@@ -219,18 +219,18 @@ O Tick só termina quando não sobra trabalho delegado, mesmo depois do último 
 
 No Claude Code a Raiz arma o Tick como um `/loop` de verdade, em modo dinâmico. O `/loop` é o comando que chama a sessão de novo, e no modo dinâmico a própria sessão marca a próxima chamada. A cadência nunca fica por conta da memória da sessão.
 
-Num programa que roda a partir de um plano, o Tick é silencioso. A Raiz só escreve no chat quando a auditoria achou uma mudança que nenhum aviso anterior relatou: um PR aberto, um head Code-ready, uma Rodada aberta ou fechada, um Veredito, um merge, um agente travado e o que foi feito, um bloqueio que entrou ou saiu, ou uma decisão que só você pode tomar. Sem novidade, o Tick termina sem texto. Nos dois casos a Raiz registra o Tick na trilha de decisões dela.
+Num programa que roda a partir de um plano, o Tick é silencioso. A Raiz só escreve no chat quando a auditoria achou uma mudança que nenhuma mensagem anterior relatou: um PR aberto, um head Code-ready, uma Rodada aberta ou fechada, um Veredito, um merge, um agente travado e o que foi feito, um bloqueio que entrou ou saiu, ou uma decisão que só você pode tomar. Sem novidade, o Tick termina sem texto. Nos dois casos a Raiz registra o Tick na trilha de decisões dela.
 
 ### O que você faz
 
 Sua parte num programa é esta:
 
 - **Dá o "go".** Depois deixa a sessão aberta até o último merge e a resposta final da Raiz.
-- **Clica no merge dos seus itens.** O Dono leva um item seu até o Merge-ready e para ali. Quem revisa e clica no merge é você, e nenhum Dono mergeia um item seu. Num programa com plano, um PR que muda uma interação também espera você: as capturas de tela e um vídeo vão para o chat, e você revisa antes do merge.
+- **Clica no merge dos seus itens.** O Dono leva um item seu até o Merge-ready e para ali. Quem revisa e clica no merge é você, e nenhum Dono mergeia um item seu. Num programa com plano, um PR que muda uma interação também espera você. As capturas de tela e um vídeo vão para o chat, e você revisa antes do merge.
 - **Aprova o que a sua autorização não cobre.** Alguns limites o CI só deixa apertar, como um gate ou um orçamento fixado. Subir um limite desses pede o aval da Raiz (*countersign*), que ela só dá depois da prova de um verificador. Quando a sua autorização ou as ordens permanentes cobrem aprovações, o aval da Raiz é a aprovação, e o Dono a registra apontando para ele. Quando não cobrem, a aprovação continua sendo sua. A Raiz também nunca dá nem contorna uma aprovação que o GitHub exige. Absorver um valor que já entrou na `main` não conta como subir limite.
 - **Manda parar quando quiser.** Um "para" seu chega na hora a todos os Donos como ordem de não escrever mais nada. Eles seguram o trabalho até você liberar.
 - **Revisa e mergeia a pilha, no Autopilot-stack.** A entrega é uma cadeia de PRs verificados, cada um com o Veredito no corpo do PR ou num comentário. Você revisa de baixo para cima e mergeia com os seus cliques, ou arma o *merge-when-ready*, que no GitHub é o auto-merge.
-- **Lê a resposta final.** No Autopilot-full ela traz a fila com o Dono, o estado e o head de cada PR, cada Veredito e o Enxame que o produziu, o que foi mergeado e o que cada Dono pegou em seguida, os avais dados e o motivo de cada um, o que ainda espera você e onde estão as trilhas de decisão. No Autopilot-stack ela traz os links da base e da ponta da pilha, um resumo do Veredito de cada PR e o que ficou de fora, com o motivo.
+- **Lê a resposta final.** No Autopilot-full ela traz a fila com o Dono, o estado e o head de cada PR, e cada Veredito com o Enxame que o produziu. Traz também o que foi mergeado, o que cada Dono pegou em seguida, os avais dados com o motivo de cada um, o que ainda espera você e onde estão as trilhas de decisão. No Autopilot-stack ela traz os links da base e da ponta da pilha, um resumo do Veredito de cada PR e o que ficou de fora, com o motivo.
 
 O resto é da Raiz e dos Donos: build, PR, CI, verificação e, no Autopilot-full, o merge.
 
@@ -299,7 +299,7 @@ A entrada traz a versão no nome (`pstack standing authorization v2`). Se você 
 
 ### De onde vem o texto dos playbooks
 
-Seis playbooks são o texto da Cursor mais uma lista de trocas: `autopilot-full`, `autopilot-stack`, `babysit`, `opening-a-pr`, `shipping` e `multi-phase-plan`. Cada troca tira um termo que só existe na Cursor e põe o equivalente do Claude Code ou do Codex. A lista está em [`upstream-substitutions.json`](../skills/poteto-mode/references/upstream-substitutions.json), com o motivo de cada linha. Ninguém edita esses seis arquivos à mão. Para mudar uma frase, mude uma troca na lista e rode `node scripts/upstream-parity.ts --write`, que gera os seis de novo. O `npm test` roda `node scripts/upstream-parity.ts check`. Esse comando refaz os seis a partir do commit da Cursor anotado em [`UPSTREAM.md`](../UPSTREAM.md) e compara com o que está no repositório. Ele falha em dois casos: quando um arquivo tem uma frase que não é da Cursor nem da lista, e quando uma troca da lista não encontra mais o texto dela na Cursor.
+Seis playbooks são o texto da Cursor mais uma tabela de trocas. São eles `autopilot-full`, `autopilot-stack`, `babysit`, `opening-a-pr`, `shipping` e `multi-phase-plan`. Cada troca tira um termo que só existe na Cursor e põe o equivalente do Claude Code ou do Codex. A tabela está em [`upstream-substitutions.json`](../skills/poteto-mode/references/upstream-substitutions.json), com o motivo de cada linha. Ninguém edita esses seis arquivos à mão. Para mudar uma frase, mude uma troca na tabela e rode `node scripts/upstream-parity.ts --write`, que gera os seis de novo. O `npm test` roda `node scripts/upstream-parity.ts check`. Esse comando refaz os seis a partir do commit da Cursor anotado em [`UPSTREAM.md`](../UPSTREAM.md) e compara com o que está no repositório. Ele falha quando um arquivo tem uma frase que não é da Cursor nem da tabela. Também falha quando uma troca da tabela não encontra mais o texto dela na Cursor.
 
 ## Skills
 
@@ -395,7 +395,7 @@ claude plugin validate --strict .   # manifest do plugin e do marketplace pelo v
 
 `tests/skill-collision-repro.sh` verifica os invariantes estáticos do pacote (sem camada `commands/`, `principle-*` ocultos e legíveis pelo modelo, skills de fluxo sem `disable-model-invocation`, nome do diretório igual ao `name`, versão única entre manifests, tag do marketplace e `package.json`, logo do Codex resolvendo, aliases móveis de Fable e Opus, vínculo do Bugbot entre a skill `babysit` e o playbook, playbooks sem comandos Graphite, conteúdo Cursor-only ausente). Com `PSTACK_BEHAVIORAL=1` ele também monta um plugin de uma skill e prova, com `claude -p`, que a invocação pela tool `Skill` e pelo `/comando` chegam à skill.
 
-O teste de paridade lê o commit da Cursor anotado em `UPSTREAM.md`, e esse commit precisa estar no clone. O CI busca o remote `cursor` antes do `npm test`. Num clone sem o commit, o teste falha com a mensagem `fetch the cursor remote first: git fetch --no-tags cursor main`. Ele falha em vez de pular, porque um teste pulado esconderia uma frase fora da lista. Para resolver, registre o remote uma vez (`git remote add cursor https://github.com/cursor/plugins.git`; a seção *Checar mudanças* do `UPSTREAM.md` tem os quatro comandos) e rode `git fetch --no-tags cursor main`.
+O teste de paridade lê o commit da Cursor anotado em `UPSTREAM.md`, e esse commit precisa estar no clone. O CI busca o remote `cursor` antes do `npm test`. Num clone sem o commit, o teste falha com a mensagem `fetch the cursor remote first: git fetch --no-tags cursor main`. Ele falha em vez de pular, porque um teste pulado esconderia uma frase fora da tabela. Para resolver, registre o remote uma vez com `git remote add cursor https://github.com/cursor/plugins.git` e rode `git fetch --no-tags cursor main`. A seção *Checar mudanças* do `UPSTREAM.md` tem os quatro comandos que registram os dois remotes.
 
 ## O que ficou de fora
 
