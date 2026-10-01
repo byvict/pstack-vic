@@ -1237,7 +1237,7 @@ Component evidence includes native Codex parent and child Why reads, the local p
 
 # 0.5.0 — O converge sai do plugin (2026-10-01)
 
-A 0.5.0 é a etapa 1 do plano [`docs/superpowers/plans/2026-09-30-autopilot-substitui-converge.md`](docs/superpowers/plans/2026-09-30-autopilot-substitui-converge.md). Em 2026-09-30 Victor decidiu aposentar o converge inteiro e adotar o autopilot da Cursor como o fluxo do plugin ([ADR 0005](docs/adr/0005-autopilot-substitui-converge.md)). Esta versão só tira. Cada item abaixo remove uma peça do converge ou a troca pelo menor equivalente sem daemon. Nenhum texto do autopilot muda aqui. A 0.5.1 regenera os playbooks do autopilot a partir do upstream.
+A 0.5.0 é a etapa 1 do plano [`docs/arquivo/superpowers/plans/2026-09-30-autopilot-substitui-converge.md`](docs/arquivo/superpowers/plans/2026-09-30-autopilot-substitui-converge.md). Em 2026-09-30 Victor decidiu aposentar o converge inteiro e adotar o autopilot da Cursor como o fluxo do plugin ([ADR 0005](docs/adr/0005-autopilot-substitui-converge.md)). Esta versão só tira. Cada item abaixo remove uma peça do converge ou a troca pelo menor equivalente sem daemon. Nenhum texto do autopilot muda aqui. A 0.5.1 regenera os playbooks do autopilot a partir do upstream.
 
 Para Victor mudam três coisas: nada mergeia sozinho, a sessão da Raiz fica aberta até o último merge, e os PRs do Dependabot são mergeados à mão ou adotados por um programa. Os detalhes estão nas consequências do ADR 0005 e na seção Autopilot de [`docs/reference.md`](docs/reference.md).
 
@@ -1302,7 +1302,7 @@ O plano também decidiu três pontos. Dois só entram na 0.5.1: a regra de lane 
 
 # 0.5.1 — O autopilot volta ao texto da Cursor, com uma guarda (2026-10-01)
 
-A 0.5.1 refaz os seis playbooks do autopilot a partir do texto da Cursor no commit `12d587d` (pstack 0.15.5). Só uma diferença é permitida, as trocas de harness. O harness é o programa que roda o agente. Uma troca tira um termo que só existe na Cursor e põe o equivalente do Claude Code ou do Codex. Uma guarda nova, `scripts/upstream-parity.ts`, roda no `npm test` e falha quando um dos seis arquivos tem uma frase que não é da Cursor nem de uma troca. Esta versão é a etapa 2 do plano [`docs/superpowers/plans/2026-09-30-autopilot-substitui-converge.md`](docs/superpowers/plans/2026-09-30-autopilot-substitui-converge.md). A etapa 1, a 0.5.0, tirou o converge.
+A 0.5.1 refaz os seis playbooks do autopilot a partir do texto da Cursor no commit `12d587d` (pstack 0.15.5). Só uma diferença é permitida, as trocas de harness. O harness é o programa que roda o agente. Uma troca tira um termo que só existe na Cursor e põe o equivalente do Claude Code ou do Codex. Uma guarda nova, `scripts/upstream-parity.ts`, roda no `npm test` e falha quando um dos seis arquivos tem uma frase que não é da Cursor nem de uma troca. Esta versão é a etapa 2 do plano [`docs/arquivo/superpowers/plans/2026-09-30-autopilot-substitui-converge.md`](docs/arquivo/superpowers/plans/2026-09-30-autopilot-substitui-converge.md). A etapa 1, a 0.5.0, tirou o converge.
 
 Duas regras do Victor (2026-09-30) valem para tudo nesta versão:
 

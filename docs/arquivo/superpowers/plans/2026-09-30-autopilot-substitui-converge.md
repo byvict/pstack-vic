@@ -1,3 +1,5 @@
+> Arquivo histórico. Este plano foi executado de 2026-09-30 a 2026-10-01. Ele aposentou o converge na 0.5.0, refez o autopilot a partir do upstream na 0.5.1 e o provou no Claude Code. A decisão está no [ADR 0005](../../../adr/0005-autopilot-substitui-converge.md). A prova no Codex (tarefa 4.2) ficou com o Victor.
+
 # Autopilot substitui converge: Implementation Plan
 
 > **For agentic workers:** two sessions under **Unattended mode** (that section prevails over every manual gate in this plan): session A for Stages 1 to 3, session B for Stage 4.1 and Stage 5, each stage run with the Workflow tool (ultracode) as the **Execution** section describes. Checkboxes (`- [ ]`) track progress. Read the whole plan before the first edit, then the maps under `~/Dev/Skills/pstack-vic-runs/2026-09-30-autopilot-substitui-converge/mapa/` (`plugin.md`, `hunks.md`, `fora.md`, `deps.md`, `release-auth.md`, their `-cetico.md` audits, `critica-completude.md`) and the plan critiques under `../critica-plano/` (`consolidado.md` first). The maps carry every file, line and object behind the tasks; where a map says "keep" for a sentence this plan removes, the plan wins.
