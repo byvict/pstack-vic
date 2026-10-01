@@ -9,8 +9,8 @@ permissions:
   contents: read
 
 # PR runs share a group per PR, so a new push cancels the superseded run.
-# Every push to main gets its own group: each main SHA becomes Converge
-# tooling for Clinext, so none of those runs is cancelled or replaced.
+# Every push to main gets its own group, so each main commit keeps its own
+# run: a later push neither cancels nor replaces it.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
