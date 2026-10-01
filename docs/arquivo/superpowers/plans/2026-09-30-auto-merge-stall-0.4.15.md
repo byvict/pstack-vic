@@ -1,4 +1,4 @@
-> Arquivo histórico. Este documento descreve o converge, que saiu do plugin na 0.5.0 pelo [ADR 0005](../../../adr/0005-autopilot-substitui-converge.md), em 2026-09-30. Nada aqui vale mais, e parte dos links não abre.
+> Arquivo histórico. Este documento descreve o converge, que saiu do plugin na versão 0.5.0. A decisão, de 2026-09-30, está no [ADR 0005](../../../adr/0005-autopilot-substitui-converge.md). Nada aqui vale mais, e parte dos links não abre.
 
 # Stalled auto-merge 0.4.15 Implementation Plan
 

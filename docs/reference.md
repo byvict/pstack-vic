@@ -56,24 +56,24 @@ codex plugin marketplace add ~/Dev/Skills/pstack-vic
 codex plugin add pstack@pstack-vic
 ```
 
-Rode `/setup-pstack` uma vez em cada pai para escrever o sheet de modelos (`~/.claude/pstack-models.md` e `~/.codex/pstack-models.md`). O último passo dele confere a [autorização permanente](#autorização-permanente), exigida para o autopilot e o playbook Shipping mergearem sem aprovação humana. Depois, `/poteto-mode` é o ponto de entrada para qualquer tarefa que peça rigor.
+Rode `/setup-pstack` uma vez em cada pai para escrever o sheet de modelos (`~/.claude/pstack-models.md` e `~/.codex/pstack-models.md`). O último passo dele confere a [autorização permanente](#autorização-permanente), que o autopilot e o playbook Shipping exigem para mergear sem aprovação humana. Depois, `/poteto-mode` é o ponto de entrada para qualquer tarefa que peça rigor.
 
 ### Publicar uma versão
 
 A versão do pstack-vic é independente das versões dos upstreams ([`UPSTREAM.md`](../UPSTREAM.md)). Ela vive em quatro lugares que `npm test` obriga a concordar: `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, `.claude-plugin/marketplace.json` (`version` e `ref: vX.Y.Z`) e `package.json`. O `--ref vX.Y.Z` do README e desta página acompanha. Publicar é subir a versão nos quatro, rodar `npm test` e mergear o PR. Depois do merge faltam dois passos: a tag, que o CI cria, e a troca do plugin nos dois pais, que é um comando no Mac.
 
-A tag sai pelo CI. Em cada push na `main`, depois que o job `test` passa, o job `tag` de [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) lê a versão do `package.json`, cria a tag `vX.Y.Z` no commit do merge e empurra só ela. Se a tag já existe no GitHub, ele não faz nada, então um merge que não sobe a versão não muda tag nenhuma. Se o job falhar, rode-o de novo (`gh run rerun <id do run> --failed`) ou crie a tag à mão com `git tag vX.Y.Z <commit do merge>` e `git push origin refs/tags/vX.Y.Z`. Nunca `git push --tags`: os remotes `cursor` e `open` são só leitura (`tagOpt --no-tags`) e este repo não reexporta tags deles.
+A tag sai pelo CI. Em cada push na `main`, depois que o job `test` passa, o job `tag` de [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) lê a versão do `package.json`, cria a tag `vX.Y.Z` no commit do merge e empurra só ela. Se a tag já existe no GitHub, ele não faz nada, então um merge que não sobe a versão não muda tag nenhuma. Se o job falhar, rode-o de novo (`gh run rerun <id do run> --failed`) ou crie a tag à mão com `git tag vX.Y.Z <commit do merge>` e `git push origin refs/tags/vX.Y.Z`. Nunca use `git push --tags`. Os remotes `cursor` e `open` são só leitura (`tagOpt --no-tags`), e este repo não reexporta as tags deles.
 
-Mover os dois pais é um comando. Nenhum CI alcança `~/.claude` e `~/.codex`, então esse passo roda no Mac, no checkout principal:
+Trocar o plugin nos dois pais é um comando. Nenhum CI alcança `~/.claude` e `~/.codex`, então esse passo roda no Mac, no checkout principal:
 
 ```shell
 git pull --ff-only
 node scripts/release.ts
 ```
 
-O script confere antes de mexer. Ele busca o `origin` e recusa se o `HEAD` não for a ponta da `origin/main`. Depois procura a tag `vX.Y.Z` no GitHub; se o CI ainda não a criou, sai com erro e manda olhar `gh run list -R byvict/pstack-vic --branch main --limit 1`. Nas duas recusas nada é tocado. Com a tag no lugar, ele atualiza o Claude Code (`claude plugin marketplace update pstack-vic` e `claude plugin update pstack@pstack-vic`) e lê de volta a versão instalada. Só então troca o Codex, que fixa o marketplace numa tag e por isso precisa de quatro comandos: `plugin remove`, `marketplace remove`, `marketplace add byvict/pstack-vic --ref vX.Y.Z` e `plugin add`. Antes da troca ele copia `~/.codex/config.toml` para `config.toml.pre-X.Y.Z`.
+O script confere antes de mexer. Ele roda `git fetch origin` e recusa se o `HEAD` não for a ponta da `origin/main`. Depois procura a tag `vX.Y.Z` no GitHub. Se o CI ainda não a criou, o script sai com erro e manda olhar `gh run list -R byvict/pstack-vic --branch main --limit 1`. Nas duas recusas ele não toca em nada. Com a tag no lugar, ele atualiza o Claude Code (`claude plugin marketplace update pstack-vic` e `claude plugin update pstack@pstack-vic`) e lê de volta a versão instalada. Só então troca o Codex, que fixa o marketplace numa tag e por isso precisa de quatro comandos: `plugin remove`, `marketplace remove`, `marketplace add byvict/pstack-vic --ref vX.Y.Z` e `plugin add`. Antes da troca ele copia `~/.codex/config.toml` para `config.toml.pre-X.Y.Z`.
 
-Cada passo confere o que já foi feito, então rodar duas vezes não estraga nada: um pai que já está na versão é pulado, uma troca do Codex interrompida continua de onde parou e a primeira cópia do `config.toml` fica como está. Qualquer falha sai com código 1. Se a troca do Codex parar no meio, o Codex pode ficar sem o plugin. Rode o script de novo para terminar, ou volte ao que havia antes com a linha que ele imprime: `cp ~/.codex/config.toml.pre-X.Y.Z ~/.codex/config.toml && codex plugin add pstack@pstack-vic`.
+Cada passo confere o que já foi feito, então rodar o script duas vezes não estraga nada. Ele pula um pai que já está na versão, continua de onde parou uma troca do Codex interrompida e deixa como está a primeira cópia do `config.toml`. Em qualquer falha, o script sai com código 1. Se a troca do Codex parar no meio, o Codex pode ficar sem o plugin. Rode o script de novo para terminar, ou volte ao que havia antes com a linha que ele imprime: `cp ~/.codex/config.toml.pre-X.Y.Z ~/.codex/config.toml && codex plugin add pstack@pstack-vic`.
 
 ## Layout
 
@@ -157,43 +157,51 @@ Faça a execução semanal da skill `pstack:update-clis` (plugin pstack instalad
 
 ## Autopilot
 
-O autopilot leva uma fila de PRs até o merge dentro de uma sessão sua. Você abre a sessão, pede o programa e dá o "go". Essa sessão é a Raiz: ela cria um Dono para cada PR, confere o trabalho de cada Dono com verificadores que não escreveram o código e só então libera o merge. Nada roda fora dessa sessão. Se ela fecha, o programa para.
+O autopilot leva uma fila de PRs até o merge dentro de uma sessão sua. Uma execução dessas se chama programa. Você abre a sessão, pede o programa e dá o "go". Essa sessão é a Raiz. Ela cria um Dono para cada PR. O Dono é um subagente que cuida daquele PR do começo ao fim. A Raiz confere o trabalho de cada Dono com verificadores que não escreveram o código e só então libera o merge. Nada roda fora dessa sessão. Se ela fecha, o programa para.
 
-Os dois playbooks vêm do pstack da Cursor. No [Autopilot-full](../skills/poteto-mode/playbooks/autopilot-full.md), cada Dono mergeia o próprio PR depois do veredito limpo da Raiz. No [Autopilot-stack](../skills/poteto-mode/playbooks/autopilot-stack.md), ninguém mergeia: a Raiz monta uma pilha de PRs verificados, e você revisa e mergeia. Use o primeiro quando os PRs são independentes e você deu a autoridade de merge. Use o segundo quando quer revisar antes do merge ou quando o trabalho é encadeado. As palavras Raiz, Dono, Enxame, Veredito, Rodada e Tick estão definidas no [`CONTEXT.md`](../CONTEXT.md).
+O autopilot tem dois playbooks, e os dois vêm do pstack da Cursor. No [Autopilot-full](../skills/poteto-mode/playbooks/autopilot-full.md), cada Dono mergeia o próprio PR depois do Veredito limpo da Raiz. No [Autopilot-stack](../skills/poteto-mode/playbooks/autopilot-stack.md), nenhum agente mergeia. A Raiz monta uma pilha de PRs verificados, e você revisa e mergeia. Use o Autopilot-full quando os PRs são independentes e você deu a autoridade de merge. Quando você quer revisar antes do merge, ou quando o trabalho é encadeado, use o Autopilot-stack. As palavras Raiz, Dono, Enxame, Veredito, Rodada e Tick estão definidas no [`CONTEXT.md`](../CONTEXT.md).
 
 ### Como um programa começa
 
 1. Abra uma sessão no repositório e entre com `/poteto-mode`.
 2. Peça o programa e diga a fila, por exemplo `autopilot this queue` seguido dos itens. Para a pilha, peça `autopilot-stack`.
-3. Diga quais itens são seus, se houver ("esse PR fica comigo").
-4. Se quiser ver o plano antes, peça o protocolo. A Raiz declara o protocolo e para. Pedir o plano não é dar o "go".
-5. Dê o "go". Só então a Raiz começa: grava o objetivo do programa nas ordens permanentes dela e cria um Dono por PR, cada um num worktree próprio. Em cerca de 15 minutos cada Dono abre o PR dele, pronto e nunca como rascunho, e começa uma trilha de decisões (`decisions.tsv`).
-
-Antes do "go", confira a [autorização permanente](#autorização-permanente). Sem ela, o modo automático do Claude Code nega o merge quando o Dono chega nele.
+3. Se algum item da fila for seu, diga qual ("esse PR fica comigo").
+4. Se quiser ver antes o que a Raiz vai fazer, peça o protocolo. A Raiz declara o protocolo e para. Pedir o protocolo não é dar o "go".
+5. Confira a [autorização permanente](#autorização-permanente). Sem ela, o modo automático do Claude Code nega o merge quando o Dono chega nele.
+6. Dê o "go". Só então a Raiz começa. Ela grava o objetivo do programa nas ordens permanentes dela, que ela relê a cada Tick, e cria um Dono por PR. Cada Dono trabalha num worktree próprio, que é uma cópia de trabalho separada do repositório. Em cerca de 15 minutos cada Dono abre o PR dele, pronto e nunca como rascunho, e começa uma trilha de decisões (`decisions.tsv`).
 
 ### O que você faz
 
-- **Dá o "go" e deixa a sessão aberta** até o último merge.
-- **Cuida dos seus itens.** Um item que você nomeou para no merge-ready. O Dono avisa, e quem revisa e clica no merge é você.
-- **Manda parar quando quiser.** Um "para" seu chega na hora a todos os Donos como ordem de zero escritas. Eles seguram o trabalho até você liberar.
-- **Lê a resposta final.** Ela traz a fila com o Dono, o estado e o head de cada PR, cada veredito, o que foi mergeado e onde estão as trilhas de decisão.
+Sua parte num programa é esta:
+
+- **Dá o "go".** Depois deixa a sessão aberta até o último merge.
+- **Cuida dos seus itens.** O Dono leva um item seu até ficar pronto para o merge (Merge-ready) e para ali. Ele avisa, e quem revisa e clica no merge é você.
+- **Manda parar quando quiser.** Um "para" seu chega na hora a todos os Donos como ordem de não escrever mais nada. Eles seguram o trabalho até você liberar.
+- **Lê a resposta final.** Ela traz a fila com o Dono, o estado e o head (o último commit) de cada PR, cada Veredito, o que foi mergeado e onde estão as trilhas de decisão.
 
 O resto é da Raiz e dos Donos: build, PR, CI, verificação e, no Autopilot-full, o merge.
 
 ### O que mudou em relação ao fluxo antigo
 
-Até a 0.4.19 o plugin tinha um fluxo próprio, em que um robô no Mac conferia e mergeava PRs sozinho, mesmo com todas as sessões fechadas. A 0.5.0 aposentou esse fluxo. A decisão está no ADR 0005, em [`docs/adr/`](adr/), e os documentos antigos estão em [`docs/arquivo/`](arquivo/), só como história. Para você, mudou isto:
+Até a 0.4.19 o plugin tinha um fluxo próprio, em que um robô no Mac conferia e mergeava PRs sozinho, mesmo com todas as sessões fechadas. A 0.5.0 aposentou esse fluxo. A decisão está no ADR 0005, em [`docs/adr/`](adr/). Os documentos antigos estão em [`docs/arquivo/`](arquivo/), só como história. Para você, mudou isto:
 
 - **Nada mergeia sozinho.** Não existe mais robô de madrugada. Um PR só anda enquanto uma sessão sua, a Raiz, está aberta rodando um programa.
-- **A sessão da Raiz fica aberta até o último merge.** Se você fechar, os Donos param, e nada acontece até você abrir de novo e retomar.
+- **A sessão da Raiz fica aberta até o último merge.** Se você fechar a sessão, os Donos param. Nada acontece até você abrir de novo e retomar.
 - **PR aberto fora de um programa espera.** Um PR do Dependabot, ou um que você abriu à mão, não tem Dono. Ou você mergeia, ou um programa o adota como item da fila.
-- **O GitHub só exige o CI.** Os checks `verdict` e `hold` saíram das regras, e um rótulo no PR não trava mais nada. O que segura um merge é o veredito da Raiz, dentro da sessão. O que é seu você diz na sessão.
-- **A versão sai em dois passos.** O CI cria a tag, e trocar o plugin nos dois pais é um comando seu no Mac ([Publicar uma versão](#publicar-uma-versão)).
-- **No Codex não há relógio interno.** Você mesmo pede o Tick a cada 30 minutos, e o Codex precisa de `multi_agent` ligado para ter Donos ([Codex](#codex)).
+- **O GitHub só exige o CI.** Os checks `verdict` e `hold` saíram das regras, e um rótulo no PR não trava mais nada. O que segura um merge é o Veredito da Raiz, dentro da sessão. Para ficar com um PR, diga isso na sessão.
+- **A versão sai em dois passos.** O CI cria a tag. Trocar o plugin nos dois pais é um comando seu no Mac ([Publicar uma versão](#publicar-uma-versão)).
+- **No Codex não há relógio interno.** Você mesmo pede o Tick a cada 30 minutos. O Codex também precisa de `multi_agent` ligado para ter Donos ([Codex](#codex)).
 
 ### Autorização permanente
 
-Nos playbooks do pstack, um agente mergeia um PR que nenhum humano aprovou, em dois casos: o dono de um PR num programa de autopilot, depois do veredito limpo do enxame da Raiz, dado por verificadores que não escreveram o código; e a sessão que roda o playbook Shipping, depois do veredito do verificador independente daquele PR. O modo automático do Claude Code bloqueia isso de fábrica (regras "Merge Without Review" e "Self-Approval"), e o classificador dele lê as mensagens do usuário e os comandos, não as perguntas do agente: um "ok" a uma pergunta não autoriza nada, e o merge é negado. O operador grava a decisão uma vez, numa entrada de `autoMode.allow` no `~/.claude/settings.json` dele. O Claude Code não lê essa lista de nenhum repositório nem de plugin, então o plugin não a entrega.
+A autorização permanente é uma entrada que você grava uma vez em `autoMode.allow`, no seu `~/.claude/settings.json`. Sem ela, o modo automático do Claude Code nega o merge quando o Dono ou a sessão do Shipping chega nele.
+
+Nos playbooks do pstack, um agente mergeia um PR que nenhum humano aprovou em dois casos:
+
+- O Dono de um PR num programa de autopilot mergeia depois do Veredito limpo do Enxame da Raiz. Quem dá esse Veredito são verificadores que não escreveram o código.
+- A sessão que roda o playbook Shipping mergeia depois do veredito do verificador independente daquele PR.
+
+O modo automático do Claude Code bloqueia esses merges de fábrica, pelas regras "Merge Without Review" e "Self-Approval". O classificador dele lê as mensagens do usuário e os comandos, e não lê as perguntas do agente. Por isso um "ok" a uma pergunta não autoriza nada, e o modo automático nega o merge. O Claude Code não lê `autoMode.allow` de nenhum repositório nem de plugin, então o plugin não entrega a entrada.
 
 ```shell
 AUTHORIZE=~/.claude/plugins/cache/pstack-vic/pstack/<versão>/skills/setup-pstack/scripts/authorize.ts
@@ -202,9 +210,21 @@ node $AUTHORIZE apply --parent claude   # num terminal: mostra a entrada, pede u
 node $AUTHORIZE check --parent codex    # 0 quando approval_policy = "never" no topo do ~/.codex/config.toml
 ```
 
-A entrada vale em qualquer repositório. Ela cobre três coisas: o merge com `gh pr merge` nesses dois casos (squash, ou `--auto` quando o playbook ou o operador pede); a Raiz criar subagentes donos e verificadores, empurrar as branches dos donos com `--force-with-lease` e publicar vereditos como comentários no PR; e lançar pelo `pstack-runner` as lanes que os playbooks nomeiam (dono, verificador, revisor, juiz ou worker em claude, codex ou grok). Continuam bloqueados `--admin` e qualquer outro desvio de check obrigatório, mudança em proteção de branch, rulesets ou checks obrigatórios e tudo o que as outras regras protegem (arquivos, branches e histórico destruídos, produção, segredos, dado que sai). O `apply` recusa sem terminal, porque a autorização é um ato do operador e não do agente. Ele mantém as regras de fábrica (`"$defaults"`) e todas as outras configurações, e copia o arquivo anterior para `settings.json.before-pstack-authorization`. Para retirar a autorização, apague a entrada.
+A entrada vale em qualquer repositório. Ela cobre três coisas:
 
-A entrada traz a versão no nome (`pstack standing authorization v2`). Quem tem a v1, do fluxo antigo, roda o `apply` de novo: ele troca a entrada no lugar, e até lá o `check` sai 1. Nenhum playbook roda o `check`. Quem confere é o operador: o passo 10 do `/setup-pstack` roda o `check`, e vale rodá-lo antes do "go" de um programa de autopilot, quando a Raiz declara o protocolo. Sem a entrada, o modo automático nega o merge quando o dono ou a sessão do Shipping chega nele.
+- O merge com `gh pr merge` nesses dois casos, por squash ou com `--auto` quando o playbook ou você pede.
+- O trabalho da Raiz de criar subagentes Donos e verificadores, empurrar as branches dos Donos com `--force-with-lease` e publicar Vereditos como comentários no PR.
+- O lançamento, pelo `pstack-runner`, das lanes que os playbooks nomeiam (Dono, verificador, revisor, juiz ou worker em claude, codex ou grok).
+
+Continuam bloqueados:
+
+- `--admin` e qualquer outro desvio de um check obrigatório.
+- Mudança em proteção de branch, em rulesets ou em checks obrigatórios.
+- Tudo o que as outras regras protegem: arquivos, branches e histórico destruídos, produção, segredos e dados enviados para fora.
+
+Fora de um terminal, o `apply` recusa, porque a autorização é um ato seu e não do agente. Ele mantém as regras de fábrica (`"$defaults"`) e todas as outras configurações, e copia o arquivo anterior para `settings.json.before-pstack-authorization`. Para retirar a autorização, apague a entrada.
+
+A entrada traz a versão no nome (`pstack standing authorization v2`). Se você tem a v1, do fluxo antigo, rode o `apply` de novo. Ele troca a entrada no lugar. Até lá, o `check` sai com 1. Nenhum playbook roda o `check`, então quem confere é você. O passo 10 do `/setup-pstack` roda o `check`. Rode-o também antes do "go" de um programa de autopilot, quando a Raiz declara o protocolo.
 
 ## Skills
 
@@ -231,7 +251,7 @@ Nomes curtos; no Claude Code cada uma aparece com o prefixo do plugin (`/pstack:
 | `blast-radius` | o que uma mudança pequena pode quebrar fora do diff, provado rodando código |
 | `recall` | reconstruir o contexto recente de um tema a partir do histórico e do registro compartilhado |
 | `update-clis` | atualizar `claude`, `codex` e `grok` só quando o plugin continua funcionando na versão nova: notas contra os pontos de contato, instalação, sonda real, volta e contraprova; o que não passa fica segurado numa issue do Linear |
-| `setup-pstack` | escolher modelo e effort por papel (a mesma família pode rodar em efforts diferentes em papéis diferentes); probe de cada par família+effort e escrita do sheet pelo `scripts/setup-pstack.ts` (rerun byte-idêntico, nada escrito se um probe falha); o passo 10 confere a autorização permanente, que o autopilot e o playbook Shipping exigem, pelo `scripts/authorize.ts` |
+| `setup-pstack` | escolher modelo e effort por papel (a mesma família pode rodar em efforts diferentes em papéis diferentes); probe de cada par família+effort e escrita do sheet pelo `scripts/setup-pstack.ts` (rerun byte-idêntico, nada escrito se um probe falha); o passo 10 confere, pelo `scripts/authorize.ts`, a autorização permanente que o autopilot e o playbook Shipping exigem |
 | `unslop` | limpar marcas de IA de qualquer prosa |
 | `no-comments` | tirar comentários antes da revisão via o subagent `comment-sicko` |
 | `create-verification-skill` | gerar uma skill de verificação local ao projeto com mapa de features |

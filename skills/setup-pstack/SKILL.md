@@ -115,7 +115,7 @@ Report the sheet path, the ledger path, the parent route table, the families pro
 
 ### 10. Standing authorization
 
-Under pstack's playbooks an agent merges a pull request that no human approved, in two cases: an autopilot owner merges its own pull request after the root's clean swarm verdict, and the session running the Shipping playbook merges after the verdict of that pull request's independent verifier. Claude Code's auto mode blocks that merge by default, under its rules Merge Without Review and Self-Approval. Its classifier reads the user's messages and the commands. It does not read your questions, so an "ok" to your question authorizes nothing. The operator records the decision once, in their own settings. Check the authorization on every run of this skill. When the operator asks only for the authorization, run this step alone:
+Under pstack's playbooks, an agent merges a pull request that no human approved in two cases. An autopilot owner merges its own pull request after the root's clean swarm verdict. The session that runs the Shipping playbook merges after the verdict of that pull request's independent verifier. Claude Code's auto mode blocks that merge by default, under its rules Merge Without Review and Self-Approval. Its classifier reads the user's messages and the commands. It does not read your questions, so an "ok" to your question authorizes nothing. The operator records the decision once, in their own settings. Check the authorization on every run of this skill. When the operator asks only for the authorization, run this step alone:
 
 ```shell
 node scripts/authorize.ts check --parent <parent>
@@ -123,7 +123,19 @@ node scripts/authorize.ts check --parent <parent>
 
 On exit 0, say in one line that the parent is authorized.
 
-On exit 1 on Claude Code, the JSON carries the `reason`, the `entry` and the `grant` command. Show the operator the `entry` in full. Say in their language what the entry allows in every repository: in those two cases, merge with `gh pr merge` a pull request that no human approved; let the root spawn owner and verifier subagents, push its owners' branches with `--force-with-lease`, and post verdicts as pull request comments; and launch pstack's lanes through the runner. Say what stays blocked: `--admin` and any other way around a required check, a change to branch protection, rulesets or required checks, and everything the other rules protect (destroyed files, branches and history, production, secrets, data that leaves). Then give the operator the `grant` command to run on a terminal. `apply` shows the entry, asks for a typed yes, keeps every other setting, and copies the old file to `settings.json.before-pstack-authorization`.
+On exit 1 on Claude Code, the JSON carries the `reason`, the `entry` and the `grant` command. Show the operator the `entry` in full. Say in their language what the entry allows in every repository:
+
+- In those two cases, an agent merges with `gh pr merge` a pull request that no human approved.
+- The root spawns owner and verifier subagents, pushes its owners' branches with `--force-with-lease`, and posts verdicts as pull request comments.
+- An agent launches pstack's lanes through the runner.
+
+Say what stays blocked:
+
+- `--admin` and any other way around a required check.
+- A change to branch protection, rulesets or required checks.
+- Everything the other rules protect (destroyed files, branches and history, production, secrets, data that leaves the trust boundary).
+
+Then give the operator the `grant` command to run on a terminal. `apply` shows the entry, asks for a typed yes, keeps every other setting, and copies the old file to `settings.json.before-pstack-authorization`.
 
 The authorization is the operator's act. Never run `apply` yourself, never write the entry into a settings file, and never supply the answer. The script refuses without a terminal for that reason. Claude Code reads `autoMode` from the user's settings and from no repository or plugin, so the plugin cannot ship the entry. When the operator says that `apply` ran, run `check` again and report the result.
 

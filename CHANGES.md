@@ -1203,7 +1203,7 @@ Hunks que ficaram de fora dos três commits e que o PR das partes de autopilot d
 
 Esse PR avança o ponto de sync em `UPSTREAM.md` para `12d587d` e a linha de proveniência da Cursor em `NOTICE.md`.
 
-**Nota da 0.5.0.** A comparação terminou com a saída do converge ([ADR 0005](docs/adr/0005-autopilot-substitui-converge.md)). A etapa 2 do plano, a 0.5.1, resolve esta lista: aplica os hunks de autopilot a partir do texto da Cursor em `12d587d` e avança o ponto de sync. A menção ao lease do converge no item do `12d587d` deixa de valer.
+**Nota da 0.5.0.** A comparação terminou com a saída do converge ([ADR 0005](docs/adr/0005-autopilot-substitui-converge.md)). A etapa 2 do plano, a 0.5.1, resolve esta lista. Ela aplica os hunks de autopilot a partir do texto da Cursor em `12d587d` e avança o ponto de sync. A menção ao lease do converge no item do `12d587d` deixa de valer.
 
 ## Verificação
 
@@ -1225,43 +1225,43 @@ Component evidence includes native Codex parent and child Why reads, the local p
 
 # 0.5.0 — O converge sai do plugin (2026-10-01)
 
-Etapa 1 do plano [`docs/superpowers/plans/2026-09-30-autopilot-substitui-converge.md`](docs/superpowers/plans/2026-09-30-autopilot-substitui-converge.md). Em 2026-09-30 Victor decidiu aposentar o converge inteiro e adotar o autopilot da Cursor como o fluxo do plugin ([ADR 0005](docs/adr/0005-autopilot-substitui-converge.md)). Esta versão só tira: cada item abaixo remove uma peça do converge ou a troca pelo menor equivalente sem daemon. Nenhum texto do autopilot muda aqui. A 0.5.1 regenera os playbooks do autopilot a partir do upstream.
+A 0.5.0 é a etapa 1 do plano [`docs/superpowers/plans/2026-09-30-autopilot-substitui-converge.md`](docs/superpowers/plans/2026-09-30-autopilot-substitui-converge.md). Em 2026-09-30 Victor decidiu aposentar o converge inteiro e adotar o autopilot da Cursor como o fluxo do plugin ([ADR 0005](docs/adr/0005-autopilot-substitui-converge.md)). Esta versão só tira. Cada item abaixo remove uma peça do converge ou a troca pelo menor equivalente sem daemon. Nenhum texto do autopilot muda aqui. A 0.5.1 regenera os playbooks do autopilot a partir do upstream.
 
-O que muda para Victor está nas consequências do ADR 0005 e na seção Autopilot de [`docs/reference.md`](docs/reference.md): nada mergeia sozinho, a sessão da Raiz fica aberta até o último merge e os PRs do Dependabot são mergeados à mão ou adotados por um programa.
+Para Victor mudam três coisas: nada mergeia sozinho, a sessão da Raiz fica aberta até o último merge, e os PRs do Dependabot são mergeados à mão ou adotados por um programa. Os detalhes estão nas consequências do ADR 0005 e na seção Autopilot de [`docs/reference.md`](docs/reference.md).
 
 ## O que saiu
 
-- **A árvore do converge.** `skills/poteto-mode/scripts/converge/` (77 arquivos), os playbooks `converge.md`, `pre-pr.md` e `catch-up.md` e as referências `converge-contract.md`, `merge-queue.md`, `parallel-delivery.md` e `pre-pr-prompts.md`.
-- **As peças do GitHub.** A action `actions/merge-queue`, o contrato `.cursor/converge.json` e o workflow `.github/workflows/hold.yml`.
-- **A sonda de permissão do Linear da 0.4.19.** `claude-linear-permission-probe.ts`, o teste, as fixtures e a referência, todos em `skills/update-clis/`, mais o parágrafo do passo 8 da skill que mandava rodá-la.
-- **As frases do converge nos playbooks e skills compartilhados.** A Posse no Babysit e no Shipping, a Nota do fluxo no Babysit e a consulta ao `converge-local` no Session pickup. Em Opening a PR saem os parágrafos dos alvos do Linear e do Pré-PR com arm, e o parágrafo Worktree volta ao texto anterior ao #63. No `poteto-mode` saem os gatilhos de entrega paralela e de converge e as entradas Converge, Pré-PR e Catch-up da lista de playbooks.
-- **Os trailers `Pstack-Author` e `Pstack-Linear`** (D6). Saem de `feature.md`, `bug-fix.md`, `perf-issue.md`, `hillclimb.md`, `opening-a-pr.md`, das skills `swarm` e `arena` e da seção *Authorship trailer* de `provider-dispatch.md`.
-- **Seis papéis da matriz.** `pre-pr reviewer`, `pre-pr fixer`, `pre-pr certifier`, `converge raiz`, `pr owner` e `pr verifier`. A matriz fica com 17 papéis. O `/setup-pstack` ainda lê um sheet que tem as seis linhas e as deixa de fora na escrita seguinte. Ele perde as checagens que só esses papéis usavam (linha de uma lane só, linha do revisor, avisos de família cruzada). O arquivo de plano do setup passa a `schemaVersion` 5, então um `plan.json` salvo pela 0.4.19 é recusado e o `plan` precisa rodar de novo.
-- **O provider `cursor` e o modo `unsandboxed`** (D2). Da matriz saem `providers.cursor`, as seis famílias `cursor-grok`, `composer`, `kimi`, `glm`, `gemini-pro` e `muse` (ficam sete famílias e três providers), o campo `transport` e a marca `unsandboxed` do Grok. Do runner saem `http-lane.ts` e o modo `unsandboxed`: o runner recusa `--mode unsandboxed`, `--repo` e `--pr`, e os recibos não trazem mais os campos `remote` e `checkout`. O probe do `/setup-pstack` perde o par `--repo`/`--pr`. Em `provider-dispatch.md` saem a seção *HTTP lanes*, o parágrafo do `unsandboxed` e as frases sobre os recibos da nuvem da Cursor. A variável `CURSOR_API_KEY` fica sem uso.
+- **A árvore do converge.** Saem `skills/poteto-mode/scripts/converge/` (77 arquivos), os playbooks `converge.md`, `pre-pr.md` e `catch-up.md` e as referências `converge-contract.md`, `merge-queue.md`, `parallel-delivery.md` e `pre-pr-prompts.md`.
+- **As peças do GitHub.** Saem a action `actions/merge-queue`, o contrato `.cursor/converge.json` e o workflow `.github/workflows/hold.yml`.
+- **A sonda de permissão do Linear da 0.4.19.** Saem `claude-linear-permission-probe.ts`, o teste, as fixtures e a referência, todos em `skills/update-clis/`, e o parágrafo do passo 8 da skill que mandava rodá-la.
+- **As frases do converge nos playbooks e skills compartilhados.** Saem a Posse no Babysit e no Shipping, a Nota do fluxo no Babysit e a consulta ao `converge-local` no Session pickup. Em Opening a PR saem os parágrafos dos alvos do Linear e do Pré-PR com arm, e o parágrafo Worktree volta ao texto anterior ao #63. No `poteto-mode` saem os gatilhos de entrega paralela e de converge e as entradas Converge, Pré-PR e Catch-up da lista de playbooks.
+- **Os trailers `Pstack-Author` e `Pstack-Linear`** (D6). Eles saem de `feature.md`, `bug-fix.md`, `perf-issue.md`, `hillclimb.md`, `opening-a-pr.md`, das skills `swarm` e `arena` e da seção *Authorship trailer* de `provider-dispatch.md`.
+- **Seis papéis da matriz.** Saem `pre-pr reviewer`, `pre-pr fixer`, `pre-pr certifier`, `converge raiz`, `pr owner` e `pr verifier`. A matriz fica com 17 papéis. O `/setup-pstack` ainda lê um sheet que tem as seis linhas e as deixa de fora na escrita seguinte. Ele perde as checagens que só esses papéis usavam (linha de uma lane só, linha do revisor, avisos de família cruzada). O arquivo de plano do setup passa a `schemaVersion` 5. Por isso o setup recusa um `plan.json` salvo pela 0.4.19, e o `plan` precisa rodar de novo.
+- **O provider `cursor` e o modo `unsandboxed`** (D2). Da matriz saem `providers.cursor`, as seis famílias `cursor-grok`, `composer`, `kimi`, `glm`, `gemini-pro` e `muse` (ficam sete famílias e três providers), o campo `transport` e a marca `unsandboxed` do Grok. Do runner saem `http-lane.ts` e o modo `unsandboxed`. O runner recusa `--mode unsandboxed`, `--repo` e `--pr`, e os recibos não trazem mais os campos `remote` e `checkout`. O probe do `/setup-pstack` perde o par `--repo`/`--pr`. Em `provider-dispatch.md` saem a seção *HTTP lanes*, o parágrafo do `unsandboxed` e as frases sobre os recibos da nuvem da Cursor. A variável `CURSOR_API_KEY` fica sem uso.
 - **Pontos de contato do `update-clis`.** Saem `codex.raiz-argv`, `claude.raiz-argv`, `grok.unsandboxed` e `claude.linear-native`, e o contrato `grok.argv` perde o valor `off` de `--sandbox`.
-- **A release pelo Daemon** (D7). `scripts/after-merge.ts` sai. No lugar entram duas peças: o job `tag` do CI, que cria a tag `vX.Y.Z` em cada push na `main` depois que o `test` passa, e `scripts/release.ts`, que roda no Mac e troca o plugin nos dois pais. O script sai com código 1 em qualquer falha. A saída 75 ("ainda não") não existe mais.
+- **A release pelo Daemon** (D7). `scripts/after-merge.ts` sai. No lugar entram duas peças: o job `tag` do CI, que cria a tag `vX.Y.Z` em cada push na `main` depois que o `test` passa, e `scripts/release.ts`, que roda no Mac e troca o plugin nos dois pais. Em qualquer falha, o `release.ts` termina com código 1. O código de saída 75 ("ainda não") não existe mais.
 - **CI e configuração.** Os comentários de `ci.yml` e de `dependabot.yml` não citam mais o converge, e a espera de 7 dias do Dependabot fica (D14). O glob do `npm test` e a lista do `collision:check` perdem as entradas apagadas.
 - **Documentos.** `docs/pre-pr.md`, `docs/converge-plan.md`, `docs/converge-v1.md`, nove planos e cinco specs vão para `docs/arquivo/`, na mesma estrutura de pastas, cada um com uma linha no topo que diz que é história. Os ADRs 0001 a 0004 ficam `superseded`, e o ADR 0005 registra a decisão. O `CONTEXT.md` é reescrito no vocabulário do autopilot (D9). `docs/reference.md` perde as seções *Probes HTTP* e *Converge* e o item `CURSOR_API_KEY`, e ganha a seção *Autopilot*. Neste arquivo, os links para os documentos movidos passam a apontar para `docs/arquivo/`, e os oito links para o `converge-contract.md` apagado viram texto.
 
 ## O que mudou no lugar
 
-- **Autorização permanente, versão 2** (D8). `authorize.ts` passa a `GRANT_VERSION` 2. A entrada cobre o merge de um PR sem aprovação humana em dois casos: o Dono de um PR num programa de autopilot, depois do veredito limpo do enxame da Raiz, e a sessão do playbook Shipping, depois do veredito do verificador independente. Quem tem a v1 roda o `apply` de novo, e até lá o `check` sai 1. Nenhum playbook roda o `check`: ele fica no passo 10 do `/setup-pstack` e em `docs/reference.md`.
+- **Autorização permanente, versão 2** (D8). `authorize.ts` passa a `GRANT_VERSION` 2. A entrada cobre o merge de um PR sem aprovação humana em dois casos: o Dono de um PR num programa de autopilot, depois do Veredito limpo do Enxame da Raiz, e a sessão do playbook Shipping, depois do veredito do verificador independente. Quem tem a v1 roda o `apply` de novo. Até lá, o `check` sai com 1. Nenhum playbook roda o `check`. Ele fica no passo 10 do `/setup-pstack` e em `docs/reference.md`.
 - **Transcripts do Codex.** `codex-tools.md` ganha a linha do diretório de transcripts do Codex, `~/.codex/sessions/`.
 
 ## Decisões
 
-Victor fechou todas em 2026-09-30. D6, D8, D9, D13 e D14 foram decididas pelo plano, e ele não discordou. Parte delas vale para as etapas seguintes do plano (Clinext, prova, faxina) e fica registrada aqui para a lista estar num lugar só.
+Victor fechou todas em 2026-09-30. O plano decidiu D6, D8, D9, D13 e D14, e ele não discordou. Parte delas vale para as etapas seguintes do plano (Clinext, prova, faxina) e fica registrada aqui para a lista estar num lugar só.
 
 | # | Decisão |
 | --- | --- |
 | D1 | O trabalho parte da 0.4.19, o que estava na `main`, com o PR #65 que o Daemon mergeou sozinho em 2026-09-30. |
 | D2 | O modo `unsandboxed` e o provider da nuvem da Cursor saem do runner. Só o converge usava os dois. |
-| D3 | O check `hold` sai das regras do GitHub, e o rótulo `needs-victor` fica só como marcação. O que é do Victor ele diz na sessão. |
+| D3 | O check `hold` sai das regras do GitHub, e o rótulo `needs-victor` fica só como marcação. Para ficar com um PR, Victor diz isso na sessão. |
 | D4 | A fila de merge nativa do Clinext é apagada. Os PRs mergeiam direto do head rebaseado, um de cada vez. |
 | D5 | O Dependabot do Clinext agrupa as atualizações e passa a rodar uma vez por mês. |
 | D6 | Os trailers `Pstack-Author` e `Pstack-Linear` saem. Sem o converge ninguém os lê, e eles não existem no upstream. |
 | D7 | A tag da versão sai pelo CI em cada merge na `main`. Trocar o plugin nos dois pais é o comando `node scripts/release.ts`, no Mac. |
-| D8 | A autorização permanente v2 entra na 0.5.0, e Victor a aplica. A frase de checagem não entra nos playbooks: fica na documentação e no `/setup-pstack`. |
+| D8 | A autorização permanente v2 entra na 0.5.0, e Victor a aplica. A frase de checagem não entra nos playbooks. Ela fica na documentação e no `/setup-pstack`. |
 | D9 | O `CONTEXT.md` é reescrito no vocabulário do autopilot, não apagado. |
 | D10 | Os dois arquivos de ambiente da Cursor no Clinext (`.cursor/cloud-install.sh` e `.cursor/environment.json`) ficam. |
 | D11 | A sessão Codex da CLI-205 é encerrada, e o branch dela no Clinext é apagado. |
@@ -1274,14 +1274,14 @@ O plano também decidiu três pontos que só entram na 0.5.1: a regra de lane tr
 
 ## Verificação
 
-- `npm test`: 261 testes, 0 falhas. A 0.4.19 tinha 1118. Saem os 769 da árvore do converge e mais 99 fora dela: 60 do runner (os 41 de `http-lane.test.ts`, 11 de `run.test.ts`, 4 de `cli.test.ts`, 3 de `commands.test.ts` e 1 de `parse-output.test.ts`), 16 de `setup-pstack.test.ts`, 10 de `after-merge.test.ts`, 8 do `update-clis` (os 7 da sonda do Linear e 1 de `update-clis.test.ts`) e 5 de `model-matrix.test.ts`. Entram os 11 de `release.test.ts`. A conta foi medida arquivo por arquivo nos dois lados: os 17 arquivos de teste da 0.4.19 fora do converge somam 349, que é 1118 menos 769, e os 15 arquivos desta versão somam 261.
+- `npm test`: 261 testes, 0 falhas. A 0.4.19 tinha 1118. Saem os 769 da árvore do converge e mais 99 fora dela: 60 do runner (os 41 de `http-lane.test.ts`, 11 de `run.test.ts`, 4 de `cli.test.ts`, 3 de `commands.test.ts` e 1 de `parse-output.test.ts`), 16 de `setup-pstack.test.ts`, 10 de `after-merge.test.ts`, 8 do `update-clis` (os 7 da sonda do Linear e 1 de `update-clis.test.ts`) e 5 de `model-matrix.test.ts`. Entram os 11 de `release.test.ts`. A conta foi medida arquivo por arquivo nos dois lados. Os 17 arquivos de teste da 0.4.19 fora do converge somam 349, que é 1118 menos 769, e os 15 arquivos desta versão somam 261.
 - `npm run test:bun`: 52 testes, 0 falhas, typecheck limpo. `npm run matrix:check`, `npm run agents:check`, `npm run collision:check` e `git diff --check` limpos.
-- Varredura de resíduo (tarefa 1.10 do plano), fora deste arquivo, de `docs/arquivo/`, de `docs/adr/` e do próprio plano. O que ela ainda acha não é converge:
-  - o verbo inglês "converge" e a palavra "convergence" na prosa do `poteto-mode`, das skills `principle-*`, da `arena`, da `reflect` e da `why`;
-  - "The PR owner" em `references/bugbot-triage.md`, texto da Cursor;
-  - "client certificates" no changelog do Claude que serve de fixture ao `update-clis`;
-  - o prefixo `pstack-authorize-` do diretório temporário de `authorize.test.ts` e o nome do backup `settings.json.before-pstack-authorization` (em `authorize.ts`, no passo 10 do `/setup-pstack` e em `docs/reference.md`), que casam com `Pstack-Author` porque a busca ignora maiúsculas;
-  - "per-PR verifier" no texto da autorização v2, que casa com `pr verifier`;
-  - a lista `RETIRED_CONVERGE_ROLES` de `setup-pstack.ts`, com os nomes dos seis papéis aposentados, e o teste dela, que ficam para o `/setup-pstack` continuar lendo um sheet antigo.
+- A varredura de resíduo (tarefa 1.10 do plano) rodou fora deste arquivo, de `docs/arquivo/`, de `docs/adr/` e do próprio plano. O que ela ainda acha não é converge:
+  - O verbo inglês "converge" e a palavra "convergence" na prosa do `poteto-mode`, das skills `principle-*`, da `arena`, da `reflect` e da `why`.
+  - "The PR owner" em `references/bugbot-triage.md`, texto da Cursor.
+  - "client certificates" no changelog do Claude que serve de fixture ao `update-clis`.
+  - O prefixo `pstack-authorize-` do diretório temporário de `authorize.test.ts` e o nome do backup `settings.json.before-pstack-authorization` (em `authorize.ts`, no passo 10 do `/setup-pstack` e em `docs/reference.md`), que casam com `Pstack-Author` porque a busca ignora maiúsculas.
+  - "per-PR verifier" no texto da autorização v2, que casa com `pr verifier`.
+  - A lista `RETIRED_CONVERGE_ROLES` de `setup-pstack.ts`, com os nomes dos seis papéis aposentados, e o teste dela, que ficam para o `/setup-pstack` continuar lendo um sheet antigo.
 - Nenhum arquivo rastreado fora desses lugares cita um caminho apagado ou movido.
-- `babysit.md`, `shipping.md` e `opening-a-pr.md` diferem do texto da Cursor em `12d587d` só nas trocas de harness e nos trechos de autopilot que a 0.5.1 aplica. Duas dessas trocas o plano devolve ao texto da Cursor na 0.5.1: o verbo da frase do Babysit ("supersedes" hoje) e o caminho do `watch-pr` no Babysit e no Shipping. O `SKILL.md` do `poteto-mode` difere também na seção *Platform Adaptation* e nos dois parágrafos de delegação.
+- `babysit.md`, `shipping.md` e `opening-a-pr.md` diferem do texto da Cursor em `12d587d` só nas trocas de harness e nos trechos de autopilot que a 0.5.1 aplica. O plano devolve duas dessas trocas ao texto da Cursor na 0.5.1: o verbo da frase do Babysit ("supersedes" hoje) e o caminho do `watch-pr` no Babysit e no Shipping. O `SKILL.md` do `poteto-mode` difere também na seção *Platform Adaptation* e nos dois parágrafos de delegação.
