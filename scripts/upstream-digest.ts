@@ -283,7 +283,7 @@ export function renderMarkdown(digest: Digest): string {
     out.push("");
   }
   out.push(
-    "Como aplicar: commits do `cursor` entram por merge da linha do split; commits do `open` entram por cópia auditada, arquivo a arquivo, com linha em `NOTICE.md`. Ver `UPSTREAM.md`, seção *Incorporar uma mudança*.",
+    "Como aplicar: commits do `cursor` entram por merge da linha do split, menos nos seis playbooks do autopilot, que `node scripts/upstream-parity.ts --write` gera de novo quando o ponto de sync avança; commits do `open` entram por cópia auditada, arquivo a arquivo, com linha em `NOTICE.md`. Ver `UPSTREAM.md`, seção *Incorporar uma mudança*.",
     "",
   );
   return out.join("\n");
