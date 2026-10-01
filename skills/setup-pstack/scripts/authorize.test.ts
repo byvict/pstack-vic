@@ -16,9 +16,9 @@ let processHome = "";
 let restoreProcessEnv: () => void = () => {};
 
 // The script falls back to the HOME of its process when `--home` is lost, and
-// `apply` writes there. So the test process and the one child get a temporary
-// HOME of their own, apart from the `home` every call names: a lost `--home`
-// writes under `processHome`, the assertions on `home` fail, and the
+// `apply` writes there. So the test process and every child it spawns get a
+// temporary HOME of their own, apart from the `home` every call names: a lost
+// `--home` writes under `processHome`, the assertions on `home` fail, and the
 // operator's ~/.claude/settings.json is never reached.
 beforeEach(() => {
   base = mkdtempSync(join(tmpdir(), "pstack-authorize-"));

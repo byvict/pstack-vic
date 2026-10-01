@@ -28,7 +28,7 @@
   "rows": [
     {
       "id": "T2",
-      "reason": "There is no remote worker environment and no cloud root. An owner or a lane is a background subagent isolated by its own worktree. The tool parameters (`Agent`, `subagent_type: poteto-agent`, `isolation: worktree`, `run_in_background: true`, the model of the authoring row; `spawn_agent` on Codex) live in the Subagents section of SKILL.md and in codex-tools.md, not in the playbook sentence.",
+      "reason": "There is no remote worker environment. An owner or a lane is a background subagent isolated by its own worktree. The tool parameters (`Agent`, `subagent_type: poteto-agent`, `isolation: worktree`, `run_in_background: true`, the model of the authoring row; `spawn_agent` on Codex) live in the Subagents section of SKILL.md and in codex-tools.md, not in the playbook sentence.",
       "pairs": [
         {
           "file": "skills/poteto-mode/playbooks/autopilot-full.md",
@@ -37,21 +37,9 @@
           "count": 1
         },
         {
-          "file": "skills/poteto-mode/playbooks/autopilot-full.md",
-          "from": " A cloud root uses the existing cloud-sleeper wake chain instead.",
-          "to": "",
-          "count": 1
-        },
-        {
           "file": "skills/poteto-mode/playbooks/autopilot-stack.md",
           "from": "One Cursor cloud agent per PR owns",
           "to": "One background subagent per PR, in its own worktree, owns",
-          "count": 1
-        },
-        {
-          "file": "skills/poteto-mode/playbooks/autopilot-stack.md",
-          "from": " A cloud root uses the existing cloud-sleeper wake chain instead.",
-          "to": "",
           "count": 1
         },
         {
@@ -232,17 +220,17 @@
     },
     {
       "id": "T13",
-      "reason": "The tick runs on Claude Code's `loop` skill. Dynamic mode re-arms itself through `ScheduleWakeup` (60 to 3600 s), so the root arms each tick, as upstream's local root does. Read in Claude Code 2.1.285, never run: both `/loop` forms are cron entries of the session (`CronCreate` for a fixed interval, one `ScheduleWakeup` entry per tick in dynamic mode) and end after 7 days (`recurringMaxAgeMs`). Codex has no `loop` skill and codex-tools.md names its cadence. The upstream sentence about leaving the cadence to memory follows the pair unchanged in all three places.",
+      "reason": "The tick runs on Claude Code's `loop` skill. Dynamic mode re-arms itself through `ScheduleWakeup` (60 to 3600 s), so the root arms each tick, as upstream's local root does. Read in Claude Code 2.1.285, never run: both `/loop` forms are cron entries of the session (`CronCreate` for a fixed interval, one `ScheduleWakeup` entry per tick in dynamic mode) and end after 7 days (`recurringMaxAgeMs`). Codex has no `loop` skill and codex-tools.md names its cadence. There is no cloud root, so each pair also takes upstream's cloud-root alternative (the cloud-sleeper wake chain) with it. The upstream sentence about leaving the cadence to memory follows the pair unchanged in all three places.",
       "pairs": [
         {
           "file": "skills/poteto-mode/playbooks/autopilot-full.md",
-          "from": "A local root arms each tick as a real terminal `/loop`. The loop uses a monitored-shell 30-minute sleep and emits an output-notification sentinel.",
+          "from": "A local root arms each tick as a real terminal `/loop`. The loop uses a monitored-shell 30-minute sleep and emits an output-notification sentinel. A cloud root uses the existing cloud-sleeper wake chain instead.",
           "to": "Arm the 30-minute audit tick as a real `/loop` in dynamic mode (on Codex, the cadence `../references/codex-tools.md` names).",
           "count": 1
         },
         {
           "file": "skills/poteto-mode/playbooks/autopilot-stack.md",
-          "from": "A local root arms each tick as a real terminal `/loop`. The loop uses a monitored-shell 30-minute sleep and emits an output-notification sentinel.",
+          "from": "A local root arms each tick as a real terminal `/loop`. The loop uses a monitored-shell 30-minute sleep and emits an output-notification sentinel. A cloud root uses the existing cloud-sleeper wake chain instead.",
           "to": "Arm the 30-minute audit tick as a real `/loop` in dynamic mode (on Codex, the cadence `../references/codex-tools.md` names).",
           "count": 1
         },

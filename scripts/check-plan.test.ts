@@ -12,8 +12,11 @@ import {
 import { PLUGIN_ROOT } from "./model-matrix.ts";
 
 // check-plan.mjs pins the wording of the plan template: the `/goal` that holds
-// the objective, the reads from the installed plugin, the 30-minute tick, the
-// status message, and the Verify, live line on the `swarm workers` role. The template lives in a playbook that scripts/upstream-parity.ts
+// the objective, the box that reads the playbooks from the installed plugin
+// (upstream pins the same box through its `git show origin/main:` reads; the
+// tick prompt also says "from the installed plugin", so the marker is the box's
+// own wording), the 30-minute tick, the status message, and the Verify, live
+// line on the `swarm workers` role. The template lives in a playbook that scripts/upstream-parity.ts
 // regenerates from the substitution table, so a pair that changes one of
 // those wordings must change the checker in the same commit.
 const CHECK_PLAN = join(PLUGIN_ROOT, "skills", "poteto-mode", "scripts", "check-plan.mjs");
@@ -69,7 +72,11 @@ describe("check-plan: the plan template of multi-phase-plan.md", () => {
   const LANES = "Ten lanes on the configured `swarm workers` role at the PR head";
   const cases: readonly { wording: string; without: string; problem: string }[] = [
     { wording: "/goal", without: "goal", problem: 'Program checklist lacks "/goal"' },
-    { wording: "the installed plugin", without: "the plugin", problem: 'Program checklist lacks "the installed plugin"' },
+    {
+      wording: "Read these from the installed plugin",
+      without: "Read these from the plugin",
+      problem: 'Program checklist lacks "Read these from the installed plugin"',
+    },
     { wording: "30-minute", without: "half-hour", problem: 'Program checklist lacks "/30[- ]minute/"' },
     { wording: "status message", without: "note", problem: 'Program checklist lacks "status message"' },
     {
@@ -88,4 +95,18 @@ describe("check-plan: the plan template of multi-phase-plan.md", () => {
       assert.equal(run.status, 1);
     });
   }
+
+  it("fails a plan that drops the read list but keeps the tick prompt", () => {
+    const lines = template().split("\n");
+    const box = lines.findIndex((line) => line.startsWith("- [ ] Read these from the installed plugin"));
+    assert.ok(box !== -1, "the template has no read-list box");
+    let end = box + 1;
+    while (lines[end].startsWith("  - [ ] ")) end++;
+    assert.ok(end - box > 1, "the read-list box has no child boxes");
+    const plan = [...lines.slice(0, box), ...lines.slice(end)].join("\n");
+    assert.ok(plan.includes("from the installed plugin and the armed /goal"), "the tick prompt is no longer verbatim");
+    const run = check("without-reads.md", plan);
+    assert.deepEqual(run.problems, ['Program checklist lacks "Read these from the installed plugin"']);
+    assert.equal(run.status, 1);
+  });
 });
