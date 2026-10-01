@@ -28,7 +28,7 @@
   "rows": [
     {
       "id": "T1",
-      "reason": "Claude Code has no `/goal` command. The program objective goes into the standing orders and is restated in the todolist (`update_plan` on Codex), and the tick re-reads it from there.",
+      "reason": "Claude Code has no `/goal` command. The program objective goes into the standing orders and is restated in the todolist (`update_plan` on Codex), and the tick re-reads it from there. The Platform Adaptation section of SKILL.md names the file that holds the standing orders.",
       "pairs": [
         {
           "file": "skills/poteto-mode/playbooks/autopilot-full.md",
@@ -105,7 +105,7 @@
         {
           "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
           "from": "on its own cloud VM",
-          "to": "on its own lane",
+          "to": "in its own worktree",
           "count": 1
         },
         {
@@ -278,8 +278,8 @@
         },
         {
           "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
-          "from": " with `subagent_type: \"poteto-agent\"` and an explicit model per the Subagents section",
-          "to": ". Resolve the configured `judgment and prose` role through `../references/provider-dispatch.md`; use `poteto-agent` only for an `inherit-parent` / `auto` native helper. Never use Claude Code's built-in `Plan` agent, which ignores this skill",
+          "from": " with `subagent_type: \"poteto-agent\"` and an explicit model per the Subagents section (the **guard-the-context-window** principle skill).",
+          "to": " (the **guard-the-context-window** principle skill). Resolve the configured `judgment and prose` role through `../references/provider-dispatch.md`; use `poteto-agent` only for an `inherit-parent` / `auto` native helper. Never use Claude Code's built-in `Plan` agent, which ignores this skill.",
           "count": 1
         }
       ]

@@ -4,7 +4,7 @@
 
 1. When the change is one or two files with an obvious approach, skip the plan. Say so and stop.
 2. Settle open questions by prototype before you write. Run `playbooks/prototype.md` for each. Keep the branch, the SHA, and the screenshots for Appendix A. Ask the operator only about a product or preference call that no run can settle. Give options (the **never-block-on-the-human** principle skill).
-3. Explore in subagents. Resolve the configured `judgment and prose` role through `../references/provider-dispatch.md`; use `poteto-agent` only for an `inherit-parent` / `auto` native helper. Never use Claude Code's built-in `Plan` agent, which ignores this skill (the **guard-the-context-window** principle skill). Each returns file pointers, conventions, test commands, and entry points. No inlined dumps.
+3. Explore in subagents (the **guard-the-context-window** principle skill). Resolve the configured `judgment and prose` role through `../references/provider-dispatch.md`; use `poteto-agent` only for an `inherit-parent` / `auto` native helper. Never use Claude Code's built-in `Plan` agent, which ignores this skill. Each returns file pointers, conventions, test commands, and entry points. No inlined dumps.
 4. Copy the skeleton below into the plan file and fill every placeholder. Unless the operator names a path, write the file under the working repository's `docs/`. Keep every heading and every sub-block in the order shown. One section per PR. One PR is one change with its own evidence (the **sequence-verifiable-units** principle skill). Name the execution playbook in **How to read this**. Pick between `playbooks/autopilot-full.md` and `playbooks/autopilot-stack.md` per the rule at the end of `playbooks/autopilot-stack.md`. A standing program takes `playbooks/orchestrate.md`.
 5. Write under `/technical-writing` in full, then `/unslop`. The body is one Diátaxis mode, how-to. Appendices hold explanation and reference. Each heading states the task or the finding. No long dashes. No mid-sentence colons.
 6. Run `node skills/poteto-mode/scripts/check-plan.mjs <plan.md>` under the installed plugin and fix every line it prints (the **encode-lessons-in-structure** principle skill).
@@ -69,7 +69,7 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
 
 ### Boot recipe, for every live lane
 
-Each live lane runs on its own lane at the PR head. Drive through `verify` (UIs) or `run` (CLIs and TUIs).
+Each live lane runs in its own worktree at the PR head. Drive through `verify` (UIs) or `run` (CLIs and TUIs).
 
 - [ ] `git fetch origin <head-branch> && git checkout <head SHA>`.
 - [ ] <Start the backend and the surface. Wait for ready.>

@@ -61,7 +61,7 @@ Some triggers name skills that ship with Claude Code, not pstack. They do not ex
 
 ## Vendored scripts
 
-`skills/poteto-mode/scripts/` ships the `watch-pr` PR watcher, the `orch` store CLI, `worktree-audit.sh`, and `runner/pstack-runner`. They run the same on Codex; invoke them through `shell`. The external runner is plain Node 24 TypeScript (no Bun) and additionally needs the assigned `claude`, `codex`, or `grok` executable already authenticated. It rejects a Codex provider when Codex is the parent because that lane belongs on native `spawn_agent`. `watch-pr` and `orch` need `bun`; PR work needs `gh` and (for stacks) `gt`; `worktree-audit.sh` needs `jq` and `rg`. `worktree-audit.sh` reads Claude Code transcripts under `~/.claude/projects/`; point it at your runtime's transcript directory instead when you run it elsewhere.
+`skills/poteto-mode/scripts/` ships the `watch-pr` PR watcher, the `orch` store CLI, `worktree-audit.sh`, and `runner/pstack-runner`. They run the same on Codex; invoke them through `shell`. The external runner is plain Node 24 TypeScript (no Bun) and additionally needs the assigned `claude`, `codex`, or `grok` executable already authenticated. It rejects a Codex provider when Codex is the parent because that lane belongs on native `spawn_agent`. `watch-pr` and `orch` need `bun`; PR work needs `gh`; only `orch frontier` (Orchestrate) needs `gt`; `worktree-audit.sh` needs `jq` and `rg`. `worktree-audit.sh` reads Claude Code transcripts under `~/.claude/projects/`; point it at your runtime's transcript directory instead when you run it elsewhere.
 
 ## Instructions file
 

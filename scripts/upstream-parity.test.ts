@@ -257,6 +257,7 @@ describe("upstream-parity: table shape", () => {
     const bad: Array<[string, unknown]> = [
       ["no rows", { files }],
       ["a pin field instead of files", { pin: "abc", rows: [row] }],
+      ["a pin field beside files and rows", { pin: "abc", files, rows: [row] }],
       ["a file without a local path", { files: [{ upstream: "pstack/a.md" }], rows: [row] }],
       ["a file listed twice", { files: [...files, ...files], rows: [row] }],
       ["a row id that is not a table row", { files, rows: [{ ...row, id: "liveness" }] }],
@@ -273,6 +274,16 @@ describe("upstream-parity: table shape", () => {
       assert.throws(() => parseTable(JSON.stringify(table)), ParityError, name);
     }
     assert.throws(() => parseTable("{"), ParityError);
+  });
+
+  it("refuses a pin in the table and says where the pin lives", () => {
+    assert.throws(
+      () => parseTable(JSON.stringify({ pin: "0123", files, rows: [row] })),
+      (err: unknown) =>
+        err instanceof ParityError &&
+        err.message.includes('unknown top-level key "pin"') &&
+        err.message.endsWith("the pin lives in the sync table of UPSTREAM.md"),
+    );
   });
 });
 
@@ -397,6 +408,27 @@ describe("upstream-parity: check and --write on a fixture checkout", () => {
     }
   });
 
+  it("runs the same when the script path goes through a symlinked directory", () => {
+    const link = join(scratch, "plugin-link");
+    symlinkSync(PLUGIN_ROOT, link);
+    const linked = join(link, "scripts", "upstream-parity.ts");
+    const viaLink = (repo: string, command: string) =>
+      spawnSync(process.execPath, [linked, command, "--repo", repo], { encoding: "utf8", env: process.env });
+
+    const clean = viaLink(fixture(), "check");
+    assert.equal(clean.status, 0, clean.stderr);
+    assert.match(clean.stdout, /^upstream-parity: 1 files equal [0-9a-f]{40} plus the 2 pairs of /);
+
+    const residue = viaLink(fixture({ local: `${GENERATED_TEXT}Take its lease first.\n` }), "check");
+    assert.equal(residue.status, 1);
+    assert.match(residue.stderr, /^upstream-parity: 1 files with residue, 0 table problems against /m);
+
+    const repo = fixture({ local: "### A\n\nA file rewritten by hand.\n" });
+    const written = viaLink(repo, "--write");
+    assert.equal(written.status, 0, written.stderr);
+    assert.equal(readFileSync(join(repo, FILE), "utf8"), GENERATED_TEXT);
+  });
+
   it("the command line takes check or --write, and nothing else", () => {
     const repo = fixture();
     for (const args of [[], ["check", "--write"], ["write"], ["check", "check"], ["--fix"]]) {
@@ -422,6 +454,18 @@ describe("upstream-parity: this checkout", () => {
     const result = spawnSync(process.execPath, [SCRIPT, "check"], { encoding: "utf8", env: process.env });
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
     assert.match(result.stdout, /^upstream-parity: 6 files equal /);
+  });
+
+  it("the table guards exactly the six autopilot playbooks", () => {
+    const table = parseTable(readFileSync(join(PLUGIN_ROOT, TABLE_PATH), "utf8"));
+    const names = ["autopilot-full", "autopilot-stack", "babysit", "multi-phase-plan", "opening-a-pr", "shipping"];
+    assert.deepEqual(
+      [...table.files].sort((a, b) => (a.local < b.local ? -1 : 1)),
+      names.map((name) => ({
+        upstream: `pstack/skills/poteto-mode/playbooks/${name}.md`,
+        local: `skills/poteto-mode/playbooks/${name}.md`,
+      })),
+    );
   });
 
   it("the two Autopilot entries of the poteto-mode playbook list equal upstream's", () => {

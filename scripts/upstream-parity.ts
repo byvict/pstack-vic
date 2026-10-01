@@ -18,8 +18,9 @@
 // that does not parse, the pin commit missing from the clone).
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { PLUGIN_ROOT } from "./model-matrix.ts";
 import { DigestError, git, readSyncPoints } from "./upstream-digest.ts";
@@ -100,6 +101,12 @@ export function parseTable(json: string): SubstitutionTable {
   }
   if (!isRecord(raw) || !Array.isArray(raw.files) || !Array.isArray(raw.rows)) {
     throw new ParityError(`${TABLE_PATH} must be { "files": [...], "rows": [...] }`);
+  }
+  const extra = Object.keys(raw).filter((key) => key !== "files" && key !== "rows");
+  if (extra.length > 0) {
+    throw new ParityError(
+      `${TABLE_PATH} has the unknown top-level key "${extra[0]}"; it holds only "files" and "rows", and the pin lives in the sync table of UPSTREAM.md`,
+    );
   }
   const files: GuardedFile[] = [];
   for (const entry of raw.files) {
@@ -423,6 +430,9 @@ export function main(argv: readonly string[]): number {
   return 0;
 }
 
-if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+// Node resolves the main module to its real path and leaves argv[1] as typed.
+// Comparing real paths keeps a run through a symlinked directory (/tmp on
+// macOS) from exiting 0 without checking anything.
+if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
   process.exitCode = main(process.argv.slice(2));
 }

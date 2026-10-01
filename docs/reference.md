@@ -177,7 +177,7 @@ A Raiz não começa por conta própria. A execução só começa com o seu "go" 
    ```
 
    Troque `<versão>` pela versão instalada, que `claude plugin list` mostra. Com 1, o JSON que o comando imprime diz o motivo e traz o comando que concede a autorização. Sem ela, o modo automático do Claude Code nega o merge quando o Dono chega nele. Nenhum playbook roda essa conferência. Ela existe aqui e no passo 10 do `/setup-pstack`. Você também pode pedir à Raiz que rode o `check` e mostre o resultado junto com o protocolo.
-6. Dê o "go". A Raiz grava o objetivo do programa nas ordens permanentes dela, que são as instruções que valem até o fim do programa, e o repete na todolist, que é a lista de afazeres da sessão. O objetivo vale até a fila acabar. Depois ela cria um Dono por PR.
+6. Dê o "go". A Raiz grava o objetivo do programa nas ordens permanentes dela, que são as instruções que valem até o fim do programa, e o repete na todolist, que é a lista de afazeres da sessão. As ordens permanentes ficam num arquivo, `standing-orders.md`, ao lado da trilha de decisões da Raiz (`decisions.tsv`) e fora do git, como ela. A Raiz relê esse arquivo a cada Tick. O objetivo vale até a fila acabar. Depois ela cria um Dono por PR.
 
 Para um trabalho de várias fases, peça antes um plano. O playbook [Multi-phase plan](../skills/poteto-mode/playbooks/multi-phase-plan.md) escreve o plano como uma lista de itens com caixas de marcar, com uma seção por PR, e o plano diz qual playbook vai executá-lo. A sessão roda o verificador do plano (`check-plan.mjs`), entrega o caminho do arquivo e para. A execução também só começa com o seu "go".
 
@@ -201,6 +201,8 @@ A Raiz é dona dos Vereditos, nunca dos PRs. Ela verifica cada Rodada. Uma Rodad
 - Provam ao vivo o comportamento principal da mudança, usando de verdade o programa que ela muda. Para isso usam a skill que opera esse tipo de programa, como `run` em CLIs e `verify` em telas.
 - Auditam o diff sem confiar no texto do PR. São duas ou mais lanes de revisão, cada uma com um foco.
 - Rodam o mesmo cenário na trunk, para comparar. É a lane de regressão.
+
+Uma lane externa não tem `run` nem `verify`. Lane externa é a que roda no runner, numa CLI que não é a do pai: o grok nos dois pais, o Codex no Claude Code e o Claude no Codex. O runner abre essa CLI com as skills desligadas e uma lista curta de ferramentas, e o grok ainda corta cada comando em 300 segundos. Por isso as lanes de gates, ao vivo e de regressão pedem, na sua folha de modelos, uma linha `swarm workers` nativa do pai. O padrão do plugin para essa linha é o grok. As suas folhas a trocam por um modelo nativo, Opus no Claude Code e Sol no Codex. O grok entra como braço de corrida nomeado nas lanes que auditam o diff.
 
 A Raiz junta os resultados num Veredito. Sem a lane ao vivo, o Veredito não é limpo. Sem Veredito limpo, não há merge. Os achados provados voltam ao Dono num só pedido de conserto. Para cada achado de comportamento, a Raiz pede um teste vermelho, isto é, um teste que falha enquanto o defeito existe. Onde nenhum teste mostra o defeito, ela pede um recibo de reprodução. O head novo ganha Enxame e Veredito novos. A exceção são os resultados que continuam válidos pela regra do patch-id do playbook [Shipping](../skills/poteto-mode/playbooks/shipping.md).
 
