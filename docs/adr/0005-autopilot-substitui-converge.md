@@ -34,7 +34,7 @@ Estas peças saem do plugin:
 - Os trailers de commit `Pstack-Author` e `Pstack-Linear`, que só o converge lia.
 - O Pós-merge do Daemon, que criava a tag da versão e trocava o plugin nos dois pais (Claude Code e Codex).
 
-O código fica nas tags `archive/converge-0.4.18` e `archive/converge-0.4.19`. Os documentos ficam em [`docs/arquivo/`](../arquivo/), e a história de cada versão fica em [`CHANGES.md`](../../CHANGES.md).
+O código fica nas tags `v0.4.18` e `v0.4.19`, que já estão no GitHub. As tags `archive/converge-0.4.18` e `archive/converge-0.4.19` apontam para os mesmos commits e vão para o GitHub na etapa 5 do plano desta aposentadoria. Os documentos ficam em [`docs/arquivo/`](../arquivo/), e a história de cada versão fica em [`CHANGES.md`](../../CHANGES.md).
 
 ## O que entra no lugar
 
