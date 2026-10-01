@@ -82,6 +82,8 @@ Cada passo confere o que já foi feito, então rodar o script duas vezes não es
 ├── .claude-plugin/                   # plugin.json (manifest do Claude Code) e marketplace.json (um plugin, fonte fixada na tag)
 ├── .codex-plugin/plugin.json         # manifest do Codex (skills: ./skills/, interface com logo)
 ├── .agents/plugins/marketplace.json  # marketplace do Codex (fonte local ./)
+├── .github/workflows/ci.yml          # CI de cada PR e de cada push na main: o job test é o check obrigatório; depois dele, na main, o job tag cria a tag vX.Y.Z do package.json se ela ainda não existe
+├── .github/dependabot.yml            # Dependabot: sobe as actions fixadas por SHA num PR semanal agrupado (prefixo ci), só com versões publicadas há 7 dias ou mais
 ├── model-matrix.json                 # famílias, efforts, pais, rota por pai, papéis (dado canônico)
 ├── scripts/                          # loader/validação da matriz, render dos blocos gerados, gerador de agents, digest semanal dos upstreams, upstream-parity.ts (a guarda dos seis playbooks do autopilot), release.ts (troca o plugin nos dois pais depois do merge), testes (inclui manifests.test.ts)
 ├── skills/                           # 55 skills compartilhadas por Claude Code e Codex
