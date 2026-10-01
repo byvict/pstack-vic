@@ -89,12 +89,12 @@ function pair(id: string, from: string, to: string, count = 1): RowPair {
 
 describe("upstream-parity: pair semantics", () => {
   it("applies the pairs of a file at once, whatever their order", () => {
-    const upstream = "Triage Bugbot. Re-read it from trunk.\n";
+    const upstream = "Write the plan under the agent store. Re-read it from trunk.\n";
     const pairs = [
-      pair("T3", "Bugbot", "the review-bot"),
+      pair("T17", "the agent store", "the working repository"),
       pair("T6", "from trunk", "from the installed plugin"),
     ];
-    const expected = "Triage the review-bot. Re-read it from the installed plugin.\n";
+    const expected = "Write the plan under the working repository. Re-read it from the installed plugin.\n";
     assert.deepEqual(applyPairs(upstream, pairs), { text: expected, problems: [] });
     assert.deepEqual(applyPairs(upstream, [...pairs].reverse()), { text: expected, problems: [] });
   });
@@ -381,14 +381,14 @@ describe("upstream-parity: check and --write on a fixture checkout", () => {
   it("a dead pair fails check and keeps --write from writing anything", () => {
     const dead: SubstitutionTable = {
       ...TABLE,
-      rows: [...TABLE.rows, { id: "T3", reason: "Bugbot is Cursor's.", pairs: [{ file: FILE, from: "Bugbot", to: "review-bot", count: 1 }] }],
+      rows: [...TABLE.rows, { id: "T17", reason: "There is no Cursor agent store.", pairs: [{ file: FILE, from: "agent store", to: "working repository", count: 1 }] }],
     };
     const local = "### A\n\nA file rewritten by hand.\n";
     const repo = fixture({ table: dead, local });
     for (const command of ["check", "--write"]) {
       const result = run(repo, command);
       assert.equal(result.status, 1, command);
-      assert.match(result.stderr, new RegExp(`^T3 dead pair in ${FILE}: "Bugbot" does not occur in the upstream text$`, "m"));
+      assert.match(result.stderr, new RegExp(`^T17 dead pair in ${FILE}: "agent store" does not occur in the upstream text$`, "m"));
     }
     assert.equal(readFileSync(join(repo, FILE), "utf8"), local);
     const report = buildReport(repo);
@@ -401,7 +401,7 @@ describe("upstream-parity: check and --write on a fixture checkout", () => {
       files: [...TABLE.files, { upstream: SECOND_UPSTREAM_PATH, local: SECOND_FILE }],
       rows: [
         ...TABLE.rows,
-        { id: "T3", reason: "Bugbot is Cursor's.", pairs: [{ file: FILE, from: "Bugbot", to: "review-bot", count: 1 }] },
+        { id: "T17", reason: "There is no Cursor agent store.", pairs: [{ file: FILE, from: "agent store", to: "working repository", count: 1 }] },
         { id: "T4", reason: "The plugin ships its own deslop.", pairs: [{ file: SECOND_FILE, from: " from `cursor-team-kit`", to: "", count: 1 }] },
       ],
     };

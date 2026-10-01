@@ -11,7 +11,7 @@ A sessão Claude Code ou Codex que conduz um programa de autopilot. É dona dos 
 _Avoid_: parent, coordenador, sessão autora
 
 **Dono** (owner):
-O subagente em segundo plano, num worktree próprio, que leva um PR do build ao merge. Ele faz o primeiro push, abre o PR já pronto, prova a mudança no artefato real, acompanha o PR até o CI ficar verde (babysit) e faz o próprio merge. O merge só acontece depois do Veredito limpo da Raiz.
+O subagente em segundo plano, num worktree próprio, que leva um PR do build ao merge. Ele faz o primeiro push, abre o PR já pronto, prova a mudança no artefato real e acompanha o PR até o CI ficar verde (babysit). No Autopilot-full ele faz o próprio merge, e só depois do Veredito limpo da Raiz. No Autopilot-stack ele não mergeia: avisa STACK-READY, e a Raiz põe o PR na pilha.
 _Avoid_: autor, implementer, worker
 
 **Lane**:
@@ -41,7 +41,7 @@ O relato do Dono, com o SHA do head, de que o código a entregar está final, de
 _Avoid_: pronto, done, draft
 
 **Merge-ready**:
-O relato do Dono, com o SHA do head, de que a prova dele, o CI e o babysit terminaram. O merge exige o Veredito limpo da Rodada cujo patch é o desse head.
+O relato do Dono, com o SHA do head, de que a prova dele, o CI e o babysit terminaram. O merge exige o Veredito limpo da Rodada cujo patch é o desse head. No Autopilot-stack o relato se chama STACK-READY, e o Veredito limpo põe o PR na pilha em vez de liberar um merge.
 _Avoid_: aprovado, verde, mergeável
 
 **Itens do operador**:

@@ -20,7 +20,7 @@ pstack skills retain Claude Code tool language (`Skill`, `Agent`, `AskUserQuesti
 | Free a finished subagent slot | `close_agent` |
 | Track tasks (the todolist / `TodoWrite`) | `update_plan` |
 | Arm a `/goal` (the autopilot playbooks; `ProposeGoal` on Claude Code) | `create_goal`, read back with `get_goal`. The goal tools need `goals = true` under `[features]` in `~/.codex/config.toml` and a persistent thread. |
-| The background task list (the audit tick of the autopilot playbooks) | The subagents you spawned and have not closed (`spawn_agent` handles) and your persistent exec sessions |
+| The program's agent list (the audit tick of the autopilot playbooks) and the background task list (Orchestrate's read-only probe) | The subagents you spawned and have not closed (`spawn_agent` handles) and your persistent exec sessions |
 | Ask the human a fixed-choice question (`AskUserQuestion`) | Ask in plain text and let the user answer. Codex has no structured-choice tool. |
 | Transcript directory (show-me-your-work audit, session pickup) | `~/.codex/sessions/`, same no-glob rule |
 
@@ -62,7 +62,7 @@ Some triggers name skills that ship with Claude Code, not pstack. They do not ex
 
 ## Vendored scripts
 
-`skills/poteto-mode/scripts/` ships the `watch-pr` PR watcher, the `orch` store CLI, `worktree-audit.sh`, and `runner/pstack-runner`. They run the same on Codex; invoke them through `shell`. The external runner is plain Node 24 TypeScript (no Bun) and additionally needs the assigned `claude`, `codex`, or `grok` executable already authenticated. It rejects a Codex provider when Codex is the parent because that lane belongs on native `spawn_agent`. `watch-pr` and `orch` need `bun`; PR work needs `gh`; only `orch frontier` (Orchestrate) needs `gt`; `worktree-audit.sh` needs `jq` and `rg`. `worktree-audit.sh` reads Claude Code transcripts under `~/.claude/projects/`; point it at your runtime's transcript directory instead when you run it elsewhere.
+`skills/poteto-mode/scripts/` ships the `watch-pr` PR watcher, the `orch` store CLI, `worktree-audit.sh`, and `runner/pstack-runner`. They run the same on Codex; invoke them through `shell`. The external runner is plain Node 24 TypeScript (no Bun) and additionally needs the assigned `claude`, `codex`, or `grok` executable already authenticated. It rejects a Codex provider when Codex is the parent because that lane belongs on native `spawn_agent`. `watch-pr` and `orch` need `bun`; PR work needs `gh`; only Orchestrate needs `gt` (its stacker and `orch frontier`); `worktree-audit.sh` needs `jq` and `rg`. `worktree-audit.sh` reads Claude Code transcripts under `~/.claude/projects/`; point it at your runtime's transcript directory instead when you run it elsewhere.
 
 ## Instructions file
 

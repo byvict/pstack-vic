@@ -177,7 +177,7 @@ A Raiz não começa por conta própria. A execução só começa com o seu "go" 
    ```
 
    Troque `<versão>` pela versão instalada, que `claude plugin list` mostra. A segunda linha mostra o código de saída da primeira: 0 é autorizado, 1 não. Com 1, o JSON que o comando imprime diz o motivo e traz o comando que concede a autorização. Sem ela, o modo automático do Claude Code nega o merge quando o Dono chega nele. Nenhum playbook roda essa conferência. Ela existe aqui e no passo 10 do `/setup-pstack`. Você também pode pedir à Raiz que rode o `check` e mostre o resultado junto com o protocolo.
-6. Dê o "go". A Raiz arma um `/goal` com o objetivo completo do programa. O `/goal` é o objetivo da sessão e vale de um turno para o outro até a fila acabar. No Claude Code a Raiz o propõe pela ferramenta `ProposeGoal`, e o Claude Code pode pedir a sua aprovação com uma tecla. Se a sessão não tiver essa ferramenta, a Raiz pede que você digite `/goal` com o objetivo. Depois ela cria um Dono por PR.
+6. Dê o "go". A Raiz arma um `/goal` com o objetivo completo do programa. O `/goal` é o objetivo da sessão e vale de um turno para o outro até a fila acabar. No Claude Code a Raiz o propõe pela ferramenta `ProposeGoal`, e o Claude Code pode pedir a sua aprovação com uma tecla. Na versão 2.1.285 essa ferramenta depende de um recurso que a Anthropic ainda libera aos poucos, só existe numa sessão interativa no seu Mac e aceita um objetivo de até 500 caracteres. Neste Mac, em 2026-10-01, esse recurso estava desligado. Quando a ferramenta falta, ou o objetivo é mais longo, a Raiz escreve a linha `/goal <objetivo>` exata para você digitar. Um `/goal` digitado aceita até 4000 caracteres. Depois ela cria um Dono por PR.
 
 Para um trabalho de várias fases, peça antes um plano. O playbook [Multi-phase plan](../skills/poteto-mode/playbooks/multi-phase-plan.md) escreve o plano como uma lista de itens com caixas de marcar, com uma seção por PR, e o plano diz qual playbook vai executá-lo. A sessão roda o verificador do plano (`check-plan.mjs`), entrega o caminho do arquivo e para. A execução também só começa com o seu "go".
 
@@ -186,7 +186,7 @@ Para um trabalho de várias fases, peça antes um plano. O playbook [Multi-phase
 O Dono leva um PR do build ao merge. Cada Dono trabalha num worktree próprio, que é uma cópia de trabalho separada do repositório. Vários Donos trabalham ao mesmo tempo quando os PRs não dependem um do outro.
 
 - **Abre o PR cedo.** Em cerca de 15 minutos ele começa uma trilha de decisões (`decisions.tsv`), empurra a primeira versão da branch e abre o PR pronto, nunca como rascunho. O PR abre antes da prova, para que o endereço, as decisões e os checks fiquem registrados desde o começo. A trilha não entra no commit. Ela volta para a Raiz junto com os avisos.
-- **Constrói, prova e limpa.** Ele prova a mudança no artefato real. Avalia com ceticismo cada comentário do robô de revisão, limpa o diff com `/deslop` e tira os comentários do código com `/no-comments`.
+- **Constrói, prova e limpa.** Ele prova a mudança no artefato real. Avalia com ceticismo cada comentário do Bugbot, o robô da Cursor que revisa PRs no GitHub, limpa o diff com `/deslop` e tira os comentários do código com `/no-comments`.
 - **Rebaseia na hora certa, no Autopilot-full.** Rebasear é reaplicar os commits da branch sobre a trunk atual, e a trunk é a `main`. O primeiro rebase vem antes do aviso de Code-ready. Nos consertos que a Raiz pede, a base não muda. Ele só rebaseia de novo no preparo do merge, num conflito com a trunk ou numa falha de CI causada por uma mudança na trunk. Para publicar um rebase, ele empurra a própria branch com `git push --force-with-lease`. Uma branch compartilhada ele nunca força.
 - **Avisa a Raiz em dois momentos.** No Code-ready, o código a entregar está final, e o aviso leva o head, que é o último commit da branch. No Merge-ready, terminaram a prova dele, o CI (os testes automáticos do GitHub) e o babysit, que é acompanhar o PR até o CI ficar verde. Entre um aviso e outro, essas três coisas correm em paralelo com a verificação da Raiz. Ele também avisa o head de cada push posterior que muda o patch, que é o conteúdo da mudança.
 - **Anota os subagentes que cria.** O arquivo `children.tsv` guarda o ID, o tempo esperado e o estado de cada um. O tempo esperado é, no mínimo, o da execução mais longa já vista daquele tipo.
@@ -216,12 +216,12 @@ A cada 30 minutos, mais ou menos, a Raiz audita todos os Donos. Essa auditoria s
 2. Sonda cada Dono, para saber se ele está vivo e em que estado está, e recolhe as trilhas de decisão.
 3. Conta como progresso só o que deixou efeito: commits, pushes, mudanças no PR ou nos checks e relatórios gravados.
 4. Trata como travada a lane que dá erro, ou que passa do tempo esperado sem deixar efeito. Ela derruba essa lane e põe outra no lugar na hora, sem esperar resposta.
-5. Aplica o mesmo teste à lista de tarefas em segundo plano e ao `children.tsv` de cada Dono. O Dono registra o subagente travado e o substitui, se o trabalho ainda faz falta. Quando o Dono não consegue, a Raiz faz as duas coisas. Uma lane travada não prova o trabalho nem o cancela.
+5. Aplica o mesmo teste à lista de agentes do programa, onde o pai tem uma, e ao `children.tsv` de cada Dono. No Claude Code essa lista são os subagentes que a sessão criou. O Dono registra o subagente travado e o substitui, se o trabalho ainda faz falta. Quando o Dono não consegue, a Raiz faz as duas coisas. Uma lane travada não prova o trabalho nem o cancela.
 6. Quando vários merges saem juntos, faz uma retrospectiva e uma varredura dos comentários que os robôs deixaram depois do merge.
 
 O Tick só termina quando não sobra trabalho delegado, mesmo depois do último merge.
 
-No Claude Code a Raiz arma o Tick como um `/loop` de verdade, em modo dinâmico. O `/loop` é o comando que chama a sessão de novo, e no modo dinâmico a própria sessão marca a próxima chamada. A cadência nunca fica por conta da memória da sessão.
+No Claude Code a Raiz arma o Tick como um `/loop` de verdade, em modo dinâmico. O `/loop` é o comando que chama a sessão de novo, e no modo dinâmico a própria sessão marca a próxima chamada. A cadência nunca fica por conta da memória da sessão. O Claude Code encerra qualquer `/loop` depois de 7 dias. Um programa mais longo que isso precisa de um Tick armado de novo.
 
 Num programa que roda a partir de um plano, o Tick é silencioso. A Raiz só escreve no chat quando a auditoria achou uma mudança que nenhuma mensagem anterior relatou: um PR aberto, um head Code-ready, uma Rodada aberta ou fechada, um Veredito, um merge, um agente travado e o que foi feito, um bloqueio que entrou ou saiu, ou uma decisão que só você pode tomar. Sem novidade, o Tick termina sem texto. Nos dois casos a Raiz registra o Tick na trilha de decisões dela.
 
@@ -254,7 +254,7 @@ Até a 0.4.19 o plugin tinha um fluxo próprio, em que um robô no Mac conferia 
 - **PR aberto fora de um programa espera.** Ou você mergeia, ou um programa o adota como item da fila ([PR aberto fora de um programa](#pr-aberto-fora-de-um-programa)).
 - **O GitHub só exige o CI.** Os checks `verdict` e `hold` saíram das regras, e um rótulo no PR não trava mais nada. O que segura um merge é o Veredito da Raiz, dentro da sessão. Para ficar com um PR, diga isso na sessão.
 - **A versão sai em dois passos.** O CI cria a tag. Trocar o plugin nos dois pais é um comando seu no Mac ([Publicar uma versão](#publicar-uma-versão)).
-- **No Codex não há relógio interno.** Você mesmo pede o Tick a cada 30 minutos. O Codex também precisa de `multi_agent` ligado para ter Donos ([Limites no Codex](#limites-no-codex)).
+- **No Codex não há relógio interno.** Você mesmo pede o Tick a cada 30 minutos. O Codex também precisa de `multi_agent` ligado para ter Donos e de `goals` ligado para armar o `/goal` ([Limites no Codex](#limites-no-codex)).
 
 ### Limites no Codex
 
@@ -388,17 +388,19 @@ Vinte e três skills de um princípio cada. `poteto-mode` indexa todas inline e 
 ## Verificação
 
 ```shell
-npm test               # matriz, gerador de agents, runner, setup-pstack, update-clis, referência de skills, manifests e hook, digest dos upstreams, paridade dos playbooks do autopilot com a Cursor, release, invariantes do pacote
+npm test
 npm run test:bun       # orch e watch-pr no Bun: bun install --frozen-lockfile, bun test e o typecheck do watch-pr (precisa do bun no PATH)
 npm run matrix:check   # blocos gerados de provider-dispatch.md e setup-pstack em dia
 npm run agents:check   # agents/pstack-*.md em dia com a matriz
 npm run collision:check
 npm run upstream:digest -- --no-fetch   # digest dos dois upstreams desde o ponto de sync (UPSTREAM.md, seção Digest semanal)
-node scripts/upstream-parity.ts check   # os seis playbooks do autopilot são o texto da Cursor mais as trocas de upstream-substitutions.json
+node scripts/upstream-parity.ts check
 npm run setup-pstack -- --help   # subcomandos do setup: state, plan, probe, attest, write
 npm run update-clis -- --help    # subcomandos da atualização das CLIs: start, check, notes, install, probe, finish
 claude plugin validate --strict .   # manifest do plugin e do marketplace pelo validador do Claude Code
 ```
+
+O `npm test` roda os testes da matriz, do gerador de agents, do runner, do setup-pstack, do update-clis, da referência de skills, dos manifests e do hook, do digest dos upstreams, da paridade dos playbooks do autopilot com a Cursor, do release e dos invariantes do pacote. O `node scripts/upstream-parity.ts check` roda só a paridade: confere que os seis playbooks do autopilot são o texto da Cursor mais as trocas de `upstream-substitutions.json`.
 
 `tests/skill-collision-repro.sh` verifica os invariantes estáticos do pacote (sem camada `commands/`, `principle-*` ocultos e legíveis pelo modelo, skills de fluxo sem `disable-model-invocation`, nome do diretório igual ao `name`, versão única entre manifests, tag do marketplace e `package.json`, logo do Codex resolvendo, aliases móveis de Fable e Opus, vínculo do Bugbot entre a skill `babysit` e o playbook, playbooks sem comandos Graphite, conteúdo Cursor-only ausente). Com `PSTACK_BEHAVIORAL=1` ele também monta um plugin de uma skill e prova, com `claude -p`, que a invocação pela tool `Skill` e pelo `/comando` chegam à skill.
 

@@ -75,24 +75,6 @@
       ]
     },
     {
-      "id": "T3",
-      "reason": "Bugbot is Cursor's review bot. The trigger prose of the autopilot steps names a generic review bot. `references/bugbot-triage.md`, babysit step 8 and the two mentions in multi-phase-plan.md keep the upstream name.",
-      "pairs": [
-        {
-          "file": "skills/poteto-mode/playbooks/autopilot-full.md",
-          "from": "skeptical Bugbot triage",
-          "to": "skeptical review-bot triage",
-          "count": 1
-        },
-        {
-          "file": "skills/poteto-mode/playbooks/autopilot-stack.md",
-          "from": "skeptical Bugbot triage",
-          "to": "skeptical review-bot triage",
-          "count": 1
-        }
-      ]
-    },
-    {
       "id": "T4",
       "reason": "This plugin ships its own copy of the deslop skill. There is no `cursor-team-kit` plugin to take it from.",
       "pairs": [
@@ -232,7 +214,7 @@
     },
     {
       "id": "T12",
-      "reason": "The Claude Code subagent tool is `Agent`, not `Task`. The parent resolves a role through provider dispatch instead of passing a Cursor `subagent_type` and model (with T9), and the Claude Code built-in `Plan` agent would bypass this skill.",
+      "reason": "The Claude Code subagent tool is `Agent`, not `Task`. A configured role can be provider-qualified (model and effort): on Claude Code it runs through the shipped frontier agent definitions and on other providers through the launcher (the Subagents section of SKILL.md, provider-dispatch.md), so the parent resolves the role instead of passing `poteto-agent` with a model (with T9). The Claude Code built-in `Plan` agent would bypass this skill.",
       "pairs": [
         {
           "file": "skills/poteto-mode/playbooks/opening-a-pr.md",
@@ -250,7 +232,7 @@
     },
     {
       "id": "T13",
-      "reason": "The tick runs on Claude Code's `loop` skill. Dynamic mode re-arms itself through `ScheduleWakeup` (60 to 3600 s). A fixed `/loop 30m` runs on `CronCreate`, which is session-only, idle-only and expires in 7 days, so dynamic mode is the faithful cadence. Codex has no `loop` skill and codex-tools.md names its cadence. The upstream sentence about leaving the cadence to memory follows the pair unchanged in all three places.",
+      "reason": "The tick runs on Claude Code's `loop` skill. Dynamic mode re-arms itself through `ScheduleWakeup` (60 to 3600 s), so the root arms each tick, as upstream's local root does. Read in Claude Code 2.1.285, never run: both `/loop` forms are cron entries of the session (`CronCreate` for a fixed interval, one `ScheduleWakeup` entry per tick in dynamic mode) and end after 7 days (`recurringMaxAgeMs`). Codex has no `loop` skill and codex-tools.md names its cadence. The upstream sentence about leaving the cadence to memory follows the pair unchanged in all three places.",
       "pairs": [
         {
           "file": "skills/poteto-mode/playbooks/autopilot-full.md",
@@ -268,18 +250,6 @@
           "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
           "from": "Arm the 30-minute audit tick. In a local session, a real terminal `/loop`. In a cloud root, a cloud-sleeper wake chain.",
           "to": "Arm the 30-minute audit tick as a real `/loop` in dynamic mode (on Codex, the cadence `../references/codex-tools.md` names).",
-          "count": 1
-        }
-      ]
-    },
-    {
-      "id": "T15",
-      "reason": "Claude Code has no Cursor agent dashboard. The background task list is where this platform lists the agents of a program.",
-      "pairs": [
-        {
-          "file": "skills/poteto-mode/playbooks/autopilot-full.md",
-          "from": "the program's agent list, where the platform has one,",
-          "to": "the background task list",
           "count": 1
         }
       ]
