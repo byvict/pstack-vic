@@ -1427,3 +1427,12 @@ Estas mudanças entram no PR da etapa 5 do plano, que não sobe a versão: ela c
 - Neste arquivo: as "Decisões" da 0.5.1 voltam aos três pontos do plano (a lane travada, o verbo do Babysit e o push do Orchestrate fora da autorização v2), e a forma única do Tick fica numa linha própria, como linha T13 da tabela do plano.
 - `docs/reference.md`: os blocos de comando de *A partir do clone*, *Versões das CLIs* e *Verificação* perdem os comentários com `#`, que vão para o texto em volta, porque o zsh interativo do operador não trata `#` como comentário; o texto do clone deixa de citar um hook, que o plugin não tem desde a 0.1.5.
 - `skills/poteto-mode/playbooks/orchestrate.md`: a linha de worker e verificador diz a escolha do port (subagentes locais, isolados por worktree ou branch) e que o `isolation: "remote"` do Claude Code depende de login no claude.ai e de um recurso ligado e, sem eles, cai num worktree.
+
+## A prova 4.1 no Claude Code (2026-10-01)
+
+A etapa 4.1 do plano rodou o autopilot da 0.5.1 num programa de verdade, com dois PRs só de docs: o [#68](https://github.com/byvict/pstack-vic/pull/68) e o [#69](https://github.com/byvict/pstack-vic/pull/69). Cada PR teve um Dono `poteto-agent` numa worktree própria. A Raiz verificou cada head com cinco lanes, oito delas nativas e duas no grok-4.7 pelo runner, e cada Dono mergeou o próprio PR depois do veredito limpo. Nenhuma troca da tabela quebrou, então nada sai como 0.5.2. Ficam registradas duas lacunas do harness que não são linhas da tabela:
+
+- Nesta sessão do app de desktop, nem a Raiz nem os subagentes tinham uma ferramenta de lista de tarefas. Por isso nenhum deles abriu a lista com os passos do playbook que o `poteto-mode` pede.
+- O `gh pr merge --squash` usa o padrão de squash do repositório, que aqui é `COMMIT_MESSAGES`. Sem `--body-file`, o commit na `main` fica só com o título, e o `opening-a-pr.md` diz que o corpo do squash é o corpo do PR.
+
+A prova rodou em bypass permissions, então não testou o classificador do auto mode. A trilha e a revisão estão em `~/Dev/Skills/pstack-vic-runs/2026-10-01-autopilot-prova/`.
