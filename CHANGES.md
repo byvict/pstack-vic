@@ -1427,7 +1427,7 @@ Estas mudanças entram no PR da etapa 5 do plano, que não sobe a versão: ela c
 - `skills/poteto-mode/SKILL.md` e `docs/reference.md`: o motivo de uma lane externa não ter `run` nem `verify` passa a ser o que o runner faz (o Claude com as skills desligadas e uma lista `--tools`, o grok com uma lista `--tools`) e o fato de o Codex não trazer essas duas skills.
 - Neste arquivo: as "Decisões" da 0.5.1 voltam aos três pontos do plano (a lane travada, o verbo do Babysit e o push do Orchestrate fora da autorização v2), e a forma única do Tick fica numa linha própria, como linha T13 da tabela do plano.
 - `docs/reference.md`: os blocos de comando de *A partir do clone*, *Versões das CLIs* e *Verificação* perdem os comentários com `#`, que vão para o texto em volta, porque o zsh interativo do operador não trata `#` como comentário; o texto do clone deixa de citar um hook, que o plugin não tem desde a 0.1.5.
-- `skills/poteto-mode/playbooks/orchestrate.md`: a linha de worker e verificador diz a escolha do port (workers e verificadores nativos como subagentes locais, verificador externo pelo runner, isolados por worktree ou branch) e que o `isolation: "remote"` do Claude Code fica atrás de uma trava e cai num worktree.
+- `skills/poteto-mode/playbooks/orchestrate.md`: a linha de worker e verificador diz a escolha do port (subagentes locais em background, isolados por worktree ou branch) e que o `isolation: "remote"` do Claude Code fica atrás de uma trava e cai num worktree.
 
 ## A prova 4.1 no Claude Code (2026-10-01)
 
