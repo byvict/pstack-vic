@@ -42,7 +42,7 @@ poteto-mode's Subagents section sets Claude-specific defaults (`subagent_type: "
 - `spawn_agent` takes no `isolation` parameter. Where the Claude call passes `isolation: "worktree"`, create the worktree with `git worktree add` before the dispatch and name its path in the brief.
 - An Autopilot-full or Autopilot-stack owner is one `spawn_agent` with the model and `reasoning_effort` of its authoring row, a worktree of its own, and instructions to read the `poteto-mode` skill in full first.
 - There is no `comment-sicko` subagent type either. The **no-comments** skill spawns it on Claude Code; on Codex dispatch a `spawn_agent` whose instructions tell it to read `agents/comment-sicko.md` in full first.
-- Claude Code runs every subagent on this machine, so the **swarm** skill's workers and the fan-out playbooks (`orchestrate`, `autopilot-full`, `autopilot-stack`) isolate writers with worktrees. The same holds on Codex.
+- The port runs every Claude Code subagent on this machine (`isolation: "remote"` is behind a gate and falls back to a worktree), so the **swarm** skill's workers and the fan-out playbooks (`orchestrate`, `autopilot-full`, `autopilot-stack`) isolate writers with worktrees. The same holds on Codex.
 - Keep the rest of the policy unchanged. Pass file pointers not inlined context, give each worker its own worktree or branch when they write, review every subagent's diff yourself.
 
 ## Models and providers
