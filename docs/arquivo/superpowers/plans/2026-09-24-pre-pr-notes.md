@@ -1,3 +1,5 @@
+> Arquivo histórico. Este documento descreve o converge, que saiu do plugin na 0.5.0 pelo [ADR 0005](../../../adr/0005-autopilot-substitui-converge.md), em 2026-09-30. Nada aqui vale mais, e parte dos links não abre.
+
 # Pré-PR plan: implementation notes
 
 These notes carry what the parts already built taught the parts still to build. Read them before you start a part of [the plan](2026-09-24-pre-pr.md). The plan's code blocks for Parts 1 to 3 are history now. The code and [`converge-contract.md`](../../../skills/poteto-mode/references/converge-contract.md) are the reference. Decisions that belong to Victor live as Linear sub-issues of CLI-192. Since 2026-09-28 the notes also serve [`2026-09-28-converge-local.md`](2026-09-28-converge-local.md); new notes start at N28.

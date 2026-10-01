@@ -1,3 +1,5 @@
+> Arquivo histórico. Este documento descreve o converge, que saiu do plugin na 0.5.0 pelo [ADR 0005](../../../adr/0005-autopilot-substitui-converge.md), em 2026-09-30. Nada aqui vale mais, e parte dos links não abre.
+
 # Pós-merge: o Varredor roda o que vem depois do merge (desenho, 2026-09-29)
 
 Desenho aprovado por Victor em 2026-09-29 ("ok, gera o chip que vai implantar"), a partir do relatório `~/Dev/Skills/pstack-vic-runs/2026-09-29-pos-merge/relatorio.md` e das evidências ao lado dele. Vocabulário em [CONTEXT.md](../../../CONTEXT.md). Estende o daemon de [2026-09-28-converge-local-design.md](2026-09-28-converge-local-design.md) e o [ADR 0003](../../adr/0003-converge-sem-nuvem.md); a referência normativa continua sendo a seção **Local daemon** de [`converge-contract.md`](../../../skills/poteto-mode/references/converge-contract.md). O [plano](../plans/2026-09-29-post-merge-0.4.10.md) registra na seção Rulings cada ajuste que o código obrigou.

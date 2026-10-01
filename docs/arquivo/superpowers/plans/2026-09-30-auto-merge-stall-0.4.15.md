@@ -1,3 +1,5 @@
+> Arquivo histórico. Este documento descreve o converge, que saiu do plugin na 0.5.0 pelo [ADR 0005](../../../adr/0005-autopilot-substitui-converge.md), em 2026-09-30. Nada aqui vale mais, e parte dos links não abre.
+
 # Stalled auto-merge 0.4.15 Implementation Plan
 
 **Goal:** Merge an armed, certified PR that GitHub's auto-merge left open after every required check passed. On 2026-09-30, pstack-vic#59 stayed open for 18 minutes and 35 seconds in that state and merged only when a session read it.

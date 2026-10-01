@@ -1,3 +1,5 @@
+> Arquivo histórico. Este documento descreve o converge, que saiu do plugin na 0.5.0 pelo [ADR 0005](../../../adr/0005-autopilot-substitui-converge.md), em 2026-09-30. Nada aqui vale mais, e parte dos links não abre.
+
 # Troca automática do Revisor pré-PR (desenho, 2026-09-29)
 
 Desenho da "correção 2" que Victor pediu em 2026-09-29: quando a família do `pre-pr reviewer` escreveu parte do código da branch, o Pré-PR troca o revisor sozinho por outra família, sem parar para avisar. Vocabulário em [CONTEXT.md](../../../CONTEXT.md). Complementa o [desenho do Converge local](2026-09-28-converge-local-design.md), cuja "Regra cruzada" este documento aperta. As decisões abertas foram delegadas a esta sessão; cada uma está registrada abaixo com o porquê.

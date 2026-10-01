@@ -4,6 +4,8 @@ status: superseded
 
 # Verificação pesada antes do PR; a nuvem só reage
 
+Superado por [ADR 0005](0005-autopilot-substitui-converge.md) em 2026-09-30.
+
 Superado em 2026-09-28 por [ADR 0003](0003-converge-sem-nuvem.md) na parte da nuvem; a decisão de verificar antes do PR continua.
 
 Até 2026-09-24 o Cursor Cloud verificava, reparava e mergeava todo PR que a Raiz abria, e em uma semana consumiu um quinto do pool mensal, a maior parte relendo contexto enquanto esperava CI. Decidimos que o Pré-PR roda na máquina local, em lanes Grok Build (assinatura SuperGrok Heavy, custo marginal zero), e que o PR só nasce certificado. Converge, na nuvem e só com modelos Cursor, passa a ser reativo: verifica PR sem Certificado, repara CI vermelho e arma o merge do que está certificado, por três gatilhos de Automation. O Cursor não foi removido porque cobre o que a máquina local não alcança depois que a Raiz encerra.

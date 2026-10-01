@@ -1,3 +1,5 @@
+> Arquivo histórico. Este documento descreve o converge, que saiu do plugin na 0.5.0 pelo [ADR 0005](../adr/0005-autopilot-substitui-converge.md), em 2026-09-30. Nada aqui vale mais, e parte dos links não abre.
+
 # Converge: plano histórico
 
 **Substituído em 2026-09-23:** o [plano vigente do Converge v1](converge-v1.md) define o fluxo aprovado de verificação, correção e merge automático no Cursor Cloud, com Grok 4.7 High/XHigh e duas responsabilidades. Ele substitui a arquitetura, os papéis, o protocolo de execução e os critérios de entrega abaixo, inclusive instruções de retomada, campanhas de avaliação e checklists ainda abertos. Este documento preserva o histórico e as evidências; suas instruções não devem ser executadas. A revisão atual é somente documental e não inicia a implementação.

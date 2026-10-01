@@ -1,3 +1,5 @@
+> Arquivo histórico. Este documento descreve o converge, que saiu do plugin na 0.5.0 pelo [ADR 0005](../adr/0005-autopilot-substitui-converge.md), em 2026-09-30. Nada aqui vale mais, e parte dos links não abre.
+
 # Converge v1: verificar, corrigir e fazer merge no Cloud
 
 Escopo revisado com Victor em 2026-09-23. Este é o plano vigente. Substitui a arquitetura, os papéis, o protocolo de execução e os critérios de entrega do [plano anterior](converge-plan.md). A execução foi autorizada em 2026-09-23.

@@ -1,3 +1,5 @@
+> Arquivo histórico. Este documento descreve o converge, que saiu do plugin na 0.5.0 pelo [ADR 0005](../../../adr/0005-autopilot-substitui-converge.md), em 2026-09-30. Nada aqui vale mais, e parte dos links não abre.
+
 # Pré-PR proporcional à mudança (desenho, 2026-09-29)
 
 Desenho fechado com Victor em 2026-09-29, opção B da investigação. Vocabulário em [CONTEXT.md](../../../CONTEXT.md). Parte da 0.4.5 ([#49](https://github.com/byvict/pstack-vic/pull/49)), que já tirou a espera fixa de 30 minutos do daemon: este desenho cuida de quanto trabalho o Pré-PR faz depois que a Raiz acorda, não de quando ela acorda. Complementa o [desenho do Converge local](2026-09-28-converge-local-design.md); a referência de código continua sendo a seção **Certificado** de [`converge-contract.md`](../../../skills/poteto-mode/references/converge-contract.md).

@@ -1,3 +1,5 @@
+> Arquivo histórico. Este documento descreve o converge, que saiu do plugin na 0.5.0 pelo [ADR 0005](../../../adr/0005-autopilot-substitui-converge.md), em 2026-09-30. Nada aqui vale mais, e parte dos links não abre.
+
 # Converge local: o daemon no Mac substitui a nuvem (desenho, 2026-09-28)
 
 Desenho fechado com Victor em 2026-09-28. Vocabulário em [CONTEXT.md](../../../CONTEXT.md). Supera a metade "nuvem" de [docs/pre-pr.md](../../pre-pr.md) e o [ADR 0001](../../adr/0001-verificacao-pesada-antes-do-pr.md), que ganha um ADR 0003 no primeiro PR de documentação. A metade Pré-PR, Partes 1 a 4a do [plano](../plans/2026-09-24-pre-pr.md), não muda.

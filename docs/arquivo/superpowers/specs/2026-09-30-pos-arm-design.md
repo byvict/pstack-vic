@@ -1,3 +1,5 @@
+> Arquivo histórico. Este documento descreve o converge, que saiu do plugin na 0.5.0 pelo [ADR 0005](../../../adr/0005-autopilot-substitui-converge.md), em 2026-09-30. Nada aqui vale mais, e parte dos links não abre.
+
 # Pós-arm: o Daemon é dono do PR depois do arm (desenho, 2026-09-30)
 
 Desenho aprovado por Victor em 2026-09-30 ("pode"), a partir do relatório `~/Dev/Skills/pstack-vic-runs/2026-09-30-pos-arm/relatorio.md`, que traz a evidência de cada caso com arquivo e linha. Vocabulário em [CONTEXT.md](../../../CONTEXT.md). Estende o Daemon de [2026-09-28-converge-local-design.md](2026-09-28-converge-local-design.md) e o Pós-merge de [2026-09-29-post-merge-design.md](2026-09-29-post-merge-design.md); a referência normativa continua sendo [`converge-contract.md`](../../../skills/poteto-mode/references/converge-contract.md), seções **Merge and progress** e **Local daemon**. O [plano](../plans/2026-09-30-pos-arm-0.4.14.md) registra as decisões R107 a R124.

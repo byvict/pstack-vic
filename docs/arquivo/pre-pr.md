@@ -1,3 +1,5 @@
+> Arquivo histórico. Este documento descreve o converge, que saiu do plugin na 0.5.0 pelo [ADR 0005](../adr/0005-autopilot-substitui-converge.md), em 2026-09-30. Nada aqui vale mais, e parte dos links não abre.
+
 # Pré-PR: certificação local em lanes configuráveis, Converge local por daemon
 
 Desenho fechado com Victor em 2026-09-24. Vocabulário em [CONTEXT.md](../CONTEXT.md); decisões de fundo em [ADR 0001](adr/0001-verificacao-pesada-antes-do-pr.md) e [ADR 0002](adr/0002-receita-obrigatoria-no-pr-que-cria-a-pagina.md). Substitui o fluxo de entrega de [converge-v1.md](converge-v1.md); a metade "nuvem" foi substituída em 2026-09-28 pelo daemon local ([spec](superpowers/specs/2026-09-28-converge-local-design.md), [ADR 0003](adr/0003-converge-sem-nuvem.md)).
