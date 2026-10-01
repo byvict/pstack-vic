@@ -30,8 +30,8 @@ Método de aplicação, por arquivo: (1) onde o resultado seria igual ao open, `
 6. **`/goal` → standing orders + todolist; `git show origin/main:pstack/...` → caminho no plugin instalado.** Claude Code não tem `/goal`; o plugin instalado é a fonte estável dos playbooks.
 7. **Cloud agents e VMs → subagents em background, um worktree por escritor.** `environment: "cloud"`, `cloud_base_branch`, "lane VM", "Cursor dashboard" e "Cursor restart" saem; `run_in_background: true` e "session restart" entram.
 8. **Transcripts → `~/.claude/projects/<encoded-cwd>/*.jsonl`**, com a mesma regra de não varrer outros projetos.
-9. **Liveness dos ticks de auditoria** (`autopilot-full`, `autopilot-stack`, `multi-phase-plan`): adotada a regra do open, tempo decorrido sem efeito colateral não prova lane travada, derrubar só com evidência afirmativa. É consequência do runner externo (lanes de 90 minutos são saudáveis), coerente com `provider-dispatch.md`.
-10. **Recusadas as mudanças editoriais do open sem motivo de plataforma**, para manter a prosa da Cursor e reduzir conflito no merge do remote `cursor` (fase 8): reescrita de `shipping.md` (GraphQL de disarm, `--match-head-commit`, variáveis de shell), mecânica de fork e `--repo` em `opening-a-pr.md`, `autopilot-*` e `multi-phase-plan.md`, reescrita de `principle-attack-the-premise` e `principle-test-behavior-not-implementation` (e as linhas correspondentes em `poteto-mode/SKILL.md`), a regra "Terse is not an excuse" reescrita, a linha de reply de `bug-fix.md`, `databricks.md` citando uma skill dbt do open. Cada uma pode voltar por veredito no digest semanal do open.
+9. **Liveness dos ticks de auditoria** (`autopilot-full`, `autopilot-stack`, `multi-phase-plan`): adotada a regra do open, tempo decorrido sem efeito colateral não prova lane travada, derrubar só com evidência afirmativa. É consequência do runner externo (lanes de 90 minutos são saudáveis), coerente com `provider-dispatch.md`. **Aposentada para os playbooks na 0.5.1.** A regra do open não é troca de harness, então sai dos três lugares: o passo 6 de `autopilot-full.md`, o passo 2 de `autopilot-stack.md` e o prompt do tick em `multi-phase-plan.md`. Volta a regra da Cursor: uma lane que dá erro, ou que passa do tempo esperado sem efeito colateral, está travada. O tempo esperado de cada subagente fica no `children.tsv` do Dono (no mínimo a execução mais longa já vista daquele tipo). A referência do runner continua sem timeout implícito e passa a apontar para esse arquivo: num programa de autopilot, o tempo esperado do `children.tsv` é o contrato medido da tarefa (`provider-dispatch.md`, parágrafo do timeout).
+10. **Recusadas as mudanças editoriais do open sem motivo de plataforma**, para manter a prosa da Cursor e reduzir conflito no merge do remote `cursor` (fase 8): reescrita de `shipping.md` (GraphQL de disarm, `--match-head-commit`, variáveis de shell), mecânica de fork e `--repo` em `opening-a-pr.md`, `autopilot-*` e `multi-phase-plan.md`, reescrita de `principle-attack-the-premise` e `principle-test-behavior-not-implementation` (e as linhas correspondentes em `poteto-mode/SKILL.md`), a regra "Terse is not an excuse" reescrita, a linha de reply de `bug-fix.md`, `databricks.md` citando uma skill dbt do open. Cada uma pode voltar por veredito no digest semanal do open. **Nota da 0.5.1:** em `shipping.md`, `opening-a-pr.md`, `autopilot-full.md`, `autopilot-stack.md`, `babysit.md` e `multi-phase-plan.md` a recusa passa a valer por construção. Os seis são gerados do texto da Cursor em `12d587d` mais a tabela de trocas, e `scripts/upstream-parity.ts` falha se um deles tiver uma frase que não é de nenhum dos dois. Uma mudança do open só volta a esses seis como troca de harness na tabela.
 
 ## Veredito por arquivo
 
@@ -83,6 +83,8 @@ Legenda: **A** aplica (cópia do open), **Ad** adapta (open + mudança de desenh
 | `session-pickup.md` | A | transcripts |
 | `shipping.md` | H | step 1 cloud agents/control → worktree/`run`/`verify`; step 8 caminho do `watch-pr`. **R**: reescrita completa dos steps 1–8 (GraphQL, `--match-head-commit`, variáveis) |
 | `worktree-cleanup.md` | A | caminhos, "sidebar" → session list, caches do Claude Code |
+
+**Nota da 0.5.1.** As linhas de `autopilot-full.md`, `autopilot-stack.md`, `babysit.md`, `multi-phase-plan.md`, `opening-a-pr.md` e `shipping.md` contam o que a fase 4 fez. Desde a 0.5.1 esses seis arquivos são gerados do texto da Cursor em `12d587d` mais a tabela de trocas, e parte do que estas linhas listam saiu (a regra de liveness, o caminho do `watch-pr` no plugin instalado, as frases editoriais do `multi-phase-plan.md`). O estado atual está na seção 0.5.1, no fim deste arquivo.
 
 ### Referências, scripts e agents
 
@@ -1205,6 +1207,14 @@ Esse PR avança o ponto de sync em `UPSTREAM.md` para `12d587d` e a linha de pro
 
 **Nota da 0.5.0.** A comparação terminou com a saída do converge ([ADR 0005](docs/adr/0005-autopilot-substitui-converge.md)). A etapa 2 do plano, a 0.5.1, resolve esta lista. Ela aplica os hunks de autopilot a partir do texto da Cursor em `12d587d` e avança o ponto de sync. A menção ao lease do converge no item do `12d587d` deixa de valer.
 
+**Resolvido na 0.5.1 (2026-10-01).** Os hunks de autopilot entraram todos pelo mesmo caminho: os seis playbooks foram gerados de novo do texto da Cursor em `12d587d` (seção 0.5.1). Nenhum hunk dos quatro commits fica pendente.
+
+- `70b2dc8` (#414): **A** em `autopilot-full.md`, `autopilot-stack.md` e `multi-phase-plan.md`, com as trocas de harness da tabela em volta, e **A** na linha "Autopilot-full." de `skills/poteto-mode/SKILL.md` ("each PR").
+- `12d587d` (#422): **A** em `autopilot-full.md` (o Dono publica o próprio rebase com `git push --force-with-lease` depois de um `ls-remote`), em `babysit.md` (passo 4) e em `opening-a-pr.md` (último parágrafo).
+- Hunks de modelo padrão nesses arquivos: **N**, `não aplica`, como na regra desta seção. O texto "on the `swarm workers` model (default `grok-4.7-xhigh-fast`)" e o marcador `<swarm workers model>` de `multi-phase-plan.md` viram a linha T9 da tabela de trocas, que cita o papel `swarm workers`.
+
+O ponto de sync de `UPSTREAM.md` avançou para `12d587d` (pstack 0.15.5), e a proveniência em `NOTICE.md` foi atualizada.
+
 ## Verificação
 
 - `npm test`: 986 testes, 0 falhas, os mesmos da 0.4.17. Nenhum teste fixava texto cortado (o único anchor de prosa em testes, `prompts.test.ts`, lê `pre-pr-prompts.md`, que não muda), então nenhum teste foi ajustado.
@@ -1287,3 +1297,98 @@ O plano também decidiu três pontos. Dois só entram na 0.5.1: a regra de lane 
   - A lista `RETIRED_CONVERGE_ROLES` de `setup-pstack.ts`, com os nomes dos seis papéis aposentados, e o teste dela, que ficam para o `/setup-pstack` continuar lendo um sheet antigo.
 - Nenhum arquivo rastreado fora desses lugares cita um caminho apagado ou movido.
 - `babysit.md`, `shipping.md` e `opening-a-pr.md` diferem do texto da Cursor em `12d587d` só nas trocas de harness e nos trechos de autopilot que a 0.5.1 aplica. O plano devolve duas dessas trocas ao texto da Cursor na 0.5.1: o verbo da frase do Babysit ("supersedes" hoje) e o caminho do `watch-pr` no Babysit e no Shipping. O `SKILL.md` do `poteto-mode` difere também na seção *Platform Adaptation* e nos dois parágrafos de delegação. Para isso valer, o gatilho do Babysit nesse arquivo recupera o "and" do texto da Cursor ("and not the standalone **babysit** skill").
+
+# 0.5.1 — O autopilot volta ao texto da Cursor, com uma guarda (2026-10-01)
+
+A 0.5.1 é a etapa 2 do plano [`docs/superpowers/plans/2026-09-30-autopilot-substitui-converge.md`](docs/superpowers/plans/2026-09-30-autopilot-substitui-converge.md). A 0.5.0 tirou o converge. Esta versão refaz os seis playbooks do autopilot a partir do texto da Cursor no commit `12d587d` (pstack 0.15.5) e deixa uma única diferença permitida: as trocas de harness. O harness é o programa que roda o agente. Uma troca tira um termo que só existe na Cursor e põe o equivalente do Claude Code ou do Codex.
+
+Duas regras do Victor (2026-09-30) valem para tudo nesta versão:
+
+1. As únicas diferenças permitidas do upstream são trocas de harness. Nada do converge entra no autopilot. Na dúvida sobre uma frase, vale a frase da Cursor.
+2. Os modelos padrão são nossos. As skills citam papéis da matriz (`model-matrix.json`), nunca um seletor de modelo da Cursor. Um hunk da Cursor que só muda modelo padrão é `não aplica`.
+
+## O que a versão faz
+
+- **Seis playbooks gerados.** `autopilot-full.md`, `autopilot-stack.md`, `babysit.md`, `opening-a-pr.md`, `shipping.md` e `multi-phase-plan.md` saem do comando `node scripts/upstream-parity.ts --write`. Nenhuma frase deles foi escrita à mão. Para mudar uma frase, muda-se uma troca na tabela e roda-se o comando de novo.
+- **Os trechos de autopilot dos commits `70b2dc8` (#414) e `12d587d` (#422) entram.** Eram a lista pendente da 0.4.18:
+  - **Rodadas.** O Enxame da Raiz verifica o head code-ready e cada push seguinte que muda o patch. O merge precisa do Veredito limpo da Rodada cujo patch é o do head merge-ready.
+  - **`children.tsv`.** Cada Dono anota os subagentes que cria: id, tempo esperado (no mínimo a execução mais longa já vista daquele tipo) e estado.
+  - **Regra de rebase.** O primeiro rebase vem antes do relatório code-ready e do babysit. Nas rodadas de conserto a base não muda. O Dono só rebaseia de novo no preparo do merge, num conflito de `git merge-tree` com a trunk ou numa falha de CI causada por uma mudança na trunk.
+  - **Auditoria.** Duas ou mais lanes de revisão, cada uma com um foco. Um defeito que uma lane registrou como nota conta como achado. Cada achado de comportamento pede um teste vermelho ou, onde teste nenhum mostra o defeito, um recibo de reprodução.
+  - **Preparo do merge.** Nunca começa antes das lanes da Rodada. Termina com um rebase na trunk atual, e o CI precisa passar no head depois desse rebase.
+  - **Aval da Raiz (countersign).** Subir um limite que o CI só deixa apertar pede o aval da Raiz, dado depois da prova de um verificador. Quando a autorização do operador ou as ordens permanentes cobrem aprovações, esse aval é a aprovação, e o Dono a registra. A Raiz nunca dá nem contorna uma aprovação que o forge (aqui, o GitHub) exige.
+  - **Lane travada.** A cada Tick o teste roda sobre a lista de tarefas em background e sobre o `children.tsv` de cada Dono. O Tick só termina quando não sobra trabalho delegado.
+  - **Push do Dono.** O Dono publica o próprio rebase com `git push --force-with-lease` depois de um `ls-remote`.
+  - **Exceções do Dono.** No passo 4 do Babysit, o Dono de um Autopilot-full rebaseia o próprio branch (no Autopilot-stack, esse dono é a Raiz). No último parágrafo de Opening a PR, o Dono fica no babysit em vez de voltar ao pai.
+  - **Tick silencioso.** O prompt do Tick só escreve no chat quando acha uma mudança que nenhum status anterior relatou. A linha do Tick na trilha é escrita sempre.
+  - **Molde de plano.** O bloco *Verdict and merge* e a regra de rebase do `multi-phase-plan.md` seguem os itens acima.
+  - **Autopilot-stack.** O passo 4 vira "Verify each round", os Donos mantêm o `children.tsv`, e o passo 7 aponta para a regra do patch-id do Shipping.
+  - **Lista de playbooks.** A entrada "Autopilot-full." de `skills/poteto-mode/SKILL.md` passa a dizer "each PR".
+- **O ponto de sync avança.** `UPSTREAM.md` passa de `5bf2b15` (0.15.2) para `12d587d` (0.15.5), e a proveniência em `NOTICE.md` acompanha.
+
+## A tabela e a guarda
+
+**A tabela.** [`skills/poteto-mode/references/upstream-substitutions.json`](skills/poteto-mode/references/upstream-substitutions.json) guarda 42 trocas em 13 linhas. Cada linha tem um id, o motivo e a lista de trocas. Cada troca diz o arquivo, o texto exato da Cursor (`from`), o texto daqui (`to`) e quantas vezes o `from` aparece no texto da Cursor daquele arquivo (`count`). Um `to` vazio apaga o trecho. As trocas de um arquivo valem todas de uma vez e não podem se sobrepor.
+
+| Linha | Na Cursor | Aqui | Trocas |
+| --- | --- | --- | --- |
+| T1 | `/goal` armado com o objetivo do programa | o objetivo escrito nas ordens permanentes (*standing orders*) e repetido na todolist | 6 |
+| T2 | um cloud agent da Cursor por PR, a VM da lane, a Raiz na nuvem | um subagente em background por PR, no próprio worktree; a frase da Raiz na nuvem sai | 7 |
+| T3 | Bugbot na prosa dos passos do autopilot | *review-bot* | 2 |
+| T4 | a skill `deslop` do plugin `cursor-team-kit` | a skill `deslop` deste plugin | 3 |
+| T5 | `control-cli` e `control-ui` do `cursor-team-kit`, "control skill" | `run` (CLIs e TUIs) e `verify` (UIs), "driver skill" | 6 |
+| T6 | `git show origin/main:pstack/skills/...` | `skills/...` no plugin instalado | 7 |
+| T9 | o modelo de `swarm workers` com um seletor da Cursor como padrão, nas linhas de verificação do plano | o papel `swarm workers` da matriz | 2 |
+| T12 | a tool `Task`; `subagent_type` e modelo explícito no passo 3 do plano | a tool `Agent`; o papel `judgment and prose` resolvido por `provider-dispatch.md`, nunca o agent `Plan` | 2 |
+| T13 | `/loop` de terminal com um sleep vigiado; a cadeia de despertar da nuvem | `/loop` em modo dinâmico; no Codex, a cadência que `codex-tools.md` diz | 3 |
+| T15 | a lista de agentes do programa | a lista de tarefas em background | 1 |
+| T17 | o `docs/` do agent store | o `docs/` do repositório de trabalho | 1 |
+| T18 | os arquivos `AGENTS.md` do repositório | `CLAUDE.md` no Claude Code, `AGENTS.md` no Codex | 1 |
+| T20 | a skill babysit embutida da Cursor | a skill standalone `babysit` | 1 |
+
+Por arquivo, as 42 trocas são 18 em `multi-phase-plan.md`, 11 em `autopilot-full.md`, 8 em `autopilot-stack.md`, 2 em `shipping.md`, 2 em `opening-a-pr.md` e 1 em `babysit.md`. As linhas T7, T8, T10, T11, T14, T16 e T19 do plano são trocas de harness em arquivos fora da guarda (`SKILL.md`, `show-me-your-work`, `session-pickup`, `codex-tools.md`, `no-comments`, `worktree-cleanup`) e não estão no JSON.
+
+**A guarda.** `scripts/upstream-parity.ts` tem dois comandos. O `check` lê cada arquivo da Cursor com `git show`, aplica as trocas e compara com o arquivo daqui. O `--write` grava o texto gerado por cima dos seis arquivos. O commit da Cursor não está na tabela: o script lê a célula Commit da tabela de sync do `UPSTREAM.md`, a mesma que o digest semanal lê. O `check` termina com código 1 e mostra o diff quando um arquivo tem uma frase que não é da Cursor nem da tabela. Também termina com 1 quando uma troca não encontra mais o texto dela na Cursor (troca morta), quando o `count` não bate e quando duas trocas se sobrepõem. Termina com 2 quando não consegue rodar, por exemplo num clone sem o commit da Cursor.
+
+- `scripts/upstream-parity.test.ts` roda o `check` dentro do `npm test`. Num clone sem o commit da Cursor ele falha com a mensagem `fetch the cursor remote first: git fetch --no-tags cursor main`. Ele falha em vez de pular, porque um teste pulado esconderia uma frase fora da tabela. Um segundo teste mantém as duas entradas "Autopilot-..." da lista de playbooks do `SKILL.md` iguais às da Cursor.
+- `scripts/check-plan.test.ts` cobre o `check-plan.mjs`, que fica fora da guarda. O molde de plano do `multi-phase-plan.md` gerado passa no verificador com 0 problemas, e um plano que perde uma das cinco frases fixadas (ordens permanentes, plugin instalado, Tick de 30 minutos, mensagem de status, a linha *Verify, live* no papel `swarm workers`) falha. O `check-plan.mjs` não mudou: as três linhas em que ele difere da Cursor são as linhas T1, T6 e T9 da tabela.
+
+## O que sumiu porque não era troca de harness
+
+Estas frases estavam nos seis arquivos até a 0.5.0. Nenhuma é texto da Cursor nem troca de harness, então a geração as tirou.
+
+- **A regra de liveness do open-pstack** (decisão 9 da fase 4): "Elapsed time or the absence of a new side effect alone never proves a lane is stuck", "The tick is an observation cadence, never a lease, deadline, or cancellation threshold", "only on affirmative failure evidence" e "Cancel through the retained handle". Ela estava no passo 6 de `autopilot-full.md`, no passo 2 de `autopilot-stack.md` e no prompt do Tick em `multi-phase-plan.md`. Volta a regra da Cursor: uma lane que dá erro, ou que passa do tempo esperado sem efeito colateral, está travada, e a Raiz a derruba e põe outra no lugar.
+- **"through its retained handle"** na frase que manda sondar cada Dono. A frase da Cursor fica como é.
+- **As frases editoriais do `multi-phase-plan.md`**: "Each explorer returns", "Children do not detect the parent harness or choose a route.", "The playbook file is not checker input. Check the plan file created in step 4.", a frase de recibo da seção *Verification*, "Keep skill-relative links in this playbook body. Do not copy them into the plan file.", os sufixos `/SKILL.md` que só o nosso molde tinha, os links em markdown onde a Cursor usa código simples, e a frase da receita de boot que descrevia cada lane ao vivo com worktree e recibo próprios.
+- **O verbo do Babysit.** "supersedes the standalone **babysit** skill" volta a "replaces", o verbo da Cursor. A troca T20 só muda o nome da skill. `tests/skill-collision-repro.sh` passa a procurar a frase com "replaces".
+- **O caminho do `watch-pr`** no passo 6 do Babysit e no passo 8 do Shipping volta a `scripts/watch-pr/watch-pr`, e o molde volta a citar `../references/bugbot-triage.md`. A Cursor já escreve os dois sem o prefixo `pstack/`, então não há o que trocar.
+- **As explicações dentro da frase.** "since Claude Code has no `/goal` command" e "which schedules its own wake-up rather than blocking on a sleep" saem dos playbooks. O motivo de cada troca fica na tabela.
+
+## Fora dos seis arquivos
+
+- `skills/poteto-mode/SKILL.md`: a seção *Platform Adaptation* ganha a frase que aponta para a tabela. A seção *Subagents* ganha o parágrafo **Autopilot owners**: no Claude Code, o Dono é uma chamada `Agent` com `subagent_type: "poteto-agent"`, `isolation: "worktree"`, `run_in_background: true` e o modelo da linha de autoria do PR. É para lá que a linha T2 manda os parâmetros da tool. Com ele, o `SKILL.md` difere do texto da Cursor nas trocas de harness, na seção *Platform Adaptation* e em três parágrafos de delegação (eram dois na 0.5.0).
+- `skills/poteto-mode/references/codex-tools.md`: o lado do Codex das linhas T2, T13 e T15. O `spawn_agent` não tem parâmetro de isolamento, então o worktree é criado antes com `git worktree add`. Um Dono é um `spawn_agent` com o modelo e o esforço da linha de autoria. A lista de tarefas em background são os subagentes abertos e as sessões de exec persistentes. No Tick de 30 minutos, onde nenhuma tarefa agendada chama a sessão, quem dá a cadência é o operador: ele manda o prompt do Tick a cada 30 minutos.
+- `skills/poteto-mode/references/provider-dispatch.md`: o parágrafo do timeout ganha uma frase. Num programa de autopilot, o tempo esperado do `children.tsv` do Dono é o contrato medido da tarefa. Para uma lane do runner que nunca rodou antes, o tempo vem dos recibos de programas anteriores ou das ordens permanentes. Uma lane que passa dele sem efeito colateral está travada, e o cancelamento vai pelo handle guardado. Sem essa frase, a referência do runner e os playbooks diriam coisas opostas sobre a mesma lane.
+- `docs/reference.md`: a seção *Autopilot* explica a tabela e o comando `--write`, a seção *Verificação* documenta o `check` e o conserto de um clone sem o remote `cursor`, e a linha de sync do topo passa a 0.15.5 (`12d587d`).
+- `UPSTREAM.md`: a coluna `cursor` da tabela de sync (commit, versão 0.15.5, data, "Commit equivalente aqui"), o parágrafo que explica o split e os quatro commits depois dele, os dois comandos de *Checar mudanças* e, em *Incorporar uma mudança*, a regra de rodar o `--write` quando o ponto de sync da Cursor avança.
+- `NOTICE.md`: a linha da fase 4 separa os seis playbooks gerados dos outros oito arquivos, que seguem como árvore Cursor 0.15.2 mais os hunks de plataforma do open. A linha do split registra a sincronização até `12d587d`. A lista de escrita nova ganha a guarda.
+- Neste arquivo: a decisão 9 da fase 4 fica aposentada para os playbooks, a decisão 10 e a tabela de playbooks da fase 4 ganham uma nota, e a lista pendente da 0.4.18 fica resolvida.
+
+## Decisões
+
+O plano decidiu, e Victor não discordou: a regra de lane travada volta a ser a da Cursor, com o tempo esperado no `children.tsv`; o verbo do Babysit volta a "replaces"; o Tick tem uma forma só nos três lugares, `/loop` em modo dinâmico; e o grok não vira o worker padrão de todas as lanes (D15), então a tabela não tem uma linha para isso.
+
+Na execução, as regras do port resolveram o resto:
+
+- As trocas são as menores que a tabela do plano permite. Onde a Cursor escreve um caminho relativo ou um nome que um operador do Claude Code consegue usar, o texto fica como a Cursor escreve: "Cloud-agent PR tools default to draft", "address the bugbot comments", o título "Audit on the wake chain" e as frases do forge Origin.
+- O `upstream-parity.ts` separa dois códigos de saída. O 1 é defeito do conteúdo (frase fora da tabela, troca morta, `count` errado, sobreposição). O 2 é ambiente (uso errado, tabela que não dá para ler, commit da Cursor ausente do clone).
+- Na tabela de sync do `UPSTREAM.md`, a célula "Data do sync" da Cursor leva a data do commit (2026-09-23) e diz ao lado que o ponto avançou em 2026-10-01. Só a data do commit faria parecer que o sync aconteceu em setembro.
+- No `NOTICE.md`, os seis playbooks gerados continuam na linha do open-pstack. Parte do texto das trocas ("standing orders", "One background subagent per PR", "under the installed plugin", "driver skill") veio dos hunks de plataforma do open na fase 4, e a atribuição acompanha o texto.
+
+## Verificação
+
+- `npm test`: 302 testes, 0 falhas. A 0.5.0 tinha 267. Entram os 28 de `upstream-parity.test.ts` e os 7 de `check-plan.test.ts`: 267 + 28 + 7 = 302.
+- `node scripts/upstream-parity.ts check` sai com 0 e imprime `upstream-parity: 6 files equal 12d587dfb20741cafc376c42c696c5f6e2a64487 plus the 42 pairs of skills/poteto-mode/references/upstream-substitutions.json`. Não há resíduo nem troca morta.
+- Os dois arquivos de teste novos seguem o isolamento da 0.5.0 (`isolated-env.test-helper.ts`). O processo de teste troca o próprio PATH e o próprio HOME enquanto o arquivo roda. O teste de paridade deixa no PATH só um link para o `git`, que é o programa que lê o commit da Cursor, e um para o `node`. O teste do `check-plan` só executa o `node`. Nenhum dos dois alcança `claude`, `codex`, `grok` ou `gh`, e cada um tem um teste que falha se algum deles aparecer no PATH.
+- `npm run matrix:check`, `npm run agents:check`, `npm run collision:check` e `git diff --check` limpos. O `collision:check` acha a frase "replaces the standalone **babysit** skill" no `babysit.md` gerado.
+- `scripts/upstream-digest.test.ts` segue verde: a célula Commit do `UPSTREAM.md` tem os dois hashes completos, de 40 caracteres, e os dois existem no clone.
