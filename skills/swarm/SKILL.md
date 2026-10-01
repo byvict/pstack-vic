@@ -44,4 +44,4 @@ Keep a compact result table, one-line evidenced issues, and explicit gaps or dro
 
 ## Phase D: Report
 
-Return one consolidated in-chat report with the table, issue one-liners, gaps or dropouts, and the race rule when used. Code a worker wrote that lands in a branch is committed with one `Pstack-Author` trailer per worker descriptor, per the authorship trailer of `provider-dispatch.md`.
+Return one consolidated in-chat report with the table, issue one-liners, gaps or dropouts, and the race rule when used.

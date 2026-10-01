@@ -69,4 +69,4 @@ If verification surfaces a problem the arena did not catch, either Phase A was w
 
 ## Outputs
 
-One synthesized artifact. One short synthesis note alongside, naming the base, the grafts (with source candidate), the rejections, the dropouts if any, and the verification result. When the artifact lands in a branch, the commit carries one `Pstack-Author` trailer for the base candidate's descriptor and one per grafted candidate's, per the authorship trailer of `provider-dispatch.md`.
+One synthesized artifact. One short synthesis note alongside, naming the base, the grafts (with source candidate), the rejections, the dropouts if any, and the verification result.

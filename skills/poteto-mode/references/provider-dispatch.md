@@ -117,16 +117,15 @@ The launcher lives at `skills/poteto-mode/scripts/runner/pstack-runner` under th
 ```text
 pstack-runner \
   --parent <claude|codex> \
-  --provider <claude|codex|cursor|grok> \
+  --provider <claude|codex|grok> \
   --model <real CLI model> \
   --effort <low|medium|high|xhigh|max> \
-  --mode <read-only|isolated-write|unsandboxed> \
+  --mode <read-only|isolated-write> \
   --prompt <unique prompt file> \
   --cwd <repository or dedicated worktree> \
   --output <unique final-response file> \
   --receipt <unique receipt file> \
-  [--timeout <seconds>] \
-  [--repo <owner/name> --pr <number>]
+  [--timeout <seconds>]
 ```
 
 Pass arguments as an argv array or quote every path. Never interpolate prompt text into a shell command. The launcher preflights the assigned CLI and authentication, invokes the model exactly once, disables recursive agents and ambient skill dispatch where the CLI supports it, restricts the built-in tool surface, and records the exact provider/model/effort flags. External lanes do not receive the parent's MCP surface. Keep MCP-dependent Why and Reflect roles on `inherit-parent` or `auto`. The launcher never falls back.
@@ -134,28 +133,6 @@ Pass arguments as an argv array or quote every path. Never interpolate prompt te
 Grok authentication preflight has one bounded retry. If the first `grok models` result would be classified as unauthenticated, the runner waits five seconds and tries the same preflight once more. A second failure is terminal. The delay and second attempt share the runner's absolute deadline and cancellation latch, and the receipt keeps evidence from both attempts. Model execution is never retried.
 
 CLI versions change only through the `update-clis` skill (the weekly `pstack-vic-cli-updates` routine, or `/pstack:update-clis` by hand). It reads each release's notes against [`cli-touchpoints.json`](../../update-clis/references/cli-touchpoints.json), installs the new version, and runs these lanes through the launcher before it keeps the version; otherwise it rolls back and holds the version in Linear. Grok keeps `auto_update = false` and the npm `claude` keeps `DISABLE_AUTOUPDATER=1` for that reason. A change to how the launcher uses a CLI (a flag, a parsed event, a sandbox assumption) updates that list in the same change: `update-clis.test.ts` fails when a flag the launcher generates is named in no contract, or when a pointer loses its anchor.
-
-## HTTP lanes
-
-A provider whose matrix row says `transport: "http"` has no CLI binary. Today that is `cursor`, the Cursor cloud agents API. The generated family table above lists every `cursor` family. The launcher reaches it from `skills/poteto-mode/scripts/runner/http-lane.ts` and shares everything else with a CLI lane: the exclusive output and receipt reservation, the one absolute deadline, the SIGINT and SIGTERM latch, receipt writing, and `modelProof`.
-
-An http lane needs `--repo <owner/name>` and `--pr <number>`, the GitHub pull request the cloud agent works on. A CLI lane refuses both flags. `CURSOR_API_KEY` must be in the launcher's environment. Without it the lane exits 69 with an `unavailable-cli` receipt whose message is `CURSOR_API_KEY is not set`, the same dropout shape as a missing binary.
-
-The lane runs in this order. Preflight is `GET /v1/models` with Basic auth from the key. A 401 or 403 is `unauthenticated`. A model id absent from the inventory is `unavailable-model`, with the inventory ids in the error evidence.
-
-The Cursor `cursor-grok` family uses `grok-4.7`. Its inventory on 2026-09-22 exposes `reasoning_effort` values low, medium, high, and xhigh, with a default 500k context. The runner retains that context and selects `fast=false`.
-
-The selector starts with the model's one declared default variant. It replaces `effort`, `reasoning`, or `reasoning_effort` with the requested effort and pins a declared `fast` parameter to `false`. Other parameter values stay at the provider default. The selector then requires one exact advertised match and sends that match in its advertised order. Multiple defaults, duplicate exact matches, malformed variant data for the selected model, multiple effort axes, and undeclared control axes fail before launch. A table without a default is valid only when `effort`, `reasoning`, or `reasoning_effort` and `fast` control every dimension. A table without an effort axis is valid only when the matrix lists one matching effort and the inventory declares one default. In that case, preflight evidence says that the requested effort is not selectable and that the matrix label maps to the provider default. The evidence also records the complete selected parameter list, including `[]`.
-
-Launch is `POST /v1/agents` with the prompt file's text, `workOnCurrentBranch: true`, and `autoCreatePR: false`. Poll is `GET /v1/agents/{id}/runs/{runId}` every 30 seconds until `FINISHED`, `ERROR`, `CANCELLED`, or `EXPIRED`. `FINISHED` writes the run's `result` to `--output`. `ERROR` and `EXPIRED` are `child-failed`. A `CANCELLED` the launcher did not request is `child-failed` too, because a `cancelled` receipt promises that this launcher received a signal or reached its deadline.
-
-When the deadline or the latch fires after launch, the launcher writes a `cancelled` receipt. Unless a terminal API status was already observed, it sends `POST /v1/agents/{id}/runs/{runId}/cancel` once. Five consecutive poll failures, an unknown status, or an unexpected polling error also trigger that cleanup, while preserving the original failure. The cancel request has an independent ten-second budget. Its acknowledgement confirms acceptance of the request, not that the run stopped. Cancellation during final head verification still produces a `cancelled` receipt and no output, without cancelling a run already known to be terminal. Before launch, a deadline is `timed-out` and a signal is `cancelled`, as on a CLI lane.
-
-The receipt keeps `schemaVersion: 1`. On an http lane `executable`, `exitCode`, and `signal` are null, `preflight.argv` is `["GET", "/v1/models"]`, and `argv` starts with `["POST", "/v1/agents", "<model id>", "<effort>"]`. A cancel request is appended after those four, and `error.evidence` records its result. `remote` carries `agentId`, `runId`, `agentUrl`, and `heads`. The `heads` record is `{ kind: "not-taken" }` before a comparison, `{ kind: "unverified", reason }` when a snapshot fails, or `{ kind: "observed", changedBranches }` after two successful snapshots. On a CLI lane `remote` is null. The Cursor API reports no served model, so a complete http receipt has `reportedModel: null` and `modelEvidence: "pinned-argv"`, like Codex. For an HTTP lane, `pinned-argv` establishes only the requested model identity. It does not prove the selected effort, the served model, or the internal reasoning level. The HTTP preflight evidence records the exact requested variant and whether the API exposes a selectable effort parameter.
-
-Read-only verification happens after the fact. The prompt carries the read-only clause, and the launcher snapshots the repository's remote heads with `git ls-remote --heads` before launch and after a `FINISHED` run. New, moved, and deleted heads appear in the sorted `remote.heads.changedBranches` list in both modes. The snapshots cannot attribute those changes to this run. Another actor's push, even to the same branch, makes read-only verification fail closed with `child-failed` and `could not verify read-only execution: remote heads changed: <branches>`. A failed snapshot produces `child-failed` with `could not verify read-only execution: remote head snapshot unavailable`. Isolated-write may complete while recording the same observation or snapshot failure. Unchanged snapshots show no observed head changes; they cannot detect a write that was restored between snapshots or changes outside branch heads. The run body's `git.branches[]` names the working branch even without a push (measured 2026-09-21), so the launcher does not use it for attribution.
-
-Three environment variables exist for tests: `PSTACK_CURSOR_BASE_URL` points the client at a fake server and is honored only when the host is loopback, and `PSTACK_CURSOR_POLL_MS` and `PSTACK_CURSOR_GIT_REMOTE` shorten the poll interval and redirect the `ls-remote` snapshots only alongside an accepted override. A non-loopback override is ignored.
 
 The parent tool sandbox still governs whether a subscribed child CLI can reach its credentials and network. Run setup's live probe from the actual parent profile. A blocked external CLI is a loud dropout, not a reason to elevate permissions or substitute a model silently.
 
@@ -176,29 +153,13 @@ Every Grok lane, in every mode, runs under an environment policy, because Grok's
 
 ```zsh
 if [[ -z $GROK_AGENT ]]; then
-  export CURSOR_API_KEY=...
+  export EXAMPLE_API_KEY=...
 fi
 ```
 
 With both in place, a control lane in each mode saw 37 variable names and none with `TOKEN`, `KEY` or `SECRET` in it, and `node`, `npm` and `git` still ran. The guard depends on `GROK_AGENT`, which Grok's documentation does not promise; the `grok.env-policy` entry of `skills/update-clis/references/cli-touchpoints.json` watches it.
 
-`unsandboxed` exists for one lane, the pre-pr certifier, which drives the app through a pty and Chromium. On macOS no Grok Seatbelt profile allows either (CLI-197, measured with Grok CLI 1.0.41). The launcher accepts the mode only for `grok`. It refuses the mode with a usage error when `CODEX_SANDBOX` is set, because the outer seatbelt denies the same things. The argv is the `read-only` argv with `--sandbox off`: the read tools plus `run_terminal_cmd`, no `search_replace`, always-approve and `--no-subagents`. The lane gets the environment policy that every Grok lane gets, described above. `--cwd` must sit inside a git worktree; otherwise the launcher refuses before preflight. The receipt's `checkout` records, at the worktree root resolved before the model child starts, the HEAD before the child, the HEAD after it exits and `git status --porcelain --untracked-files=all` after. Those git reads share the lane's deadline and cancellation latch. `checkout` is `null` in the other modes, and also when the child did not exit on its own or git could not read the worktree after it; such a lane is never `complete`. The launcher records and does not judge: a lane that moved HEAD or left a file still completes, and the certificate's admission refuses it. The record sees only what git reports, so a lane that hides a change from git (`git update-index --assume-unchanged` or `--skip-worktree`, `.git/info/exclude`) passes it. Nothing else confines the lane, so give it only a disposable worktree that you create at the pushed head and remove afterwards. Never give it the primary checkout.
-
 Every concurrent external lane needs distinct prompt, output, and receipt paths. The launcher reserves output and receipt paths exclusively and refuses to overwrite them.
-
-## Authorship trailer
-
-Every commit of a branch that Pré-PR certifies carries, in the trailer block of its message, one `Pstack-Author` line per family that wrote code in it: the descriptor of each lane whose code the commit holds, and the bare provider of the Raiz for what it wrote by hand. The certifier reads the trailers from GitHub's compare into `report.json` (`authors`) and unions them with the families the Raiz declares, so the reviewer is chosen against what the branch records, in an interactive session and in the daemon's catch-up alike.
-
-```text
-Pstack-Author: grok:grok-4.7@xhigh
-Pstack-Author: codex:gpt-6-sol@xhigh
-Pstack-Author: claude
-```
-
-The key is matched without case, as git matches trailers. The value is a provider name of the matrix (`claude`, `codex`, `grok`) or a descriptor `<provider>:<model>@<effort>` of such a provider. Only the provider counts, so a trailer keeps counting for its provider after the matrix retires its model or effort. Any other value is a gap that refuses the certificate until the message is rewritten. The block is the message's last paragraph, every line `Key: value` with one space after the colon; other trailers may share it. Anywhere else, a line that starts with `Pstack-Author` and a colon is a gap too, never a silent drop: in the subject or the body, in a paragraph a squash left mid-message, or in a last paragraph with a line that is not `Key: value` (a folded line, `(cherry picked from commit …)`, `Pstack-Author:claude` without the space). One line per distinct lane; repetitions count once.
-
-Who writes it: a delegated lane commits with `git commit --trailer 'Pstack-Author: <its descriptor>'`, because its brief says so, and the Raiz checks the trailer when it reviews the diff. The Raiz writes the trailers itself on the commit that lands an arena or architect artifact (one per base candidate and per grafted candidate), a swarm's work (one per worker whose code entered) and its own hand-written changes (its bare provider; an alias lane, `inherit-parent` or `auto`, is the parent's native provider too). The `pre-pr fixer` commits without a trailer: its rounds are recorded as `adjustRounds`, and the Raiz reviews its diff. Human and Dependabot commits carry none and count for no family. The rebase of **Opening a PR** keeps every trailer, and Pré-PR step 1 checks `authors` against what the session knows.
 
 ## Completion and dropouts
 
@@ -206,7 +167,7 @@ Success requires all of these:
 
 1. Exit status `0`.
 2. Receipt status `complete`.
-3. Either `modelVerified: true` with `modelEvidence: "provider-report"`, or a Codex or Cursor receipt with `reportedModel: null`, `modelVerified: false`, and `modelEvidence: "pinned-argv"`. Claude's provider report must match the family's `reportedModel` pattern; Opus must report `claude-opus-5-5`. Codex 0.154.0 accepts the exact `--model` argument but does not report the served model in its `--json` stream (measured 2026-09-17 with `gpt-6-astra`). The Cursor cloud agents API reports no served model either (measured 2026-09-21). Cursor's `pinned-argv` value therefore proves only the requested model identity. Its preflight evidence records the advertised request parameters and the effort mapping.
+3. Either `modelVerified: true` with `modelEvidence: "provider-report"`, or a Codex receipt with `reportedModel: null`, `modelVerified: false`, and `modelEvidence: "pinned-argv"`. Claude's provider report must match the family's `reportedModel` pattern; Opus must report `claude-opus-5-5`. Codex 0.154.0 accepts the exact `--model` argument but does not report the served model in its `--json` stream (measured 2026-09-17 with `gpt-6-astra`).
 4. A non-empty output file.
 
 The receipt also carries elapsed time, token usage when the CLI exposes it, and cost when available. Keep it with the arena or review artifacts so parent-harness comparisons are evidence-based.
