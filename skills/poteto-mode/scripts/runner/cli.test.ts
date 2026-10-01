@@ -1,7 +1,34 @@
-import { describe, it } from "node:test";
+import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseArgs } from "./cli.ts";
+import { main, parseArgs } from "./cli.ts";
+import { UsageError } from "./types.ts";
+import { clisOutsideFakes, isolateProcessEnv } from "./isolated-env.test-helper.ts";
+
+let home = "";
+let restoreProcessEnv: () => void = () => {};
+
+// main() runs in this process. Every case here stops in the argument parser;
+// if one ever gets past it, the process holds no CLI and a temporary HOME.
+before(() => {
+  home = mkdtempSync(join(tmpdir(), "pstack-runner-cli-"));
+  restoreProcessEnv = isolateProcessEnv(home);
+});
+
+after(() => {
+  restoreProcessEnv();
+  rmSync(home, { recursive: true, force: true });
+});
+
+describe("test isolation", () => {
+  it("keeps every provider CLI and gh off the PATH of the test process", () => {
+    assert.deepEqual(clisOutsideFakes(process.env.PATH), [], "a CLI is on the PATH of the test process");
+    assert.equal(process.env.PATH, join(home, ".node-bin"));
+    assert.equal(process.env.HOME, home);
+  });
+});
 
 function argv(extra: readonly string[] = []): string[] {
   return [
@@ -27,10 +54,6 @@ function argv(extra: readonly string[] = []): string[] {
   ];
 }
 
-function cursorArgv(extra: readonly string[] = []): string[] {
-  return argv(["--provider", "cursor", "--model", "composer-2.5", "--effort", "high", ...extra]);
-}
-
 describe("runner CLI parsing", () => {
   it("does not invent a timeout", () => {
     assert.equal(parseArgs(argv())?.timeoutMs, null);
@@ -47,10 +70,10 @@ describe("runner CLI parsing", () => {
   it("derives parent, provider, and effort choices from the matrix", () => {
     assert.throws(
       () => parseArgs(argv(["--provider", "gemini"])),
-      /provider must be one of: claude, codex, cursor, grok$/
+      /provider must be one of: claude, codex, grok$/
     );
     assert.throws(
-      () => parseArgs(argv(["--parent", "cursor"])),
+      () => parseArgs(argv(["--parent", "grok"])),
       /parent must be one of: claude, codex/
     );
     assert.throws(
@@ -59,47 +82,26 @@ describe("runner CLI parsing", () => {
     );
   });
 
-  it("parses the unsandboxed mode", () => {
-    const parsed = parseArgs(
-      argv(["--provider", "grok", "--model", "grok-4.7", "--effort", "high", "--mode", "unsandboxed"])
-    );
-    assert.equal(parsed?.mode, "unsandboxed");
-  });
-
-  it("parses --repo and --pr into a target for an http provider only", () => {
-    const parsed = parseArgs(cursorArgv(["--repo", "acme/app", "--pr", "7"]));
-    assert.deepEqual(parsed?.target, { owner: "acme", name: "app", pullNumber: 7 });
-    assert.equal(parsed?.provider, "cursor");
-    assert.equal(parseArgs(argv())?.target, null);
-  });
-
-  it("requires --repo and --pr together for an http provider and refuses them for a cli one", () => {
-    assert.throws(
-      () => parseArgs(cursorArgv()),
-      /--repo and --pr are required for cursor \(http transport\)/
-    );
-    assert.throws(
-      () => parseArgs(argv(["--provider", "grok", "--model", "grok-4.6", "--repo", "acme/app", "--pr", "7"])),
-      /--repo and --pr are only accepted for: cursor/
-    );
-    assert.throws(() => parseArgs(cursorArgv(["--repo", "acme/app"])), /--pr is required with --repo/);
-    assert.throws(() => parseArgs(cursorArgv(["--pr", "7"])), /--repo is required with --pr/);
-  });
-
-  it("rejects a --repo that is not owner/name and a --pr that is not a positive integer", () => {
-    for (const repo of ["acme", "acme/", "/app", "https://github.com/acme/app", "acme/app/extra", " /app"]) {
-      assert.throws(
-        () => parseArgs(cursorArgv(["--repo", repo, "--pr", "7"])),
-        /--repo must be owner\/name/,
-        repo
-      );
-    }
-    for (const pr of ["0", "-1", "1.5", "seven", "1e3", ""]) {
-      assert.throws(
-        () => parseArgs(cursorArgv(["--repo", "acme/app", `--pr=${pr}`])),
-        /--pr must be a positive integer/,
-        pr
-      );
+  // Each one stops in the argument parser, before any path is reserved or any
+  // CLI is looked up.
+  it("refuses the retired --mode unsandboxed, --repo, and --pr with exit 64 and the reason", async () => {
+    const refused: ReadonlyArray<readonly [string[], RegExp]> = [
+      [["--mode", "unsandboxed"], /^error: mode must be one of: read-only, isolated-write\n/],
+      [["--repo", "acme/app"], /^error: Unknown option '--repo'/],
+      [["--pr", "7"], /^error: Unknown option '--pr'/],
+    ];
+    for (const [extra, reason] of refused) {
+      assert.throws(() => parseArgs(argv(extra)), UsageError, extra.join(" "));
+      const stdout: string[] = [];
+      const stderr: string[] = [];
+      const exitCode = await main(argv(extra), Date.now(), {
+        stdout: (value) => stdout.push(value),
+        stderr: (value) => stderr.push(value),
+      });
+      assert.equal(exitCode, 64, extra.join(" "));
+      assert.match(stderr.join(""), reason);
+      assert.match(stderr.join(""), /Usage: pstack-runner/);
+      assert.deepEqual(stdout, []);
     }
   });
 });

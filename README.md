@@ -18,11 +18,11 @@ Este port mantém a prosa da Cursor onde ela não depende da Cursor e substitui 
    ```
 
    ```shell
-   codex plugin marketplace add byvict/pstack-vic --ref v0.4.19
+   codex plugin marketplace add byvict/pstack-vic --ref v0.5.0
    codex plugin add pstack@pstack-vic
    ```
 
-2. Rode `/setup-pstack` uma vez em cada pai para escolher os modelos por papel. No fim, ele confere a autorização permanente do Pré-PR e, no Claude Code, entrega o comando que você roda uma vez para concedê-la.
+2. Rode `/setup-pstack` uma vez em cada pai para escolher os modelos por papel. No fim, ele confere a [autorização permanente](docs/reference.md#autorização-permanente), que o autopilot e o playbook Shipping exigem para mergear sem aprovação humana. No Claude Code, ele entrega o comando que você roda uma vez para concedê-la.
 3. Use `/poteto-mode` sempre que a tarefa pedir rigor. O modo só entra por esse comando; o agente não o liga sozinho.
 
 ```text
@@ -31,7 +31,7 @@ Este port mantém a prosa da Cursor onde ela não depende da Cursor e substitui 
 
 ## Documentos
 
-- [`docs/reference.md`](docs/reference.md) — instalação, layout, dependências, todas as skills, subagents, o que ficou de fora.
+- [`docs/reference.md`](docs/reference.md) — instalação, layout, dependências, o [autopilot](docs/reference.md#autopilot), todas as skills, subagents, o que ficou de fora.
 - [`UPSTREAM.md`](UPSTREAM.md) — os dois upstreams (Cursor, fonte de merge; open-pstack, só leitura) e o ponto de sync de cada um.
 - [`NOTICE.md`](NOTICE.md) — proveniência de cada arquivo copiado e o que é escrita nova.
 - [`CHANGES.md`](CHANGES.md) — veredito por hunk e por skill de cada fase do port.

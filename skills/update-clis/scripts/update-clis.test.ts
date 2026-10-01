@@ -19,8 +19,9 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
 import { loadMatrix, PLUGIN_ROOT } from "../../../scripts/model-matrix.ts";
-import { invocationCommand, preflightCommand, requireSupportedMode } from "../../poteto-mode/scripts/runner/commands.ts";
+import { invocationCommand, preflightCommand } from "../../poteto-mode/scripts/runner/commands.ts";
 import { ACCESS_MODES } from "../../poteto-mode/scripts/runner/types.ts";
+import { clisOutsideFakes, isolatedEnv, isolateProcessEnv } from "../../poteto-mode/scripts/runner/isolated-env.test-helper.ts";
 import {
   codexStableVersions,
   fetchNotes,
@@ -36,18 +37,33 @@ const FIXTURES = join(import.meta.dirname, "fixtures");
 const fixture = (name: string): string => readFileSync(join(FIXTURES, name), "utf8");
 
 let root = "";
+let restoreProcessEnv: () => void = () => {};
 
+// The test process itself holds no CLI, fake or real, and its HOME is a
+// temporary one: a gh call or a probe whose `env` gets lost inherits this and
+// finds nothing. No system directory is on this PATH either, because on
+// Linux gh installs into /usr/bin; a test that needs a system tool in process
+// names the PATH it looks the tool up on.
 before(() => {
   root = mkdtempSync(join(tmpdir(), "pstack-update-clis-"));
+  restoreProcessEnv = isolateProcessEnv(join(root, "home"));
 });
 
-after(() => rmSync(root, { recursive: true, force: true }));
+after(() => {
+  restoreProcessEnv();
+  rmSync(root, { recursive: true, force: true });
+});
+
+/** For what runs outside a fake machine: `fakeBins` and this node on PATH, under a temporary HOME, and nothing of the operator's. */
+function isolated(fakeBins: readonly string[] = [], extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+  return isolatedEnv(join(root, "home"), fakeBins, extra);
+}
 
 function executable(path: string, text: string): string {
   writeFileSync(path, text);
   chmodSync(path, 0o755);
   // macOS vets a fresh executable on its first exec; pay that once here.
-  execFileSync(path, ["--version"], { stdio: "ignore", env: { ...process.env, FAKE_WARMUP: "1" } });
+  execFileSync(path, ["--version"], { stdio: "ignore", env: isolated([], { FAKE_WARMUP: "1" }) });
   return path;
 }
 
@@ -70,6 +86,16 @@ async function serve(routes: Record<string, string>): Promise<{ url: string; ser
   if (address === null || typeof address === "string") throw new Error("no port");
   return { url: `http://127.0.0.1:${address.port}`, server, hits };
 }
+
+describe("test isolation", () => {
+  it("keeps every provider CLI and gh off the PATH of the test process, and off the isolated PATH outside the fakes", () => {
+    assert.deepEqual(clisOutsideFakes(process.env.PATH), [], "a CLI is on the PATH of the test process");
+    assert.equal(process.env.PATH, join(root, "home", ".node-bin"));
+    assert.equal(process.env.HOME, join(root, "home"));
+    const fakes = join(root, "isolation-fakes");
+    assert.deepEqual(clisOutsideFakes(isolated([fakes]).PATH, [fakes]), [], "a real CLI is on the isolated PATH");
+  });
+});
 
 describe("notes parsers", () => {
   it("reads one version per CHANGELOG section with its bullet entries", () => {
@@ -129,7 +155,7 @@ describe("fetchNotes", () => {
     const cdn = await serve({ "/CHANGELOG.md": fixture("claude-CHANGELOG.md") });
     try {
       const notes = await fetchNotes("claude", "2.1.275", "2.1.277", {
-        env: { ...process.env, PSTACK_UPDATE_CLIS_CLAUDE_CHANGELOG_URL: `${cdn.url}/CHANGELOG.md` },
+        env: { PSTACK_UPDATE_CLIS_CLAUDE_CHANGELOG_URL: `${cdn.url}/CHANGELOG.md` },
       });
       assert.deepEqual(notes.versions.map((v) => [v.version, v.entries.length]), [
         ["2.1.276", 1],
@@ -146,7 +172,7 @@ describe("fetchNotes", () => {
     try {
       await assert.rejects(
         fetchNotes("claude", "2.1.278", "2.1.279", {
-          env: { ...process.env, PSTACK_UPDATE_CLIS_CLAUDE_CHANGELOG_URL: `${cdn.url}/CHANGELOG.md` },
+          env: { PSTACK_UPDATE_CLIS_CLAUDE_CHANGELOG_URL: `${cdn.url}/CHANGELOG.md` },
         }),
         (error: unknown) => error instanceof NotesError && /no notes for claude 2\.1\.279/.test(error.message)
       );
@@ -160,7 +186,7 @@ describe("fetchNotes", () => {
     cdn.server.close();
     await assert.rejects(
       fetchNotes("claude", "2.1.275", "2.1.277", {
-        env: { ...process.env, PSTACK_UPDATE_CLIS_CLAUDE_CHANGELOG_URL: `${cdn.url}/CHANGELOG.md` },
+        env: { PSTACK_UPDATE_CLIS_CLAUDE_CHANGELOG_URL: `${cdn.url}/CHANGELOG.md` },
       }),
       (error: unknown) => error instanceof NotesError && /could not fetch/.test(error.message)
     );
@@ -169,7 +195,7 @@ describe("fetchNotes", () => {
   it("ignores a source override that is not loopback", async () => {
     await assert.rejects(
       fetchNotes("grok", "1.0.40", "1.0.41", {
-        env: { ...process.env, PSTACK_UPDATE_CLIS_GROK_CHANGELOGS_URL: "http://example.invalid/changelogs" },
+        env: { PSTACK_UPDATE_CLIS_GROK_CHANGELOGS_URL: "http://example.invalid/changelogs" },
         fetch: async (url: string) => {
           throw new Error(`fetched ${url}`);
         },
@@ -185,7 +211,7 @@ describe("fetchNotes", () => {
     });
     try {
       const notes = await fetchNotes("grok", "1.0.38", "1.0.41", {
-        env: { ...process.env, PSTACK_UPDATE_CLIS_GROK_CHANGELOGS_URL: `${cdn.url}/changelogs` },
+        env: { PSTACK_UPDATE_CLIS_GROK_CHANGELOGS_URL: `${cdn.url}/changelogs` },
       });
       assert.deepEqual(notes.versions.map((v) => [v.version, v.entries.length]), [
         ["1.0.39", 13],
@@ -212,7 +238,7 @@ describe("fetchNotes", () => {
     });
     try {
       const notes = await fetchNotes("grok", "1.0.39", "1.0.41", {
-        env: { ...process.env, PSTACK_UPDATE_CLIS_GROK_CHANGELOGS_URL: `${cdn.url}/changelogs` },
+        env: { PSTACK_UPDATE_CLIS_GROK_CHANGELOGS_URL: `${cdn.url}/changelogs` },
       });
       assert.deepEqual(notes.versions.map((v) => [v.version, v.entries.length]), [
         ["1.0.40", 13],
@@ -232,7 +258,7 @@ describe("fetchNotes", () => {
     });
     try {
       const notes = await fetchNotes("grok", "1.0.39", "1.0.41", {
-        env: { ...process.env, PSTACK_UPDATE_CLIS_GROK_CHANGELOGS_URL: `${cdn.url}/changelogs` },
+        env: { PSTACK_UPDATE_CLIS_GROK_CHANGELOGS_URL: `${cdn.url}/changelogs` },
       });
       assert.deepEqual(notes.versions.map((v) => v.entries), [[{ text: "Flag --x is gone.", category: "features", breaking: true }], []]);
       assert.deepEqual(notes.missing, []);
@@ -246,7 +272,7 @@ describe("fetchNotes", () => {
     try {
       await assert.rejects(
         fetchNotes("grok", "1.0.39", "1.0.41", {
-          env: { ...process.env, PSTACK_UPDATE_CLIS_GROK_CHANGELOGS_URL: `${cdn.url}/changelogs` },
+          env: { PSTACK_UPDATE_CLIS_GROK_CHANGELOGS_URL: `${cdn.url}/changelogs` },
         }),
         (error: unknown) => error instanceof NotesError && /no notes for grok 1\.0\.41/.test(error.message)
       );
@@ -273,7 +299,7 @@ if (args[0] === "release" && args[1] === "view") { writeSync(1, readFileSync(fix
 process.exit(2);
 `
     );
-    const env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` };
+    const env = isolated([bin]);
     const notes = await fetchNotes("codex", "0.155.1", "0.156.1", { env });
     assert.deepEqual(notes.versions.map((v) => [v.version, v.date, v.entries.length]), [
       ["0.156.0", "2026-09-22T19:51:01Z", 540],
@@ -294,7 +320,8 @@ process.exit(2);
 
 const SCRIPT = join(import.meta.dirname, "update-clis.ts");
 
-function cli(args: readonly string[], env: NodeJS.ProcessEnv = process.env): Promise<{ code: number; stdout: string; stderr: string }> {
+/** Run the script. The environment has no default: a fake machine's, or isolated(). */
+function cli(args: readonly string[], env: NodeJS.ProcessEnv): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [SCRIPT, ...args], { env, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
@@ -311,7 +338,7 @@ describe("notes command", () => {
     const dir = join(root, "notes-run");
     mkdirSync(dir, { recursive: true });
     try {
-      const env = { ...process.env, PSTACK_UPDATE_CLIS_GROK_CHANGELOGS_URL: `${cdn.url}/changelogs` };
+      const env = isolated([], { PSTACK_UPDATE_CLIS_GROK_CHANGELOGS_URL: `${cdn.url}/changelogs` });
       const result = await cli(["notes", "--cli", "grok", "--from", "1.0.40", "--to", "1.0.41", "--dir", dir], env);
       assert.equal(result.code, 0, result.stderr);
       const printed = JSON.parse(result.stdout);
@@ -325,11 +352,11 @@ describe("notes command", () => {
   it("exits 2 with the reason when the notes cannot be read, and 64 on a bad invocation", async () => {
     const cdn = await serve({});
     cdn.server.close();
-    const env = { ...process.env, PSTACK_UPDATE_CLIS_GROK_CHANGELOGS_URL: `${cdn.url}/changelogs` };
+    const env = isolated([], { PSTACK_UPDATE_CLIS_GROK_CHANGELOGS_URL: `${cdn.url}/changelogs` });
     const down = await cli(["notes", "--cli", "grok", "--from", "1.0.40", "--to", "1.0.41"], env);
     assert.equal(down.code, 2);
     assert.match(down.stderr, /could not fetch/);
-    const bad = await cli(["notes", "--cli", "cursor", "--from", "1.0.40", "--to", "1.0.41"]);
+    const bad = await cli(["notes", "--cli", "cursor", "--from", "1.0.40", "--to", "1.0.41"], isolated());
     assert.equal(bad.code, 64);
     assert.match(bad.stderr, /--cli must be one of: codex, grok, claude/);
   });
@@ -575,8 +602,9 @@ describe("check", () => {
   });
 
   it("reports a running process of the resolved install as in use, and nothing once it exits", async (t) => {
-    if (spawnSync("lsof", ["-v"], { stdio: "ignore" }).error) return t.skip("lsof not on PATH");
     const machine = fakeMachine();
+    // Looked up on the PATH of the fake machine, where the script finds it; the PATH of this process holds only node.
+    if (spawnSync("lsof", ["-v"], { stdio: "ignore", env: machine.env }).error) return t.skip("lsof not on PATH");
     const helper = join(machine.node19, "lib", "node_modules", "@openai", "codex", "vendor", "codex-helper");
     mkdirSync(dirname(helper), { recursive: true });
     copyFileSync(process.execPath, helper, fsConstants.COPYFILE_FICLONE);
@@ -791,7 +819,7 @@ describe("cli-touchpoints.json", () => {
   const matrix = loadMatrix();
   const raw = JSON.parse(readFileSync(join(import.meta.dirname, "..", "references", "cli-touchpoints.json"), "utf8"));
   const touchpoints: readonly Touchpoint[] = raw.touchpoints;
-  const cliNames = Object.values(matrix.providers).flatMap((provider) => (provider.cli === null ? [] : [provider.cli]));
+  const cliNames = Object.values(matrix.providers).map((provider) => provider.cli);
 
   it("gives each touchpoint a unique id under its CLI, a runner CLI, a kind, a contract, and the version it was measured on", () => {
     assert.equal(raw.schemaVersion, 1);
@@ -800,7 +828,7 @@ describe("cli-touchpoints.json", () => {
     assert.equal(new Set(ids).size, ids.length, "duplicate ids");
     for (const t of touchpoints) {
       assert.deepEqual(Object.keys(t).sort(), ["cli", "contract", "coveredBy", "id", "kind", "measuredOn", "pointers"], t.id);
-      assert.ok(cliNames.includes(t.cli), `${t.id}: ${t.cli} is not a cli-transport CLI in model-matrix.json`);
+      assert.ok(cliNames.includes(t.cli), `${t.id}: ${t.cli} is not a CLI in model-matrix.json`);
       assert.ok(t.id.startsWith(`${t.cli}.`), `${t.id} is not under ${t.cli}.`);
       assert.ok(t.kind === "lane" || t.kind === "harness", `${t.id}: kind ${t.kind}`);
       assert.ok(t.contract.trim().length > 0, `${t.id}: empty contract`);
@@ -822,15 +850,6 @@ describe("cli-touchpoints.json", () => {
     assert.deepEqual(missing, []);
   });
 
-  it("keeps the native Linear permission executable and its upgrade gate in the contract", () => {
-    const native = touchpoints.find(t => t.id === "claude.linear-native");
-    assert.ok(native);
-    assert.ok(native.pointers.some(p => p.file === "skills/update-clis/scripts/claude-linear-permission-probe.ts" && p.anchor === "export async function permissionProbe"));
-    const skill = readFileSync(join(PLUGIN_ROOT, "skills/update-clis/SKILL.md"), "utf8");
-    assert.ok(skill.includes("references/linear-permission-probe.md"));
-    assert.ok(skill.includes("Require its exit 0 and `ok: true` before recording a successful update"));
-  });
-
   it("covers a lane touchpoint only with lanes its CLI's probe runs and leaves every harness touchpoint uncovered", () => {
     for (const t of touchpoints) {
       const lanes: readonly string[] = PROBE_LANES[t.cli as keyof typeof PROBE_LANES];
@@ -845,33 +864,24 @@ describe("cli-touchpoints.json", () => {
     }
   });
 
-  it("names in some contract of the same CLI every flag the runner generates, in every access mode it accepts", () => {
+  it("names in some contract of the same CLI every flag the runner generates, in every access mode", () => {
     const unnamed: string[] = [];
     const named = (cli: string, flag: string): boolean => {
       const token = new RegExp(`(^|[^A-Za-z0-9-])${flag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^A-Za-z0-9-]|$)`);
       return touchpoints.some((t) => t.cli === cli && token.test(t.contract));
     };
     for (const [provider, spec] of Object.entries(matrix.providers)) {
-      if (spec.cli === null) continue;
       const cli = spec.cli;
       const family = matrix.families.find((f) => f.provider === provider);
       assert.ok(family, provider);
       const parent = matrix.parents.claude && matrix.routes.claude[provider] === "runner" ? "claude" : "codex";
       const envs: NodeJS.ProcessEnv[] = cli === "grok" ? [{}, { CODEX_SANDBOX: "seatbelt" }] : [{}];
       const argvs: string[][] = [[...preflightCommand(provider).args]];
-      const accepts = (mode: (typeof ACCESS_MODES)[number], env: NodeJS.ProcessEnv): boolean => {
-        try {
-          requireSupportedMode(provider, mode, env);
-          return true;
-        } catch {
-          return false;
-        }
-      };
       for (const mode of ACCESS_MODES) {
-        for (const env of envs.filter((candidate) => accepts(mode, candidate))) {
+        for (const env of envs) {
           const options = {
             parent, provider, model: family.model, effort: family.defaultEffort, mode,
-            promptPath: "/p/prompt.md", cwd: "/p", outputPath: "/p/out.md", receiptPath: "/p/receipt.json", timeoutMs: null, target: null,
+            promptPath: "/p/prompt.md", cwd: "/p", outputPath: "/p/out.md", receiptPath: "/p/receipt.json", timeoutMs: null,
           } as const;
           argvs.push([...invocationCommand(options, env).args]);
         }
@@ -892,7 +902,7 @@ feature, refactoring: grok:grok-4.7@xhigh
 bug-fix: claude:claude-opus-5-5@xhigh
 arena runners: codex:gpt-6-sol@xhigh, grok:grok-4.7@xhigh, claude:claude-opus-5-5@xhigh
 why investigators: inherit-parent
-pr owner: cursor:grok-4.7@xhigh
+hardest tasks: claude:fable@max
 `;
 
 const CODEX_SHEET = `# pstack model configuration
@@ -901,7 +911,7 @@ feature, refactoring: grok:grok-4.7@xhigh
 bug-fix: codex:gpt-6-sol@xhigh
 swarm workers: grok:grok-4.6@high
 arena runners: codex:gpt-6-sol@xhigh, grok:grok-4.7@xhigh, claude:claude-opus-5-5@xhigh
-pr verifier: cursor:grok-4.7@xhigh
+hardest tasks: codex:gpt-6-astra@max
 `;
 
 function withSheets(machine: FakeMachine, sheets: { claude?: string; codex?: string }): void {

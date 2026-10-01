@@ -34,16 +34,20 @@ const matrix = loadMatrix();
 // Files whose prose or frontmatter may cite a model. Anything here that names a
 // descriptor outside model-matrix.json fails the consumer test. Test files are
 // skipped: their fixtures hold deliberately invalid descriptors and legacy pins.
+// docs/arquivo is skipped too: archived documents are history and keep the
+// descriptors of families the matrix no longer has.
 const CONSUMER_DIRS = ["skills", "agents", "docs"] as const;
 const CONSUMER_ROOT_FILES = ["README.md"] as const;
 const CONSUMER_EXTENSIONS = new Set([".md", ".json", ".mjs", ".ts", ".sh"]);
 const SKIP_DIRS = new Set(["node_modules", ".git"]);
+const ARCHIVE_DIR = join(PLUGIN_ROOT, "docs", "arquivo");
 
 function walk(dir: string, out: string[]): void {
   if (!existsSync(dir)) return;
   for (const name of readdirSync(dir)) {
     if (SKIP_DIRS.has(name)) continue;
     const path = join(dir, name);
+    if (path === ARCHIVE_DIR) continue;
     if (statSync(path).isDirectory()) {
       walk(path, out);
       continue;
@@ -207,45 +211,12 @@ describe("model-matrix.json", () => {
     assert.throws(() => validateMatrix(raw), /routes\.claude\.grok is native/);
   });
 
-  it("accepts cli null only for an http provider", () => {
-    const cursor = matrix.providers.cursor;
-    assert.deepEqual(cursor, { cli: null, transport: "http", nativeIn: null, unsandboxed: false });
-    assert.equal(matrix.providers.grok.transport, "cli");
-    for (const parent of Object.keys(matrix.parents)) {
-      assert.equal(routeFor(matrix, parent, "cursor"), "runner");
-    }
-    const withProvider = (spec: Record<string, unknown>): unknown => {
+  it("rejects a provider without a CLI binary", () => {
+    for (const cli of [null, ""]) {
       const raw = rawMatrix();
-      (raw.providers as Record<string, unknown>).cursor = spec;
-      return raw;
-    };
-    assert.throws(
-      () => validateMatrix(withProvider({ cli: null, nativeIn: null })),
-      /providers\.cursor\.cli must be a non-empty string when transport is cli/
-    );
-    assert.throws(
-      () => validateMatrix(withProvider({ cli: "agent", transport: "http", nativeIn: null })),
-      /providers\.cursor\.cli must be null when transport is http/
-    );
-    assert.throws(
-      () => validateMatrix(withProvider({ cli: null, transport: "ssh", nativeIn: null })),
-      /providers\.cursor\.transport must be "cli" or "http"/
-    );
-  });
-
-  it("providers declare whether the runner has an unsandboxed mode for them", () => {
-    assert.equal(matrix.providers.grok.unsandboxed, true);
-    assert.equal(matrix.providers.claude.unsandboxed, false);
-    assert.equal(matrix.providers.codex.unsandboxed, false);
-    assert.equal(matrix.providers.cursor.unsandboxed, false);
-  });
-
-  it("an http provider cannot claim an unsandboxed mode", () => {
-    const raw = JSON.parse(JSON.stringify(matrix));
-    raw.providers.cursor.unsandboxed = true;
-    assert.throws(() => validateMatrix(raw), /providers\.cursor\.unsandboxed needs a cli/);
-    raw.providers.cursor.unsandboxed = "yes";
-    assert.throws(() => validateMatrix(raw), /providers\.cursor\.unsandboxed must be a boolean/);
+      (raw.providers as Record<string, Record<string, unknown>>).grok.cli = cli;
+      assert.throws(() => validateMatrix(raw), /providers\.grok\.cli must be a non-empty string/);
+    }
   });
 
   it("rejects a duplicate family name or provider:model pair", () => {
@@ -331,34 +302,6 @@ describe("descriptors", () => {
     assert.throws(() => resolveDescriptor(matrix, "claude:sonnet@max"), /no matrix family/);
     assert.throws(() => resolveDescriptor(matrix, "cursor:composer@high"), /no matrix family/);
     assert.throws(() => resolveDescriptor(matrix, "codex:gpt-6-astra@ultra"), /does not select effort ultra/);
-  });
-
-  it("resolves the four Cursor PR-phase families and rejects unselectable efforts", () => {
-    const cases: Array<[string, string, readonly string[], string]> = [
-      ["kimi", "kimi-k3", ["low", "high"], "max"],
-      ["glm", "glm-5.2", ["high"], "low"],
-      ["gemini-pro", "gemini-3.1-pro", ["high"], "low"],
-      ["muse", "muse-spark-1.3", ["low", "high", "xhigh"], "medium"],
-    ];
-    assert.deepEqual(
-      matrix.families.map((f) => f.family).slice(-4),
-      ["kimi", "glm", "gemini-pro", "muse"]
-    );
-    for (const [family, model, efforts, bad] of cases) {
-      const resolved = resolveDescriptor(matrix, `cursor:${model}@high`);
-      assert.equal(resolved.family.family, family);
-      assert.equal(resolved.family.provider, "cursor");
-      assert.equal(resolved.family.model, model);
-      assert.deepEqual([...resolved.family.efforts], [...efforts]);
-      assert.equal(resolved.family.defaultEffort, "high");
-      assert.equal(resolved.family.agentStem, null);
-      assert.equal(resolved.family.cursorSlug, null);
-      assert.equal(resolved.family.reportedModel, null);
-      assert.throws(
-        () => resolveDescriptor(matrix, `cursor:${model}@${bad}`),
-        /does not select effort/
-      );
-    }
   });
 
   it("map Cursor 0.15.2 selectors back to a family and effort", () => {
@@ -469,7 +412,7 @@ describe("roles", () => {
     }
   });
 
-  it("pins the 23 roles in matrix order and the two Cloud PR responsibilities", () => {
+  it("pins the 17 roles in matrix order", () => {
     assert.deepEqual(
       matrix.roles.map((r) => r.role),
       [
@@ -490,15 +433,9 @@ describe("roles", () => {
         "swarm workers",
         "architect runners",
         "interrogate reviewers",
-        "pre-pr reviewer",
-        "pre-pr fixer",
-        "pre-pr certifier",
-        "converge raiz",
-        "pr owner",
-        "pr verifier",
       ]
     );
-    assert.equal(matrix.roles.length, 23);
+    assert.equal(matrix.roles.length, 17);
     const mixedPanel = [
       "claude:fable@max",
       "codex:gpt-6-astra@max",
@@ -509,35 +446,7 @@ describe("roles", () => {
       for (const label of ["arena runners", "arena cross-judge pool", "architect runners", "interrogate reviewers"]) {
         assert.deepEqual(roleDefault(matrix, label, parent), mixedPanel, `${label}/${parent}`);
       }
-      assert.deepEqual(roleDefault(matrix, "pr owner", parent), ["cursor:grok-4.7@high"]);
-      assert.deepEqual(roleDefault(matrix, "pr verifier", parent), ["cursor:grok-4.7@high"]);
     }
-    assert.equal(
-      roleNamed(matrix, "pr verifier")?.description,
-      "Independently checks risk, tests and user behavior of the exact PR head in Cursor Cloud without writing code."
-    );
-    assert.equal(
-      roleNamed(matrix, "pr owner")?.description,
-      "Owns an uncertified or red PR in Cursor Cloud through verification, repair and merge; start.ts exits when the head is certified."
-    );
-  });
-
-  it("pre-pr reviewer defaults to Grok 4.7 first and the other parent's code family as the reserve; fixer and certifier stay on Grok 4.7", () => {
-    assert.deepEqual(roleDefault(matrix, "pre-pr reviewer", "claude"), ["grok:grok-4.7@xhigh", "codex:gpt-6-sol@xhigh"]);
-    assert.deepEqual(roleDefault(matrix, "pre-pr reviewer", "codex"), ["grok:grok-4.7@xhigh", "claude:claude-opus-5-5@xhigh"]);
-    assert.deepEqual(roleDefault(matrix, "pre-pr certifier", "codex"), ["grok:grok-4.7@high"]);
-    assert.deepEqual(roleDefault(matrix, "pre-pr fixer", "claude"), ["grok:grok-4.7@xhigh"]);
-    assert.match(roleNamed(matrix, "pre-pr reviewer")?.description ?? "", /Lanes in order of preference; Pré-PR runs the first whose family wrote none of the branch\.$/);
-    assert.match(renderRoleDefaultsMarkdown(matrix), /The `pre-pr reviewer` list is not a panel: it is an order of preference, and one lane runs per round, the first whose family wrote none of the branch\./);
-  });
-
-  it("converge raiz defaults to the native code family of each parent", () => {
-    assert.deepEqual(roleDefault(matrix, "converge raiz", "claude"), ["claude:claude-opus-5-5@xhigh"]);
-    assert.deepEqual(roleDefault(matrix, "converge raiz", "codex"), ["codex:gpt-6-sol@xhigh"]);
-    assert.equal(
-      matrix.roles.findIndex((r) => r.role === "converge raiz"),
-      matrix.roles.findIndex((r) => r.role === "pre-pr certifier") + 1
-    );
   });
 
   it("reject a role default naming an unknown family, an unselectable effort, or a foreign parent", () => {

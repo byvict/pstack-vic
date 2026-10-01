@@ -22,31 +22,11 @@ export interface ParentSpec {
   readonly nativePrimitive: string;
 }
 
-export type Transport = "cli" | "http";
-
-export interface CliProviderSpec {
+export interface ProviderSpec {
   /** Binary the runner spawns. */
   readonly cli: string;
-  readonly transport: "cli";
   readonly nativeIn: string | null;
-  /** Whether the runner can launch this CLI with its own sandbox off (the pre-pr certifier needs it). */
-  readonly unsandboxed: boolean;
 }
-
-export interface HttpProviderSpec {
-  /** No binary: the lane is the API client in skills/poteto-mode/scripts/runner/http-lane.ts. */
-  readonly cli: null;
-  readonly transport: "http";
-  readonly nativeIn: string | null;
-  readonly unsandboxed: false;
-}
-
-/**
- * The union is the rule: `{ cli: null, transport: "cli" }` and
- * `{ cli: "agent", transport: "http" }` are compile errors, not only validator
- * findings. validateMatrix picks an arm.
- */
-export type ProviderSpec = CliProviderSpec | HttpProviderSpec;
 
 export interface Family {
   readonly family: string;
@@ -165,27 +145,14 @@ export function validateMatrix(raw: unknown): ModelMatrix {
   const providers: Record<string, ProviderSpec> = {};
   for (const [name, spec] of Object.entries(raw.providers)) {
     if (!isRecord(spec)) fail(`providers.${name} must be an object`);
-    const transport = spec.transport ?? "cli";
-    if (transport !== "cli" && transport !== "http") {
-      fail(`providers.${name}.transport must be "cli" or "http"`);
+    if (typeof spec.cli !== "string" || spec.cli.length === 0) {
+      fail(`providers.${name}.cli must be a non-empty string`);
     }
-    const cli = nullableString(spec.cli, `providers.${name}.cli`);
     const nativeIn = nullableString(spec.nativeIn, `providers.${name}.nativeIn`);
     if (nativeIn !== null && !(nativeIn in parents)) {
       fail(`providers.${name}.nativeIn names unknown parent ${nativeIn}`);
     }
-    const unsandboxed = spec.unsandboxed ?? false;
-    if (typeof unsandboxed !== "boolean") fail(`providers.${name}.unsandboxed must be a boolean`);
-    if (transport === "http") {
-      if (cli !== null) fail(`providers.${name}.cli must be null when transport is http`);
-      if (unsandboxed) fail(`providers.${name}.unsandboxed needs a cli`);
-      providers[name] = { cli: null, transport, nativeIn, unsandboxed: false };
-    } else {
-      if (cli === null || cli.length === 0) {
-        fail(`providers.${name}.cli must be a non-empty string when transport is cli`);
-      }
-      providers[name] = { cli, transport, nativeIn, unsandboxed };
-    }
+    providers[name] = { cli: spec.cli, nativeIn };
   }
   for (const parent of parentNames) {
     const owners = providerNames.filter((p) => providers[p].nativeIn === parent);
@@ -582,9 +549,6 @@ export function renderMatrixMarkdown(matrix: ModelMatrix): string {
     lines.push(`| ${spec.name} | ${cells.join(" | ")} |`);
   }
   lines.push("");
-  const unsandboxed = Object.entries(matrix.providers).filter(([, p]) => p.unsandboxed).map(([name]) => `\`${name}\``);
-  lines.push(`Providers whose CLI the runner can launch in \`unsandboxed\` mode: ${unsandboxed.length ? unsandboxed.join(", ") : "none"}. The pre-pr certifier row admits only their families.`);
-  lines.push("");
   lines.push(MATRIX_END);
   return lines.join("\n");
 }
@@ -609,7 +573,7 @@ export function renderRoleDefaultsMarkdown(matrix: ModelMatrix): string {
   }
   lines.push("");
   lines.push(
-    "A list is a panel: one lane per entry, in this order. The `pre-pr reviewer` list is not a panel: it is an order of preference, and one lane runs per round, the first whose family wrote none of the branch. A role whose two columns differ takes a family native to each parent: the frontier family for the frontier solo roles, the code family for the four authoring rows and `converge raiz`, and the other parent's code family as the reviewer reserve. Aliases run on the parent model through its native subagent primitive."
+    "A list is a panel: one lane per entry, in this order. A role whose two columns differ takes a family native to each parent: the frontier family for the frontier solo roles, the code family for the four authoring rows. Aliases run on the parent model through its native subagent primitive."
   );
   lines.push("");
   lines.push(ROLES_END);

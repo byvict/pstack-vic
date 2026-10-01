@@ -1,7 +1,5 @@
 import {
   cliFor,
-  MATRIX,
-  transportFor,
   UsageError,
   type AccessMode,
   type Effort,
@@ -24,11 +22,6 @@ export interface ConfigOverlay {
 }
 
 function requireCli(provider: Provider): string {
-  if (transportFor(provider) === "http") {
-    throw new UsageError(
-      `provider ${provider} uses the http transport; its lane is built in http-lane.ts, not as a CLI command`
-    );
-  }
   const cli = cliFor(provider);
   if (cli === null) {
     throw new UsageError(`provider ${provider} has no CLI in model-matrix.json`);
@@ -81,37 +74,12 @@ function codexSandbox(mode: AccessMode): string {
 // built-in `none` profile and the outer sandbox governs; plan mode and the
 // tool list still apply. Measured with Grok CLI 1.0.5 and Codex 0.154.0.
 function grokSandbox(mode: AccessMode, outerSeatbelt: boolean): string {
-  if (mode === "unsandboxed") return "off";
   if (outerSeatbelt) return "none";
   return mode === "read-only" ? "read-only" : "workspace";
 }
 
 export function insideCodexSandbox(env: NodeJS.ProcessEnv): boolean {
   return (env.CODEX_SANDBOX ?? "") !== "";
-}
-
-/**
- * On macOS no Grok Seatbelt profile lets a lane open a pty or start Chromium,
- * so the certifier that drives the app runs with Grok's sandbox off (CLI-197,
- * measured with Grok CLI 1.0.41). The mode refuses every provider that
- * model-matrix.json does not mark `unsandboxed`. Codex's outer seatbelt
- * denies the pty and Chromium just the same, so the mode refuses a parent
- * that exports CODEX_SANDBOX too.
- */
-export function requireSupportedMode(
-  provider: Provider,
-  mode: AccessMode,
-  env: NodeJS.ProcessEnv
-): void {
-  if (mode !== "unsandboxed") return;
-  const providers = MATRIX.providers;
-  if (!providers[provider]?.unsandboxed) {
-    const allowed = Object.keys(providers).filter((p) => providers[p].unsandboxed);
-    throw new UsageError(`mode unsandboxed runs only on ${allowed.join(", ")}, not on ${provider}`);
-  }
-  if (insideCodexSandbox(env)) {
-    throw new UsageError("unsandboxed needs a parent without a seatbelt");
-  }
 }
 
 /**
@@ -153,8 +121,7 @@ function permissionMode(mode: AccessMode): string {
 // "request-level floor" only yields to that mode. A lane cannot answer a
 // prompt, so the runner never relies on one: always-approve, and confinement
 // comes from the sandbox (`read-only` / `workspace`, or the outer Codex
-// seatbelt when Grok runs on `none`) plus the tool list. An `unsandboxed` lane
-// keeps only the tool list and the disposable worktree its caller passes.
+// seatbelt when Grok runs on `none`) plus the tool list.
 function grokPermissionMode(): string {
   return "bypassPermissions";
 }
@@ -168,7 +135,6 @@ export function invocationCommand(
   env: NodeJS.ProcessEnv = process.env
 ): CommandSpec {
   const cli = requireCli(options.provider);
-  requireSupportedMode(options.provider, options.mode, env);
   switch (cli) {
     case "claude":
       return {

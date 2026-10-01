@@ -1,7 +1,6 @@
-import { after, afterEach, before, beforeEach, describe, it } from "node:test";
+import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { createServer } from "node:http";
 import {
   chmodSync,
   existsSync,
@@ -10,46 +9,23 @@ import {
   readFileSync,
   rmSync,
   statSync,
-  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { childEnvironment, evidence, findExecutable, runLane } from "./run.ts";
-import { CURSOR_ENV } from "./http-lane.ts";
 import { main } from "./cli.ts";
-import { MATRIX, type Provider, type RunnerOptions, type RunnerReceipt } from "./types.ts";
+import { cliFor, PROVIDERS, type Provider, type RunnerOptions, type RunnerReceipt } from "./types.ts";
 import { matchObject } from "./match-object.test-helper.ts";
+import { clisOutsideFakes, isolateProcessEnv } from "./isolated-env.test-helper.ts";
 
 let scratch = "";
 let bin = "";
-let previousPath: string | undefined;
-
-// The http lane snapshots this PR's head around the cloud run.
-let bareRepo = "";
-
-before(() => {
-  bareRepo = mkdtempSync(join(tmpdir(), "pstack-runner-test-remote-"));
-  execFileSync("git", ["init", "--quiet", "--bare", bareRepo], { stdio: ["ignore", "pipe", "pipe"] });
-  const clone = mkdtempSync(join(tmpdir(), "pstack-runner-test-clone-"));
-  try {
-    execFileSync("git", ["clone", "--quiet", bareRepo, clone]);
-    execFileSync("git", ["commit", "--allow-empty", "--quiet", "-m", "PR head"], { cwd: clone, env: { ...process.env, GIT_AUTHOR_NAME: 'test', GIT_AUTHOR_EMAIL: 'test@example.invalid', GIT_COMMITTER_NAME: 'test', GIT_COMMITTER_EMAIL: 'test@example.invalid' } });
-    execFileSync("git", ["push", "--quiet", "origin", "HEAD:refs/pull/7/head"], { cwd: clone });
-  } finally { rmSync(clone, { recursive: true, force: true }); }
-});
-
-after(() => {
-  rmSync(bareRepo, { recursive: true, force: true });
-});
-
-const CLI_PROVIDERS: readonly string[] = Object.entries(MATRIX.providers)
-  .filter(([, spec]) => spec.transport === "cli")
-  .map(([name]) => name);
+let restoreProcessEnv: () => void = () => {};
 
 const fake = `#!/usr/bin/env node
-import { appendFileSync, existsSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
-import { execFileSync, spawn } from "node:child_process";
+import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+import { spawn } from "node:child_process";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const out = (text) => writeSync(1, text + "\\n");
 const err = (text) => writeSync(2, text + "\\n");
@@ -129,31 +105,18 @@ if (process.env.FAKE_INVALID_MODEL === "1") {
   err("The requested model is not supported with this account.");
   process.exit(1);
 }
-if (name === "grok" && stage === "model") {
-  if (process.env.FAKE_GROK_CONFIG_RECORD_PATH) {
-    const overlay = process.env.GROK_CONFIG_PATH ?? null;
-    writeFileSync(process.env.FAKE_GROK_CONFIG_RECORD_PATH, JSON.stringify({
-      path: overlay,
-      content: overlay === null ? null : readFileSync(overlay, "utf8"),
-      inline: process.env.GROK_CONFIG ?? null,
-    }));
-  }
-  if (process.env.FAKE_GROK_WRITE_PROBE === "1") writeFileSync("probe.txt", "probe");
-  if (process.env.FAKE_GROK_REMOVE_GIT === "1") rmSync(".git", { recursive: true, force: true });
-  if (process.env.FAKE_GROK_REPOINT_CWD) {
-    const link = args[args.indexOf("--cwd") + 1];
-    unlinkSync(link);
-    symlinkSync(process.env.FAKE_GROK_REPOINT_CWD, link);
-  }
-  if (process.env.FAKE_GROK_COMMIT === "1") {
-    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "--allow-empty", "--quiet", "-m", "lane"], {
-      env: { ...process.env, GIT_AUTHOR_NAME: "lane", GIT_AUTHOR_EMAIL: "lane@example.invalid", GIT_COMMITTER_NAME: "lane", GIT_COMMITTER_EMAIL: "lane@example.invalid" },
-    });
-  }
+if (name === "grok" && stage === "model" && process.env.FAKE_GROK_CONFIG_RECORD_PATH) {
+  const overlay = process.env.GROK_CONFIG_PATH ?? null;
+  writeFileSync(process.env.FAKE_GROK_CONFIG_RECORD_PATH, JSON.stringify({
+    path: overlay,
+    content: overlay === null ? null : readFileSync(overlay, "utf8"),
+    inline: process.env.GROK_CONFIG ?? null,
+  }));
 }
 if (stage === "model" && process.env.FAKE_DESCENDANT_HOLDS_PIPES_MS) {
   const seconds = Number(process.env.FAKE_DESCENDANT_HOLDS_PIPES_MS) / 1000;
-  const descendant = spawn("/bin/sh", ["-c", "sleep " + seconds], {
+  // By absolute path: the PATH of a lane holds only the fakes and node.
+  const descendant = spawn("/bin/sleep", [String(seconds)], {
     stdio: ["ignore", "inherit", "inherit"],
     detached: true,
   });
@@ -183,8 +146,16 @@ if (process.env.FAKE_MODEL_EXITING_PATH) {
 
 const LAUNCHER = join(import.meta.dirname, "pstack-runner");
 
-function makeExecutable(name: string): void {
-  const path = join(bin, name);
+/** The binary the runner resolves for a provider: `providers.<provider>.cli` in the matrix. */
+function cliOf(provider: Provider): string {
+  const cli = cliFor(provider);
+  assert.ok(cli, `provider ${provider} has no cli in model-matrix.json`);
+  return cli;
+}
+
+/** Write the fake under the name of the CLI the runner resolves for the provider. */
+function makeExecutable(provider: Provider): void {
+  const path = join(bin, cliOf(provider));
   writeFileSync(path, fake);
   chmodSync(path, 0o755);
 }
@@ -193,8 +164,8 @@ function makeExecutable(name: string): void {
 // up to 4.7 s with every core busy, against ~0.1 s for a repeat exec (measured
 // 2026-09-24). Every test writes new fakes, so a test whose deadline must
 // outlast a fake's startup execs the fake once before starting the run.
-function warm(name: string): void {
-  execFileSync(join(bin, name), [], { env: { PATH: process.env.PATH }, stdio: "ignore" });
+function warm(provider: Provider): void {
+  execFileSync(join(bin, cliOf(provider)), [], { env: { PATH: process.env.PATH }, stdio: "ignore" });
 }
 
 function options(provider: Provider, suffix: string = provider): RunnerOptions {
@@ -216,17 +187,6 @@ function options(provider: Provider, suffix: string = provider): RunnerOptions {
     outputPath: join(scratch, `${suffix}.out`),
     receiptPath: join(scratch, `${suffix}.receipt.json`),
     timeoutMs: null,
-    target: null,
-  };
-}
-
-function httpOptions(suffix: string): RunnerOptions {
-  return {
-    ...options("cursor", suffix),
-    parent: "claude",
-    model: "composer-2.5",
-    effort: "high",
-    target: { owner: "acme", name: "app", pullNumber: 7 },
   };
 }
 
@@ -250,82 +210,7 @@ function runnerArgs(input: RunnerOptions): string[] {
   if (input.timeoutMs !== null) {
     args.push("--timeout", String(input.timeoutMs / 1_000));
   }
-  if (input.target !== null) {
-    args.push(
-      "--repo", `${input.target.owner}/${input.target.name}`,
-      "--pr", String(input.target.pullNumber)
-    );
-  }
   return args;
-}
-
-interface FakeCursor {
-  readonly env: NodeJS.ProcessEnv;
-  readonly requests: readonly string[];
-  close(): Promise<void>;
-}
-
-async function fakeCursor(finished: boolean): Promise<FakeCursor> {
-  const requests: string[] = [];
-  const runPath = "/v1/agents/bc_1/runs/run_1";
-  const server = createServer((request, response) => {
-    request.resume();
-    request.on("end", () => {
-      const route = `${request.method} ${request.url}`;
-      requests.push(route);
-      const answer = (body: unknown): void => {
-        response.writeHead(200, { "content-type": "application/json", connection: "close" });
-        response.end(JSON.stringify(body));
-      };
-      if (route === "GET /v1/models") {
-        answer({ items: [{
-          id: "composer-2.5",
-          parameters: [{
-            id: "fast",
-            values: [{ value: "false" }, { value: "true" }],
-          }],
-          variants: [
-            {
-              params: [{ id: "fast", value: "true" }],
-              isDefault: true,
-            },
-            {
-              params: [{ id: "fast", value: "false" }],
-            },
-          ],
-        }] });
-      } else if (route === "POST /v1/agents") {
-        answer({ agent: { id: "bc_1", url: "https://cursor.com/agents/bc_1" }, run: { id: "run_1" } });
-      } else if (route === `GET ${runPath}`) {
-        answer(finished
-          ? { id: "run_1", status: "FINISHED", result: "pong", git: { branches: [{ repoUrl: "x" }] } }
-          : { id: "run_1", status: "RUNNING" });
-      } else if (route === `POST ${runPath}/cancel`) {
-        answer({ id: "run_1" });
-      } else {
-        response.writeHead(404, { connection: "close" });
-        response.end();
-      }
-    });
-  });
-  server.unref();
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address = server.address();
-  if (address === null || typeof address === "string") throw new Error("fake did not bind a port");
-  return {
-    env: {
-      [CURSOR_ENV.apiKey]: "test-key",
-      [CURSOR_ENV.baseUrl]: `http://127.0.0.1:${address.port}`,
-      [CURSOR_ENV.pollIntervalMs]: "5",
-      [CURSOR_ENV.gitRemote]: bareRepo,
-    },
-    requests,
-    close: () =>
-      new Promise((resolve) => {
-        server.closeAllConnections();
-        server.close(() => resolve());
-      }),
-  };
 }
 
 function sleep(ms: number): Promise<void> {
@@ -460,42 +345,38 @@ const FAKE_ENV = [
   "FAKE_DESCENDANT_PID_PATH",
   "FAKE_SELF_SIGNAL",
   "FAKE_GROK_CONFIG_RECORD_PATH",
-  "FAKE_GROK_WRITE_PROBE",
-  "FAKE_GROK_COMMIT",
-  "FAKE_GROK_REMOVE_GIT",
-  "FAKE_GROK_REPOINT_CWD",
-  "FAKE_REAL_GIT",
-  "FAKE_GIT_STATUS_DELAY_MS",
 ] as const;
 
 function clearFakeEnv(): void {
   for (const key of FAKE_ENV) delete process.env[key];
 }
 
+// runLane reads process.env, and the launcher child inherits it, so the
+// isolation goes on process.env itself: every lane of this file, in process or
+// under the launcher, sees only the fakes and this node under a temporary HOME.
 beforeEach(() => {
   scratch = mkdtempSync(join(tmpdir(), "pstack-runner-test-"));
   bin = join(scratch, "bin");
   mkdirSync(bin);
   writeFileSync(join(bin, "package.json"), '{"type":"module"}\n');
   writeFileSync(join(scratch, "prompt.md"), "Return the marker.");
-  for (const name of CLI_PROVIDERS) makeExecutable(name);
-  previousPath = process.env.PATH;
-  process.env.PATH = `${bin}:${dirname(process.execPath)}:${previousPath ?? ""}`;
+  for (const provider of PROVIDERS) makeExecutable(provider);
+  restoreProcessEnv = isolateProcessEnv(join(scratch, "home"), [bin]);
   clearFakeEnv();
 });
 
 afterEach(() => {
-  process.env.PATH = previousPath;
+  restoreProcessEnv();
   clearFakeEnv();
   rmSync(scratch, { recursive: true, force: true });
 });
 
 describe("runLane", () => {
   it("drives every matrix cli provider through the fake binaries", () => {
-    assert.deepEqual(CLI_PROVIDERS, ["claude", "codex", "grok"]);
+    assert.deepEqual(PROVIDERS, ["claude", "codex", "grok"]);
   });
 
-  for (const provider of CLI_PROVIDERS) {
+  for (const provider of PROVIDERS) {
     it(`executes and receipts the ${provider} external lane`, async () => {
       const input = options(provider);
       const result = await runLane(input);
@@ -510,8 +391,6 @@ describe("runLane", () => {
         modelVerified: provider !== "codex",
         modelEvidence: provider === "codex" ? "pinned-argv" : "provider-report",
         preflight: { status: "passed" },
-        remote: null,
-        checkout: null,
       });
       if (provider === "claude") {
         assert.equal(receipt(input.receiptPath).reportedModel, "claude-fable-9-9");
@@ -1016,77 +895,6 @@ describe("runLane", () => {
     assert.equal(receipt(retry.receiptPath).status, "complete");
   });
 
-  it("runs the http provider through the launcher without a binary and refuses a reused receipt path before any request", async () => {
-    const fake = await fakeCursor(true);
-    try {
-      const input = httpOptions("cursor-complete");
-      const runner = startRunner(input, fake.env);
-      assert.equal(await exitWithin(runner, 5_000), 0);
-      assert.equal(readFileSync(input.outputPath, "utf8"), "pong");
-      matchObject(receipt(input.receiptPath), {
-        status: "complete",
-        provider: "cursor",
-        executable: null,
-        exitCode: null,
-        signal: null,
-        modelEvidence: "pinned-argv",
-        argv: ["POST", "/v1/agents", "composer-2.5", "high"],
-        remote: { agentId: "bc_1", runId: "run_1", heads: { kind: "observed", changedBranches: [] } },
-        checkout: null,
-      });
-      assert.deepEqual(fake.requests, [
-        "GET /v1/models",
-        "POST /v1/agents",
-        "GET /v1/agents/bc_1/runs/run_1",
-      ]);
-
-      const seen = fake.requests.length;
-      const samePaths = startRunner(input, fake.env);
-      assert.equal(await finish(samePaths), 64);
-      assert.equal(fake.requests.length, seen);
-      assert.equal(receipt(input.receiptPath).status, "complete");
-    } finally {
-      await fake.close();
-    }
-  });
-
-  for (const signal of ["SIGINT", "SIGTERM"] as const) {
-    it(`cancels an http lane on ${signal}, sends one cancel request, and receipts cancelled`, async () => {
-      const fake = await fakeCursor(false);
-      try {
-        const input = httpOptions(`cursor-${signal}`);
-        const runner = startRunner(input, fake.env);
-        for (let attempt = 0; attempt < 300; attempt += 1) {
-          if (fake.requests.includes("GET /v1/agents/bc_1/runs/run_1")) break;
-          await sleep(10);
-        }
-        assert.ok(fake.requests.includes("GET /v1/agents/bc_1/runs/run_1"), "the lane never polled");
-        runner.child.kill(signal);
-
-        assert.equal(await exitWithin(runner, 3_000), 130);
-        assert.equal(existsSync(input.outputPath), false);
-        matchObject(receipt(input.receiptPath), {
-          status: "cancelled",
-          signal: null,
-          exitCode: null,
-          preflight: { status: "passed" },
-          argv: ["POST", "/v1/agents", "composer-2.5", "high", "POST", "/v1/agents/bc_1/runs/run_1/cancel"],
-          remote: { agentId: "bc_1", runId: "run_1" },
-          error: {
-            message: `launcher received ${signal} while polling the cloud agent; cancel requested`,
-            evidence: "cancel acknowledged",
-          },
-        });
-        assert.equal(
-          fake.requests.filter((route) => route === "POST /v1/agents/bc_1/runs/run_1/cancel").length,
-          1
-        );
-      } finally {
-        await fake.close();
-      }
-    });
-  }
-
   it("rejects same-provider recursion", async () => {
     const input = { ...options("claude"), parent: "claude" };
     await assert.rejects(runLane(input), /native to parent/);
@@ -1120,18 +928,8 @@ describe("runLane", () => {
   });
 });
 
-describe("unsandboxed mode", () => {
-  const PARENT_ENV = ["CODEX_SANDBOX", "GROK_CONFIG", "GROK_CONFIG_PATH"] as const;
-  const REAL_GIT = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
-  const FAKE_GIT = `#!/usr/bin/env node
-import { spawnSync } from "node:child_process";
-const args = process.argv.slice(2);
-if (args.includes("status") && process.env.FAKE_GIT_STATUS_DELAY_MS) {
-  await new Promise((resolve) => setTimeout(resolve, Number(process.env.FAKE_GIT_STATUS_DELAY_MS)));
-}
-const real = spawnSync(process.env.FAKE_REAL_GIT, args, { stdio: "inherit" });
-process.exit(real.status ?? 1);
-`;
+describe("Grok environment policy", () => {
+  const PARENT_ENV = ["GROK_CONFIG", "GROK_CONFIG_PATH"] as const;
   const saved = new Map<string, string | undefined>();
 
   beforeEach(() => {
@@ -1149,152 +947,21 @@ process.exit(real.status ?? 1);
     }
   });
 
-  function git(cwd: string, args: readonly string[]): string {
-    return execFileSync("git", [...args], {
-      cwd,
-      encoding: "utf8",
-      env: { ...process.env, GIT_AUTHOR_NAME: "test", GIT_AUTHOR_EMAIL: "test@example.invalid", GIT_COMMITTER_NAME: "test", GIT_COMMITTER_EMAIL: "test@example.invalid" },
-    }).trim();
-  }
-
-  function worktree(): { readonly cwd: string; readonly head: string } {
-    const cwd = join(scratch, "worktree");
-    mkdirSync(cwd);
-    git(cwd, ["init", "--quiet"]);
-    git(cwd, ["-c", "commit.gpgsign=false", "commit", "--allow-empty", "--quiet", "-m", "head"]);
-    return { cwd, head: git(cwd, ["rev-parse", "HEAD"]) };
-  }
-
-  function unsandboxed(cwd: string, suffix: string = "unsandboxed"): RunnerOptions {
-    return { ...options("grok", suffix), mode: "unsandboxed", cwd };
-  }
-
-  it("refuses a cwd outside a git worktree before preflight", async () => {
-    const started = join(scratch, "preflight-started");
-    process.env.FAKE_PREFLIGHT_STARTED_PATH = started;
-    const input = unsandboxed(scratch);
-    await assert.rejects(runLane(input), /unsandboxed needs --cwd inside a git worktree/);
-    assert.equal(existsSync(started), false);
-    assert.equal(existsSync(input.receiptPath), false);
-  });
-
-  it("refuses under an outer seatbelt and for an http provider before reserving paths", async () => {
-    const { cwd } = worktree();
-    process.env.CODEX_SANDBOX = "seatbelt";
-    const nested = unsandboxed(cwd);
-    await assert.rejects(runLane(nested), /unsandboxed needs a parent without a seatbelt/);
-    assert.equal(existsSync(nested.receiptPath), false);
-    delete process.env.CODEX_SANDBOX;
-    const cloud = { ...httpOptions("cursor-unsandboxed"), mode: "unsandboxed" as const, cwd };
-    await assert.rejects(runLane(cloud), /unsandboxed.*cursor/);
-    assert.equal(existsSync(cloud.receiptPath), false);
-  });
-
-  it("runs Grok with --sandbox off under the lane's overlay and records an untouched worktree", async () => {
-    const { cwd, head } = worktree();
-    const record = join(scratch, "overlay.json");
-    process.env.FAKE_GROK_CONFIG_RECORD_PATH = record;
-    process.env.GROK_CONFIG = '{"models":{"default_reasoning_effort":"low"}}';
-    process.env.GROK_CONFIG_PATH = join(scratch, "parent-overlay.toml");
-    const input = unsandboxed(cwd);
-    const result = await runLane(input);
-    assert.equal(result.exitCode, 0);
-    const recorded = receipt(input.receiptPath);
-    matchObject(recorded, {
-      status: "complete",
-      mode: "unsandboxed",
-      checkout: { headBefore: head, headAfter: head, statusAfter: [] },
-    });
-    assert.equal(recorded.argv[recorded.argv.indexOf("--sandbox") + 1], "off");
-    const seen = JSON.parse(readFileSync(record, "utf8")) as { path: string; content: string; inline: string | null };
-    assert.equal(seen.content, '[shell_environment_policy]\ninherit = "core"\n');
-    assert.equal(seen.inline, null);
-    assert.notEqual(seen.path, process.env.GROK_CONFIG_PATH);
-    assert.ok(!seen.path.startsWith(cwd));
-    assert.equal(existsSync(seen.path), false);
-    assert.equal(existsSync(dirname(seen.path)), false);
-  });
-
-  it("records the untracked file a lane leaves and still completes", async () => {
-    const { cwd, head } = worktree();
-    process.env.FAKE_GROK_WRITE_PROBE = "1";
-    const input = unsandboxed(cwd);
-    assert.equal((await runLane(input)).exitCode, 0);
-    matchObject(receipt(input.receiptPath), {
-      status: "complete",
-      checkout: { headBefore: head, headAfter: head, statusAfter: ["?? probe.txt"] },
-    });
-  });
-
-  it("records the head a lane moved", async () => {
-    const { cwd, head } = worktree();
-    process.env.FAKE_GROK_COMMIT = "1";
-    const input = unsandboxed(cwd);
-    assert.equal((await runLane(input)).exitCode, 0);
-    const moved = git(cwd, ["rev-parse", "HEAD"]);
-    assert.notEqual(moved, head);
-    matchObject(receipt(input.receiptPath), {
-      status: "complete",
-      checkout: { headBefore: head, headAfter: moved, statusAfter: [] },
-    });
-  });
-
-  it("fails the lane without a checkout when its worktree can no longer be read", async () => {
-    const { cwd } = worktree();
-    process.env.FAKE_GROK_REMOVE_GIT = "1";
-    const input = unsandboxed(cwd);
-    assert.equal((await runLane(input)).exitCode, 70);
-    const recorded = receipt(input.receiptPath);
-    matchObject(recorded, { status: "child-failed", checkout: null, exitCode: 0 });
-    assert.match(recorded.error?.evidence ?? "", /git rev-parse --verify HEAD failed/);
-    assert.equal(existsSync(input.outputPath), false);
-  });
-
-  it("reads the worktree the lane ran in after the lane repoints a --cwd symlink", async () => {
-    const { cwd, head } = worktree();
-    const clean = join(scratch, "clean");
-    git(scratch, ["clone", "--quiet", cwd, clean]);
-    const link = join(scratch, "link");
-    symlinkSync(cwd, link);
-    process.env.FAKE_GROK_WRITE_PROBE = "1";
-    process.env.FAKE_GROK_REPOINT_CWD = clean;
-    const input = unsandboxed(link);
-    assert.equal((await runLane(input)).exitCode, 0);
-    matchObject(receipt(input.receiptPath), {
-      status: "complete",
-      checkout: { headBefore: head, headAfter: head, statusAfter: ["?? probe.txt"] },
-    });
-  });
-
-  it("keeps the explicit deadline while it reads the worktree after the lane", { timeout: RUN_BUDGET_MS * 2 }, async () => {
-    const { cwd } = worktree();
-    writeFileSync(join(bin, "git"), FAKE_GIT);
-    chmodSync(join(bin, "git"), 0o755);
-    process.env.FAKE_REAL_GIT = REAL_GIT;
-    warm("grok");
-    execFileSync(join(bin, "git"), ["--version"], { stdio: "ignore" });
-    process.env.FAKE_GIT_STATUS_DELAY_MS = String(DESCENDANT_HOLD_MS);
-    const started = Date.now();
-    const input = { ...unsandboxed(cwd), timeoutMs: DRAIN_DEADLINE_MS };
-    const result = await runLane(input, started);
-    assert.ok(Date.now() - started < DESCENDANT_HOLD_MS / 2, "the git read was not cut at the deadline");
-    assert.equal(result.exitCode, 124);
-    matchObject(receipt(input.receiptPath), { status: "timed-out", checkout: null, exitCode: 0 });
-  });
-
   for (const mode of ["read-only", "isolated-write"] as const) {
-    it(`gives the ${mode} Grok lane the same overlay and no checkout`, async () => {
-      const { cwd } = worktree();
+    it(`runs the ${mode} Grok lane under the lane's overlay and removes it afterwards`, async () => {
       const record = join(scratch, "overlay.json");
       process.env.FAKE_GROK_CONFIG_RECORD_PATH = record;
       process.env.GROK_CONFIG = '{"models":{"default_reasoning_effort":"low"}}';
-      const input = { ...options("grok", mode), mode, cwd };
+      process.env.GROK_CONFIG_PATH = join(scratch, "parent-overlay.toml");
+      const input = { ...options("grok", mode), mode };
       assert.equal((await runLane(input)).exitCode, 0);
       const seen = JSON.parse(readFileSync(record, "utf8")) as { path: string; content: string; inline: string | null };
       assert.equal(seen.content, '[shell_environment_policy]\ninherit = "core"\n');
       assert.equal(seen.inline, null);
+      assert.notEqual(seen.path, process.env.GROK_CONFIG_PATH);
+      assert.ok(!seen.path.startsWith(input.cwd));
+      assert.equal(existsSync(seen.path), false);
       assert.equal(existsSync(dirname(seen.path)), false);
-      assert.equal(receipt(input.receiptPath).checkout, null);
     });
   }
 });
@@ -1341,15 +1008,30 @@ describe("childEnvironment", () => {
   });
 });
 
+describe("test isolation", () => {
+  it("leaves no provider CLI on the PATH of the lanes once its fake is gone", () => {
+    assert.deepEqual(clisOutsideFakes(process.env.PATH, [bin]), [], "a real CLI is on the PATH of the test process");
+    for (const provider of PROVIDERS) {
+      const cli = cliOf(provider);
+      assert.equal(findExecutable(cli, process.env.PATH, scratch), join(bin, cli));
+      rmSync(join(bin, cli));
+      assert.equal(findExecutable(cli, process.env.PATH, scratch), null, `a real ${cli} is on the test PATH`);
+    }
+    assert.equal(findExecutable("node", process.env.PATH, scratch), join(process.env.HOME ?? "", ".node-bin", "node"));
+    assert.equal(process.env.HOME, join(scratch, "home"));
+  });
+});
+
 describe("findExecutable", () => {
   it("resolves the first executable regular file on PATH and nothing else", () => {
-    assert.equal(findExecutable("claude", process.env.PATH, scratch), join(bin, "claude"));
+    const cli = cliOf("claude");
+    assert.equal(findExecutable(cli, process.env.PATH, scratch), join(bin, cli));
     assert.equal(findExecutable("no-such-cli", process.env.PATH, scratch), null);
     mkdirSync(join(bin, "a-directory"));
     assert.equal(findExecutable("a-directory", process.env.PATH, scratch), null);
     writeFileSync(join(bin, "not-executable"), "#!/bin/sh\n");
     chmodSync(join(bin, "not-executable"), 0o644);
     assert.equal(findExecutable("not-executable", process.env.PATH, scratch), null);
-    assert.equal(findExecutable("bin/claude", undefined, scratch), join(bin, "claude"));
+    assert.equal(findExecutable(`bin/${cli}`, undefined, scratch), join(bin, cli));
   });
 });

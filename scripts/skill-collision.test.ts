@@ -1,4 +1,4 @@
-import { it } from "node:test";
+import { after, it } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -8,10 +8,29 @@ import { PLUGIN_ROOT } from "./model-matrix.ts";
 
 type Cleanup = { after(fn: () => void): void };
 
+// The script needs bash, sed, grep, awk, find and mktemp, and nothing else.
+// They live in /usr/bin and /bin, which hold no claude on the operator's Mac
+// or on the CI image (there npm puts claude beside node). The developer's PATH
+// and HOME stay out, so the behavioral leg reaches only a fake that a test
+// puts in front; if the opt-in guard regressed, `claude` would not be found.
+const SYSTEM_PATH = "/usr/bin:/bin";
+// Checked before any test runs, by a lookup that launches nothing: with a
+// claude in one of these directories the behavioral leg could reach it.
+for (const dir of SYSTEM_PATH.split(":")) {
+  assert.equal(
+    existsSync(join(dir, "claude")),
+    false,
+    `${join(dir, "claude")} exists: these tests run the collision script under PATH=${SYSTEM_PATH} on the premise that it holds no claude`
+  );
+}
+const home = mkdtempSync(join(tmpdir(), "pstack-collision-home-"));
+after(() => rmSync(home, { recursive: true, force: true }));
+
 function collision(root: string, env: Record<string, string> = {}) {
+  const tmp = process.env.TMPDIR;
   return spawnSync("bash", [join(root, "tests", "skill-collision-repro.sh")], {
     encoding: "utf8",
-    env: { ...process.env, PSTACK_BEHAVIORAL: "0", ...env },
+    env: { PATH: SYSTEM_PATH, HOME: home, ...(tmp === undefined ? {} : { TMPDIR: tmp }), PSTACK_BEHAVIORAL: "0", ...env },
     maxBuffer: 64 * 1024 * 1024,
   });
 }
@@ -73,7 +92,7 @@ it("the behavioral leg finds the marker at the start of a long claude output", (
   writeFileSync(join(bin, "filler"), PIPE_OVERFLOW);
   writeFileSync(join(bin, "claude"), '#!/bin/sh\necho SKILL-RAN\ncat "$(dirname "$0")/filler"\n');
   chmodSync(join(bin, "claude"), 0o755);
-  const result = collision(PLUGIN_ROOT, { PSTACK_BEHAVIORAL: "1", PATH: `${bin}:${process.env.PATH}` });
+  const result = collision(PLUGIN_ROOT, { PSTACK_BEHAVIORAL: "1", PATH: `${bin}:${SYSTEM_PATH}` });
   assert.equal(result.status, 0, `${result.stdout.slice(0, 4000)}\n${result.stderr}`);
   assert.match(result.stdout, /^ok: model-initiated Skill-tool invocation -> SKILL-RAN$/m);
   assert.match(result.stdout, /^ok: user \/testplug:foo invocation -> SKILL-RAN$/m);

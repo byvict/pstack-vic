@@ -1,10 +1,10 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { configOverlay, invocationCommand, preflightCommand } from "./commands.ts";
-import { UsageError, type LaneOptionsBase, type RunnerOptions } from "./types.ts";
+import type { RunnerOptions } from "./types.ts";
 import { arrayContaining } from "./match-object.test-helper.ts";
 
-function options(overrides: Partial<LaneOptionsBase> = {}): RunnerOptions {
+function options(overrides: Partial<RunnerOptions> = {}): RunnerOptions {
   return {
     parent: "claude",
     provider: "codex",
@@ -17,7 +17,6 @@ function options(overrides: Partial<LaneOptionsBase> = {}): RunnerOptions {
     receiptPath: "/tmp/receipt.json",
     timeoutMs: null,
     ...overrides,
-    target: null,
   };
 }
 
@@ -178,23 +177,8 @@ describe("invocationCommand", () => {
     arrayContaining(codexNested.args, ["--sandbox", "read-only"]);
   });
 
-  it("drops only Grok's own sandbox in unsandboxed mode", () => {
-    const grok = { provider: "grok", model: "grok-4.7", effort: "high" };
-    const readOnly = invocationCommand(options(grok), { PATH: "/usr/bin" });
-    const unsandboxed = invocationCommand(options({ ...grok, mode: "unsandboxed" }), { PATH: "/usr/bin" });
-    assert.deepEqual(
-      unsandboxed.args,
-      readOnly.args.map((arg) => (arg === "read-only" ? "off" : arg))
-    );
-    const at = (flag: string) => unsandboxed.args[unsandboxed.args.indexOf(flag) + 1];
-    assert.equal(at("--sandbox"), "off");
-    assert.equal(at("--tools"), "read_file,grep,list_dir,run_terminal_cmd");
-    assert.equal(at("--permission-mode"), "bypassPermissions");
-    assert.ok(!unsandboxed.args.some((arg) => arg.includes("search_replace")));
-  });
-
   it("gives every Grok lane, and no other provider, the core environment policy overlay", () => {
-    for (const mode of ["read-only", "isolated-write", "unsandboxed"] as const) {
+    for (const mode of ["read-only", "isolated-write"] as const) {
       assert.deepEqual(
         configOverlay(options({ provider: "grok", model: "grok-4.7", mode })),
         {
@@ -210,28 +194,6 @@ describe("invocationCommand", () => {
       assert.equal(configOverlay(options({ mode })), null);
       assert.equal(configOverlay(options({ provider: "claude", model: "fable", mode })), null);
     }
-  });
-
-  it("refuses unsandboxed for every provider but Grok, and under an outer seatbelt", () => {
-    for (const [provider, model] of [["claude", "fable"], ["codex", "gpt-5.6-sol"]]) {
-      assert.throws(
-        () => invocationCommand(options({ provider, model, mode: "unsandboxed" }), {}),
-        (error: unknown) =>
-          error instanceof UsageError &&
-          error.message.includes("unsandboxed") &&
-          error.message.includes(provider)
-      );
-    }
-    assert.throws(
-      () =>
-        invocationCommand(
-          options({ provider: "grok", model: "grok-4.7", mode: "unsandboxed" }),
-          { CODEX_SANDBOX: "seatbelt" }
-        ),
-      (error: unknown) =>
-        error instanceof UsageError &&
-        error.message === "unsandboxed needs a parent without a seatbelt"
-    );
   });
 
   it("covers low, medium, and high for every external provider", () => {
@@ -269,13 +231,5 @@ describe("invocationCommand", () => {
       /provider gemini has no CLI in model-matrix.json/
     );
     assert.throws(() => preflightCommand("gemini"), /no CLI in model-matrix.json/);
-  });
-
-  it("names the http transport instead of building a command for an http provider", () => {
-    assert.throws(
-      () => invocationCommand(options({ provider: "cursor", model: "composer-2.5", effort: "high" })),
-      /provider cursor uses the http transport; its lane is built in http-lane.ts/
-    );
-    assert.throws(() => preflightCommand("cursor"), /provider cursor uses the http transport/);
   });
 });

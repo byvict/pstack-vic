@@ -24,7 +24,7 @@ No shell, `claude plugin marketplace add byvict/pstack-vic` e `claude plugin ins
 ### Codex
 
 ```shell
-codex plugin marketplace add byvict/pstack-vic --ref v0.4.19
+codex plugin marketplace add byvict/pstack-vic --ref v0.5.0
 codex plugin add pstack@pstack-vic
 ```
 
@@ -56,11 +56,24 @@ codex plugin marketplace add ~/Dev/Skills/pstack-vic
 codex plugin add pstack@pstack-vic
 ```
 
-Rode `/setup-pstack` uma vez em cada pai para escrever o sheet de modelos (`~/.claude/pstack-models.md` e `~/.codex/pstack-models.md`). O último passo dele confere a [autorização permanente](#autorização-permanente) do Pré-PR. Depois, `/poteto-mode` é o ponto de entrada para qualquer tarefa que peça rigor.
+Rode `/setup-pstack` uma vez em cada pai para escrever o sheet de modelos (`~/.claude/pstack-models.md` e `~/.codex/pstack-models.md`). O último passo dele confere a [autorização permanente](#autorização-permanente), que o autopilot e o playbook Shipping exigem para mergear sem aprovação humana. Depois, `/poteto-mode` é o ponto de entrada para qualquer tarefa que peça rigor.
 
 ### Publicar uma versão
 
-A versão do pstack-vic é independente das versões dos upstreams ([`UPSTREAM.md`](../UPSTREAM.md)). Ela vive em quatro lugares que `npm test` obriga a concordar: `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, `.claude-plugin/marketplace.json` (`version` e `ref: vX.Y.Z`) e `package.json`. O `--ref vX.Y.Z` do README e desta página acompanha. Publicar é subir a versão nos quatro, `npm test` e levar o PR pelo Pré-PR até o arm. Depois do merge, a release roda sozinha pelo bloco `postMerge` do `.cursor/converge.json`: quando o CI de push do commit do merge fica verde, o Varredor roda `node scripts/after-merge.ts` num worktree descartável do commit (pelo `node` direto, não pelo `npm run`, que poria diretórios `node_modules/.bin` na frente do `PATH` que o `install` grava nos jobs). O script cria a tag `vX.Y.Z` nesse commit e empurra só ela (`git push origin refs/tags/vX.Y.Z`), atualiza o plugin no Claude Code e no Codex, com cópia do `~/.codex/config.toml` em `config.toml.pre-X.Y.Z`, e, sem Raiz rodando, lança `converge-local install --when-idle` a partir do cache novo, solto do tick, e sai 75. O tick seguinte, já na versão nova, confere os três jobs e grava a release como feita. Um commit que não é a ponta da `main` só ganha a tag, porque o marketplace do Claude Code segue a `main` e instalaria a versão mais nova; o commit seguinte da fila instala. Cada passo confere o que já foi feito antes de agir, então rodar duas vezes não estraga nada. Um comando que falha (sem rede, GitHub fora do ar) ou um plugin que aparece em outra versão faz o script sair 75, e o tick seguinte tenta de novo; só uma tag local apontando para outro commit é falha. Nunca `git push --tags`: os remotes `cursor` e `open` são só leitura (`tagOpt --no-tags`) e este repo não reexporta tags deles. Se o pós-merge falhar ou o Daemon estiver parado, o caminho manual faz o mesmo: `git tag vX.Y.Z <commit do merge>`, `git push origin refs/tags/vX.Y.Z`, `claude plugin marketplace update pstack-vic && claude plugin update pstack@pstack-vic`, no Codex `plugin remove`, `marketplace remove`, `marketplace add byvict/pstack-vic --ref vX.Y.Z` e `plugin add`, e `node ~/.claude/plugins/cache/pstack-vic/pstack/X.Y.Z/skills/poteto-mode/scripts/converge/converge-local install --when-idle`. Ou rode `converge-local post-merge --repo byvict/pstack-vic --commit <sha>`, que passa pelo mesmo caminho do Varredor.
+A versão do pstack-vic é independente das versões dos upstreams ([`UPSTREAM.md`](../UPSTREAM.md)). Ela vive em quatro lugares que `npm test` obriga a concordar: `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, `.claude-plugin/marketplace.json` (`version` e `ref: vX.Y.Z`) e `package.json`. O `--ref vX.Y.Z` do README e desta página acompanha. Publicar é subir a versão nos quatro, rodar `npm test` e mergear o PR. Depois do merge faltam dois passos: a tag, que o CI cria, e a troca do plugin nos dois pais, que é um comando no Mac.
+
+A tag sai pelo CI. Em cada push na `main`, depois que o job `test` passa, o job `tag` de [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) lê a versão do `package.json`, cria a tag `vX.Y.Z` no commit do merge e empurra só ela. Se a tag já existe no GitHub, ele não faz nada, então um merge que não sobe a versão não muda tag nenhuma. Se o job falhar, rode-o de novo (`gh run rerun <id do run> --failed`) ou crie a tag à mão com `git tag vX.Y.Z <commit do merge>` e `git push origin refs/tags/vX.Y.Z`. Nunca use `git push --tags`. Os remotes `cursor` e `open` são só leitura (`tagOpt --no-tags`), e este repo não reexporta as tags deles.
+
+Trocar o plugin nos dois pais é um comando. Nenhum CI alcança `~/.claude` e `~/.codex`, então esse passo roda no Mac, no checkout principal:
+
+```shell
+git pull --ff-only
+node scripts/release.ts
+```
+
+O script confere antes de mexer. Ele roda `git fetch origin` e recusa se o `HEAD` não for a ponta da `origin/main`. Depois procura a tag `vX.Y.Z` no GitHub. Se o CI ainda não a criou, o script sai com erro e manda olhar `gh run list -R byvict/pstack-vic --branch main --limit 1`. Nas duas recusas ele não toca em nada. Com a tag no lugar, ele atualiza o Claude Code (`claude plugin marketplace update pstack-vic` e `claude plugin update pstack@pstack-vic`) e lê de volta a versão instalada. Só então troca o Codex, que fixa o marketplace numa tag e por isso precisa de quatro comandos: `plugin remove`, `marketplace remove`, `marketplace add byvict/pstack-vic --ref vX.Y.Z` e `plugin add`. Antes da troca ele copia `~/.codex/config.toml` para `config.toml.pre-X.Y.Z`.
+
+Cada passo confere o que já foi feito, então rodar o script duas vezes não estraga nada. Ele pula um pai que já está na versão, continua de onde parou uma troca do Codex interrompida e deixa como está a primeira cópia do `config.toml`. Em qualquer falha, o script sai com código 1. Se a troca do Codex parar no meio, o Codex pode ficar sem o plugin. Rode o script de novo para terminar, ou volte ao que havia antes com a linha que ele imprime: `cp ~/.codex/config.toml.pre-X.Y.Z ~/.codex/config.toml && codex plugin add pstack@pstack-vic`.
 
 ## Layout
 
@@ -70,16 +83,19 @@ A versão do pstack-vic é independente das versões dos upstreams ([`UPSTREAM.m
 ├── .codex-plugin/plugin.json         # manifest do Codex (skills: ./skills/, interface com logo)
 ├── .agents/plugins/marketplace.json  # marketplace do Codex (fonte local ./)
 ├── model-matrix.json                 # famílias, efforts, pais, rota por pai, papéis (dado canônico)
-├── scripts/                          # loader/validação da matriz, render dos blocos gerados, gerador de agents, digest semanal dos upstreams, testes (inclui manifests.test.ts)
+├── scripts/                          # loader/validação da matriz, render dos blocos gerados, gerador de agents, digest semanal dos upstreams, release.ts (troca o plugin nos dois pais depois do merge), testes (inclui manifests.test.ts)
 ├── skills/                           # 55 skills compartilhadas por Claude Code e Codex
 │   ├── poteto-mode/agents/           # openai.yaml: no Codex, poteto-mode só por invocação explícita
 │   ├── poteto-mode/references/       # provider-dispatch.md (rota e papéis), codex-tools.md (mapa de tools), bugbot-triage.md
 │   ├── poteto-mode/scripts/          # runner externo (Node 24, com probe-lane.ts, a sonda de uma lane), watch-pr, orch, check-plan.mjs, worktree-audit.sh
-│   ├── setup-pstack/scripts/         # setup-pstack.ts: estado, plano, probe, atestado e escrita do sheet (Node 24); authorize.ts: a autorização permanente do Pré-PR
+│   ├── setup-pstack/scripts/         # setup-pstack.ts: estado, plano, probe, atestado e escrita do sheet (Node 24); authorize.ts: a autorização permanente (autopilot e Shipping)
 │   └── update-clis/                  # scripts/update-clis.ts (check, notes, install, probe) e references/cli-touchpoints.json
 ├── agents/                           # poteto-agent, comment-sicko e as lanes nativas pstack-<família>-<effort> geradas da matriz
 ├── assets/                           # logo
 ├── docs/reference.md                 # esta referência
+├── docs/adr/                         # decisões registradas (ADRs); o 0005 aposenta o fluxo antigo
+├── docs/arquivo/                     # documentos do fluxo antigo, só história
+├── CONTEXT.md                        # glossário do autopilot (Raiz, Dono, Enxame, Veredito, Rodada, Tick)
 ├── tests/skill-collision-repro.sh    # invariantes do pacote de skills (estático) e prova de invocação no Claude Code (opcional)
 ├── LICENSE                           # pstack (Lauren Tan), MIT
 ├── LICENSE-open-pstack               # open-pstack (Eric Litman), MIT
@@ -101,24 +117,13 @@ Nada é gerado nem bifurcado por pai. Duas referências fazem a tradução em te
 
 Nada é declarado em manifest. O que as skills usam:
 
-- **Node 24** — the external runner, the matrix scripts, `check-plan.mjs`, and `npm test` run TypeScript directly, with no build step and no Bun.
+- **Node 24** — o runner externo, os scripts da matriz, o `check-plan.mjs` e o `npm test` rodam TypeScript direto, sem build e sem Bun.
 - **CLIs `claude`, `codex` e `grok`** — autenticados, só os que o sheet de modelos usa. O runner recusa provider igual ao do pai (essa lane é nativa). A versão delas muda só pela skill `update-clis` (seção [Versões das CLIs](#versões-das-clis)).
-- **`CURSOR_API_KEY`** — só para o provider `cursor` (lanes http na API de cloud agents da Cursor; famílias da tabela gerada em `provider-dispatch.md`). Sem a variável a lane cai como dropout `unavailable-cli` (exit 69). Lanes http exigem `--repo` e `--pr`; veja a seção *HTTP lanes* de `provider-dispatch.md`.
 - **`gh`** — forge padrão dos playbooks de PR e da skill `babysit`; `origin` é usado quando resolve o repositório; `gt` só no playbook Orchestrate. A skill `update-clis` também o usa para ler as releases do codex.
 - **`lsof`** — só para `update-clis`, que o usa para saber se alguém está rodando a CLI que ela trocaria.
-- **`bun`** — only for `watch-pr` and `orch`, which came from Cursor unchanged, and for their tests and the `watch-pr` typecheck (`npm run test:bun`).
+- **`bun`** — só para `watch-pr` e `orch`, que vieram da Cursor sem mudança, e para os testes deles e o typecheck do `watch-pr` (`npm run test:bun`).
 - **`jq` e `rg`** — só para `worktree-audit.sh` (playbook Worktree cleanup); sem eles o audit avisa e deixa colunas em branco.
 - **`run`, `verify`, `loop`** — built-ins do Claude Code; **`skill-creator`** — skill oficial da Anthropic para autoria de SKILL.md. Os quatro têm substituto em `codex-tools.md`.
-
-## Probes HTTP
-
-Quando o plano de setup contém um par HTTP, `probe` recebe o PR autorizado em `--repo <owner/name> --pr <number>`. Os dois argumentos são obrigatórios nesse caso. Um plano sem pares HTTP recusa esses argumentos. O destino vale para essa execução e não fica salvo no plano nem no sheet. Em um plano misto, somente os filhos HTTP recebem o destino.
-
-```shell
-npm run setup-pstack -- probe --dir <dir> --repo <owner/name> --pr <number>
-```
-
-O provider Cursor requer `CURSOR_API_KEY` e acesso de leitura ao remoto Git. O recibo registra `remote.heads` como `not-taken`, `unverified` com motivo ou `observed` com `changedBranches`. A comparação observa branches adicionadas, movidas ou removidas durante a execução. Ela não identifica quem fez essas alterações. Uma lane read-only falha se houver alteração observada ou se a comparação não puder ser concluída. A seção [HTTP lanes](../skills/poteto-mode/references/provider-dispatch.md#http-lanes) define o contrato completo do recibo.
 
 ## Versões das CLIs
 
@@ -150,49 +155,53 @@ Faça a execução semanal da skill `pstack:update-clis` (plugin pstack instalad
 - Termine com uma linha por CLI: em dia, atualizada A → B, adiada, segurada, sem verificação ou sonda inconclusiva.
 ```
 
-## Converge
+## Autopilot
 
-A Raiz certifica o head antes de o PR existir, pelo [playbook Pré-PR](../skills/poteto-mode/playbooks/pre-pr.md): Corridas, Revisor pré-PR de uma Família fora da lista de Autores, voltas do Ajustador e, quando o contrato pede, o Certificador. Desde a 0.4.7, uma mudança cujos caminhos estão todos no `prePr.light` do contrato, ou que só sobe dependência, segue a Classe leve: Corridas e Revisor com prompt estreito, sem Certificador, Certificado `Light` ([ADR 0004](adr/0004-classe-leve-por-caminho.md)). A metade **Entregar** do mesmo playbook abre o PR, publica o Certificado e arma o auto-merge com `--pending`; quem mergeia é o GitHub, quando os checks obrigatórios passam. Repositórios com fila nativa seguem o [contrato da fila](../skills/poteto-mode/references/merge-queue.md), que testa o prefixo combinado e revalida Certificados e Holds; trabalhos paralelos seguem [Parallel PR delivery](../skills/poteto-mode/references/parallel-delivery.md). O que a Raiz não vê depois de encerrar fica com o Daemon, o `converge-local`, desde a 0.4.0: o Varredor arma o que está certificado e, depois do merge, roda o Pós-merge do repositório, e o job da Raiz lança uma Raiz sem supervisão que roda o [playbook Catch-up](../skills/poteto-mode/playbooks/catch-up.md) para reparar, recertificar ou certificar um PR aberto. O [playbook Converge](../skills/poteto-mode/playbooks/converge.md) descreve os três jobs, o [contrato Converge](../skills/poteto-mode/references/converge-contract.md) define Certificado, gate, publicação e varredura, e o [ADR 0003](adr/0003-converge-sem-nuvem.md) registra a saída da nuvem. O owner do Cursor na nuvem, o `start.ts` e as Automations estão aposentados; a 0.5.0 remove o código.
+O autopilot leva uma fila de PRs até o merge dentro de uma sessão sua. Uma execução dessas se chama programa. Você abre a sessão, pede o programa e dá o "go". Essa sessão é a Raiz. Ela cria um Dono para cada PR. O Dono é um subagente que cuida daquele PR do começo ao fim. A Raiz confere o trabalho de cada Dono com verificadores que não escreveram o código e só então libera o merge. Nada roda fora dessa sessão. Se ela fecha, o programa para.
 
-Configuração em `~/.config/pstack/converge-local.json`:
+O autopilot tem dois playbooks, e os dois vêm do pstack da Cursor. No [Autopilot-full](../skills/poteto-mode/playbooks/autopilot-full.md), cada Dono mergeia o próprio PR depois do Veredito limpo da Raiz. No [Autopilot-stack](../skills/poteto-mode/playbooks/autopilot-stack.md), nenhum agente mergeia. A Raiz monta uma pilha de PRs verificados, e você revisa e mergeia. Use o Autopilot-full quando os PRs são independentes e você deu a autoridade de merge. Quando você quer revisar antes do merge, ou quando o trabalho é encadeado, use o Autopilot-stack. As palavras Raiz, Dono, Enxame, Veredito, Rodada e Tick estão definidas no [`CONTEXT.md`](../CONTEXT.md).
 
-```json
-{
-  "parent": "claude",
-  "repos": [
-    { "repo": "byvict/pstack-vic", "checkout": "/Users/victorbaccega/Dev/Skills/pstack-vic" }
-  ],
-  "intervalMinutes": 10,
-  "trustedAuthors": ["dependabot[bot]"]
-}
-```
+### Como um programa começa
 
-`trustedAuthors` completa a lista de confiança do job da Raiz. A conta autenticada do `gh` é sempre confiável e não precisa estar nela. Liste, pelo login do GitHub (`[bot]` no fim para um app), os bots cujos PRs e comentários o Daemon pode entregar a uma Raiz, como o `dependabot[bot]`; a comparação ignora maiúsculas e minúsculas. Listar um bot é confiar no texto que ele repassa, como as release notes, o changelog e os assuntos de commit que o Dependabot põe no PR. O job da Raiz pula um PR cujo autor está fora da lista (`untrusted author: LOGIN`) e, quando haveria trabalho nele, um PR com comentário, comentário de review ou review de alguém de fora (`untrusted commenter: LOGIN`, `untrusted reviewer: LOGIN`). Esconder (minimizar) o comentário de alguém de fora não desfaz o pulo, porque a API do GitHub continua devolvendo o comentário; apagá-lo ou listar o login desfaz. O Daemon não confere quem empurra commits nem quem edita o corpo do PR, porque isso exige escrita no repositório, e a lista só limita quem põe texto na frente de uma Raiz sem escrita e sem um bot listado que o repasse.
+1. Abra uma sessão no repositório e entre com `/poteto-mode`.
+2. Peça o programa e diga a fila, por exemplo `autopilot this queue` seguido dos itens. Para a pilha, peça `autopilot-stack`.
+3. Se algum item da fila for seu, diga qual ("esse PR fica comigo").
+4. Se quiser ver antes o que a Raiz vai fazer, peça o protocolo. A Raiz declara o protocolo e para. Pedir o protocolo não é dar o "go".
+5. Confira a [autorização permanente](#autorização-permanente). Sem ela, o modo automático do Claude Code nega o merge quando o Dono chega nele.
+6. Dê o "go". Só então a Raiz começa. Ela grava o objetivo do programa nas ordens permanentes dela, que ela relê a cada Tick, e cria um Dono por PR. Cada Dono trabalha num worktree próprio, que é uma cópia de trabalho separada do repositório. Em cerca de 15 minutos cada Dono abre o PR dele, pronto e nunca como rascunho, e começa uma trilha de decisões (`decisions.tsv`).
 
-```shell
-CONVERGE_LOCAL=~/.claude/plugins/cache/pstack-vic/pstack/<versão>/skills/poteto-mode/scripts/converge/converge-local
-node $CONVERGE_LOCAL install
-node $CONVERGE_LOCAL install --when-idle
-node $CONVERGE_LOCAL status
-node $CONVERGE_LOCAL tick --job raiz --dry-run
-node $CONVERGE_LOCAL tick --job watch --dry-run
-node $CONVERGE_LOCAL run --repo byvict/pstack-vic --pr <n> --dry-run
-node $CONVERGE_LOCAL post-merge --repo byvict/pstack-vic --commit <sha> --dry-run
-node $CONVERGE_LOCAL nudge
-node $CONVERGE_LOCAL uninstall
-```
+### O que você faz
 
-`install` grava e carrega três jobs em `~/Library/LaunchAgents`, todos rodando o `converge-local` do `pluginDir` da configuração (por padrão, o plugin de onde você rodou o `install`): `com.pstack.converge-sweep` e `com.pstack.converge-raiz`, a cada `intervalMinutes` e sempre que `~/Library/Application Support/pstack/converge-local/wake/<job>/` tiver um arquivo, e `com.pstack.converge-watch`, o Vigia, a cada 60 segundos. Esse arquivo é a campainha: `converge-local nudge` deixa um para cada job (`--job sweep` ou `--job raiz` para um só), os playbooks Pré-PR, Babysit e Shipping tocam logo depois de liberar a Posse, e um tick que lançou uma Raiz toca para os dois jobs ao terminar, para o próximo PR e para o Varredor armar o que ficou certificado. O tick apaga os arquivos do próprio job antes de qualquer leitura e grava quantos eram em `wakes` do `last-tick-<job>.json`. O Vigia toca a campainha pelo que muda no GitHub sem ninguém no Mac: PR do Dependabot, check que termina ou fica vermelho, `main` que fica verde, Hold tirado no GitHub. A cada minuto ele pergunta ao GitHub, só com GET condicional (`If-None-Match`), se mudaram a lista de PRs abertos de cada repositório, os checks da ponta da `main` e os checks do head de cada PR aberto. A lista mudou (PR aberto ou fechado, head novo, rótulo, draft, comentário): acorda os dois jobs. Os checks da `main` mudaram: acorda o Varredor. Os checks de um head mudaram: acorda o job da Raiz. Um 304 não gasta o limite de chamadas do GitHub, então, enquanto nada muda, um repositório sem PR aberto custa uma chamada do `gh` por minuto, e um com N PRs abertos custa 2 + N, sem gastar limite. O Vigia nunca lança modelo nem escreve no GitHub; guarda as ETags em `~/Library/Application Support/pstack/converge-local/watch/<owner>-<repo>.json`, e o primeiro tick depois do `install` só guarda, sem acordar ninguém. Um tick do Vigia que não mudou nada nem falhou não escreve no log (seriam 1.440 por dia); o `last-tick-watch.json` mostra `reads`, `changed` e `woken` do último. O intervalo de 10 minutos fica como rede de segurança para o que o Vigia não vê, como um `verdict` publicado sem campainha, e para um minuto em que o Vigia falhou. Rode o `install` do plugin instalado, como nos comandos acima, com `<versão>` trocada pela versão instalada, e deixe `pluginDir` fora da configuração. Assim os jobs e o `--plugin-dir` da Raiz rodam código publicado, nunca um checkout que pode estar em outra branch. Com `parent` `codex`, o caminho é o mesmo sob `~/.codex/plugins/cache/`. Rode o `install` de novo depois de cada atualização do plugin, para levar os jobs à versão nova. O Claude Code guarda o diretório da versão anterior, então a versão velha segue rodando até lá. O cache do Codex guarda só a versão atual, então, com `parent` `codex`, os jobs saem 1 em todo tick, sem tocar nenhum PR, até o `install` rodar de novo. Antes do `install`, rode o `/setup-pstack` para pôr a linha `converge raiz` no sheet do `parent`: sem uma linha válida, o `install` recusa. Ele só instala a partir do arquivo padrão acima e recusa outro `--config`, porque os comandos `converge-local lease` dos playbooks leem a configuração padrão. `lease` e `release` funcionam sem esse arquivo, no diretório de estado padrão, então uma sessão interativa toma a Posse com ou sem Daemon configurado. Todo caminho da configuração é absoluto: o JSON não expande `~`, e um caminho relativo é recusado. O launchd começa um job com um `PATH` mínimo, e o zsh não interativo não lê o `~/.zshrc`, onde o nvm põe `node` e `claude`. Por isso cada job grava o `PATH` do shell que rodou o `install` e o caminho absoluto do `node` desse shell, e roda por `/bin/zsh -c`. Esse zsh lê o `~/.zshenv`, que exporta o token das lanes, e, como não é shell de login, não passa pelo `path_helper` do `/etc/zprofile`, que poria os diretórios do sistema na frente do `PATH` gravado. O `install` recusa quando o `gh` ou a CLI do `parent` não está nesse `PATH`. Rode o `install` de novo depois que o `node` ou uma CLI mudar de lugar, como numa versão nova do nvm. O Varredor roda o `converge-sweep` por script. O job da Raiz classifica os PRs abertos e lança uma Raiz por tick pela linha `converge raiz` do sheet do `parent`, com permissão total, para rodar o playbook Catch-up. Um PR sem Certificado e sem Posse entra na fila quando o check de testes do head (`tests.job` do contrato) terminou, com qualquer conclusão, ou quando o PR completa 30 minutos; a Posse, não a idade, é o que mantém o Daemon longe de uma branch que uma sessão está certificando. Depois do arm, o PR é do Daemon, nunca do Auto-fix do app de desktop: check obrigatório vermelho é `repair`; conflito com a `main` e toda recusa do portão que um Certificado novo cura (política da `main` que mudou, comentário do veredito apagado ou superado) são `recertify`; comentário ou revisão postado depois do veredito faz o Varredor desarmar e vira `respond`, uma Resposta: a Raiz tria cada texto contra o código, conserta com prova red-first ou responde com a refutação, e certifica de novo. Os comentários do próprio fluxo pela conta de Victor começam com `<!-- converge:note -->` e não contam como texto novo; qualquer outro texto dessa conta é de Victor e conta. Três tetos seguram um head com o Hold, um comentário e uma notificação do macOS (`Held <owner>/<repo>#<pr>: <motivo>`): duas tentativas falhas no head, três tentativas adiadas (`deferred`) no head, ou seis horas desde a primeira tentativa sem nenhuma certificada; tirar o rótulo deixa o Daemon tentar de novo. O mesmo Hold vem na hora quando alguém fora da lista confiável comentou ou revisou um PR com trabalho (o comentário diz para apagar o texto ou pôr o login em `trustedAuthors`), e numa Trava: PR armado que não mergeou em 2 horas (o motivo diz o que o GitHub espera, como um check `hold` que nunca rodou) ou a mesma recusa do portão por 1 hora. O relógio de cada Trava fica em `~/Library/Application Support/pstack/converge-local/waiting/<owner>-<repo>/<pr>.json`, recomeça num head novo e some quando o PR anda; o `status` mostra os relógios em `waiting`. Depois de uma tentativa adiada, o Daemon espera 30 minutos antes de lançar outra no mesmo head. Uma Raiz que não sobe, ou que termina sem resultado em menos de dois minutos, não conta como tentativa: o tick sai 1 e não toca o PR, porque isso é problema da máquina (login, cota, CLI que mudou de lugar). O ledger do head guarda essas falhas de lançamento; a partir da terceira desde a última tentativa registrada, o Daemon espera uma hora depois da última antes de lançar de novo nesse head, cada tick que chega ao PR nesse meio-tempo reporta a espera como erro, e os outros PRs seguem recebendo os ticks. Para lançar antes da hora, depois de consertar a máquina, apague o ledger do PR, `~/Library/Application Support/pstack/converge-local/ledger/<owner>-<repo>/<pr>.json`: o tick seguinte começa um ledger novo, que também esquece as tentativas do head, e os tetos recomeçam do zero. Senão, espere a hora passar; o `run` também respeita a espera. Cada erro do tick sai também no stderr, uma linha por erro, e cada tick real grava como terminou em `last-tick-<job>.json`, que o `status` mostra. Logs em `~/Library/Logs/pstack-converge-*.log`; posses e ledgers em `~/Library/Application Support/pstack/converge-local/`; diretório de corrida de cada tentativa sob `$TMPDIR/converge-local/`. `converge-local tick --job raiz --dry-run` mostra a classificação até o primeiro PR com trabalho, sem gravar nem lançar nada. Os comandos `converge-certify`, `converge-reconcile`, `publish.ts`, `converge-arm --pending` e `converge-sweep` continuam como o contrato descreve.
+Sua parte num programa é esta:
 
-O Varredor também faz o merge que o GitHub deixa passar. Um PR armado e certificado que o GitHub diz estar pronto (`mergeable_state` `clean`, `unstable` ou `has_hooks`) e cujos checks obrigatórios passaram há 5 minutos ou mais recebe de novo o comando do arm (`gh pr merge --squash --auto --match-head-commit SHA`), que nesse estado faz o merge na hora. O relatório do tick mostra `merged`, com `auto-merge stalled since HORA, merged after the arm command`. Se o PR continuar aberto, o tick reporta `refused` e o PR segue armado.
+- **Dá o "go".** Depois deixa a sessão aberta até o último merge.
+- **Cuida dos seus itens.** O Dono leva um item seu até ficar pronto para o merge (Merge-ready) e para ali. Ele avisa, e quem revisa e clica no merge é você.
+- **Manda parar quando quiser.** Um "para" seu chega na hora a todos os Donos como ordem de não escrever mais nada. Eles seguram o trabalho até você liberar.
+- **Lê a resposta final.** Ela traz a fila com o Dono, o estado e o head (o último commit) de cada PR, cada Veredito, o que foi mergeado e onde estão as trilhas de decisão.
 
-O Varredor também roda o Pós-merge. Quando o `.cursor/converge.json` da `main` tem o bloco `postMerge` (`{ "runs": [{ "name", "command" }], "after": "tests" }`), depois da varredura de cada repositório ele roda esses comandos uma vez por commit novo da `main`, do mais antigo para o mais novo, cada commit num worktree descartável (`$TMPDIR/converge-local/post-merge/`), nunca no checkout primário. Com `after: "tests"`, o padrão, um commit espera o CI de push dele ficar verde; o Vigia continua lendo os checks da `main` mesmo sem PR aberto, então o Varredor acorda em até um minuto depois disso. O primeiro tick depois de o bloco aparecer só anota a ponta da `main`, sem rodar o passado. O comando recebe `PSTACK_REPO`, `PSTACK_COMMIT`, `PSTACK_PR`, `PSTACK_CHECKOUT` e `PSTACK_PLUGIN_DIR` e tem 20 minutos. Saída 0 é feito; 75 é "ainda não", e o próximo tick tenta de novo, por até 24 horas; qualquer outra saída é falha. Numa falha, a fila daquele repositório para naquele commit, o Daemon comenta uma vez no PR mergeado com os caminhos dos logs, e o erro aparece em todo tick e no `status` até você apagar o registro do commit (`~/Library/Application Support/pstack/converge-local/post-merge/<owner>-<repo>/<sha>.json`) ou rodar `converge-local post-merge --repo R --commit SHA`, que roda o mesmo caminho à mão. O comando pode rodar duas vezes depois de uma queda, então precisa aguentar isso. O comentário sai pela conta do `gh`, que costuma ser a autora do PR, e o GitHub não avisa ninguém do próprio comentário; por isso, logo depois do comentário, o Daemon mostra uma notificação do macOS: `Post-merge stopped on commit <8 primeiros do sha>: <motivo> (PR #N)`, sem o PR quando o commit não veio de um. Tirar o bloco do contrato faz o Varredor esquecer a ponta anotada, então recolocá-lo depois começa de novo pela primeira volta, sem repetir o passado. O Daemon roda esses comandos com permissão total no Mac, como já roda o `prePr.runs`: quem escreve na `main` já tem esse poder. O que roda no GitHub (deploy, pacote, a tag de outro projeto) fica num workflow de push na `main`. `install --when-idle` espera o Varredor e o job da Raiz pararem antes de recarregar os jobs, para o `bootout` não matar um tick nem uma Raiz; é assim que o pós-merge do pstack-vic reinstala o Daemon, e serve também para a reinstalação à mão.
+O resto é da Raiz e dos Donos: build, PR, CI, verificação e, no Autopilot-full, o merge.
 
-As notificações do Daemon aparecem na Central de Notificações deste Mac, com o título `Converge local` e o repositório embaixo, pelo `osascript`, que já vem no macOS. Saem uma vez por falha registrada do Pós-merge, uma vez por Hold e uma vez por commit vermelho da `main` (`Trunk red at <8 do sha>: <motivo> (PR #N)`), depois do registro e do comentário, e cada uma tem no máximo 10 segundos, então nunca atrasa o tick. O commit vermelho é o que a fila do Pós-merge espera, num repositório com bloco `postMerge`, ou a ponta da `main`, num repositório sem ele, como o Clinext; o registro fica em `~/Library/Application Support/pstack/converge-local/red-trunk/<owner>-<repo>/<sha>.json`, gravado antes da notificação. O erro que se repete a cada tick não notifica de novo. Um commit adiado (saída 75) só notifica quando vira falha, depois de 24 horas. Os erros que se repetem sem registro de falha (checkout que falha, mais de 50 commits acumulados, ponta que não descende, arquivo ilegível) ficam só no stderr, no `status` e no log, porque não há registro onde marcar que já avisaram. O macOS mostra o remetente como Script Editor, o app dono do `osascript`. Para desligar, ou para escolher o estilo Alertas, que fica na tela até você fechar, use Ajustes do Sistema > Notificações > Script Editor; a configuração do Daemon não tem campo para isso. Se a notificação falhar (`osascript` fora do `PATH`, erro, 10 segundos estourados), o tick reporta `notification failed` e segue; a falha ou o Hold continuam registrados do mesmo jeito. Fora do Mac, a notificação espera na Central; um Foco a segura até acabar.
+### O que mudou em relação ao fluxo antigo
+
+Até a 0.4.19 o plugin tinha um fluxo próprio, em que um robô no Mac conferia e mergeava PRs sozinho, mesmo com todas as sessões fechadas. A 0.5.0 aposentou esse fluxo. A decisão está no ADR 0005, em [`docs/adr/`](adr/). Os documentos antigos estão em [`docs/arquivo/`](arquivo/), só como história. Para você, mudou isto:
+
+- **Nada mergeia sozinho.** Não existe mais robô de madrugada. Um PR só anda enquanto uma sessão sua, a Raiz, está aberta rodando um programa.
+- **A sessão da Raiz fica aberta até o último merge.** Se você fechar a sessão, os Donos param. Nada acontece até você abrir de novo e retomar.
+- **PR aberto fora de um programa espera.** Um PR do Dependabot, ou um que você abriu à mão, não tem Dono. Ou você mergeia, ou um programa o adota como item da fila.
+- **O GitHub só exige o CI.** Os checks `verdict` e `hold` saíram das regras, e um rótulo no PR não trava mais nada. O que segura um merge é o Veredito da Raiz, dentro da sessão. Para ficar com um PR, diga isso na sessão.
+- **A versão sai em dois passos.** O CI cria a tag. Trocar o plugin nos dois pais é um comando seu no Mac ([Publicar uma versão](#publicar-uma-versão)).
+- **No Codex não há relógio interno.** Você mesmo pede o Tick a cada 30 minutos. O Codex também precisa de `multi_agent` ligado para ter Donos ([Codex](#codex)).
 
 ### Autorização permanente
 
-O pstack mergeia um PR que outra Família de modelo revisou e que nenhum humano aprovou. O modo automático do Claude Code bloqueia isso de fábrica (regras "Merge Without Review" e "Self-Approval"), e o verificador dele lê as mensagens do usuário e os comandos, não as perguntas do agente: um "ok" a uma pergunta não autoriza nada, e o Pré-PR parava no meio. O operador grava a decisão uma vez, numa entrada de `autoMode.allow` no `~/.claude/settings.json` dele. O Claude Code não lê essa lista de nenhum repositório nem de plugin, então o plugin não a entrega.
+A autorização permanente é uma entrada que você grava uma vez em `autoMode.allow`, no seu `~/.claude/settings.json`. Sem ela, o modo automático do Claude Code nega o merge quando o Dono ou a sessão do Shipping chega nele.
+
+Nos playbooks do pstack, um agente mergeia um PR que nenhum humano aprovou em dois casos:
+
+- O Dono de um PR num programa de autopilot mergeia depois do Veredito limpo do Enxame da Raiz. Quem dá esse Veredito são verificadores que não escreveram o código.
+- A sessão que roda o playbook Shipping mergeia depois do veredito do verificador independente daquele PR.
+
+O modo automático do Claude Code bloqueia esses merges de fábrica, pelas regras "Merge Without Review" e "Self-Approval". O classificador dele lê as mensagens do usuário e os comandos, e não lê as perguntas do agente. Por isso um "ok" a uma pergunta não autoriza nada, e o modo automático nega o merge. O Claude Code não lê `autoMode.allow` de nenhum repositório nem de plugin, então o plugin não entrega a entrada.
 
 ```shell
 AUTHORIZE=~/.claude/plugins/cache/pstack-vic/pstack/<versão>/skills/setup-pstack/scripts/authorize.ts
@@ -201,7 +210,21 @@ node $AUTHORIZE apply --parent claude   # num terminal: mostra a entrada, pede u
 node $AUTHORIZE check --parent codex    # 0 quando approval_policy = "never" no topo do ~/.codex/config.toml
 ```
 
-A entrada vale em qualquer repositório: certificar a branch, publicar o `verdict`, armar e mergear um PR sem aprovação humana, lançar as lanes do pstack. Continuam bloqueados `--admin` e qualquer outro desvio de check obrigatório, mudança em proteção de branch e tudo o que as outras regras protegem (arquivos e branches destruídos, produção, segredos, dado que sai). O `apply` recusa sem terminal, porque a autorização é um ato do operador e não do agente. Ele mantém as regras de fábrica (`"$defaults"`) e todas as outras configurações, e copia o arquivo anterior para `settings.json.before-pstack-authorization`. Para retirar a autorização, apague a entrada. O Pré-PR roda o `check` antes da Posse; sem a autorização, para ali e pede uma vez. O Daemon não precisa dela: lança a Raiz sem etapa de aprovação.
+A entrada vale em qualquer repositório. Ela cobre três coisas:
+
+- O merge com `gh pr merge` nesses dois casos, por squash ou com `--auto` quando o playbook ou você pede.
+- O trabalho da Raiz de criar subagentes Donos e verificadores, empurrar as branches dos Donos com `--force-with-lease` e publicar Vereditos como comentários no PR.
+- O lançamento, pelo `pstack-runner`, das lanes que os playbooks nomeiam (Dono, verificador, revisor, juiz ou worker em claude, codex ou grok).
+
+Continuam bloqueados:
+
+- `--admin` e qualquer outro desvio de um check obrigatório.
+- Mudança em proteção de branch, em rulesets ou em checks obrigatórios.
+- Tudo o que as outras regras protegem: arquivos, branches e histórico destruídos, produção, segredos e dados enviados para fora.
+
+Fora de um terminal, o `apply` recusa, porque a autorização é um ato seu e não do agente. Ele mantém as regras de fábrica (`"$defaults"`) e todas as outras configurações, e copia o arquivo anterior para `settings.json.before-pstack-authorization`. Para retirar a autorização, apague a entrada.
+
+A entrada traz a versão no nome (`pstack standing authorization v2`). Se você tem a v1, do fluxo antigo, rode o `apply` de novo. Ele troca a entrada no lugar. Até lá, o `check` sai com 1. Nenhum playbook roda o `check`, então quem confere é você. O passo 10 do `/setup-pstack` roda o `check`. Rode-o também antes do "go" de um programa de autopilot, quando a Raiz declara o protocolo.
 
 ## Skills
 
@@ -228,7 +251,7 @@ Nomes curtos; no Claude Code cada uma aparece com o prefixo do plugin (`/pstack:
 | `blast-radius` | o que uma mudança pequena pode quebrar fora do diff, provado rodando código |
 | `recall` | reconstruir o contexto recente de um tema a partir do histórico e do registro compartilhado |
 | `update-clis` | atualizar `claude`, `codex` e `grok` só quando o plugin continua funcionando na versão nova: notas contra os pontos de contato, instalação, sonda real, volta e contraprova; o que não passa fica segurado numa issue do Linear |
-| `setup-pstack` | escolher modelo e effort por papel (a mesma família pode rodar em efforts diferentes em papéis diferentes); probe de cada par família+effort e escrita do sheet pelo `scripts/setup-pstack.ts` (rerun byte-idêntico, nada escrito se um probe falha); o passo 10 confere a autorização permanente do Pré-PR pelo `scripts/authorize.ts` |
+| `setup-pstack` | escolher modelo e effort por papel (a mesma família pode rodar em efforts diferentes em papéis diferentes); probe de cada par família+effort e escrita do sheet pelo `scripts/setup-pstack.ts` (rerun byte-idêntico, nada escrito se um probe falha); o passo 10 confere, pelo `scripts/authorize.ts`, a autorização permanente que o autopilot e o playbook Shipping exigem |
 | `unslop` | limpar marcas de IA de qualquer prosa |
 | `no-comments` | tirar comentários antes da revisão via o subagent `comment-sicko` |
 | `create-verification-skill` | gerar uma skill de verificação local ao projeto com mapa de features |
@@ -283,8 +306,8 @@ Vinte e três skills de um princípio cada. `poteto-mode` indexa todas inline e 
 ## Verificação
 
 ```shell
-npm test               # matriz, gerador de agents, runner, setup-pstack, update-clis, referência de skills, manifests e hook, digest dos upstreams, invariantes do pacote
-npm run test:bun       # orch and watch-pr under Bun: bun install --frozen-lockfile, bun test, then the watch-pr typecheck (needs bun on PATH)
+npm test               # matriz, gerador de agents, runner, setup-pstack, update-clis, referência de skills, manifests e hook, digest dos upstreams, release, invariantes do pacote
+npm run test:bun       # orch e watch-pr no Bun: bun install --frozen-lockfile, bun test e o typecheck do watch-pr (precisa do bun no PATH)
 npm run matrix:check   # blocos gerados de provider-dispatch.md e setup-pstack em dia
 npm run agents:check   # agents/pstack-*.md em dia com a matriz
 npm run collision:check

@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { loadMatrix, renderRoleSheet, renderSheetDocument } from "../../../scripts/model-matrix.ts";
+import { loadMatrix, renderRoleSheet } from "../../../scripts/model-matrix.ts";
+import { clisOutsideFakes, isolatedEnv, isolateProcessEnv } from "../../poteto-mode/scripts/runner/isolated-env.test-helper.ts";
 import {
   SetupError,
   buildPlan,
@@ -17,25 +18,20 @@ import {
 
 const matrix = loadMatrix();
 
-const CLI_ONLY_ROLES: Record<string, string[]> = {
-  "pr owner": ["inherit-parent"],
-  "pr verifier": ["inherit-parent"],
-};
-
-function cliOnlyRoleFlags(): string[] {
-  return Object.entries(CLI_ONLY_ROLES).flatMap(([role, lanes]) => [
-    "--role",
-    `${role}=${lanes.join(", ")}`,
-  ]);
-}
-
 let home = "";
+let restoreProcessEnv: () => void = () => {};
 
+// The test process itself holds no CLI, fake or real, and its HOME is the
+// temporary one: a probe whose `env` gets lost on the way to the launcher
+// inherits this and finds nothing, and a path that falls back to the home
+// directory lands in the temporary one.
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "pstack-setup-"));
+  restoreProcessEnv = isolateProcessEnv(home);
 });
 
 afterEach(() => {
+  restoreProcessEnv();
   rmSync(home, { recursive: true, force: true });
 });
 
@@ -73,33 +69,14 @@ function firstRunSheet(parent: string): string {
   ].join("\n");
 }
 
-function oldSeventeenSheet(parent: string): string {
-  const lines = renderRoleSheet(matrix, parent).split("\n").slice(0, 17);
-  assert.equal(lines.length, 17);
-  assert.ok(lines[16].startsWith("interrogate reviewers:"));
-  return [
-    "# pstack model configuration",
-    "",
-    "Provider-qualified per-role choices. Read the installed pstack provider-dispatch reference before dispatching a configured role. Every documented role remains present. `inherit-parent` and `auto` use the parent model natively and still count as one panel lane.",
-    "",
-    lines.join("\n"),
-    "",
-  ].join("\n");
-}
-
-function nineteenRowOpusSheet(parent: string): string {
-  const volume = new Set(["feature, refactoring", "bug-fix", "perf-issue", "hillclimb"]);
-  const lines = renderRoleSheet(matrix, parent)
-    .split("\n")
-    .filter((line) => !line.startsWith("pre-pr ") && !line.startsWith("converge raiz: "))
-    .map((line) => {
-      const role = line.slice(0, line.indexOf(": "));
-      return volume.has(role) ? `${role}: claude:claude-opus-5-5@xhigh` : line;
-    });
-  assert.equal(lines.length, 19);
-  assert.deepEqual(lines.slice(-2), ["pr owner: cursor:grok-4.7@high", "pr verifier: cursor:grok-4.7@high"]);
-  return renderSheetDocument(lines.join("\n"));
-}
+const RETIRED_ROWS = [
+  "pre-pr reviewer: grok:grok-4.7@xhigh, codex:gpt-6-sol@xhigh",
+  "pre-pr fixer: grok:grok-4.7@xhigh",
+  "pre-pr certifier: grok:grok-4.7@high",
+  "converge raiz: claude:claude-opus-5-5@xhigh",
+  "pr owner: cursor:grok-4.7@xhigh",
+  "pr verifier: cursor:grok-4.7@xhigh",
+];
 
 function lanesOf(plan: Plan, role: string): string[] {
   const row = plan.rows.find((r) => r.role === role);
@@ -130,8 +107,14 @@ describe("parseSheet", () => {
   });
 
   it("drops retired Converge roles from an existing sheet", () => {
-    const rows = parseSheet("pr reviewer: cursor:grok-4.7@high\npr fixer, simple: cursor:composer-2.5@high\npr owner: cursor:grok-4.7@high\n", matrix);
-    assert.deepEqual(rows, [{ role: "pr owner", lanes: ["cursor:grok-4.7@high"] }]);
+    const older = [
+      "pr reviewer: cursor:grok-4.7@high",
+      "pr fixer, simple: cursor:composer-2.5@high",
+      "pr fixer, complex: cursor:grok-4.7@xhigh",
+      "pr diagnosis pool: cursor:muse-spark-1.3@high, cursor:kimi-k3@high",
+    ];
+    const rows = parseSheet(`bug-fix: grok:grok-4.6@xhigh\n${[...older, ...RETIRED_ROWS].join("\n")}\n`, matrix);
+    assert.deepEqual(rows, [{ role: "bug-fix", lanes: ["grok:grok-4.6@xhigh"] }]);
   });
 });
 
@@ -175,26 +158,18 @@ describe("Grok 4.7 selection", () => {
   it("leaves the 4.6 lanes untouched when a role selects 4.7 and probes 4.7 only when the ledger lacks it", () => {
     putSheet("codex", firstRunSheet("codex"));
     const state = loadState({ parent: "codex", home, matrix });
-    assert.deepEqual(state.efforts["grok-4-7"], {
-      status: "mixed",
-      efforts: ["high", "xhigh"],
-      rows: [
-        { role: "pre-pr reviewer", lane: "grok:grok-4.7@xhigh" },
-        { role: "pre-pr fixer", lane: "grok:grok-4.7@xhigh" },
-        { role: "pre-pr certifier", lane: "grok:grok-4.7@high" },
-      ],
-    });
+    assert.deepEqual(state.efforts["grok-4-7"], { status: "outside-map", efforts: ["xhigh"], rows: [] });
     const plan = buildPlan({ parent: "codex", home, matrix, roles: { "bug-fix": ["grok:grok-4.7@xhigh"] } });
     assert.deepEqual(lanesOf(plan, "bug-fix"), ["grok:grok-4.7@xhigh"]);
     assert.deepEqual(lanesOf(plan, "swarm workers"), ["grok:grok-4.6@xhigh"]);
     assert.deepEqual(lanesOf(plan, "how explorer"), ["grok:grok-4.6@xhigh"]);
     assert.deepEqual(plan.efforts.grok, ["xhigh"]);
-    assert.deepEqual(plan.efforts["grok-4-7"], ["high", "xhigh"]);
+    assert.deepEqual(plan.efforts["grok-4-7"], ["xhigh"]);
     assert.deepEqual(
       plan.pairs.filter((p) => p.family.startsWith("grok")).map((p) => [p.pair, p.descriptor, p.route]),
       [
         ["grok@xhigh", "grok:grok-4.6@xhigh", "runner"],
-        ["grok-4-7@high", "grok:grok-4.7@high", "runner"],
+        ["grok-4-7@xhigh", "grok:grok-4.7@xhigh", "runner"],
       ]
     );
 
@@ -217,7 +192,7 @@ describe("loadState", () => {
     assert.equal(state.sheetPath, join(home, ".claude", "pstack-models.md"));
     assert.deepEqual(state.migrations, []);
     assert.deepEqual(state.efforts.grok, { status: "unassigned", efforts: ["xhigh"], rows: [] });
-    assert.deepEqual(state.efforts.sol, { status: "unassigned", efforts: ["max"], rows: [] }, "Sol enters the Claude first-run map as the reviewer reserve");
+    assert.deepEqual(state.efforts.sol, { status: "outside-map", efforts: ["max"], rows: [] }, "no role of the Claude first-run map uses Sol");
     assert.equal("conflicts" in state, false);
     assert.equal(loadState({ parent: "codex", home, matrix }).efforts.sol.status, "unassigned");
   });
@@ -274,28 +249,22 @@ describe("buildPlan", () => {
   it("on a first run takes the parent's role defaults, the matrix default efforts, and one probe per family in the map", () => {
     const plan = buildPlan({ parent: "claude", home, matrix });
     assert.equal(plan.sheet, firstRunSheet("claude"));
-    assert.equal(plan.schemaVersion, 4);
+    assert.equal(plan.schemaVersion, 5);
     assert.equal(plan.ledgerPath, join(home, ".claude", "pstack-probes.json"));
     assert.deepEqual(plan.verified, []);
     assert.deepEqual(plan.efforts, {
       fable: ["max"],
       opus: ["xhigh"],
-      sol: ["xhigh"],
       astra: ["max"],
       grok: ["xhigh"],
-      "grok-4-7": ["high", "xhigh"],
-      "cursor-grok": ["high"],
     });
     assert.deepEqual(
       plan.pairs.map((p) => [p.family, p.pair, p.descriptor, p.route]),
       [
         ["fable", "fable@max", "claude:fable@max", "native"],
         ["opus", "opus@xhigh", "claude:claude-opus-5-5@xhigh", "native"],
-        ["sol", "sol@xhigh", "codex:gpt-6-sol@xhigh", "runner"],
         ["astra", "astra@max", "codex:gpt-6-astra@max", "runner"],
         ["grok", "grok@xhigh", "grok:grok-4.6@xhigh", "runner"],
-        ["grok-4-7", "grok-4-7@high", "grok:grok-4.7@high", "runner"],
-        ["cursor-grok", "cursor-grok@high", "cursor:grok-4.7@high", "runner"],
       ]
     );
     const fable = plan.pairs.find((p) => p.pair === "fable@max");
@@ -355,7 +324,6 @@ describe("buildPlan", () => {
       home,
       matrix,
       roles: {
-        ...CLI_ONLY_ROLES,
         "swarm workers": ["codex:gpt-6.1-sol@high"],
         "why synthesizer": ["auto"],
       },
@@ -367,7 +335,7 @@ describe("buildPlan", () => {
     assert.equal(plan.pairs.find((p) => p.pair === "sol-6-1@high")?.route, "runner");
     assert.deepEqual(
       plan.pairs.map((p) => p.pair),
-      ["fable@max", "opus@xhigh", "sol@xhigh", "sol-6-1@high", "astra@max", "grok@xhigh", "grok-4-7@high"]
+      ["fable@max", "opus@xhigh", "sol-6-1@high", "astra@max", "grok@xhigh"]
     );
   });
 
@@ -427,7 +395,7 @@ describe("buildPlan", () => {
 
   it("probes no family the ledger verified, whatever effort its lanes take, and probes a family new to this parent", () => {
     putSheet("claude", firstRunSheet("claude"));
-    putLedger("claude", ["fable", "opus", "sol", "astra", "grok", "grok-4-7", "cursor-grok"]);
+    putLedger("claude", ["fable", "opus", "astra", "grok"]);
     const effortsOnly = buildPlan({ parent: "claude", home, matrix, efforts: { grok: "high", fable: "medium" } });
     assert.deepEqual(effortsOnly.efforts.grok, ["high"]);
     assert.deepEqual(effortsOnly.pairs, []);
@@ -436,11 +404,8 @@ describe("buildPlan", () => {
       [
         ["fable", "claude:fable", "2026-09-24T00:00:00.000Z"],
         ["opus", "claude:claude-opus-5-5", "2026-09-24T00:00:00.000Z"],
-        ["sol", "codex:gpt-6-sol", "2026-09-24T00:00:00.000Z"],
         ["astra", "codex:gpt-6-astra", "2026-09-24T00:00:00.000Z"],
         ["grok", "grok:grok-4.6", "2026-09-24T00:00:00.000Z"],
-        ["grok-4-7", "grok:grok-4.7", "2026-09-24T00:00:00.000Z"],
-        ["cursor-grok", "cursor:grok-4.7", "2026-09-24T00:00:00.000Z"],
       ]
     );
 
@@ -448,20 +413,20 @@ describe("buildPlan", () => {
       parent: "claude",
       home,
       matrix,
-      roles: { "bug-fix": ["cursor:kimi-k3@high"], "swarm workers": ["codex:gpt-6.1-sol@high"] },
+      roles: { "bug-fix": ["grok:grok-4.7@high"], "swarm workers": ["codex:gpt-6.1-sol@high"] },
     });
     assert.deepEqual(
       newFamilies.pairs.map((p) => [p.pair, p.descriptor, p.route]),
       [
         ["sol-6-1@high", "codex:gpt-6.1-sol@high", "runner"],
-        ["kimi@high", "cursor:kimi-k3@high", "runner"],
+        ["grok-4-7@high", "grok:grok-4.7@high", "runner"],
       ]
     );
-    assert.equal(newFamilies.verified.some((v) => v.family === "sol-6-1" || v.family === "kimi"), false);
+    assert.equal(newFamilies.verified.some((v) => v.family === "sol-6-1" || v.family === "grok-4-7"), false);
   });
 
   it("probes a new model of a verified family and keeps one parent's ledger from verifying the other", () => {
-    putLedger("claude", ["fable", "opus", "sol", "astra", "grok", "grok-4-7", "cursor-grok"]);
+    putLedger("claude", ["fable", "opus", "astra", "grok"]);
     const bumped = structuredClone(matrix) as { families: Array<{ family: string; model: string }> };
     const grok = bumped.families.find((f) => f.family === "grok");
     assert.ok(grok);
@@ -473,7 +438,7 @@ describe("buildPlan", () => {
     assert.deepEqual(codex.verified, []);
     assert.deepEqual(
       codex.pairs.map((p) => p.pair),
-      ["fable@max", "opus@xhigh", "sol@xhigh", "astra@max", "grok@xhigh", "grok-4-7@high", "cursor-grok@high"]
+      ["fable@max", "opus@xhigh", "sol@xhigh", "astra@max", "grok@xhigh"]
     );
   });
 
@@ -507,38 +472,17 @@ describe("buildPlan", () => {
     assert.deepEqual(plan.rows.map((r) => r.role), matrix.roles.map((r) => r.role));
   });
 
-  it("keeps an old 17-role sheet and materializes the pre-pr and Cloud PR defaults", () => {
-    putSheet("claude", oldSeventeenSheet("claude"));
+  it("reads a sheet that still has the six retired rows, keeps its other lanes, and renders only the current roles", () => {
+    const customized = firstRunSheet("claude").replace("bug-fix: claude:claude-opus-5-5@xhigh", "bug-fix: codex:gpt-6-sol@high");
+    putSheet("claude", `${customized}${RETIRED_ROWS.join("\n")}\n`);
     const state = loadState({ parent: "claude", home, matrix });
     assert.equal(state.exists, true);
-    assert.equal(state.rows.length, 17);
-    assert.deepEqual(
-      state.rows.map((r) => r.role),
-      matrix.roles.slice(0, 17).map((r) => r.role)
-    );
+    assert.deepEqual(state.rows.map((r) => r.role), matrix.roles.map((r) => r.role));
+    assert.equal(state.efforts["grok-4-7"].status, "outside-map");
     const plan = buildPlan({ parent: "claude", home, matrix });
-    assert.equal(plan.rows.length, 23);
-    assert.deepEqual(lanesOf(plan, "bug-fix"), ["claude:claude-opus-5-5@xhigh"]);
-    assert.deepEqual(lanesOf(plan, "interrogate reviewers"), [
-      "claude:fable@max",
-      "codex:gpt-6-astra@max",
-      "grok:grok-4.6@xhigh",
-      "claude:claude-opus-5-5@xhigh",
-    ]);
-    assert.deepEqual(lanesOf(plan, "pre-pr reviewer"), ["grok:grok-4.7@xhigh", "codex:gpt-6-sol@xhigh"]);
-    assert.deepEqual(lanesOf(plan, "pre-pr fixer"), ["grok:grok-4.7@xhigh"]);
-    assert.deepEqual(lanesOf(plan, "pre-pr certifier"), ["grok:grok-4.7@high"]);
-    assert.deepEqual(lanesOf(plan, "converge raiz"), ["claude:claude-opus-5-5@xhigh"]);
-    assert.deepEqual(lanesOf(plan, "pr owner"), ["cursor:grok-4.7@high"]);
-    assert.deepEqual(lanesOf(plan, "pr verifier"), ["cursor:grok-4.7@high"]);
-  });
-
-  it("accepts only Grok 4.7 high or xhigh for the Converge roles, which start.ts reads as floors", () => {
-    const raised = buildPlan({ parent: "claude", home, matrix, roles: { "pr owner": ["cursor:grok-4.7@xhigh"] } });
-    assert.deepEqual(lanesOf(raised, "pr owner"), ["cursor:grok-4.7@xhigh"]);
-    assert.throws(() => buildPlan({ parent: "claude", home, matrix, roles: { "pr verifier": ["cursor:composer-2.5@high"] } }), /"pr verifier" takes one lane/);
-    assert.throws(() => buildPlan({ parent: "claude", home, matrix, roles: { "pr owner": ["cursor:grok-4.7@medium"] } }), /"pr owner" takes one lane/);
-    assert.throws(() => buildPlan({ parent: "claude", home, matrix, efforts: { "cursor-grok": "low" } }), /"pr owner" takes one lane/);
+    assert.equal(plan.sheet, customized);
+    assert.deepEqual(lanesOf(plan, "bug-fix"), ["codex:gpt-6-sol@high"]);
+    assert.deepEqual(plan.pairs.map((p) => p.pair), ["fable@max", "opus@xhigh", "sol@high", "astra@max", "grok@xhigh"]);
   });
 
   it("carries the rolling-alias migrations into the plan and rewrites them in the sheet", () => {
@@ -571,100 +515,6 @@ describe("buildPlan", () => {
   });
 });
 
-describe("pre-pr and converge raiz rows", () => {
-  it("takes an ordered list of distinct CLI families the runner launches from the parent, keeps the operator's order, and refuses an alias, a cloud lane, a repeated family or the parent's native family", () => {
-    const codex = buildPlan({ parent: "claude", home, matrix, roles: { "pre-pr reviewer": ["codex:gpt-6-sol@high"] } });
-    assert.deepEqual(lanesOf(codex, "pre-pr reviewer"), ["codex:gpt-6-sol@high"]);
-    const reversed = buildPlan({ parent: "claude", home, matrix, roles: { "pre-pr reviewer": ["codex:gpt-6-sol@xhigh", "grok:grok-4.7@xhigh"] } });
-    assert.deepEqual(lanesOf(reversed, "pre-pr reviewer"), ["codex:gpt-6-sol@xhigh", "grok:grok-4.7@xhigh"], "the reviewer row keeps the operator's order");
-    const message = /"pre-pr reviewer" takes one or more lanes of distinct families, each one of codex:gpt-6-sol@low /;
-    assert.throws(() => buildPlan({ parent: "claude", home, matrix, roles: { "pre-pr reviewer": ["inherit-parent"] } }), message);
-    assert.throws(() => buildPlan({ parent: "claude", home, matrix, roles: { "pre-pr reviewer": ["cursor:grok-4.7@high"] } }), message);
-    assert.throws(() => buildPlan({ parent: "claude", home, matrix, roles: { "pre-pr reviewer": ["grok:grok-4.7@xhigh", "grok:grok-4.7@high"] } }), message);
-    assert.throws(() => buildPlan({ parent: "claude", home, matrix, roles: { "pre-pr reviewer": ["claude:claude-opus-5-5@high"] } }), message);
-    assert.throws(() => buildPlan({ parent: "codex", home, matrix, roles: { "pre-pr reviewer": ["codex:gpt-6-sol@high"] } }), /"pre-pr reviewer" takes one or more lanes of distinct families, each one of claude:fable@low /);
-    assert.deepEqual(lanesOf(buildPlan({ parent: "codex", home, matrix, roles: { "pre-pr reviewer": ["claude:claude-opus-5-5@high"] } }), "pre-pr reviewer"), ["claude:claude-opus-5-5@high"]);
-  });
-
-  it("probes the reserve family when the ledger lacks it and not otherwise", () => {
-    putLedger("claude", ["fable", "opus", "astra", "grok", "grok-4-7", "cursor-grok"]);
-    const plan = buildPlan({ parent: "claude", home, matrix, roles: { "pre-pr reviewer": ["grok:grok-4.7@xhigh", "codex:gpt-6-sol@xhigh"] } });
-    assert.deepEqual(plan.pairs.map((p) => [p.pair, p.descriptor, p.route]), [["sol@xhigh", "codex:gpt-6-sol@xhigh", "runner"]]);
-    putLedger("claude", ["fable", "opus", "sol", "astra", "grok", "grok-4-7", "cursor-grok"]);
-    assert.deepEqual(buildPlan({ parent: "claude", home, matrix, roles: { "pre-pr reviewer": ["grok:grok-4.7@xhigh", "codex:gpt-6-sol@xhigh"] } }).pairs, []);
-  });
-
-  it("lets the fixer be an alias and the certifier only an unsandboxed family", () => {
-    assert.deepEqual(lanesOf(buildPlan({ parent: "claude", home, matrix, roles: { "pre-pr fixer": ["inherit-parent"] } }), "pre-pr fixer"), ["inherit-parent"]);
-    assert.deepEqual(lanesOf(buildPlan({ parent: "codex", home, matrix, roles: { "pre-pr certifier": ["grok:grok-4.7@medium"] } }), "pre-pr certifier"), ["grok:grok-4.7@medium"]);
-    assert.throws(() => buildPlan({ parent: "claude", home, matrix, roles: { "pre-pr certifier": ["claude:claude-opus-5-5@xhigh"] } }), /"pre-pr certifier" takes one lane, grok:grok-4\.6@low/);
-    assert.throws(() => buildPlan({ parent: "claude", home, matrix, roles: { "pre-pr certifier": ["inherit-parent"] } }), /"pre-pr certifier" takes one lane/);
-  });
-
-  it("binds converge raiz to the parent's native provider", () => {
-    assert.deepEqual(lanesOf(buildPlan({ parent: "claude", home, matrix }), "converge raiz"), ["claude:claude-opus-5-5@xhigh"]);
-    assert.deepEqual(lanesOf(buildPlan({ parent: "codex", home, matrix }), "converge raiz"), ["codex:gpt-6-sol@xhigh"]);
-    assert.deepEqual(lanesOf(buildPlan({ parent: "claude", home, matrix, roles: { "converge raiz": ["claude:fable@max"] } }), "converge raiz"), ["claude:fable@max"]);
-    assert.throws(() => buildPlan({ parent: "claude", home, matrix, roles: { "converge raiz": ["codex:gpt-6-sol@xhigh"] } }), /"converge raiz" takes one lane, claude:fable@low/);
-    assert.throws(() => buildPlan({ parent: "codex", home, matrix, roles: { "converge raiz": ["claude:claude-opus-5-5@xhigh"] } }), /"converge raiz" takes one lane, codex:gpt-6-sol@low/);
-    assert.throws(() => buildPlan({ parent: "claude", home, matrix, roles: { "converge raiz": ["auto"] } }), /"converge raiz" takes one lane/);
-  });
-
-  it("warns when an authoring row shares the reviewer family and is silent once they differ", () => {
-    const grok = ["grok:grok-4.6@xhigh"];
-    const grokAuthors = buildPlan({ parent: "claude", home, matrix, roles: { "feature, refactoring": ["grok:grok-4.7@xhigh"], "bug-fix": grok, "perf-issue": grok, hillclimb: grok, "pre-pr reviewer": ["grok:grok-4.7@xhigh"] } });
-    assert.deepEqual(grokAuthors.warnings, [
-      "feature, refactoring and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
-      "bug-fix and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
-      "perf-issue and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
-      "hillclimb and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
-    ]);
-    const reserved = buildPlan({ parent: "claude", home, matrix, roles: { "feature, refactoring": ["grok:grok-4.7@xhigh"], "pre-pr reviewer": ["grok:grok-4.7@xhigh", "codex:gpt-6-sol@xhigh"] } });
-    assert.deepEqual(reserved.warnings, [], "a reserve of another family means certification can still choose a reviewer");
-    for (const parent of ["claude", "codex"]) assert.deepEqual(buildPlan({ parent, home, matrix }).warnings, [], `${parent} first run`);
-  });
-
-  it("warns for an authoring row with any lane in the reviewer's provider, never for an alias or a non-authoring row", () => {
-    const opus = "claude:claude-opus-5-5@xhigh";
-    const plan = buildPlan({
-      parent: "codex",
-      home,
-      matrix,
-      roles: {
-        "feature, refactoring": [opus],
-        "bug-fix": ["inherit-parent"],
-        "perf-issue": [opus, "grok:grok-4.6@high"],
-        hillclimb: ["auto"],
-        "hardest tasks": ["grok:grok-4.7@xhigh"],
-        "pre-pr reviewer": ["grok:grok-4.7@xhigh"],
-      },
-    });
-    assert.deepEqual(lanesOf(plan, "swarm workers"), ["grok:grok-4.6@xhigh"]);
-    assert.deepEqual(plan.warnings, [
-      "perf-issue and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
-      "hardest tasks and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
-    ]);
-  });
-
-  it("upgrades a 19-row sheet with Opus authors: the pre-pr rows take their defaults, a verified Grok 4.7 is not probed, and nothing warns", () => {
-    putSheet("claude", nineteenRowOpusSheet("claude"));
-    putLedger("claude", ["fable", "opus", "sol", "astra", "grok", "grok-4-7", "cursor-grok"]);
-    const state = loadState({ parent: "claude", home, matrix });
-    assert.equal(state.rows.length, 19);
-    const plan = buildPlan({ parent: "claude", home, matrix });
-    assert.deepEqual(plan.rows.map((r) => r.role), matrix.roles.map((r) => r.role));
-    assert.deepEqual(lanesOf(plan, "feature, refactoring"), ["claude:claude-opus-5-5@xhigh"]);
-    assert.deepEqual(lanesOf(plan, "pre-pr reviewer"), ["grok:grok-4.7@xhigh", "codex:gpt-6-sol@xhigh"]);
-    assert.deepEqual(lanesOf(plan, "pre-pr fixer"), ["grok:grok-4.7@xhigh"]);
-    assert.deepEqual(lanesOf(plan, "pre-pr certifier"), ["grok:grok-4.7@high"]);
-    assert.match(plan.sheet, /\ninterrogate reviewers: .*\npre-pr reviewer: grok:grok-4\.7@xhigh, codex:gpt-6-sol@xhigh\npre-pr fixer: grok:grok-4\.7@xhigh\npre-pr certifier: grok:grok-4\.7@high\nconverge raiz: claude:claude-opus-5-5@xhigh\npr owner: cursor:grok-4\.7@high\n/);
-    assert.deepEqual(plan.efforts["grok-4-7"], ["high", "xhigh"]);
-    assert.deepEqual(plan.pairs, []);
-    assert.deepEqual(plan.verified.map((v) => v.family), ["fable", "opus", "sol", "astra", "grok", "grok-4-7", "cursor-grok"]);
-    assert.deepEqual(plan.warnings, []);
-  });
-});
-
 // --- Probe, attest, write ------------------------------------------------------
 
 import { chmodSync, readdirSync, statSync } from "node:fs";
@@ -674,7 +524,6 @@ import {
   CODEX_BLOCK_END,
   attestNative,
   integrationPathFor,
-  loadPlan,
   runProbes,
   savePlan,
   verifyProbes,
@@ -728,19 +577,29 @@ beforeEach(() => {
   runDir = join(home, "run");
 });
 
+/** The fake CLIs and this node on PATH, under the test's temporary home; nothing of the operator's PATH or HOME. */
 function fakeEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
-  return { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, ...extra };
+  return isolatedEnv(home, [bin], extra);
 }
+
+/** For a command that must launch nothing: not even the fakes are on PATH, so a lane that starts anyway finds no CLI. */
+function noCliEnv(): NodeJS.ProcessEnv {
+  return isolatedEnv(home);
+}
+
+describe("test isolation", () => {
+  it("keeps every provider CLI and gh off the PATH of the test process, and off the PATH of a probe outside the fakes", () => {
+    assert.deepEqual(clisOutsideFakes(process.env.PATH), [], "a CLI is on the PATH of the test process");
+    assert.equal(process.env.PATH, join(home, ".node-bin"));
+    assert.equal(process.env.HOME, home);
+    assert.deepEqual(clisOutsideFakes(fakeEnv().PATH, [bin]), [], "a real CLI is on the PATH of the probes");
+    assert.deepEqual(clisOutsideFakes(noCliEnv().PATH), [], "a CLI is on the PATH of a command that must launch nothing");
+  });
+});
 
 /** Plan, run the external probes with the fake CLIs, and attest every native pair. */
 async function planAndProbe(parent: string, input: { efforts?: Record<string, string>; roles?: Record<string, string[]> } = {}) {
-  const plan = buildPlan({
-    parent,
-    home,
-    matrix,
-    ...input,
-    roles: { ...CLI_ONLY_ROLES, ...input.roles },
-  });
+  const plan = buildPlan({ parent, home, matrix, ...input });
   rmSync(runDir, { recursive: true, force: true });
   savePlan(runDir, plan);
   const summary = await runProbes(plan, { dir: runDir, env: fakeEnv() });
@@ -753,17 +612,15 @@ async function planAndProbe(parent: string, input: { efforts?: Record<string, st
 
 describe("runProbes", () => {
   it("runs one external lane per runner pair, passes when the marker comes back, and lists the native pairs as pending", async () => {
-    const plan = buildPlan({ parent: "claude", home, matrix, roles: CLI_ONLY_ROLES });
+    const plan = buildPlan({ parent: "claude", home, matrix });
     savePlan(runDir, plan);
     const summary = await runProbes(plan, { dir: runDir, env: fakeEnv() });
     assert.equal(summary.externalOk, true);
     assert.deepEqual(
       summary.external.map((r) => [r.pair, r.family, r.status]),
       [
-        ["sol@xhigh", "sol", "passed"],
         ["astra@max", "astra", "passed"],
         ["grok@xhigh", "grok", "passed"],
-        ["grok-4-7@high", "grok-4-7", "passed"],
       ]
     );
     const grok = summary.external.find((r) => r.pair === "grok@xhigh");
@@ -793,7 +650,6 @@ describe("runProbes", () => {
       home,
       matrix,
       roles: {
-        ...CLI_ONLY_ROLES,
         "bug-fix": ["codex:gpt-6-sol@xhigh"],
         hillclimb: ["codex:gpt-6-sol@high"],
       },
@@ -810,8 +666,8 @@ describe("runProbes", () => {
   });
 
   it("runs nothing when every family of the plan is verified", async () => {
-    putLedger("claude", ["fable", "opus", "sol", "astra", "grok", "grok-4-7"]);
-    const plan = buildPlan({ parent: "claude", home, matrix, roles: CLI_ONLY_ROLES, efforts: { grok: "high" } });
+    putLedger("claude", ["fable", "opus", "astra", "grok"]);
+    const plan = buildPlan({ parent: "claude", home, matrix, efforts: { grok: "high" } });
     savePlan(runDir, plan);
     const summary = await runProbes(plan, { dir: runDir, env: fakeEnv({ FAKE_GROK_UNAUTH: "1" }) });
     assert.deepEqual(summary, { external: [], native: [], externalOk: true, ok: true });
@@ -819,7 +675,7 @@ describe("runProbes", () => {
   });
 
   it("marks a lane failed when its CLI is unauthenticated and keeps the other results", async () => {
-    const plan = buildPlan({ parent: "claude", home, matrix, roles: CLI_ONLY_ROLES });
+    const plan = buildPlan({ parent: "claude", home, matrix });
     savePlan(runDir, plan);
     const summary = await runProbes(plan, { dir: runDir, env: fakeEnv({ FAKE_GROK_UNAUTH: "1" }) });
     assert.equal(summary.externalOk, false);
@@ -830,7 +686,7 @@ describe("runProbes", () => {
   });
 
   it("fails a lane whose receipt is complete but whose output lacks the marker", async () => {
-    const plan = buildPlan({ parent: "codex", home, matrix, roles: CLI_ONLY_ROLES });
+    const plan = buildPlan({ parent: "codex", home, matrix });
     savePlan(runDir, plan);
     const summary = await runProbes(plan, { dir: runDir, env: fakeEnv({ FAKE_DROP_MARKER: "1" }) });
     assert.equal(summary.externalOk, false);
@@ -875,7 +731,7 @@ describe("attestNative", () => {
       parent: "claude",
       home,
       matrix,
-      roles: { ...CLI_ONLY_ROLES, "hardest tasks": ["claude:fable@medium"] },
+      roles: { "hardest tasks": ["claude:fable@medium"] },
     });
     savePlan(runDir, plan);
     assert.deepEqual(plan.efforts.fable, ["medium", "max"]);
@@ -894,7 +750,7 @@ describe("attestNative", () => {
 
 describe("writeSheet", () => {
   it("refuses to write while any pair lacks a passing probe and creates nothing", async () => {
-    const plan = buildPlan({ parent: "claude", home, matrix, roles: CLI_ONLY_ROLES });
+    const plan = buildPlan({ parent: "claude", home, matrix });
     savePlan(runDir, plan);
     assert.throws(() => writeSheet(plan, runDir, { home }), (error: unknown) => error instanceof SetupError && /probe/.test((error as Error).message));
     assert.equal(existsSync(join(home, ".claude")), false);
@@ -927,19 +783,15 @@ describe("writeSheet", () => {
     writeSheet(plan, runDir, { home });
     const ledger = JSON.parse(readFileSync(plan.ledgerPath, "utf8"));
     assert.equal(ledger.schemaVersion, 1);
-    assert.deepEqual(Object.keys(ledger.families), ["claude:claude-opus-5-5", "claude:fable", "codex:gpt-6-astra", "codex:gpt-6-sol", "grok:grok-4.6", "grok:grok-4.7"]);
+    assert.deepEqual(Object.keys(ledger.families), ["claude:claude-opus-5-5", "claude:fable", "codex:gpt-6-astra", "grok:grok-4.6"]);
     assert.deepEqual(
       { ...ledger.families["grok:grok-4.6"], verifiedAt: "" },
       { family: "grok", descriptor: "grok:grok-4.6@xhigh", verifiedAt: "", evidence: runDir }
     );
-    assert.deepEqual(
-      { ...ledger.families["grok:grok-4.7"], verifiedAt: "" },
-      { family: "grok-4-7", descriptor: "grok:grok-4.7@high", verifiedAt: "", evidence: runDir }
-    );
     const ledgerText = readFileSync(plan.ledgerPath, "utf8");
 
     const effortDir = join(home, "effort-run");
-    const effort = buildPlan({ parent: "claude", home, matrix, roles: CLI_ONLY_ROLES, efforts: { grok: "high", opus: "max" } });
+    const effort = buildPlan({ parent: "claude", home, matrix, efforts: { grok: "high", opus: "max" } });
     assert.deepEqual(effort.pairs, []);
     savePlan(effortDir, effort);
     const written = writeSheet(effort, effortDir, { home });
@@ -949,7 +801,7 @@ describe("writeSheet", () => {
     assert.match(readFileSync(plan.sheetPath, "utf8"), /^bug-fix: claude:claude-opus-5-5@max$/m);
 
     const solDir = join(home, "sol-run");
-    const sol = buildPlan({ parent: "claude", home, matrix, roles: { ...CLI_ONLY_ROLES, "swarm workers": ["codex:gpt-6.1-sol@high"] } });
+    const sol = buildPlan({ parent: "claude", home, matrix, roles: { "swarm workers": ["codex:gpt-6.1-sol@high"] } });
     assert.deepEqual(sol.pairs.map((p) => p.pair), ["sol-6-1@high"]);
     savePlan(solDir, sol);
     assert.throws(() => writeSheet(sol, solDir, { home }), /sol-6-1@high/);
@@ -1070,38 +922,19 @@ describe("writeSheet", () => {
 
 // --- Command line ---------------------------------------------------------------
 
-import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { createServer } from "node:http";
-import { CURSOR_ENV } from "../../poteto-mode/scripts/runner/http-lane.ts";
+import { spawnSync } from "node:child_process";
 
 const SCRIPT = join(import.meta.dirname, "setup-pstack.ts");
 
-function cli(args: string[], env: NodeJS.ProcessEnv = process.env) {
+/** Run the script. The environment has no default: every call says whether the fakes are in reach (fakeEnv) or nothing is (noCliEnv). */
+function cli(args: string[], env: NodeJS.ProcessEnv) {
   const result = spawnSync(process.execPath, [SCRIPT, ...args], { encoding: "utf8", env });
   return { code: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
-function cliAsync(args: string[], env: NodeJS.ProcessEnv = process.env): Promise<{ code: number; stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [SCRIPT, ...args], { env });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
-      stdout += chunk;
-    });
-    child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
-      stderr += chunk;
-    });
-    child.on("error", reject);
-    child.on("close", (status) => {
-      resolve({ code: status ?? 1, stdout, stderr });
-    });
-  });
-}
-
 describe("command line", () => {
   it("state prints the parent's state as JSON", () => {
-    const result = cli(["state", "--parent", "claude", "--home", home]);
+    const result = cli(["state", "--parent", "claude", "--home", home], noCliEnv());
     assert.equal(result.code, 0, result.stderr);
     const state = JSON.parse(result.stdout);
     assert.equal(state.exists, false);
@@ -1113,14 +946,14 @@ describe("command line", () => {
     const result = cli([
       "plan", "--parent", "codex", "--home", home, "--dir", runDir,
       "--effort", "grok=high", "--role", "swarm workers=auto", "--role", "why synthesizer=claude:claude-opus-5-5@xhigh",
-    ]);
+    ], noCliEnv());
     assert.equal(result.code, 0, result.stderr);
     const { dir, ...printed } = JSON.parse(result.stdout);
     assert.equal(dir, runDir);
     const saved = JSON.parse(readFileSync(join(runDir, "plan.json"), "utf8"));
     assert.deepEqual(printed, saved);
     assert.equal(saved.parent, "codex");
-    assert.equal(saved.schemaVersion, 4);
+    assert.equal(saved.schemaVersion, 5);
     assert.deepEqual(saved.efforts.grok, ["high"]);
     assert.deepEqual(saved.rows.find((r: { role: string }) => r.role === "swarm workers").lanes, ["auto"]);
     assert.deepEqual(saved.rows.find((r: { role: string }) => r.role === "why synthesizer").lanes, ["claude:claude-opus-5-5@xhigh"]);
@@ -1128,7 +961,7 @@ describe("command line", () => {
   });
 
   it("plan chooses a fresh run directory when --dir is omitted", () => {
-    const result = cli(["plan", "--parent", "claude", "--home", home]);
+    const result = cli(["plan", "--parent", "claude", "--home", home], noCliEnv());
     assert.equal(result.code, 0, result.stderr);
     const printed = JSON.parse(result.stdout);
     assert.ok(typeof printed.dir === "string" && existsSync(join(printed.dir, "plan.json")), result.stdout);
@@ -1136,7 +969,7 @@ describe("command line", () => {
   });
 
   it("probe runs the external lanes and exits 1 when one fails", () => {
-    cli(["plan", "--parent", "claude", "--home", home, "--dir", runDir, ...cliOnlyRoleFlags()]);
+    cli(["plan", "--parent", "claude", "--home", home, "--dir", runDir], noCliEnv());
     const ok = cli(["probe", "--dir", runDir], fakeEnv());
     assert.equal(ok.code, 0, ok.stderr);
     const summary = JSON.parse(ok.stdout);
@@ -1144,61 +977,59 @@ describe("command line", () => {
     assert.equal(summary.native.length, 2);
 
     rmSync(runDir, { recursive: true, force: true });
-    cli(["plan", "--parent", "claude", "--home", home, "--dir", runDir, ...cliOnlyRoleFlags()]);
+    cli(["plan", "--parent", "claude", "--home", home, "--dir", runDir], noCliEnv());
     const failed = cli(["probe", "--dir", runDir], fakeEnv({ FAKE_GROK_UNAUTH: "1" }));
     assert.equal(failed.code, 1);
     assert.equal(JSON.parse(failed.stdout).externalOk, false);
   });
 
   it("attest records a native probe and write commits only when every probe passed", () => {
-    cli(["plan", "--parent", "claude", "--home", home, "--dir", runDir, ...cliOnlyRoleFlags()]);
+    cli(["plan", "--parent", "claude", "--home", home, "--dir", runDir], noCliEnv());
     assert.equal(cli(["probe", "--dir", runDir], fakeEnv()).code, 0);
     const plan = JSON.parse(readFileSync(join(runDir, "plan.json"), "utf8")) as Plan;
 
-    const early = cli(["write", "--dir", runDir, "--home", home]);
+    const early = cli(["write", "--dir", runDir, "--home", home], noCliEnv());
     assert.equal(early.code, 1);
     assert.match(early.stderr, /fable/);
     assert.equal(existsSync(plan.sheetPath), false);
 
     for (const pair of plan.pairs.filter((p) => p.native)) {
-      const bad = cli(["attest", "--dir", runDir, "--pair", pair.pair, "--observed", "no token here"]);
+      const bad = cli(["attest", "--dir", runDir, "--pair", pair.pair, "--observed", "no token here"], noCliEnv());
       assert.equal(bad.code, 1);
-      const good = cli(["attest", "--dir", runDir, "--pair", pair.pair, "--observed", `reply ${pair.marker}`]);
+      const good = cli(["attest", "--dir", runDir, "--pair", pair.pair, "--observed", `reply ${pair.marker}`], noCliEnv());
       assert.equal(good.code, 0, good.stderr);
     }
-    const written = cli(["write", "--dir", runDir, "--home", home]);
+    const written = cli(["write", "--dir", runDir, "--home", home], noCliEnv());
     assert.equal(written.code, 0, written.stderr);
     const result = JSON.parse(written.stdout);
     assert.deepEqual([result.sheet, result.integration, result.ledger], ["created", "created", "created"]);
     assert.equal(readFileSync(plan.sheetPath, "utf8"), plan.sheet);
 
-    const again = JSON.parse(cli(["write", "--dir", runDir, "--home", home]).stdout);
+    const again = JSON.parse(cli(["write", "--dir", runDir, "--home", home], noCliEnv()).stdout);
     assert.deepEqual([again.sheet, again.integration, again.ledger], ["unchanged", "unchanged", "unchanged"]);
   });
 
   it("rejects a bad subcommand, a malformed --effort, and a missing --parent with exit 64 and usage", () => {
-    for (const args of [["frobnicate"], ["plan", "--parent", "claude", "--effort", "grok"], ["plan", "--home", home], []]) {
-      const result = cli(args);
+    for (const args of [["frobnicate"], ["plan", "--parent", "claude", "--effort", "grok"], ["plan", "--home", home], ["probe", "--dir", runDir, "--repo", "acme/app", "--pr", "7"], []]) {
+      const result = cli(args, noCliEnv());
       assert.equal(result.code, 64, JSON.stringify(args));
       assert.match(result.stderr, /Usage: setup-pstack/);
     }
-    const help = cli(["--help"]);
+    const help = cli(["--help"], noCliEnv());
     assert.equal(help.code, 0);
     assert.match(help.stdout, /Usage: setup-pstack/);
     assert.match(help.stdout, /--pair <family>@<effort>/);
-    assert.match(help.stdout, /--repo <owner\/name>/);
-    assert.match(help.stdout, /--pr <number>/);
     assert.doesNotMatch(help.stdout, /--family <family>/);
   });
 
   it("attest --pair records a native probe and attest --family is unknown", () => {
-    cli(["plan", "--parent", "claude", "--home", home, "--dir", runDir]);
+    cli(["plan", "--parent", "claude", "--home", home, "--dir", runDir], noCliEnv());
     const plan = JSON.parse(readFileSync(join(runDir, "plan.json"), "utf8")) as Plan;
     const fable = plan.pairs.find((p) => p.pair === "fable@max")!;
-    const unknown = cli(["attest", "--dir", runDir, "--family", "fable", "--observed", `reply ${fable.marker}`]);
+    const unknown = cli(["attest", "--dir", runDir, "--family", "fable", "--observed", `reply ${fable.marker}`], noCliEnv());
     assert.equal(unknown.code, 64, unknown.stderr);
     assert.match(unknown.stderr, /Usage: setup-pstack/);
-    const good = cli(["attest", "--dir", runDir, "--pair", "fable@max", "--observed", `reply ${fable.marker}`]);
+    const good = cli(["attest", "--dir", runDir, "--pair", "fable@max", "--observed", `reply ${fable.marker}`], noCliEnv());
     assert.equal(good.code, 0, good.stderr);
     const printed = JSON.parse(good.stdout);
     assert.equal(printed.pair, "fable@max");
@@ -1206,389 +1037,15 @@ describe("command line", () => {
   });
 
   it("probe refuses a plan.json from the previous schema", () => {
-    assert.equal(cli(["plan", "--parent", "claude", "--home", home, "--dir", runDir]).code, 0);
+    assert.equal(cli(["plan", "--parent", "claude", "--home", home, "--dir", runDir], noCliEnv()).code, 0);
     const path = join(runDir, "plan.json");
-    const { warnings, ...older } = JSON.parse(readFileSync(path, "utf8")) as Plan;
-    assert.deepEqual(warnings, []);
-    writeFileSync(path, `${JSON.stringify({ ...older, schemaVersion: 3 }, null, 2)}\n`);
-    const result = cli(["probe", "--dir", runDir]);
+    const current = JSON.parse(readFileSync(path, "utf8")) as Plan;
+    writeFileSync(path, `${JSON.stringify({ ...current, schemaVersion: 4, warnings: [] }, null, 2)}\n`);
+    const result = cli(["probe", "--dir", runDir], noCliEnv());
     assert.equal(result.code, 1);
     assert.match(result.stderr, /plan/);
     assert.match(result.stderr, /run plan again with this version of the script/);
+    assert.deepEqual(readdirSync(runDir), ["plan.json"], "no probe lane ran");
     assert.equal(existsSync(join(home, ".claude", "pstack-models.md")), false);
-  });
-
-  it("plan and write print the plan's warnings on stderr, keep exit 0, and a crossed plan prints none", () => {
-    putLedger("claude", ["fable", "opus", "astra", "grok", "grok-4-7", "cursor-grok"]);
-    const grokWarnings = [
-      "warning: feature, refactoring and pre-pr reviewer are both grok; certification will refuse until one of them changes family\n",
-      "warning: bug-fix and pre-pr reviewer are both grok; certification will refuse until one of them changes family\n",
-      "warning: perf-issue and pre-pr reviewer are both grok; certification will refuse until one of them changes family\n",
-      "warning: hillclimb and pre-pr reviewer are both grok; certification will refuse until one of them changes family\n",
-    ].join("");
-    const grok = "grok:grok-4.6@xhigh";
-    const planned = cli([
-      "plan", "--parent", "claude", "--home", home, "--dir", runDir,
-      "--role", `feature, refactoring=${grok}`, "--role", `bug-fix=${grok}`, "--role", `perf-issue=${grok}`, "--role", `hillclimb=${grok}`,
-      "--role", "pre-pr reviewer=grok:grok-4.7@xhigh",
-    ]);
-    assert.equal(planned.code, 0, planned.stderr);
-    assert.equal(planned.stderr, grokWarnings);
-    assert.deepEqual(JSON.parse(planned.stdout).warnings, [
-      "feature, refactoring and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
-      "bug-fix and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
-      "perf-issue and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
-      "hillclimb and pre-pr reviewer are both grok; certification will refuse until one of them changes family",
-    ]);
-    const written = cli(["write", "--dir", runDir, "--home", home]);
-    assert.equal(written.code, 0, written.stderr);
-    assert.equal(written.stderr, grokWarnings);
-    assert.equal(JSON.parse(written.stdout).sheet, "created");
-
-    const crossedDir = join(home, "crossed-run");
-    const opus = "claude:claude-opus-5-5@xhigh";
-    const crossed = cli([
-      "plan", "--parent", "claude", "--home", home, "--dir", crossedDir,
-      "--role", `feature, refactoring=${opus}`, "--role", `bug-fix=${opus}`, "--role", `perf-issue=${opus}`, "--role", `hillclimb=${opus}`,
-    ]);
-    assert.equal(crossed.code, 0, crossed.stderr);
-    assert.equal(crossed.stderr, "");
-    assert.deepEqual(JSON.parse(crossed.stdout).warnings, []);
-    const crossedWrite = cli(["write", "--dir", crossedDir, "--home", home]);
-    assert.equal(crossedWrite.code, 0, crossedWrite.stderr);
-    assert.equal(crossedWrite.stderr, "");
-    assert.equal(JSON.parse(crossedWrite.stdout).sheet, "updated");
-    assert.match(readFileSync(sheetPathFor("claude", home), "utf8"), /^feature, refactoring: claude:claude-opus-5-5@xhigh$/m);
-  });
-});
-
-const GIT_ENV = {
-  GIT_TERMINAL_PROMPT: "0",
-  GIT_CONFIG_GLOBAL: "/dev/null",
-  GIT_CONFIG_NOSYSTEM: "1",
-  GIT_AUTHOR_NAME: "test",
-  GIT_AUTHOR_EMAIL: "test@example.invalid",
-  GIT_COMMITTER_NAME: "test",
-  GIT_COMMITTER_EMAIL: "test@example.invalid",
-} as const;
-
-interface FakeCursor {
-  readonly baseUrl: string;
-  readonly launch: unknown;
-  close(): Promise<void>;
-}
-
-async function fakeCursor(modelsStatus?: number): Promise<FakeCursor> {
-  let prompt = "";
-  let launch: unknown = null;
-  const server = createServer((request, response) => {
-    let raw = "";
-    request.setEncoding("utf8");
-    request.on("data", (chunk: string) => {
-      raw += chunk;
-    });
-    request.on("end", () => {
-      const method = request.method ?? "";
-      const path = request.url ?? "";
-      const answer = (status: number, body: unknown): void => {
-        response.writeHead(status, { "content-type": "application/json", connection: "close" });
-        response.end(JSON.stringify(body));
-      };
-      if (method === "GET" && path === "/v1/models") {
-        if (modelsStatus !== undefined) {
-          answer(modelsStatus, { error: "refused" });
-          return;
-        }
-        answer(200, {
-          items: [
-            {
-              id: "grok-4.7",
-              displayName: "grok-4.7",
-              parameters: [
-                { id: "reasoning_effort", displayName: "reasoning_effort", values: [{ value: "high" }] },
-                { id: "fast", displayName: "fast", values: [{ value: "false" }] },
-              ],
-              variants: [
-                { params: [{ id: "reasoning_effort", value: "high" }, { id: "fast", value: "false" }] },
-              ],
-            },
-          ],
-        });
-        return;
-      }
-      if (method === "POST" && path === "/v1/agents") {
-        const body: unknown = JSON.parse(raw);
-        launch = body;
-        if (typeof body === "object" && body !== null && "prompt" in body) {
-          const field = body.prompt;
-          if (typeof field === "object" && field !== null && "text" in field && typeof field.text === "string") {
-            prompt = field.text;
-          }
-        }
-        answer(200, {
-          agent: { id: "bc_1", status: "CREATING", url: "https://cursor.com/agents/bc_1", latestRunId: "run_1" },
-          run: { id: "run_1", status: "CREATING", createdAt: "2026-09-21T12:00:00.000Z" },
-        });
-        return;
-      }
-      if (method === "GET" && path === "/v1/agents/bc_1/runs/run_1") {
-        const marker = (prompt.match(/PSTACK-SETUP-[A-Za-z0-9-]+/) ?? ["missing"])[0];
-        answer(200, {
-          id: "run_1",
-          agentId: "bc_1",
-          status: "FINISHED",
-          createdAt: "2026-09-21T12:00:00.000Z",
-          updatedAt: "2026-09-21T12:00:01.000Z",
-          result: marker,
-          git: { branches: [{ repoUrl: "https://github.com/acme/app" }] },
-        });
-        return;
-      }
-      answer(404, { error: `no route for ${method} ${path}` });
-    });
-  });
-  server.unref();
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address = server.address();
-  if (address === null || typeof address === "string") throw new Error("fake did not bind a port");
-  return {
-    baseUrl: `http://127.0.0.1:${address.port}`,
-    get launch() {
-      return launch;
-    },
-    close: () =>
-      new Promise((resolve) => {
-        server.closeAllConnections();
-        server.close(() => resolve());
-      }),
-  };
-}
-
-function gitBare(root: string): string {
-  mkdirSync(root, { recursive: true });
-  const bare = join(root, "remote.git");
-  const work = join(root, "work");
-  const git = (cwd: string, args: readonly string[]): void => {
-    execFileSync("git", args, { cwd, env: { ...process.env, ...GIT_ENV }, stdio: ["ignore", "pipe", "pipe"] });
-  };
-  git(root, ["init", "--quiet", "--bare", "--initial-branch=main", bare]);
-  git(root, ["clone", "--quiet", bare, work]);
-  git(work, ["commit", "--allow-empty", "--quiet", "-m", "main"]);
-  git(work, ["push", "--quiet", "origin", "HEAD:refs/heads/main"]);
-  git(work, ["push", "--quiet", "origin", "HEAD:refs/pull/7/head"]);
-  return bare;
-}
-
-function mixedPlan(): Plan {
-  return buildPlan({
-    parent: "claude",
-    home,
-    matrix,
-    roles: { ...CLI_ONLY_ROLES, "bug-fix": ["cursor:grok-4.7@high"] },
-  });
-}
-
-function cursorEnv(fake: FakeCursor, gitRemote: string): Record<string, string> {
-  return {
-    [CURSOR_ENV.apiKey]: "test-key",
-    [CURSOR_ENV.baseUrl]: fake.baseUrl,
-    [CURSOR_ENV.pollIntervalMs]: "5",
-    [CURSOR_ENV.gitRemote]: gitRemote,
-  };
-}
-
-describe("probe target", () => {
-  const fakes: FakeCursor[] = [];
-
-  afterEach(async () => {
-    await Promise.all(fakes.splice(0).map((fake) => fake.close()));
-  });
-
-  it("rejects partial and malformed --repo/--pr with exit 64 and only plan.json", () => {
-    savePlan(runDir, mixedPlan());
-    const cases: Array<{ readonly args: readonly string[]; readonly message: RegExp }> = [
-      { args: ["--repo", "acme/app"], message: /--pr is required with --repo/ },
-      { args: ["--pr", "7"], message: /--repo is required with --pr/ },
-      { args: ["--repo", "acme/app", "--pr", "0"], message: /--pr must be a positive integer/ },
-      { args: ["--repo", "acme/app", "--pr", "x"], message: /--pr must be a positive integer/ },
-    ];
-    for (const { args, message } of cases) {
-      const result = cli(["probe", "--dir", runDir, ...args], fakeEnv());
-      assert.equal(result.code, 64, args.join(" "));
-      assert.match(result.stderr, message, args.join(" "));
-      assert.match(result.stderr, /Usage: setup-pstack/);
-      assert.deepEqual(readdirSync(runDir), ["plan.json"], args.join(" "));
-    }
-    for (const repo of ["acme", "acme/", "/app", "https://github.com/acme/app", "acme/app/extra"]) {
-      const result = cli(["probe", "--dir", runDir, "--repo", repo, "--pr", "7"], fakeEnv());
-      assert.equal(result.code, 64, repo);
-      assert.match(result.stderr, /--repo must be owner\/name/, repo);
-      assert.deepEqual(readdirSync(runDir), ["plan.json"], repo);
-    }
-  });
-
-  it("rejects an http plan without a target before writing any probe file", async () => {
-    const plan = mixedPlan();
-    savePlan(runDir, plan);
-    const missing = cli(["probe", "--dir", runDir], fakeEnv());
-    assert.equal(missing.code, 64, missing.stderr);
-    assert.match(missing.stderr, /--repo and --pr are required for cursor \(http transport\)/);
-    assert.deepEqual(readdirSync(runDir), ["plan.json"]);
-
-    const fresh = join(home, "never-probed");
-    await assert.rejects(
-      () => runProbes(plan, { dir: fresh, env: fakeEnv() }),
-      (error: unknown) =>
-        error instanceof SetupError && /--repo and --pr are required for cursor \(http transport\)/.test(error.message)
-    );
-    assert.equal(existsSync(fresh), false);
-    await assert.rejects(
-      () => runProbes(plan, { dir: runDir, env: fakeEnv(), target: { owner: "acme", name: "app", pullNumber: 0 } }),
-      (error: unknown) => error instanceof SetupError && /--pr must be a positive integer/.test(error.message)
-    );
-    assert.deepEqual(readdirSync(runDir), ["plan.json"]);
-  });
-
-  it("requires --repo and --pr on a first-run plan because the PR-phase defaults include cursor pairs", () => {
-    const plan = buildPlan({ parent: "claude", home, matrix });
-    savePlan(runDir, plan);
-    const missing = cli(["probe", "--dir", runDir], fakeEnv());
-    assert.equal(missing.code, 64, missing.stderr);
-    assert.match(missing.stderr, /--repo and --pr are required for cursor \(http transport\)/);
-    assert.deepEqual(readdirSync(runDir), ["plan.json"]);
-  });
-
-  it("rejects a target on a cli-only plan with exit 64 and names the rule", async () => {
-    const plan = buildPlan({ parent: "claude", home, matrix, roles: CLI_ONLY_ROLES });
-    savePlan(runDir, plan);
-    const result = cli(["probe", "--dir", runDir, "--repo", "acme/app", "--pr", "7"], fakeEnv());
-    assert.equal(result.code, 64, result.stderr);
-    assert.match(result.stderr, /--repo and --pr are only accepted for: cursor/);
-    assert.deepEqual(readdirSync(runDir), ["plan.json"]);
-
-    await assert.rejects(
-      () => runProbes(plan, { dir: runDir, env: fakeEnv(), target: { owner: "acme", name: "app", pullNumber: 7 } }),
-      (error: unknown) =>
-        error instanceof SetupError && /--repo and --pr are only accepted for: cursor/.test(error.message)
-    );
-    assert.deepEqual(readdirSync(runDir), ["plan.json"]);
-  });
-
-  it("rejects --repo/--pr on every subcommand except probe", () => {
-    for (const args of [
-      ["state", "--parent", "claude", "--home", home, "--repo", "acme/app", "--pr", "7"],
-      ["plan", "--parent", "claude", "--home", home, "--dir", runDir, "--repo", "acme/app", "--pr", "7"],
-      ["attest", "--dir", runDir, "--pair", "fable@max", "--observed", "x", "--repo", "acme/app", "--pr", "7"],
-      ["write", "--dir", runDir, "--home", home, "--repo", "acme/app", "--pr", "7"],
-    ]) {
-      const result = cli(args);
-      assert.equal(result.code, 64, JSON.stringify(args));
-      assert.match(result.stderr, /--repo and --pr are only accepted on probe/);
-      assert.equal(existsSync(join(runDir, "plan.json")), false);
-    }
-  });
-
-  it("routes --repo/--pr only to the http child of a mixed grok and cursor-grok plan", { timeout: 30_000 }, async () => {
-    const plan = mixedPlan();
-    savePlan(runDir, plan);
-    const saved = loadPlan(runDir);
-    assert.equal(saved.schemaVersion, 4);
-    assert.equal("target" in saved, false);
-    assert.ok(saved.pairs.every((pair) => !("transport" in pair)));
-
-    const fake = await fakeCursor();
-    fakes.push(fake);
-    const bare = gitBare(join(home, "git"));
-    const probed = await cliAsync(["probe", "--dir", runDir, "--repo", "acme/app", "--pr", "7"], fakeEnv(cursorEnv(fake, bare)));
-    assert.equal(probed.code, 0, probed.stderr + probed.stdout);
-    const summary: unknown = JSON.parse(probed.stdout);
-    if (typeof summary !== "object" || summary === null || !("external" in summary) || !Array.isArray(summary.external)) {
-      assert.fail("expected probe summary with external results");
-    }
-    assert.equal("externalOk" in summary ? summary.externalOk : undefined, true);
-    assert.deepEqual(
-      summary.external.map((result: unknown) =>
-        typeof result === "object" && result !== null && "pair" in result && "status" in result
-          ? [result.pair, result.status]
-          : result
-      ),
-      [
-        ["sol@xhigh", "passed"],
-        ["astra@max", "passed"],
-        ["grok@xhigh", "passed"],
-        ["grok-4-7@high", "passed"],
-        ["cursor-grok@high", "passed"],
-      ]
-    );
-
-    const grokReceipt = JSON.parse(readFileSync(join(runDir, "probe-grok@xhigh.receipt.json"), "utf8"));
-    assert.equal(grokReceipt.status, "complete");
-    assert.equal(grokReceipt.remote, null);
-    const cursorReceipt = JSON.parse(readFileSync(join(runDir, "probe-cursor-grok@high.receipt.json"), "utf8"));
-    assert.equal(cursorReceipt.status, "complete");
-    assert.equal(cursorReceipt.mode, "read-only");
-    assert.equal(cursorReceipt.modelEvidence, "pinned-argv");
-    assert.equal(cursorReceipt.remote.agentUrl, "https://cursor.com/agents/bc_1");
-    assert.equal(cursorReceipt.remote.agentId, "bc_1");
-    const launch = fake.launch;
-    if (typeof launch !== "object" || launch === null) assert.fail("expected a launch body");
-    assert.deepEqual(
-      {
-        name: "name" in launch ? launch.name : undefined,
-        repos: "repos" in launch ? launch.repos : undefined,
-      },
-      {
-        name: "pstack acme/app#7 grok-4.7@high",
-        repos: [{ url: "https://github.com/acme/app", prUrl: "https://github.com/acme/app/pull/7" }],
-      }
-    );
-    const after = loadPlan(runDir);
-    assert.equal(after.schemaVersion, 4);
-    assert.equal("target" in after, false);
-  });
-
-  it("keeps the grok cli result when the cursor http lane is unauthenticated", { timeout: 30_000 }, async () => {
-    const plan = mixedPlan();
-    savePlan(runDir, plan);
-    const fake = await fakeCursor(401);
-    fakes.push(fake);
-    const bare = gitBare(join(home, "git"));
-    const probed = await cliAsync(["probe", "--dir", runDir, "--repo", "acme/app", "--pr", "7"], fakeEnv(cursorEnv(fake, bare)));
-    assert.equal(probed.code, 1, probed.stderr + probed.stdout);
-    const summary: unknown = JSON.parse(probed.stdout);
-    if (typeof summary !== "object" || summary === null || !("external" in summary) || !Array.isArray(summary.external)) {
-      assert.fail("expected probe summary with external results");
-    }
-    assert.equal("externalOk" in summary ? summary.externalOk : undefined, false);
-    assert.deepEqual(
-      summary.external.map((result: unknown) =>
-        typeof result === "object" && result !== null && "family" in result && "status" in result
-          ? [result.family, result.status]
-          : result
-      ),
-      [
-        ["sol", "passed"],
-        ["astra", "passed"],
-        ["grok", "passed"],
-        ["grok-4-7", "passed"],
-        ["cursor-grok", "failed"],
-      ]
-    );
-    const cursor = summary.external.find(
-      (result: unknown) =>
-        typeof result === "object" && result !== null && "family" in result && result.family === "cursor-grok"
-    );
-    assert.match(
-      typeof cursor === "object" && cursor !== null && "detail" in cursor && typeof cursor.detail === "string"
-        ? cursor.detail
-        : "",
-      /unauthenticated/
-    );
-    const grokReceipt = JSON.parse(readFileSync(join(runDir, "probe-grok@xhigh.receipt.json"), "utf8"));
-    assert.equal(grokReceipt.status, "complete");
-    assert.equal(grokReceipt.remote, null);
-    const cursorReceipt = JSON.parse(readFileSync(join(runDir, "probe-cursor-grok@high.receipt.json"), "utf8"));
-    assert.equal(cursorReceipt.status, "unauthenticated");
-    assert.equal(fake.launch, null);
   });
 });

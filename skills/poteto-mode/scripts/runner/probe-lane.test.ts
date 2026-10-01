@@ -5,6 +5,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runProbeLane, type ProbeLane } from "./probe-lane.ts";
+import { clisOutsideFakes, isolatedEnv, isolateProcessEnv } from "./isolated-env.test-helper.ts";
 
 // Fake provider CLIs in the shapes the runner parses. A model turn echoes the
 // PSTACK marker from its prompt; in a write prompt it also creates probe.txt in
@@ -55,6 +56,12 @@ process.exit(run.status ?? 1);
 
 let root = "";
 let bin = "";
+let restoreProcessEnv: () => void = () => {};
+
+/** Only the fakes and this node on PATH, under a temporary HOME; no real CLI is in reach. */
+function laneEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+  return isolatedEnv(join(root, "home"), [bin], extra);
+}
 
 function write(path: string, text: string): void {
   writeFileSync(path, text);
@@ -65,15 +72,30 @@ before(() => {
   root = mkdtempSync(join(tmpdir(), "pstack-probe-lane-"));
   bin = join(root, "bin");
   mkdirSync(bin);
+  // The test process itself holds no CLI, fake or real: a lane whose `env`
+  // gets lost on the way to the launcher inherits this PATH and finds nothing.
+  restoreProcessEnv = isolateProcessEnv(join(root, "home"));
   for (const name of ["claude", "codex", "grok"]) write(join(bin, name), fakeCli);
   write(join(bin, "wrap"), fakeWrapper);
   // macOS vets a fresh executable on its first exec; pay that once here.
   for (const name of ["claude", "codex", "grok", "wrap"]) {
-    execFileSync(join(bin, name), name === "wrap" ? ["--", "true"] : ["models"], { stdio: "ignore" });
+    execFileSync(join(bin, name), name === "wrap" ? ["--", process.execPath, "--version"] : ["models"], { stdio: "ignore", env: laneEnv() });
   }
 });
 
-after(() => rmSync(root, { recursive: true, force: true }));
+after(() => {
+  restoreProcessEnv();
+  rmSync(root, { recursive: true, force: true });
+});
+
+describe("test isolation", () => {
+  it("keeps every provider CLI and gh off the PATH of the test process, and off the PATH of a lane outside the fakes", () => {
+    assert.deepEqual(clisOutsideFakes(process.env.PATH), [], "a CLI is on the PATH of the test process");
+    assert.equal(process.env.PATH, join(root, "home", ".node-bin"));
+    assert.equal(process.env.HOME, join(root, "home"));
+    assert.deepEqual(clisOutsideFakes(laneEnv().PATH, [bin]), [], "a real CLI is on the PATH of the lanes");
+  });
+});
 
 let laneCount = 0;
 
@@ -90,7 +112,7 @@ function lane(overrides: Partial<ProbeLane> & Pick<ProbeLane, "provider" | "mode
     promptPath: join(dir, "prompt.md"),
     outputPath: join(dir, "output.md"),
     receiptPath: join(dir, "receipt.json"),
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, ...env },
+    env: laneEnv(env),
     ...overrides,
   };
 }

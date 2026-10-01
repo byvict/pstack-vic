@@ -9,8 +9,9 @@ permissions:
   contents: read
 
 # PR runs share a group per PR, so a new push cancels the superseded run.
-# Every push to main gets its own group: each main SHA becomes Converge
-# tooling for Clinext, so none of those runs is cancelled or replaced.
+# Every push to main gets its own group, so each main commit keeps its own
+# run: a later push neither cancels nor replaces it, and the run of a release
+# commit lives to tag it.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -81,3 +82,25 @@ jobs:
           else
             echo "::notice::No previous commit for this push; skipping git diff --check"
           fi
+
+  # Both marketplaces install the plugin from the tag v<version>, and
+  # scripts/release.ts moves the two parents to it once it is on origin.
+  tag:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      # This checkout keeps its credentials: the push below needs the token.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - name: Tag the version
+        run: |
+          V=$(node -p "require('./package.json').version")
+          git ls-remote --exit-code --tags origin "refs/tags/v$V" && exit 0
+          git tag "v$V" "$GITHUB_SHA"
+          git push origin "refs/tags/v$V"

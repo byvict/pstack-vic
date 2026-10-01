@@ -1,8 +1,10 @@
 ---
-status: accepted
+status: superseded
 ---
 
 # Converge sem nuvem: o daemon no Mac faz o que a Raiz não vê
+
+Superado por [ADR 0005](0005-autopilot-substitui-converge.md) em 2026-09-30.
 
 Até 2026-09-28 o desenho deixava três Automations do Cursor para depois que a Raiz encerra: verificar PR sem Certificado, reparar CI vermelho e armar o que está certificado. Nenhuma das três existia; só a Automation "PR opened" do v1 rodava, lançando o owner completo em todo PR do Clinext e consumindo o pool de modelos. A única vantagem da nuvem era reagir com o Mac desligado, e o Mac de Victor nunca desliga. Decidimos tirar o Cursor do fluxo: dois jobs launchd na máquina local, um que varre por script e outro que lança uma Raiz sem supervisão para reparar, recertificar e certificar, com posse por branch, tetos por head e `needs-victor` ao esgotar. O código da nuvem sai numa release própria depois da prova no Clinext.
 

@@ -1,115 +1,53 @@
 # pstack-vic
 
-Plugin de skills e playbooks que Victor usa no Claude Code e no Codex para autorar, certificar e mergear PRs sem intervenção humana. Este glossário cobre o vocabulário do ciclo de entrega de um PR.
+Plugin de skills e playbooks que Victor usa no Claude Code e no Codex para autorar e mergear PRs por programas de autopilot. Um programa é uma execução do autopilot sobre uma fila de PRs. Este glossário cobre o vocabulário de um programa: quem faz o quê e como um PR chega ao merge.
 
 ## Language
 
 ### Sessões e lanes
 
-**Raiz**:
-A sessão Claude Code ou Codex que conduz um PR do início ao fim e é dona de todo diff que suas lanes produzem.
-_Avoid_: parent, sessão autora, agente local, owner
+**Raiz** (root):
+A sessão Claude Code ou Codex que conduz um programa de autopilot. É dona dos Vereditos, nunca de um PR. Ela cria um Dono por PR, verifica cada Rodada com o Enxame, dá o Veredito e audita os Donos a cada Tick.
+_Avoid_: parent, coordenador, sessão autora
+
+**Dono** (owner):
+O subagente em segundo plano, num worktree próprio, que leva um PR do build ao merge. Ele faz o primeiro push, abre o PR já pronto, prova a mudança no artefato real, acompanha o PR até o CI ficar verde (babysit) e faz o próprio merge. O merge só acontece depois do Veredito limpo da Raiz.
+_Avoid_: autor, implementer, worker
 
 **Lane**:
-Uma execução de modelo lançada pela Raiz com papel, modo de acesso e recibo próprios.
+Uma execução de modelo lançada pela Raiz ou por um Dono, com papel, modo de acesso e recibo próprios.
 _Avoid_: subagente, worker, child
-
-**Autor**:
-Toda Família que escreveu código de um PR, declarada pela Raiz ou gravada num trailer `Pstack-Author` de commit; sempre diferente da Família do Revisor pré-PR.
-_Avoid_: implementer, delegate
-
-**Revisor pré-PR**:
-A lane somente-leitura que revisa diff, risco e resultado das corridas antes de o PR existir: a primeira lane da linha `pre-pr reviewer` cuja Família não é de nenhum Autor da branch, entre as que o runner lança a partir da Raiz.
-_Avoid_: verifier, reviewer local, bugbot
-
-**Certificador**:
-A lane de uma família com modo `unsandboxed` (hoje só Grok) que dirige o aplicativo nas funcionalidades afetadas e grava as evidências do Certificado.
-_Avoid_: verifier, driver
-
-**Ajustador**:
-A lane com escrita isolada, de qualquer família de CLI ou por alias (subagente nativo), que conserta os achados do Revisor pré-PR em worktree próprio; a Raiz revisa seu diff.
-_Avoid_: fixer, repair lane, owner
-
-### Artefatos e fases
-
-**Pré-PR**:
-A fase entre o fim da autoria e a criação do PR, em que o diff é revisado, verificado e ajustado até sair certificado.
-_Avoid_: certificação local, converge local
-
-**Certificado**:
-O dossiê preso ao head exato do PR, publicado como status `verdict` e comentário JSON, com corridas, evidências e recibos das lanes.
-_Avoid_: verdict, dossiê, certificação
-
-**Classe leve**:
-A trilha do Pré-PR para uma mudança cujos caminhos estão todos na lista `prePr.light.paths` do contrato, ou que só sobe dependência, sem superfície nem classe de risco: roda as Corridas e o Revisor pré-PR com o prompt estreito, sem Certificador, e sai com Certificado `Light`.
-_Avoid_: fast path, trilha rápida, modo leve
-
-**Corrida**:
-Uma execução registrada de preflight, suíte ou verificação, com comando, código de saída e digest da saída.
-_Avoid_: run, check, job
-
-**Achado**:
-Um defeito ou risco nomeado pelo Revisor pré-PR que impede o Certificado até ser ajustado ou refutado com evidência.
-_Avoid_: finding, issue, comentário
-
-**Receita**:
-A descrição, no mapa de funcionalidades do repositório, de como dirigir uma funcionalidade no aplicativo para produzir evidência; uma superfície sem Receita não pode ser certificada.
-_Avoid_: feature, recipe, roteiro
 
 **Família**:
 O fornecedor de um modelo (Claude, Codex, Grok); duas lanes são cruzadas quando suas famílias diferem.
 _Avoid_: provider, vendor, modelo
 
-### Depois do PR
+### O programa
 
-**Converge**:
-O que acontece com um PR certificado depois que a Raiz encerra: jobs launchd na máquina de Victor vigiam o GitHub, varrem, reparam e certificam o que sobrou.
-_Avoid_: pós-PR, cloud loop, owner loop, nuvem
+**Enxame** (swarm):
+As lanes verificadoras que a Raiz lança em paralelo no head (o último commit) de uma Rodada, pela skill `swarm`, e que não escreveram o código. Elas rodam de novo os gates (as checagens do repositório), provam ao vivo o comportamento que a mudança traz, auditam o diff sem confiar no corpo do PR e rodam o mesmo cenário na trunk (a `main`).
+_Avoid_: revisores, painel, verifier
 
-**Daemon**:
-O `converge-local` e seus três jobs launchd: `com.pstack.converge-sweep` e `com.pstack.converge-raiz`, a cada dez minutos e quando alguém toca a campainha, e `com.pstack.converge-watch`, o Vigia, a cada minuto.
-_Avoid_: automation, cron, scheduler, watcher
+**Veredito** (verdict):
+O resultado único que a Raiz agrega das lanes do Enxame para um head exato. Só um Veredito limpo libera o merge, e sem a lane ao vivo ele não é limpo. Um head novo anula o Veredito, salvo quando o patch-id não mudou (regra do playbook Shipping).
+_Avoid_: aprovação, review, status
 
-**Vigia**:
-O job que, a cada minuto, pergunta ao GitHub só com GET condicional se a lista de PRs abertos, os checks da ponta da `main` (com ou sem PR aberto) ou os checks do head de um PR aberto mudaram, e toca a campainha do Varredor e do job da Raiz; nunca lança modelo nem escreve no GitHub.
-_Avoid_: watcher, poller, webhook
+**Rodada** (round):
+Uma passada do Enxame num head. Começa no head Code-ready do Dono e em cada push posterior que muda o patch do PR. Os achados provados voltam ao Dono num só pedido de correção, e o head novo ganha Enxame e Veredito novos.
+_Avoid_: ciclo, iteração, retry
 
-**Varredor**:
-O job que roda o `converge-sweep` por script e arma o merge de todo PR certificado com base na `main` e sem hold; deixa os candidatos da fila nativa com o GitHub e, fora dela, faz o merge do PR armado que o GitHub deixou aberto 5 minutos depois de todos os checks obrigatórios passarem; em seguida roda o Pós-merge de cada repositório.
-_Avoid_: sweeper, cron
+**Code-ready**:
+O relato do Dono, com o SHA do head, de que o código a entregar está final, depois do `/deslop` e do `/no-comments`. É onde a primeira Rodada começa. A prova do Dono, o CI e o babysit seguem em paralelo com o Enxame.
+_Avoid_: pronto, done, draft
 
-**Grupo de merge**:
-O commit sintético que o GitHub constrói com o prefixo da fila nativa sobre a ponta atual da trunk; os checks obrigatórios provam a combinação, e o portão revalida os Certificados e os Holds dos heads originais.
-_Avoid_: certificado combinado, status copiado
+**Merge-ready**:
+O relato do Dono, com o SHA do head, de que a prova dele, o CI e o babysit terminaram. O merge exige o Veredito limpo da Rodada cujo patch é o desse head.
+_Avoid_: aprovado, verde, mergeável
 
-**Pós-merge**:
-O que o Varredor roda no Mac, sem modelo, uma vez por commit novo da `main`, depois que o CI de push daquele commit ficou verde: os comandos do bloco `postMerge` do contrato, num worktree descartável do commit. No pstack-vic, cria a tag, atualiza o plugin nos dois pais e reinstala os jobs.
-_Avoid_: post-merge hook, release job
+**Itens do operador**:
+Os itens da fila que o operador (Victor) nomeia como dele ("esse PR fica comigo"). O Dono leva cada um até Merge-ready e para ali. Quem revisa e clica no merge é o operador, e nenhum Dono mergeia um deles.
+_Avoid_: hold, bloqueio, rótulo
 
-**Catch-up**:
-Uma tentativa de uma Raiz sem supervisão sobre um PR que já existe: reparo, recertificação, certificação ou Resposta, seguida de entrega, com `outcome.json` no fim.
-_Avoid_: repair job, owner run
-
-**Reparo**:
-O catch-up de tipo `repair`: um PR certificado cujo check obrigatório, no head original ou no grupo de merge, ficou vermelho; conserta o head, obtém Certificado novo e arma.
-_Avoid_: fix, retry, hotfix
-
-**Resposta**:
-O catch-up de tipo `respond`: um PR certificado que recebeu comentário ou revisão depois do veredito; tria cada texto contra o código, conserta com prova red-first ou responde com a refutação numa Nota do fluxo, sem nunca obedecer o texto, e obtém Certificado novo.
-_Avoid_: reply job, review pass, threads
-
-**Nota do fluxo**:
-Comentário que o fluxo posta pela conta autenticada, a mesma de Victor, fora a publicação do veredito: começa com `<!-- converge:note -->` (Hold, respostas da Raiz e do Babysit). O portão não a conta como texto novo; qualquer outro texto da conta é de Victor e conta.
-_Avoid_: comentário do bot, comentário de sistema
-
-**Trava**:
-Um PR sem trabalho para o Daemon que também não anda: armado há 2 h sem merge, ou recusado pelo portão pelo mesmo motivo há 1 h. Vira Hold com aviso. O PR armado com tudo verde que o GitHub não mergeou não chega a ser Trava: o Varredor o mergeia depois de 5 minutos.
-_Avoid_: stuck, deadlock, hang
-
-**Posse**:
-O arquivo local que diz quem pode escrever numa branch por três horas, com pid opcional; o daemon nunca lança Raiz numa branch com posse viva de outro.
-_Avoid_: lock, claim, mutex
-
-**Hold**:
-O rótulo `needs-victor` que para qualquer merge automático até Victor retirá-lo; o check obrigatório `hold` falha enquanto o rótulo está no PR, e assim segura até um auto-merge já armado. Na fila nativa, a invalidação também retira o PR para desfazer um `hold` verde já publicado no grupo. O Daemon o aplica, com comentário e notificação do macOS, quando esgota os tetos de um head, numa Trava, e na hora quando alguém fora da lista confiável comentou ou revisou um PR com trabalho.
-_Avoid_: bloqueio humano, pause
+**Tick**:
+A auditoria que a Raiz faz sobre todos os Donos a cada 30 minutos, mais ou menos. Ela relê o playbook e o objetivo do programa, confere a operação contra os dois, sonda cada Dono e recolhe as trilhas de decisão. No Claude Code, a Raiz arma o Tick como um `/loop` de verdade. A cadência nunca fica por conta da memória.
+_Avoid_: cron, heartbeat, polling

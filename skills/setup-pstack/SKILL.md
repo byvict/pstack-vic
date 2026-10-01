@@ -1,13 +1,13 @@
 ---
 name: setup-pstack
-description: Configure pstack's provider-qualified models, per-lane requested effort, and parent-owned routes per role. Probes a family on native Claude and Codex lanes, external CLI lanes, or Cursor cloud lanes only the first time the parent uses it (a new provider or model) before writing the override sheet; effort and role changes write without probes. Use for /setup-pstack, "configure pstack models", or changing pstack's model choices.
+description: Configure pstack's provider-qualified models, per-lane requested effort, and parent-owned routes per role. Probes a family on native Claude and Codex lanes or external CLI lanes only the first time the parent uses it (a new provider or model) before writing the override sheet; effort and role changes write without probes. Use for /setup-pstack, "configure pstack models", or changing pstack's model choices.
 ---
 
 # Setup pstack
 
 Configure one portable model sheet for the current parent harness. Read [`provider-dispatch.md`](../poteto-mode/references/provider-dispatch.md) before probing or writing anything. Its model matrix, descriptor grammar, route table, and role defaults are the contract. Each lane carries its own effort, so two roles may run the same family at different efforts. Do not add a second configuration file, a runtime resolver, or a weaker-model fallback.
 
-The deterministic half of this skill is `scripts/setup-pstack.ts`, next to this file (Node 24, no dependencies; run it as `node <this skill's directory>/scripts/setup-pstack.ts <subcommand>`). It reads the matrix, reads and normalizes the current sheet, renders the new one, runs the external probes through the runner, refuses to write while any required probe is missing, and writes with snapshot, read-back, and restore. You own the conversation (parent, efforts, role changes, confirmation) and the native one-turn probes. Every subcommand prints JSON; `--help` prints the usage. Never edit the sheet or the integration files by hand, and never paste a rendered sheet as the result. A second script, `scripts/authorize.ts`, checks the operator's standing authorization for the Pré-PR (step 10).
+The deterministic half of this skill is `scripts/setup-pstack.ts`, next to this file (Node 24, no dependencies; run it as `node <this skill's directory>/scripts/setup-pstack.ts <subcommand>`). It reads the matrix, reads and normalizes the current sheet, renders the new one, runs the external probes through the runner, refuses to write while any required probe is missing, and writes with snapshot, read-back, and restore. You own the conversation (parent, efforts, role changes, confirmation) and the native one-turn probes. Every subcommand prints JSON; `--help` prints the usage. Never edit the sheet or the integration files by hand, and never paste a rendered sheet as the result. A second script, `scripts/authorize.ts`, checks the operator's standing authorization (step 10).
 
 Claude Code writes `~/.claude/pstack-models.md` and loads it from `~/.claude/CLAUDE.md` with:
 
@@ -37,7 +37,7 @@ Use the harness and tool surface running this skill: Claude Code (`--parent clau
 node scripts/setup-pstack.ts state --parent <parent>
 ```
 
-The JSON says whether the parent's sheet exists (`exists`), its path, the normalized rows, the `migrations` it applied in memory (old Fable revisions become `fable`; `opus` and old Opus revisions become `claude-opus-5-5`; `gpt-5.6-sol` becomes `gpt-6-sol`, preserving provider, effort, role, and lane order), and one `efforts` entry per matrix family with its `status`, the distinct `efforts` in use, and the `rows` that use them. A family's status is `current` (every lane of the family shares one effort), `mixed` (its lanes use two or more efforts; a valid sheet, not a conflict), `unassigned` (first run: the matrix Default effort is proposed), or `outside-map` (no role uses the family, so no effort can persist for it; on a Claude Code parent, Sol enters the first-run map only as the reserve lane of `pre-pr reviewer` (the 2026-09-17 decision keeps it out of the panels), and on a Codex parent it is the default of the four authoring rows and `converge raiz`).
+The JSON says whether the parent's sheet exists (`exists`), its path, the normalized rows, the `migrations` it applied in memory (old Fable revisions become `fable`; `opus` and old Opus revisions become `claude-opus-5-5`; `gpt-5.6-sol` becomes `gpt-6-sol`, preserving provider, effort, role, and lane order), and one `efforts` entry per matrix family with its `status`, the distinct `efforts` in use, and the `rows` that use them. A family's status is `current` (every lane of the family shares one effort), `mixed` (its lanes use two or more efforts; a valid sheet, not a conflict), `unassigned` (first run: the matrix Default effort is proposed), or `outside-map` (no role uses the family, so no effort can persist for it; on a Claude Code parent, Sol is outside the first-run map by the 2026-09-17 decision, and on a Codex parent it is the default of the four authoring rows).
 
 The script stops on inconsistent state: an unknown or duplicate role row, a bare host-native slug, an unregistered Claude model, a provider/model pair outside the matrix, or an effort outside the family's Selectable efforts. Show the error verbatim and resolve it with the operator before going on. Do not probe or write while any inconsistency is unresolved.
 
@@ -52,9 +52,9 @@ When the operator chose "Change roles" without typing lanes, ask which roles in 
 1. **Model.** Options are the current value first, labeled "(keep)", then three more in this order until four options are filled: the role's matrix default for this parent when it differs from the current value, then the remaining families in matrix order, then `inherit-parent` and `auto`. Each family option names its model and its route for this parent (native or external runner). The families and aliases that did not fit are typed under "Other" by family name. For a role whose lane is an alias, the options are the current alias first, then the other alias, then families in matrix order.
 2. **Effort.** Options are the current effort first, labeled "(keep)", then the family's remaining Selectable efforts in matrix order, dropping `low` when it is not current; the dropped one is typed under "Other". Say in the question that the effort is ignored when the model answer is an alias. Empty input keeps the current lanes; on a first run it accepts the matrix proposal.
 
-A panel role (a list) gets one question instead of two: the current lanes as the "(keep)" option, the parent's matrix default panel when it differs, and "Other" for a typed list of descriptors, one per lane, in the order they should run. Explain that one lane runs per entry and that the list length is the fan-out count. `pre-pr reviewer` is asked the same way, but say that it is not a panel: one lane runs per round, the first whose family wrote none of the branch, so the order is a preference and the list holds at most one lane per family.
+A panel role (a list) gets one question instead of two: the current lanes as the "(keep)" option, the parent's matrix default panel when it differs, and "Other" for a typed list of descriptors, one per lane, in the order they should run. Explain that one lane runs per entry and that the list length is the fan-out count.
 
-Each lane keeps the effort written in its descriptor, so `bug-fix: codex:gpt-6-sol@xhigh` next to `hillclimb: codex:gpt-6-sol@high` is a valid map; there is no per-family effort question. A role that brings a family into the map carries that family's effort in its answer. Why and Reflect roles need the parent's live MCP surface, so recommend `inherit-parent` or `auto` for them in the question. `pr owner` and `pr verifier` take one lane, `cursor:grok-4.7@high` or `cursor:grok-4.7@xhigh`: Converge's `start.ts` reads them as effort floors for the Cloud owner and its verifier, and `plan` refuses any other family, effort, or panel there. An alias on those rows sets no floor. `pre-pr reviewer` takes one or more lanes, in order of preference, of distinct families the external runner launches from this parent: codex or grok on Claude Code, claude or grok on Codex; any effort the family selects, no alias, at most one lane per family. Pré-PR runs one lane per round, the first whose family wrote none of the branch (`converge-certify reviewer` chooses it and records the choice), so a second lane is the reserve for a branch the first family wrote. Its receipt is admitted into the Certificado; the runner refuses the parent's native provider, and a native subagent writes no receipt, so `plan` refuses that provider, an alias and two lanes of one family there. `pre-pr fixer` takes one lane of any CLI family (claude, codex or grok), or `inherit-parent` or `auto`; a family native to the parent and both aliases run it as a native subagent in its own worktree. Only its round count enters the Certificado. `pre-pr certifier` takes one lane of a family whose provider has `unsandboxed: true` in the matrix, only Grok in this version. `converge raiz` takes one lane of the parent's native provider (claude on Claude Code, codex on Codex), any model of it, any effort, and no alias: the local converge daemon launches it as a session of the parent. `plan` refuses a panel on the other three. When an authoring row (`feature, refactoring`, `bug-fix`, `perf-issue`, `hillclimb`, `hardest tasks`) has a lane from the same provider as every `pre-pr reviewer` lane, `plan` and `write` print a warning on stderr and the plan JSON carries it in `warnings`. A warning never stops `plan` or `write`, but pre-pr certification refuses until they differ in family.
+Each lane keeps the effort written in its descriptor, so `bug-fix: codex:gpt-6-sol@xhigh` next to `hillclimb: codex:gpt-6-sol@high` is a valid map; there is no per-family effort question. A role that brings a family into the map carries that family's effort in its answer. Why and Reflect roles need the parent's live MCP surface, so recommend `inherit-parent` or `auto` for them in the question.
 
 ### 4. Collect the changes
 
@@ -69,20 +69,17 @@ node scripts/setup-pstack.ts plan --parent <parent> \
 
 The plan is the in-memory render: it starts from the loaded rows (or the first-run map), materializes any missing documented role from the defaults, rewrites every lane of a family named in `--effort` to that effort, then applies the named role changes lane by lane. It refuses an unqualified slug, an unknown role or family, an effort outside the family's row, and a family-wide `--effort` for a family outside the map. A family-wide `--effort` updates every lane of that family and moves no role.
 
-The output carries `dir` (a fresh run directory holding `plan.json`; pass `--dir` to choose it), the distinct `efforts` per family in the final map, the `rows`, the `sheet` bytes, the `migrations`, `warnings` (one line per authoring row whose family is the family of every `pre-pr reviewer` lane, also printed on stderr), `verified` (the families of the map already in this parent's ledger, which are not probed), and `pairs`: one probe per family of the map missing from the ledger, at the family's lowest effort in use (`sol@high` when `sol` runs at `high` and `xhigh`), with its route for this parent and, for native pairs, how to probe it. A plan that only changes efforts or moves roles between verified families has no `pairs`.
+The output carries `dir` (a fresh run directory holding `plan.json`; pass `--dir` to choose it), the distinct `efforts` per family in the final map, the `rows`, the `sheet` bytes, the `migrations`, `verified` (the families of the map already in this parent's ledger, which are not probed), and `pairs`: one probe per family of the map missing from the ledger, at the family's lowest effort in use (`sol@high` when `sol` runs at `high` and `xhigh`), with its route for this parent and, for native pairs, how to probe it. A plan that only changes efforts or moves roles between verified families has no `pairs`.
 
 ### 6. Probe new families
 
 Skip this step when the plan's `pairs` is empty: every family of the map is already verified on this parent. Otherwise:
 
 ```shell
-node scripts/setup-pstack.ts probe --dir <dir> [--timeout <seconds>] \
-  [--repo <owner/name> --pr <number>]
+node scripts/setup-pstack.ts probe --dir <dir> [--timeout <seconds>]
 ```
 
-External pairs (route `runner`) of the plan run at once through the external runner in `read-only` mode, each with its own prompt, output, and receipt named after the pair under the run directory, after the provider preflight proves credentials (`claude auth status --json`, `codex login status`, `grok models` listing the requested model, or, for the `cursor` provider, `GET /v1/models` on the Cursor cloud agents API with `CURSOR_API_KEY` from the environment). A pair passes only when its receipt is `complete` for exactly the requested provider, model, and effort, the model is verified (provider report) or pinned by argv (Codex and Cursor), and the output carries the pair's unique marker. Exit code 1 means at least one external pair failed: report the failing pair, provider, and `detail`, stop, and write nothing. There is no implicit timeout; pass `--timeout` only when the operator gives a real deadline.
-
-When the plan contains an HTTP pair, pass both `--repo <owner/name>` and `--pr <number>` to `probe` for its authorized pull request. These flags belong only to `probe`; the target is not saved in the plan or sheet. The script validates the target before creating probe artifacts or launching any pair and forwards it only to HTTP lanes. Omit both flags for a plan without HTTP pairs. Cursor probes require `CURSOR_API_KEY` and Git read access to the remote repository. See [HTTP lanes](../poteto-mode/references/provider-dispatch.md#http-lanes) for authentication, remote-head evidence, and its attribution limit.
+External pairs (route `runner`) of the plan run at once through the external runner in `read-only` mode, each with its own prompt, output, and receipt named after the pair under the run directory, after the CLI proves credentials (`claude auth status --json`, `codex login status`, or `grok models` listing the requested model). A pair passes only when its receipt is `complete` for exactly the requested provider, model, and effort, the model is verified (provider report) or pinned by argv (Codex), and the output carries the pair's unique marker. Exit code 1 means at least one external pair failed: report the failing pair, provider, and `detail`, stop, and write nothing. There is no implicit timeout; pass `--timeout` only when the operator gives a real deadline.
 
 Native pairs (route `native`) are listed under `native` with the `pair` id and the `prompt` to send. Run each one yourself through the parent's primitive: on Claude Code, one turn of the mapped `pstack-<stem>-<effort>` agent (`Agent` with that `subagent_type`); on Codex, one `spawn_agent` turn with the listed `model` and `reasoning_effort`. When the Codex parent has no `multi_agent` (so `spawn_agent` is unavailable), run the same prompt as one turn of the parent's own CLI instead: `codex exec --model <model> --config 'model_reasoning_effort="<effort>"' --sandbox read-only --skip-git-repo-check --ephemeral`; the Codex CLI is the parent's native process, not the external launcher. Then record the exact reply:
 
@@ -94,9 +91,9 @@ node scripts/setup-pstack.ts attest --dir <dir> --pair <family>@<effort> --obser
 
 ### 7. Confirm and commit
 
-Show any model migrations as original and normalized descriptors. Show the route table for this parent and every rendered row from `plan.json`. Say which families were probed in step 6 and which were already verified (`verified`). Say when `inherit-parent` or `auto` reduces a panel's provider diversity. Why and Reflect require the parent's live MCP surface; keep their roles on `inherit-parent` or `auto`, because the bounded external runner deliberately omits ambient MCPs. For panel roles, one lane runs per entry and the list length is the fan-out count. `arena cross-judge pool` is a list from which Arena chooses a provider different from the parent and base candidate when possible. `pre-pr reviewer` is a list from which Pré-PR runs the first lane whose family wrote none of the branch. `swarm workers` is the default for every worker unless a race explicitly assigns another descriptor.
+Show any model migrations as original and normalized descriptors. Show the route table for this parent and every rendered row from `plan.json`. Say which families were probed in step 6 and which were already verified (`verified`). Say when `inherit-parent` or `auto` reduces a panel's provider diversity. Why and Reflect require the parent's live MCP surface; keep their roles on `inherit-parent` or `auto`, because the bounded external runner deliberately omits ambient MCPs. For panel roles, one lane runs per entry and the list length is the fan-out count. `arena cross-judge pool` is a list from which Arena chooses a provider different from the parent and base candidate when possible. `swarm workers` is the default for every worker unless a race explicitly assigns another descriptor.
 
-Show every `warnings` line to the operator, then ask for confirmation. After the operator confirms:
+Ask for confirmation. After the operator confirms:
 
 ```shell
 node scripts/setup-pstack.ts write --dir <dir>
@@ -118,7 +115,7 @@ Report the sheet path, the ledger path, the parent route table, the families pro
 
 ### 10. Standing authorization
 
-pstack merges a pull request that a different model family reviewed and no human approved. Claude Code's auto mode blocks that merge by default, under its rules Merge Without Review and Self-Approval. Its classifier reads the user's messages and the commands. It does not read your questions, so an "ok" to your question authorizes nothing. The operator records the decision once, in their own settings. Check the authorization on every run of this skill. When the operator asks only for the authorization, run this step alone:
+Under pstack's playbooks, an agent merges a pull request that no human approved in two cases. An autopilot owner merges its own pull request after the root's clean swarm verdict. The session that runs the Shipping playbook merges after the verdict of that pull request's independent verifier. Claude Code's auto mode blocks that merge by default, under its rules Merge Without Review and Self-Approval. Its classifier reads the user's messages and the commands. It does not read your questions, so an "ok" to your question authorizes nothing. The operator records the decision once, in their own settings. Check the authorization on every run of this skill. When the operator asks only for the authorization, run this step alone:
 
 ```shell
 node scripts/authorize.ts check --parent <parent>
@@ -126,17 +123,31 @@ node scripts/authorize.ts check --parent <parent>
 
 On exit 0, say in one line that the parent is authorized.
 
-On exit 1 on Claude Code, the JSON carries the `reason`, the `entry` and the `grant` command. Show the operator the `entry` in full. Say in their language what the entry allows in every repository: certify a branch, publish the verdict, arm and merge a pull request that no human approved, and launch pstack's lanes. Say what stays blocked: `--admin` and any other way around a required check, a change to branch protection, and everything the other rules protect (destroyed files and branches, production, secrets, data that leaves). Then give the operator the `grant` command to run on a terminal. `apply` shows the entry, asks for a typed yes, keeps every other setting, and copies the old file to `settings.json.before-pstack-authorization`.
+On exit 1 on Claude Code, the JSON carries the `reason`, the `entry` and the `grant` command. Show the operator the `entry` in full. Say in their language what the entry allows in every repository:
+
+- In those two cases, an agent merges with `gh pr merge` a pull request that no human approved.
+- The root spawns owner and verifier subagents, pushes its owners' branches with `--force-with-lease`, and posts verdicts as pull request comments.
+- An agent launches pstack's lanes through the runner.
+
+Say what stays blocked:
+
+- `--admin` and any other way around a required check.
+- A change to branch protection, rulesets or required checks.
+- Everything the other rules protect (destroyed files, branches and history, production, secrets, data that leaves the trust boundary).
+
+Then give the operator the `grant` command to run on a terminal. `apply` shows the entry, asks for a typed yes, keeps every other setting, and copies the old file to `settings.json.before-pstack-authorization`.
 
 The authorization is the operator's act. Never run `apply` yourself, never write the entry into a settings file, and never supply the answer. The script refuses without a terminal for that reason. Claude Code reads `autoMode` from the user's settings and from no repository or plugin, so the plugin cannot ship the entry. When the operator says that `apply` ran, run `check` again and report the result.
 
 On exit 1 on Codex, show the `reason`. Codex has no such list. Codex asks for no approval when `approval_policy` is `"never"` at the top level of `~/.codex/config.toml`. The operator sets that value, or accepts that Codex stops to ask.
 
-The entry names its version (`pstack standing authorization v1`). A release that changes what the entry grants raises the version, and `check` fails until the operator runs `apply` again. To withdraw the authorization, the operator deletes the entry from `autoMode.allow`.
+The entry names its version (`pstack standing authorization v2`). A release that changes what the entry grants raises the version, and `check` fails until the operator runs `apply` again. To withdraw the authorization, the operator deletes the entry from `autoMode.allow`.
+
+No playbook runs this check. Without the entry, auto mode denies the merge when an autopilot owner or the Shipping session reaches it.
 
 ## First-run role maps
 
-The maps below are rendered from `model-matrix.json` by `scripts/render-model-matrix.ts`, one per parent because the frontier solo roles take the parent's native frontier family and the four authoring rows and `converge raiz` take its native code family. They only seed the plan on a first run; selected efforts and explicit role changes always replace their values before writing. Never paste one as the result.
+The maps below are rendered from `model-matrix.json` by `scripts/render-model-matrix.ts`, one per parent because the frontier solo roles take the parent's native frontier family and the four authoring rows take its native code family. They only seed the plan on a first run; selected efforts and explicit role changes always replace their values before writing. Never paste one as the result.
 
 <!-- role-sheet:begin -->
 
@@ -164,12 +175,6 @@ arena cross-judge pool: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@x
 swarm workers: grok:grok-4.6@xhigh
 architect runners: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:claude-opus-5-5@xhigh
 interrogate reviewers: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:claude-opus-5-5@xhigh
-pre-pr reviewer: grok:grok-4.7@xhigh, codex:gpt-6-sol@xhigh
-pre-pr fixer: grok:grok-4.7@xhigh
-pre-pr certifier: grok:grok-4.7@high
-converge raiz: claude:claude-opus-5-5@xhigh
-pr owner: cursor:grok-4.7@high
-pr verifier: cursor:grok-4.7@high
 ```
 
 Codex parent:
@@ -196,12 +201,6 @@ arena cross-judge pool: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@x
 swarm workers: grok:grok-4.6@xhigh
 architect runners: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:claude-opus-5-5@xhigh
 interrogate reviewers: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:claude-opus-5-5@xhigh
-pre-pr reviewer: grok:grok-4.7@xhigh, claude:claude-opus-5-5@xhigh
-pre-pr fixer: grok:grok-4.7@xhigh
-pre-pr certifier: grok:grok-4.7@high
-converge raiz: codex:gpt-6-sol@xhigh
-pr owner: cursor:grok-4.7@high
-pr verifier: cursor:grok-4.7@high
 ```
 
 <!-- role-sheet:end -->
