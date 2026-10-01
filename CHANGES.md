@@ -1376,11 +1376,13 @@ Estas frases estavam nos seis arquivos até a 0.5.0. Nenhuma é texto da Cursor 
 
 ## Decisões
 
-O plano decidiu três pontos, e Victor não discordou de nenhum:
+O plano decidiu três pontos, os mesmos da seção da 0.5.0, e Victor não discordou de nenhum:
 
 - A regra de lane travada volta a ser a da Cursor, com o tempo esperado no `children.tsv`.
 - O verbo do Babysit volta a "replaces".
-- O Tick tem uma forma só nos três lugares, `/loop` em modo dinâmico.
+- O push direto na trunk do Orchestrate não entra na autorização v2. Esse ponto já valia na 0.5.0.
+
+O Tick tem uma forma só nos três lugares, `/loop` em modo dinâmico. É a linha T13 da tabela do plano.
 
 A decisão D15 do Victor (2026-09-30, padrão) também vale aqui: o grok não vira o worker padrão de todas as lanes, então a tabela não tem uma linha T5b.
 
