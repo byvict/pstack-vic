@@ -392,7 +392,10 @@ Vinte e três skills de um princípio cada. `poteto-mode` indexa todas inline e 
 
 ## Subagents
 
-- **`poteto-agent`** — roda o estilo inteiro a partir de um pai (`subagent_type: "poteto-agent"`). Lê `poteto-mode` por completo antes de trabalhar.
+- **`poteto-agent`**. É o Dono de cada PR em um programa de [autopilot](#autopilot).
+  No Claude Code, a Raiz o cria com `Agent`, `subagent_type: "poteto-agent"` e `isolation: "worktree"`.
+  No Codex, a Raiz usa `spawn_agent` com uma worktree própria.
+  Lê `poteto-mode` por completo antes de trabalhar.
 - **`comment-sicko`** — revisor de comentários, só leitura, que `no-comments` dispara. Renomeado de `Comment Sicko` para valer como `subagent_type`.
 - **`pstack-<família>-<effort>`** — lanes nativas do Claude Code para cada família com `agentStem` na matriz (hoje `fable` e `opus`) em cada effort selecionável, geradas por `npm run agents:generate` e verificadas por `agents:check`. Não são fluxos de usuário; `provider-dispatch.md` as despacha a partir do papel configurado. No Codex não há arquivo: `spawn_agent` recebe `model` e `reasoning_effort`.
 
