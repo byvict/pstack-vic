@@ -239,7 +239,7 @@ describe("upstream-parity: residue diff", () => {
 
 describe("upstream-parity: table shape", () => {
   const files = [{ upstream: "pstack/skills/poteto-mode/playbooks/a.md", local: FILE }];
-  const row = { id: "T1", reason: "Claude Code has no `/goal`.", pairs: [{ file: FILE, from: "a", to: "b", count: 1 }] };
+  const row = { id: "T1", reason: "The objective goes into the standing orders.", pairs: [{ file: FILE, from: "a", to: "b", count: 1 }] };
 
   it("reads files and rows, and hands a file its pairs with their row ids", () => {
     const table = parseTable(
@@ -312,7 +312,7 @@ const GENERATED_TEXT = "### A\n\nOne background subagent per PR owns the build.\
 const TABLE: SubstitutionTable = {
   files: [{ upstream: UPSTREAM_PATH, local: FILE }],
   rows: [
-    { id: "T1", reason: "Claude Code has no `/goal`.", pairs: [{ file: FILE, from: "the armed `/goal`", to: "the standing objective", count: 1 }] },
+    { id: "T1", reason: "The objective goes into the standing orders.", pairs: [{ file: FILE, from: "the armed `/goal`", to: "the standing objective", count: 1 }] },
     { id: "T2", reason: "No cloud agents.", pairs: [{ file: FILE, from: "Cursor cloud agent", to: "background subagent", count: 1 }] },
   ],
 };

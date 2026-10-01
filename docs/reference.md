@@ -173,10 +173,10 @@ A Raiz não começa por conta própria. A execução só começa com o seu "go" 
 
    ```shell
    node ~/.claude/plugins/cache/pstack-vic/pstack/<versão>/skills/setup-pstack/scripts/authorize.ts check --parent claude
-   echo $?   # o código de saída do comando acima: 0 autorizado, 1 não
+   echo $?
    ```
 
-   Troque `<versão>` pela versão instalada, que `claude plugin list` mostra. Com 1, o JSON que o comando imprime diz o motivo e traz o comando que concede a autorização. Sem ela, o modo automático do Claude Code nega o merge quando o Dono chega nele. Nenhum playbook roda essa conferência. Ela existe aqui e no passo 10 do `/setup-pstack`. Você também pode pedir à Raiz que rode o `check` e mostre o resultado junto com o protocolo.
+   Troque `<versão>` pela versão instalada, que `claude plugin list` mostra. A segunda linha mostra o código de saída da primeira: 0 é autorizado, 1 não. Com 1, o JSON que o comando imprime diz o motivo e traz o comando que concede a autorização. Sem ela, o modo automático do Claude Code nega o merge quando o Dono chega nele. Nenhum playbook roda essa conferência. Ela existe aqui e no passo 10 do `/setup-pstack`. Você também pode pedir à Raiz que rode o `check` e mostre o resultado junto com o protocolo.
 6. Dê o "go". A Raiz grava o objetivo do programa nas ordens permanentes dela, que são as instruções que valem até o fim do programa, e o repete na todolist, que é a lista de afazeres da sessão. As ordens permanentes ficam num arquivo, `standing-orders.md`, ao lado da trilha de decisões da Raiz (`decisions.tsv`) e fora do git, como ela. A Raiz relê esse arquivo a cada Tick. O objetivo vale até a fila acabar. Depois ela cria um Dono por PR.
 
 Para um trabalho de várias fases, peça antes um plano. O playbook [Multi-phase plan](../skills/poteto-mode/playbooks/multi-phase-plan.md) escreve o plano como uma lista de itens com caixas de marcar, com uma seção por PR, e o plano diz qual playbook vai executá-lo. A sessão roda o verificador do plano (`check-plan.mjs`), entrega o caminho do arquivo e para. A execução também só começa com o seu "go".
@@ -278,10 +278,12 @@ O modo automático do Claude Code bloqueia esses merges de fábrica, pelas regra
 
 ```shell
 AUTHORIZE=~/.claude/plugins/cache/pstack-vic/pstack/<versão>/skills/setup-pstack/scripts/authorize.ts
-node $AUTHORIZE check --parent claude   # 0 autorizado, 1 não; o JSON traz o motivo, a entrada e o comando
-node $AUTHORIZE apply --parent claude   # num terminal: mostra a entrada, pede um "yes" digitado e grava
-node $AUTHORIZE check --parent codex    # 0 quando approval_policy = "never" no topo do ~/.codex/config.toml
+node $AUTHORIZE check --parent claude
+node $AUTHORIZE apply --parent claude
+node $AUTHORIZE check --parent codex
 ```
+
+Troque `<versão>` pela versão instalada. O primeiro comando confere o Claude Code. Ele sai com 0 quando a autorização está gravada e com 1 quando não está, e o JSON que ele imprime traz o motivo, a entrada e o comando. O segundo grava a autorização e só roda num terminal. Ele mostra a entrada, pede um "yes" digitado e grava. O terceiro confere o Codex. Ele sai com 0 quando `approval_policy = "never"` está no topo do `~/.codex/config.toml`.
 
 A entrada vale em qualquer repositório. Ela cobre três coisas:
 

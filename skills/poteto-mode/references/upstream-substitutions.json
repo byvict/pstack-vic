@@ -28,7 +28,7 @@
   "rows": [
     {
       "id": "T1",
-      "reason": "Claude Code has no `/goal` command. The program objective goes into the standing orders and is restated in the todolist (`update_plan` on Codex), and the tick re-reads it from there. The Platform Adaptation section of SKILL.md names the file that holds the standing orders.",
+      "reason": "Both harnesses ship a `/goal` (read in Claude Code 2.1.285 and Codex 0.159.2), but not one form a root can arm the same way on both. On Claude Code it is a stop condition the operator types, capped at 4000 characters and refused in an untrusted workspace or with hooks restricted; the model's own route is the `ProposeGoal` tool, which the operator can switch off and which refuses to run in a subagent or outside an interactive local session. On Codex it sits behind the experimental goals feature and needs a saved session. A file is the same on both harnesses and the tick can re-read it: the program objective goes into the standing orders and is restated in the todolist (`update_plan` on Codex). The Platform Adaptation section of SKILL.md names the file that holds the standing orders.",
       "pairs": [
         {
           "file": "skills/poteto-mode/playbooks/autopilot-full.md",
