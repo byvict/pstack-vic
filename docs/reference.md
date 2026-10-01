@@ -45,16 +45,20 @@ As duas linhas de `sandbox_workspace_write` são para as lanes externas: o runne
 
 Para desenvolver ou testar um checkout antes de publicar:
 
+No Claude Code, este comando carrega o clone como plugin da sessão (manifest, agents e skills):
+
 ```shell
-# Claude Code: carrega o clone como plugin da sessão (manifest, hook, agents e skills)
 claude --plugin-dir ~/Dev/Skills/pstack-vic
 ```
 
+No Codex, estes dois comandos instalam o clone por um marketplace local, sem tag:
+
 ```shell
-# Codex: marketplace local, sem tag; desfaz com plugin remove + marketplace remove
 codex plugin marketplace add ~/Dev/Skills/pstack-vic
 codex plugin add pstack@pstack-vic
 ```
+
+Para desfazer no Codex, rode `codex plugin remove pstack@pstack-vic` e depois `codex plugin marketplace remove pstack-vic`.
 
 Rode `/setup-pstack` uma vez em cada pai para escrever o sheet de modelos (`~/.claude/pstack-models.md` e `~/.codex/pstack-models.md`). O último passo dele confere a [autorização permanente](#autorização-permanente), que o autopilot e o playbook Shipping exigem para mergear sem aprovação humana. Depois, `/poteto-mode` é o ponto de entrada para qualquer tarefa que peça rigor.
 
@@ -134,10 +138,12 @@ O runner chama três CLIs: `claude` (npm, Node 24.21.0), `codex` (npm, Node 24.1
 Para cada CLI, na ordem codex → grok → claude, a skill lê as notas de versão contra `skills/update-clis/references/cli-touchpoints.json`, instala a versão nova e roda a sonda. A sonda roda as lanes `read` e `write` de cada par família@esforço que as duas fichas mandam para aquela CLI pelo runner. Roda também `seatbelt` (grok e claude dentro do `codex sandbox`), `sandbox` (o codex, sem modelo) e `manifest` (o claude, com `claude plugin validate`, sem modelo). Uma lane que falha faz a CLI voltar para a versão anterior e rodar a mesma sonda de novo: se a anterior passa, a versão nova fica segurada numa issue `CLI <nome> <versão> segurada`; se a anterior também falha, o problema é do ambiente e ninguém é segurado. Uma mudança de contrato num ponto sem cobertura segura a versão sem instalar. Os binários que os apps desktop trazem ficam de fora e só aparecem no relatório.
 
 ```shell
-npm run update-clis -- check                  # versão instalada, última do canal, duplicatas e processos em uso, por CLI
+npm run update-clis -- check
 npm run update-clis -- notes --cli grok --from 1.0.5 --to 1.0.41
-npm run update-clis -- --help                 # start, check, notes, install, probe, finish
+npm run update-clis -- --help
 ```
+
+O `check` mostra, para cada CLI, a versão instalada, a última do canal, as duplicatas e os processos em uso. O `--help` lista os subcomandos: `start`, `check`, `notes`, `install`, `probe` e `finish`.
 
 Cada execução guarda notas, prompts, saídas, recibos e o resumo em `~/Library/Caches/pstack-vic/update-clis/<data-hora>/`, e a skill mantém as 10 mais recentes. Uma trava na mesma pasta impede duas execuções ao mesmo tempo.
 
@@ -205,7 +211,7 @@ A Raiz é dona dos Vereditos, nunca dos PRs. Ela verifica cada Rodada. Uma Rodad
 - Auditam o diff sem confiar no texto do PR. São duas ou mais lanes de revisão, cada uma com um foco.
 - Rodam o mesmo cenário na trunk, para comparar. É a lane de regressão.
 
-Uma lane externa não tem `run` nem `verify`. Lane externa é a que roda no runner, numa CLI que não é a do pai: o grok nos dois pais, o Codex no Claude Code e o Claude no Codex. O runner abre essa CLI com as skills desligadas e uma lista curta de ferramentas, e o grok ainda corta cada comando em 300 segundos. Por isso as lanes de gates, ao vivo e de regressão pedem, na sua folha de modelos, uma linha `swarm workers` nativa do pai. O padrão do plugin para essa linha é o grok. As suas folhas a trocam por um modelo nativo, Opus no Claude Code e Sol no Codex. Para ter o grok na auditoria (decisão D15), peça isso à Raiz quando der a fila. Ela põe o grok (`grok:grok-4.7@xhigh`) como braço de corrida nomeado numa das lanes que auditam o diff, como a skill `swarm` permite. Nenhum playbook nem a sua folha põem o grok lá sozinhos.
+Uma lane externa não tem `run` nem `verify`. Lane externa é a que roda no runner, numa CLI que não é a do pai: o grok nos dois pais, o Codex no Claude Code e o Claude no Codex. O runner abre o Claude com as skills desligadas (`--disable-slash-commands`) e uma lista curta de ferramentas (`--tools`), e abre o grok com uma lista curta de ferramentas (`--tools`). O Codex não traz `run` nem `verify`. O grok ainda corta cada comando em 300 segundos. Por isso as lanes de gates, ao vivo e de regressão pedem, na sua folha de modelos, uma linha `swarm workers` nativa do pai. O padrão do plugin para essa linha é o grok. As suas folhas a trocam por um modelo nativo, Opus no Claude Code e Sol no Codex. Para ter o grok na auditoria (decisão D15), peça isso à Raiz quando der a fila. Ela põe o grok (`grok:grok-4.7@xhigh`) como braço de corrida nomeado numa das lanes que auditam o diff, como a skill `swarm` permite. Nenhum playbook nem a sua folha põem o grok lá sozinhos.
 
 Mesmo numa lane nativa do Claude Code, o `verify` pode faltar. Você sempre pode digitar `/verify`. O agente só consegue chamá-lo quando ele aparece na lista de skills da sessão, e na versão 2.1.285 isso depende de um recurso que a Anthropic ainda libera aos poucos. Neste Mac ele não aparece: em 2026-10-01 a lista de skills de uma sessão trazia o `run` e não trazia o `verify`. Sem o `verify`, a lane de tela usa o `run`, que também opera apps Electron e apps de navegador, ou o driver que o repositório nomeia. Os seus dois repositórios não dependem do `verify`: o pstack-vic não tem tela e o Clinext tem o driver próprio, `verify-clinext`. O `run` e o `verify` são embutidos no Claude Code e não têm arquivo. Por isso, num plano, a caixa `<driver skill path>` leva o nome da skill, e a Raiz a lê carregando a skill. Um driver do repositório ela lê pelo caminho dele.
 
@@ -394,18 +400,20 @@ Vinte e três skills de um princípio cada. `poteto-mode` indexa todas inline e 
 
 ```shell
 npm test
-npm run test:bun       # orch e watch-pr no Bun: bun install --frozen-lockfile, bun test e o typecheck do watch-pr (precisa do bun no PATH)
-npm run matrix:check   # blocos gerados de provider-dispatch.md e setup-pstack em dia
-npm run agents:check   # agents/pstack-*.md em dia com a matriz
+npm run test:bun
+npm run matrix:check
+npm run agents:check
 npm run collision:check
-npm run upstream:digest -- --no-fetch   # digest dos dois upstreams desde o ponto de sync (UPSTREAM.md, seção Digest semanal)
+npm run upstream:digest -- --no-fetch
 node scripts/upstream-parity.ts check
-npm run setup-pstack -- --help   # subcomandos do setup: state, plan, probe, attest, write
-npm run update-clis -- --help    # subcomandos da atualização das CLIs: start, check, notes, install, probe, finish
-claude plugin validate --strict .   # manifest do plugin e do marketplace pelo validador do Claude Code
+npm run setup-pstack -- --help
+npm run update-clis -- --help
+claude plugin validate --strict .
 ```
 
 O `npm test` roda os testes da matriz, do gerador de agents, do runner, do setup-pstack, do update-clis, da referência de skills, dos manifests e do hook, do digest dos upstreams, da paridade dos playbooks do autopilot com a Cursor, do verificador de planos (`check-plan.mjs`) contra o molde do `multi-phase-plan.md` gerado, do release e dos invariantes do pacote. O `node scripts/upstream-parity.ts check` roda só a paridade: confere que os seis playbooks do autopilot são o texto da Cursor mais as trocas de `upstream-substitutions.json`.
+
+O `npm run test:bun` roda no Bun os testes do `orch` e do `watch-pr`: `bun install --frozen-lockfile`, `bun test` e o typecheck do `watch-pr`. Ele precisa do `bun` no PATH. O `npm run matrix:check` confere que os blocos gerados de `provider-dispatch.md` e do `setup-pstack` estão em dia, e o `npm run agents:check` confere que os `agents/pstack-*.md` estão em dia com a matriz. O `npm run upstream:digest -- --no-fetch` monta o digest dos dois upstreams desde o ponto de sync (`UPSTREAM.md`, seção *Digest semanal*). Os dois `--help` listam os subcomandos do setup (`state`, `plan`, `probe`, `attest` e `write`) e os da atualização das CLIs (`start`, `check`, `notes`, `install`, `probe` e `finish`). O `claude plugin validate --strict .` passa o manifest do plugin e o do marketplace pelo validador do Claude Code.
 
 `tests/skill-collision-repro.sh` verifica os invariantes estáticos do pacote (sem camada `commands/`, `principle-*` ocultos e legíveis pelo modelo, skills de fluxo sem `disable-model-invocation`, nome do diretório igual ao `name`, versão única entre manifests, tag do marketplace e `package.json`, logo do Codex resolvendo, aliases móveis de Fable e Opus, vínculo do Bugbot entre a skill `babysit` e o playbook, playbooks sem comandos Graphite, conteúdo Cursor-only ausente). Com `PSTACK_BEHAVIORAL=1` ele também monta um plugin de uma skill e prova, com `claude -p`, que a invocação pela tool `Skill` e pelo `/comando` chegam à skill.
 

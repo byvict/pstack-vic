@@ -1237,7 +1237,7 @@ Component evidence includes native Codex parent and child Why reads, the local p
 
 # 0.5.0 — O converge sai do plugin (2026-10-01)
 
-A 0.5.0 é a etapa 1 do plano [`docs/superpowers/plans/2026-09-30-autopilot-substitui-converge.md`](docs/superpowers/plans/2026-09-30-autopilot-substitui-converge.md). Em 2026-09-30 Victor decidiu aposentar o converge inteiro e adotar o autopilot da Cursor como o fluxo do plugin ([ADR 0005](docs/adr/0005-autopilot-substitui-converge.md)). Esta versão só tira. Cada item abaixo remove uma peça do converge ou a troca pelo menor equivalente sem daemon. Nenhum texto do autopilot muda aqui. A 0.5.1 regenera os playbooks do autopilot a partir do upstream.
+A 0.5.0 é a etapa 1 do plano [`docs/arquivo/superpowers/plans/2026-09-30-autopilot-substitui-converge.md`](docs/arquivo/superpowers/plans/2026-09-30-autopilot-substitui-converge.md). Em 2026-09-30 Victor decidiu aposentar o converge inteiro e adotar o autopilot da Cursor como o fluxo do plugin ([ADR 0005](docs/adr/0005-autopilot-substitui-converge.md)). Esta versão só tira. Cada item abaixo remove uma peça do converge ou a troca pelo menor equivalente sem daemon. Nenhum texto do autopilot muda aqui. A 0.5.1 regenera os playbooks do autopilot a partir do upstream.
 
 Para Victor mudam três coisas: nada mergeia sozinho, a sessão da Raiz fica aberta até o último merge, e os PRs do Dependabot são mergeados à mão ou adotados por um programa. Os detalhes estão nas consequências do ADR 0005 e na seção Autopilot de [`docs/reference.md`](docs/reference.md).
 
@@ -1302,7 +1302,7 @@ O plano também decidiu três pontos. Dois só entram na 0.5.1: a regra de lane 
 
 # 0.5.1 — O autopilot volta ao texto da Cursor, com uma guarda (2026-10-01)
 
-A 0.5.1 refaz os seis playbooks do autopilot a partir do texto da Cursor no commit `12d587d` (pstack 0.15.5). Só uma diferença é permitida, as trocas de harness. O harness é o programa que roda o agente. Uma troca tira um termo que só existe na Cursor e põe o equivalente do Claude Code ou do Codex. Uma guarda nova, `scripts/upstream-parity.ts`, roda no `npm test` e falha quando um dos seis arquivos tem uma frase que não é da Cursor nem de uma troca. Esta versão é a etapa 2 do plano [`docs/superpowers/plans/2026-09-30-autopilot-substitui-converge.md`](docs/superpowers/plans/2026-09-30-autopilot-substitui-converge.md). A etapa 1, a 0.5.0, tirou o converge.
+A 0.5.1 refaz os seis playbooks do autopilot a partir do texto da Cursor no commit `12d587d` (pstack 0.15.5). Só uma diferença é permitida, as trocas de harness. O harness é o programa que roda o agente. Uma troca tira um termo que só existe na Cursor e põe o equivalente do Claude Code ou do Codex. Uma guarda nova, `scripts/upstream-parity.ts`, roda no `npm test` e falha quando um dos seis arquivos tem uma frase que não é da Cursor nem de uma troca. Esta versão é a etapa 2 do plano [`docs/arquivo/superpowers/plans/2026-09-30-autopilot-substitui-converge.md`](docs/arquivo/superpowers/plans/2026-09-30-autopilot-substitui-converge.md). A etapa 1, a 0.5.0, tirou o converge.
 
 Duas regras do Victor (2026-09-30) valem para tudo nesta versão:
 
@@ -1376,11 +1376,13 @@ Estas frases estavam nos seis arquivos até a 0.5.0. Nenhuma é texto da Cursor 
 
 ## Decisões
 
-O plano decidiu três pontos, e Victor não discordou de nenhum:
+O plano decidiu três pontos, os mesmos da seção da 0.5.0, e Victor não discordou de nenhum:
 
 - A regra de lane travada volta a ser a da Cursor, com o tempo esperado no `children.tsv`.
 - O verbo do Babysit volta a "replaces".
-- O Tick tem uma forma só nos três lugares, `/loop` em modo dinâmico.
+- O push direto na trunk do Orchestrate não entra na autorização v2. Esse ponto já valia na 0.5.0.
+
+O Tick tem uma forma só nos três lugares, `/loop` em modo dinâmico. É a linha T13 da tabela do plano.
 
 A decisão D15 do Victor (2026-09-30, padrão) também vale aqui: o grok não vira o worker padrão de todas as lanes, então a tabela não tem uma linha T5b.
 
@@ -1414,3 +1416,24 @@ Na execução, as regras do port resolveram o resto:
 - `npm run test:bun`: 52 testes, 0 falhas, typecheck limpo. `npm run matrix:check`, `npm run agents:check`, `npm run collision:check` e `git diff --check` limpos. O `collision:check` confere a versão 0.5.1 nos manifestos, na tag do marketplace e no `package.json`, e acha a frase "replaces the standalone **babysit** skill" no `babysit.md` gerado.
 - `scripts/upstream-digest.test.ts` segue verde. A célula Commit do `UPSTREAM.md` tem os dois hashes completos, de 40 caracteres, e os dois existem no clone.
 - A varredura de resíduo da tarefa 1.10 do plano acha 45 linhas em 19 arquivos nesta versão. Na 0.5.0 eram 38 linhas em 17 arquivos. As 7 linhas novas casam com o termo "Cursor cloud" e nenhuma é converge: 3 são textos `from` da linha T2 em `upstream-substitutions.json`, isto é, o texto da Cursor que a troca tira, e 4 são fixtures de `scripts/upstream-parity.test.ts`. O resto é a lista da 0.5.0.
+
+# Sem versão — Consertos de texto depois da 0.5.1 (2026-10-01)
+
+Estas mudanças entram no PR da etapa 5 do plano, que não sobe a versão: ela continua 0.5.1. A próxima versão as leva. Quase todas vêm dos achados menores do verificador independente do PR #67.
+
+- `skills/poteto-mode/references/upstream-substitutions.json`: os motivos das linhas T2 e T13 dizem a escolha do port (Donos e lanes nativas rodam como subagentes locais, cada um no seu worktree, as lanes externas rodam pelo runner, e a Raiz é uma sessão local), em vez de dizer que o Claude Code não tem ambiente remoto nem Raiz na nuvem; nenhuma troca muda e o `--write` não reescreve nada.
+- `skills/poteto-mode/references/codex-tools.md`: a frase sobre onde rodam os subagentes do Claude Code diz a escolha do port e que o `isolation: "remote"` fica atrás de uma trava e cai num worktree.
+- `scripts/upstream-digest.ts`: o rodapé "Como aplicar" do digest semanal diz que os seis playbooks do autopilot não entram por merge do split, e sim pelo `node scripts/upstream-parity.ts --write` quando o ponto de sync avança.
+- `skills/poteto-mode/SKILL.md` e `docs/reference.md`: o motivo de uma lane externa não ter `run` nem `verify` passa a ser o que o runner faz (o Claude com as skills desligadas e uma lista `--tools`, o grok com uma lista `--tools`) e o fato de o Codex não trazer essas duas skills.
+- Neste arquivo: as "Decisões" da 0.5.1 voltam aos três pontos do plano (a lane travada, o verbo do Babysit e o push do Orchestrate fora da autorização v2), e a forma única do Tick fica numa linha própria, como linha T13 da tabela do plano.
+- `docs/reference.md`: os blocos de comando de *A partir do clone*, *Versões das CLIs* e *Verificação* perdem os comentários com `#`, que vão para o texto em volta, porque o zsh interativo do operador não trata `#` como comentário; o texto do clone deixa de citar um hook, que o plugin não tem desde a 0.1.5.
+- `skills/poteto-mode/playbooks/orchestrate.md`: a linha de worker e verificador diz a escolha do port (subagentes locais em background, isolados por worktree ou branch) e que o `isolation: "remote"` do Claude Code fica atrás de uma trava e cai num worktree.
+
+## A prova 4.1 no Claude Code (2026-10-01)
+
+A etapa 4.1 do plano rodou o autopilot da 0.5.1 num programa de verdade, com dois PRs só de docs: o [#68](https://github.com/byvict/pstack-vic/pull/68) e o [#69](https://github.com/byvict/pstack-vic/pull/69). Cada PR teve um Dono `poteto-agent` numa worktree própria. A Raiz verificou cada head com cinco lanes, quatro nativas e uma no grok-4.7 pelo runner, dez lanes ao todo, e cada Dono mergeou o próprio PR depois do veredito limpo. Nenhuma troca da tabela quebrou, então nada sai como 0.5.2. Ficam registradas duas lacunas do harness que não são linhas da tabela:
+
+- Nesta sessão do app de desktop, nem a Raiz nem os subagentes tinham uma ferramenta de lista de tarefas. Por isso nenhum deles abriu a lista com os passos do playbook que o `poteto-mode` pede.
+- O `gh pr merge --squash` usa o padrão de squash do repositório, que aqui é `COMMIT_MESSAGES`. Sem `--body-file`, o commit na `main` fica só com o título, e o `opening-a-pr.md` diz que o corpo do squash é o corpo do PR.
+
+A prova rodou em bypass permissions, então não testou o classificador do auto mode. A trilha e a revisão estão em `~/Dev/Skills/pstack-vic-runs/2026-10-01-autopilot-prova/`.
