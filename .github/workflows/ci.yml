@@ -83,10 +83,8 @@ jobs:
             echo "::notice::No previous commit for this push; skipping git diff --check"
           fi
 
-  # The release tag. Once the tests pass on a push to main, the commit gets
-  # the tag v<version of package.json>, unless origin already has that tag.
-  # Both marketplaces install from the tag; scripts/release.ts then moves the
-  # two parents to it.
+  # Both marketplaces install the plugin from the tag v<version>, and
+  # scripts/release.ts moves the two parents to it once it is on origin.
   tag:
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

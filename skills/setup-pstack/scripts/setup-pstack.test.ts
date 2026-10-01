@@ -61,7 +61,6 @@ function firstRunSheet(parent: string): string {
   ].join("\n");
 }
 
-/** The six role rows 0.5.0 retired, as an operator's sheet still carries them. */
 const RETIRED_ROWS = [
   "pre-pr reviewer: grok:grok-4.7@xhigh, codex:gpt-6-sol@xhigh",
   "pre-pr fixer: grok:grok-4.7@xhigh",

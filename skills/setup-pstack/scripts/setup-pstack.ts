@@ -90,7 +90,6 @@ export interface SheetRow {
 }
 
 const ROW_RE = /^([a-z][a-z0-9 ,-]*): (.+)$/;
-/** Role rows earlier versions wrote and the matrix no longer has. parseSheet drops them instead of failing on an unknown role, so an existing sheet still loads and the next write leaves them out. */
 const RETIRED_CONVERGE_ROLES = new Set([
   "pr reviewer",
   "pr fixer, simple",

@@ -70,8 +70,7 @@ function setup(t: { after: (fn: () => void) => void }, change: (state: Record<st
     run: () => spawnSync(process.execPath, [script], { cwd: work, encoding: 'utf8', env: { PATH: bin, HOME: home, FAKE_ROOT: root } }),
     calls, state: read, write,
     git: () => calls().filter(call => call[0] === 'git'),
-    /** Every call to a parent's CLI, reads included. */
-    parents: () => calls().filter(call => call[0] !== 'git'),
+    parentCalls: () => calls().filter(call => call[0] !== 'git'),
     /** The calls that change a parent. */
     moves: () => calls().filter(call => call[0] !== 'git' && !call.includes('--json')),
   };
@@ -116,7 +115,7 @@ test('a fetch or a tag lookup that fails reports that failure, not a missing tag
     const result = s.run();
     assert.equal(result.status, 1);
     assert.equal(result.stderr, `${command} failed: fake git: unable to access remote\n`);
-    assert.deepEqual(s.parents(), []);
+    assert.deepEqual(s.parentCalls(), []);
   }
 });
 test('a Claude Code update that lands on another version exits 1 and leaves Codex alone', t => {
@@ -124,7 +123,7 @@ test('a Claude Code update that lands on another version exits 1 and leaves Code
   const result = s.run();
   assert.equal(result.status, 1);
   assert.equal(result.stderr, 'Claude Code reports pstack@pstack-vic 0.4.9, not 0.4.8\n');
-  assert.deepEqual(s.parents().filter(call => call[0] === 'codex'), []);
+  assert.deepEqual(s.parentCalls().filter(call => call[0] === 'codex'), []);
   assert.equal(existsSync(s.backup), false);
 });
 test('a Claude Code command that fails exits 1 and leaves Codex alone', t => {
@@ -132,7 +131,7 @@ test('a Claude Code command that fails exits 1 and leaves Codex alone', t => {
   const result = s.run();
   assert.equal(result.status, 1);
   assert.equal(result.stderr, 'claude plugin update pstack@pstack-vic failed: fake claude: unable to access remote\n');
-  assert.deepEqual(s.parents().filter(call => call[0] === 'codex'), []);
+  assert.deepEqual(s.parentCalls().filter(call => call[0] === 'codex'), []);
 });
 test('a Codex swap interrupted after the marketplace removal resumes with the two adds and keeps the first backup', t => {
   const s = setup(t, state => { state.codex = { version: null, ref: null }; });

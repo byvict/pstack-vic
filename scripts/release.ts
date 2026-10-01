@@ -19,7 +19,7 @@ function run(binary: string, args: string[]): string {
   if (result.status !== 0) throw new Error(result.failure);
   return result.stdout;
 }
-/** The marketplaces install the commit that carries the tag, so the release waits for the checkout to be the trunk tip and for CI to have tagged the version. Nothing is touched before both hold. */
+/** The marketplaces install the commit that carries the tag, so the release waits for the checkout to be the trunk tip and for CI to have tagged the version. */
 function requireTaggedTrunk(version: string): void {
   run('git', ['fetch', 'origin']);
   const head = run('git', ['rev-parse', 'HEAD']).trim();
@@ -50,7 +50,7 @@ function codexVersion(): string | null {
 function codexMarketplace(): boolean {
   return (JSON.parse(run('codex', ['plugin', 'marketplace', 'list', '--json'])) as { marketplaces: { name: string }[] }).marketplaces.some(m => m.name === MARKETPLACE);
 }
-/** Codex pins its marketplace to a tag, so a version moves by remove, remove, add at the tag, add. A step an interrupted run already undid is skipped, and the first backup of config.toml is kept. Nobody retries a swap that fails halfway, so the failure names the way back. */
+/** Codex pins its marketplace to a tag, so a version moves by remove, remove, add at the tag, add. A step an interrupted run already undid is skipped, and the first backup of config.toml is kept. */
 function updateCodex(version: string, home: string): void {
   const before = codexVersion();
   if (before === version) { say(`Codex on ${PLUGIN} ${version}`); return; }

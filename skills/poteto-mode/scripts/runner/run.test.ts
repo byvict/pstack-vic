@@ -15,14 +15,12 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { childEnvironment, evidence, findExecutable, runLane } from "./run.ts";
 import { main } from "./cli.ts";
-import { MATRIX, type Provider, type RunnerOptions, type RunnerReceipt } from "./types.ts";
+import { PROVIDERS, type Provider, type RunnerOptions, type RunnerReceipt } from "./types.ts";
 import { matchObject } from "./match-object.test-helper.ts";
 
 let scratch = "";
 let bin = "";
 let previousPath: string | undefined;
-
-const CLI_PROVIDERS: readonly string[] = Object.keys(MATRIX.providers);
 
 const fake = `#!/usr/bin/env node
 import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
@@ -349,7 +347,7 @@ beforeEach(() => {
   mkdirSync(bin);
   writeFileSync(join(bin, "package.json"), '{"type":"module"}\n');
   writeFileSync(join(scratch, "prompt.md"), "Return the marker.");
-  for (const name of CLI_PROVIDERS) makeExecutable(name);
+  for (const name of PROVIDERS) makeExecutable(name);
   previousPath = process.env.PATH;
   process.env.PATH = `${bin}:${dirname(process.execPath)}:${previousPath ?? ""}`;
   clearFakeEnv();
@@ -363,10 +361,10 @@ afterEach(() => {
 
 describe("runLane", () => {
   it("drives every matrix cli provider through the fake binaries", () => {
-    assert.deepEqual(CLI_PROVIDERS, ["claude", "codex", "grok"]);
+    assert.deepEqual(PROVIDERS, ["claude", "codex", "grok"]);
   });
 
-  for (const provider of CLI_PROVIDERS) {
+  for (const provider of PROVIDERS) {
     it(`executes and receipts the ${provider} external lane`, async () => {
       const input = options(provider);
       const result = await runLane(input);
