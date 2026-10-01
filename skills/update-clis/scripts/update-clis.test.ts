@@ -791,7 +791,7 @@ describe("cli-touchpoints.json", () => {
   const matrix = loadMatrix();
   const raw = JSON.parse(readFileSync(join(import.meta.dirname, "..", "references", "cli-touchpoints.json"), "utf8"));
   const touchpoints: readonly Touchpoint[] = raw.touchpoints;
-  const cliNames = Object.values(matrix.providers).flatMap((provider) => (provider.cli === null ? [] : [provider.cli]));
+  const cliNames = Object.values(matrix.providers).map((provider) => provider.cli);
 
   it("gives each touchpoint a unique id under its CLI, a runner CLI, a kind, a contract, and the version it was measured on", () => {
     assert.equal(raw.schemaVersion, 1);
@@ -800,7 +800,7 @@ describe("cli-touchpoints.json", () => {
     assert.equal(new Set(ids).size, ids.length, "duplicate ids");
     for (const t of touchpoints) {
       assert.deepEqual(Object.keys(t).sort(), ["cli", "contract", "coveredBy", "id", "kind", "measuredOn", "pointers"], t.id);
-      assert.ok(cliNames.includes(t.cli), `${t.id}: ${t.cli} is not a cli-transport CLI in model-matrix.json`);
+      assert.ok(cliNames.includes(t.cli), `${t.id}: ${t.cli} is not a CLI in model-matrix.json`);
       assert.ok(t.id.startsWith(`${t.cli}.`), `${t.id} is not under ${t.cli}.`);
       assert.ok(t.kind === "lane" || t.kind === "harness", `${t.id}: kind ${t.kind}`);
       assert.ok(t.contract.trim().length > 0, `${t.id}: empty contract`);
@@ -820,15 +820,6 @@ describe("cli-touchpoints.json", () => {
       }
     }
     assert.deepEqual(missing, []);
-  });
-
-  it("keeps the native Linear permission executable and its upgrade gate in the contract", () => {
-    const native = touchpoints.find(t => t.id === "claude.linear-native");
-    assert.ok(native);
-    assert.ok(native.pointers.some(p => p.file === "skills/update-clis/scripts/claude-linear-permission-probe.ts" && p.anchor === "export async function permissionProbe"));
-    const skill = readFileSync(join(PLUGIN_ROOT, "skills/update-clis/SKILL.md"), "utf8");
-    assert.ok(skill.includes("references/linear-permission-probe.md"));
-    assert.ok(skill.includes("Require its exit 0 and `ok: true` before recording a successful update"));
   });
 
   it("covers a lane touchpoint only with lanes its CLI's probe runs and leaves every harness touchpoint uncovered", () => {
@@ -852,7 +843,6 @@ describe("cli-touchpoints.json", () => {
       return touchpoints.some((t) => t.cli === cli && token.test(t.contract));
     };
     for (const [provider, spec] of Object.entries(matrix.providers)) {
-      if (spec.cli === null) continue;
       const cli = spec.cli;
       const family = matrix.families.find((f) => f.provider === provider);
       assert.ok(family, provider);
@@ -892,7 +882,7 @@ feature, refactoring: grok:grok-4.7@xhigh
 bug-fix: claude:claude-opus-5-5@xhigh
 arena runners: codex:gpt-6-sol@xhigh, grok:grok-4.7@xhigh, claude:claude-opus-5-5@xhigh
 why investigators: inherit-parent
-pr owner: cursor:grok-4.7@xhigh
+hardest tasks: claude:fable@max
 `;
 
 const CODEX_SHEET = `# pstack model configuration
@@ -901,7 +891,7 @@ feature, refactoring: grok:grok-4.7@xhigh
 bug-fix: codex:gpt-6-sol@xhigh
 swarm workers: grok:grok-4.6@high
 arena runners: codex:gpt-6-sol@xhigh, grok:grok-4.7@xhigh, claude:claude-opus-5-5@xhigh
-pr verifier: cursor:grok-4.7@xhigh
+hardest tasks: codex:gpt-6-astra@max
 `;
 
 function withSheets(machine: FakeMachine, sheets: { claude?: string; codex?: string }): void {

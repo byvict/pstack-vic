@@ -18,7 +18,7 @@
 //   setup-pstack.ts state  --parent <claude|codex> [--home <dir>]
 //   setup-pstack.ts plan   --parent <p> [--home <dir>] [--dir <run dir>]
 //                          [--effort <family>=<effort>]... [--role "<label>=<lane>, <lane>"]...
-//   setup-pstack.ts probe  --dir <run dir> [--timeout <seconds>] [--repo <owner/name> --pr <number>]
+//   setup-pstack.ts probe  --dir <run dir> [--timeout <seconds>]
 //   setup-pstack.ts attest --dir <run dir> --pair <family>@<effort> --observed <text>
 //   setup-pstack.ts write  --dir <run dir> [--home <dir>]
 //
@@ -41,10 +41,7 @@ import {
   type ModelMatrix,
   type Route,
 } from "../../../scripts/model-matrix.ts";
-import { CLOUD_VERIFIER } from "../../poteto-mode/scripts/converge/contract.ts";
-import { checkReviewerRow } from "../../poteto-mode/scripts/converge/sheet.ts";
 import { judgeLane, probePrompt, runProbeLane } from "../../poteto-mode/scripts/runner/probe-lane.ts";
-import type { RepoTarget } from "../../poteto-mode/scripts/runner/types.ts";
 
 export class SetupError extends Error {}
 
@@ -93,36 +90,19 @@ export interface SheetRow {
 }
 
 const ROW_RE = /^([a-z][a-z0-9 ,-]*): (.+)$/;
-const RETIRED_CONVERGE_ROLES = new Set(['pr reviewer', 'pr fixer, simple', 'pr fixer, complex', 'pr diagnosis pool']);
-const AUTHORING_ROLES = ["feature, refactoring", "bug-fix", "perf-issue", "hillclimb", "hardest tasks"];
-/** The Cursor cloud rows keep the Cloud verifier's pinned lanes until the cloud removal; the daemon never reads them. */
-const CLOUD_LANES = CLOUD_VERIFIER.efforts.map((effort) => `${CLOUD_VERIFIER.provider}:${CLOUD_VERIFIER.model}@${effort}`);
-
-/** The rows that take exactly one lane, and which lanes: derived from the matrix, so a family added there is admitted here. The reviewer row is not here: it takes an ordered list, checked by `checkReviewerRow` of `converge/sheet.ts`. The fixer may be native, as a subagent in its worktree. The raiz is a session of the parent, hence only the parent's native provider. */
-export function singleLaneRows(matrix: ModelMatrix, parent: string): ReadonlyMap<string, readonly string[]> {
-  const lanes = (families: readonly Family[]): string[] => families.flatMap((f) => f.efforts.map((effort) => `${f.provider}:${f.model}@${effort}`));
-  const cli = matrix.families.filter((f) => matrix.providers[f.provider].transport === "cli");
-  const unsandboxed = cli.filter((f) => matrix.providers[f.provider].unsandboxed);
-  const native = matrix.families.filter((f) => matrix.providers[f.provider].nativeIn === parent);
-  return new Map([
-    ["pr owner", [...CLOUD_LANES, ...matrix.aliases]],
-    ["pr verifier", [...CLOUD_LANES, ...matrix.aliases]],
-    ["pre-pr fixer", [...lanes(cli), ...matrix.aliases]],
-    ["pre-pr certifier", lanes(unsandboxed)],
-    ["converge raiz", lanes(native)],
-  ]);
-}
-
-/** One warning per authoring row whose family is the family of every `pre-pr reviewer` lane: on a branch that row wrote, no reviewer lane is left. A row with a lane of another family never warns. */
-function crossFamilyWarnings(rows: readonly SheetRow[]): string[] {
-  const reviewers = new Set((rows.find((row) => row.role === "pre-pr reviewer")?.lanes ?? []).map((lane) => parseDescriptor(lane)?.provider));
-  if (reviewers.size !== 1) return [];
-  const [reviewer] = reviewers;
-  if (reviewer === undefined) return [];
-  return rows
-    .filter((row) => AUTHORING_ROLES.includes(row.role) && row.lanes.some((lane) => parseDescriptor(lane)?.provider === reviewer))
-    .map((row) => `${row.role} and pre-pr reviewer are both ${reviewer}; certification will refuse until one of them changes family`);
-}
+/** Role rows earlier versions wrote and the matrix no longer has. parseSheet drops them instead of failing on an unknown role, so an existing sheet still loads and the next write leaves them out. */
+const RETIRED_CONVERGE_ROLES = new Set([
+  "pr reviewer",
+  "pr fixer, simple",
+  "pr fixer, complex",
+  "pr diagnosis pool",
+  "pre-pr reviewer",
+  "pre-pr fixer",
+  "pre-pr certifier",
+  "converge raiz",
+  "pr owner",
+  "pr verifier",
+]);
 
 /**
  * The role rows of a sheet: `label: lane[, lane]`. Title, blank lines, and
@@ -408,7 +388,7 @@ export interface VerifiedFamily {
 }
 
 export interface Plan {
-  readonly schemaVersion: 4;
+  readonly schemaVersion: 5;
   readonly parent: string;
   readonly createdAt: string;
   readonly sheetPath: string;
@@ -424,7 +404,6 @@ export interface Plan {
   /** Families in the final map that this parent verified before; not probed again, whatever effort their lanes take. */
   readonly verified: readonly VerifiedFamily[];
   readonly migrations: readonly Migration[];
-  readonly warnings: readonly string[];
 }
 
 export interface PlanInput extends StateInput {
@@ -506,18 +485,6 @@ export function buildPlan(input: PlanInput): Plan {
     rows = rows.map((r) => (r.role === role ? { role, lanes: normalized } : r));
   }
 
-  const singleLane = singleLaneRows(matrix, parent);
-  for (const row of rows) {
-    const allowed = singleLane.get(row.role);
-    if (allowed !== undefined && (row.lanes.length !== 1 || !allowed.includes(row.lanes[0]))) {
-      fail(`role ${JSON.stringify(row.role)} takes one lane, ${allowed.join(" or ")}; got ${row.lanes.join(", ")}`);
-    }
-  }
-  const reviewer = rows.find((row) => row.role === "pre-pr reviewer");
-  if (reviewer) {
-    try { checkReviewerRow(reviewer.lanes, matrix, parent); } catch (error) { fail((error as Error).message); }
-  }
-
   const sheet = renderSheetDocument(rows.map((r) => `${r.role}: ${r.lanes.join(", ")}`).join("\n"));
   const ledgerPath = ledgerPathFor(parent, home);
   const ledger = parseLedger(snapshotOf(ledgerPath, "probe ledger"), ledgerPath);
@@ -549,7 +516,7 @@ export function buildPlan(input: PlanInput): Plan {
   }
 
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     parent,
     createdAt: new Date().toISOString(),
     sheetPath: state.sheetPath,
@@ -562,7 +529,6 @@ export function buildPlan(input: PlanInput): Plan {
     pairs,
     verified,
     migrations: state.migrations,
-    warnings: crossFamilyWarnings(rows),
   };
 }
 
@@ -581,7 +547,7 @@ export function loadPlan(dir: string): Plan {
   const path = join(dir, PLAN_FILE);
   if (!existsSync(path)) fail(`no ${PLAN_FILE} in ${dir}; run plan first`);
   const raw = JSON.parse(readFileSync(path, "utf8")) as Plan;
-  if (raw.schemaVersion !== 4) {
+  if (raw.schemaVersion !== 5) {
     fail(`${path}: unsupported schemaVersion ${JSON.stringify(raw.schemaVersion)}; run plan again with this version of the script`);
   }
   return raw;
@@ -624,37 +590,6 @@ export interface ProbeOptions {
   readonly dir: string;
   readonly env?: NodeJS.ProcessEnv;
   readonly timeoutSeconds?: number | null;
-  /** Required when any runner pair uses http transport, rejected otherwise. Not written to the plan. */
-  readonly target?: RepoTarget;
-}
-
-function transportOf(matrix: ModelMatrix, provider: string): "cli" | "http" {
-  return matrix.providers[provider]?.transport ?? "cli";
-}
-
-function probeTargetProblem(plan: Plan, target: RepoTarget | undefined, matrix: ModelMatrix): string | null {
-  if (target !== undefined) {
-    const segments = `${target.owner}/${target.name}`.split("/");
-    if (segments.length !== 2 || segments.some((segment) => segment.trim().length === 0)) {
-      return "--repo must be owner/name";
-    }
-    if (!Number.isSafeInteger(target.pullNumber) || target.pullNumber <= 0) {
-      return "--pr must be a positive integer";
-    }
-  }
-  const http: string[] = [];
-  for (const pair of plan.pairs) {
-    if (pair.route !== "runner" || transportOf(matrix, pair.provider) !== "http") continue;
-    if (!http.includes(pair.provider)) http.push(pair.provider);
-  }
-  if (http.length > 0 && target === undefined) {
-    return `--repo and --pr are required for ${http.join(", ")} (http transport)`;
-  }
-  if (http.length === 0 && target !== undefined) {
-    const accepted = Object.keys(matrix.providers).filter((provider) => transportOf(matrix, provider) === "http");
-    return `--repo and --pr are only accepted for: ${accepted.join(", ")}`;
-  }
-  return null;
 }
 
 function probePaths(dir: string, pair: string): { prompt: string; output: string; receipt: string } {
@@ -673,7 +608,7 @@ function probeLabel(pair: ProbePair): string {
   return `${pair.pair} (${pair.descriptor})`;
 }
 
-async function runLane(pair: ProbePair, plan: Plan, options: ProbeOptions, matrix: ModelMatrix): Promise<ExternalProbeResult> {
+async function runLane(pair: ProbePair, plan: Plan, options: ProbeOptions): Promise<ExternalProbeResult> {
   const paths = probePaths(options.dir, pair.pair);
   const verdict = await runProbeLane({
     parent: plan.parent,
@@ -687,7 +622,6 @@ async function runLane(pair: ProbePair, plan: Plan, options: ProbeOptions, matri
     receiptPath: paths.receipt,
     env: options.env ?? process.env,
     timeoutSeconds: options.timeoutSeconds,
-    target: transportOf(matrix, pair.provider) === "http" ? options.target : undefined,
   });
   return {
     family: pair.family,
@@ -725,12 +659,8 @@ function nativeStatus(
  * once, each with its own prompt, output, and receipt under `dir`. Native
  * pairs are not run here (the parent's primitive is the skill's job); they are
  * listed with the prompt to send and whether `attest` has recorded them.
- * Target presence is checked before mkdir, artifact writes, or spawn.
  */
 export async function runProbes(plan: Plan, options: ProbeOptions): Promise<ProbeSummary> {
-  const matrix = loadMatrix();
-  const problem = probeTargetProblem(plan, options.target, matrix);
-  if (problem !== null) fail(problem);
   mkdirSync(options.dir, { recursive: true });
   const runnerPairs = plan.pairs.filter((p) => p.route === "runner");
   for (const pair of runnerPairs) {
@@ -739,7 +669,7 @@ export async function runProbes(plan: Plan, options: ProbeOptions): Promise<Prob
       if (existsSync(path)) fail(`${path} already exists; use a fresh run directory or remove the previous probe artifacts`);
     }
   }
-  const external = await Promise.all(runnerPairs.map((pair) => runLane(pair, plan, options, matrix)));
+  const external = await Promise.all(runnerPairs.map((pair) => runLane(pair, plan, options)));
   const native = plan.pairs.flatMap((p) => (p.native === null ? [] : [nativeStatus(plan, options.dir, p, p.native)]));
   const externalOk = external.every((r) => r.status === "passed");
   return { external, native, externalOk, ok: externalOk && native.every((n) => n.attested) };
@@ -951,10 +881,9 @@ const USAGE = `Usage: setup-pstack <state|plan|probe|attest|write> [options]
          [--effort <family>=<effort>]... [--role "<label>=<lane>[, <lane>]"]...
          Render the new sheet in memory and save plan.json (creates a run dir when --dir is omitted).
          --effort rewrites every lane of that family; --role overlays after, each lane keeping its effort.
-  probe  --dir <run dir> [--timeout <seconds>] [--repo <owner/name> --pr <number>]
+  probe  --dir <run dir> [--timeout <seconds>]
          Run the plan's external probes (families new to this parent) through the runner;
          list native probes to attest. A plan whose families are all verified has none.
-         --repo and --pr are required when a runner pair uses http transport and refused otherwise.
   attest --dir <run dir> --pair <family>@<effort> --observed <reply text>
          Record a native one-turn probe whose reply carries the pair's marker.
   write  --dir <run dir> [--home <dir>]
@@ -993,21 +922,6 @@ function parseRoleChanges(values: readonly string[] | undefined): Record<string,
   return out;
 }
 
-function parseProbeTarget(repo: string | undefined, pr: string | undefined): RepoTarget | undefined {
-  if (repo === undefined && pr === undefined) return undefined;
-  if (repo === undefined) usage("--repo is required with --pr");
-  if (pr === undefined) usage("--pr is required with --repo");
-  const segments = repo.split("/");
-  if (segments.length !== 2 || segments.some((segment) => segment.trim().length === 0)) {
-    usage("--repo must be owner/name");
-  }
-  const pullNumber = /^[0-9]+$/.test(pr) ? Number(pr) : Number.NaN;
-  if (!Number.isSafeInteger(pullNumber) || pullNumber <= 0) {
-    usage("--pr must be a positive integer");
-  }
-  return { owner: segments[0], name: segments[1], pullNumber };
-}
-
 export async function main(argv: readonly string[], io: Io = {
   stdout: (v) => process.stdout.write(v),
   stderr: (v) => process.stderr.write(v),
@@ -1029,8 +943,6 @@ export async function main(argv: readonly string[], io: Io = {
           pair: { type: "string" },
           observed: { type: "string" },
           timeout: { type: "string" },
-          repo: { type: "string" },
-          pr: { type: "string" },
           help: { type: "boolean", short: "h", default: false },
         },
       });
@@ -1043,11 +955,6 @@ export async function main(argv: readonly string[], io: Io = {
     }
     const [command, ...rest] = parsed.positionals;
     if (rest.length > 0) usage(`unexpected arguments: ${rest.join(" ")}`);
-    const repo = typeof parsed.values.repo === "string" ? parsed.values.repo : undefined;
-    const pr = typeof parsed.values.pr === "string" ? parsed.values.pr : undefined;
-    if (command !== "probe" && (repo !== undefined || pr !== undefined)) {
-      usage("--repo and --pr are only accepted on probe");
-    }
     const home = typeof parsed.values.home === "string" ? parsed.values.home : homedir();
     const requireParent = (): string => {
       const parent = parsed.values.parent;
@@ -1060,9 +967,6 @@ export async function main(argv: readonly string[], io: Io = {
       return dir;
     };
     const emit = (value: unknown): void => io.stdout(`${JSON.stringify(value, null, 2)}\n`);
-    const warn = (plan: Plan): void => {
-      for (const warning of plan.warnings) io.stderr(`warning: ${warning}\n`);
-    };
 
     switch (command) {
       case "state": {
@@ -1079,7 +983,6 @@ export async function main(argv: readonly string[], io: Io = {
         const dir = typeof parsed.values.dir === "string" ? parsed.values.dir : mkdtempSync(join(tmpdir(), "pstack-setup-"));
         savePlan(dir, plan);
         emit({ dir, ...plan });
-        warn(plan);
         return 0;
       }
       case "probe": {
@@ -1089,11 +992,8 @@ export async function main(argv: readonly string[], io: Io = {
         if (timeoutSeconds !== null && (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0)) {
           usage("--timeout must be a number greater than zero");
         }
-        const target = parseProbeTarget(repo, pr);
         const plan = loadPlan(dir);
-        const problem = probeTargetProblem(plan, target, loadMatrix());
-        if (problem !== null) usage(problem);
-        const summary = await runProbes(plan, { dir, timeoutSeconds, target });
+        const summary = await runProbes(plan, { dir, timeoutSeconds });
         emit(summary);
         return summary.externalOk ? 0 : 1;
       }
@@ -1111,7 +1011,6 @@ export async function main(argv: readonly string[], io: Io = {
       case "write": {
         const dir = requireDir();
         const plan = loadPlan(dir);
-        warn(plan);
         emit(writeSheet(plan, dir, { home }));
         return 0;
       }
