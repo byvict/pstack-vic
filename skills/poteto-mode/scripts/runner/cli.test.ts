@@ -1,7 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
-import { parseArgs } from "./cli.ts";
+import { main, parseArgs } from "./cli.ts";
+import { UsageError } from "./types.ts";
 
 function argv(extra: readonly string[] = []): string[] {
   return [
@@ -53,5 +54,28 @@ describe("runner CLI parsing", () => {
       () => parseArgs(argv(["--effort", "ultra"])),
       /effort must be one of: low, medium, high, xhigh, max/
     );
+  });
+
+  // Each one stops in the argument parser, before any path is reserved or any
+  // CLI is looked up.
+  it("refuses the retired --mode unsandboxed, --repo, and --pr with exit 64 and the reason", async () => {
+    const refused: ReadonlyArray<readonly [string[], RegExp]> = [
+      [["--mode", "unsandboxed"], /^error: mode must be one of: read-only, isolated-write\n/],
+      [["--repo", "acme/app"], /^error: Unknown option '--repo'/],
+      [["--pr", "7"], /^error: Unknown option '--pr'/],
+    ];
+    for (const [extra, reason] of refused) {
+      assert.throws(() => parseArgs(argv(extra)), UsageError, extra.join(" "));
+      const stdout: string[] = [];
+      const stderr: string[] = [];
+      const exitCode = await main(argv(extra), Date.now(), {
+        stdout: (value) => stdout.push(value),
+        stderr: (value) => stderr.push(value),
+      });
+      assert.equal(exitCode, 64, extra.join(" "));
+      assert.match(stderr.join(""), reason);
+      assert.match(stderr.join(""), /Usage: pstack-runner/);
+      assert.deepEqual(stdout, []);
+    }
   });
 });

@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { loadMatrix, renderRoleSheet } from "../../../scripts/model-matrix.ts";
+import { isolatedEnv } from "../../poteto-mode/scripts/runner/isolated-env.test-helper.ts";
 import {
   SetupError,
   buildPlan,
@@ -569,8 +570,14 @@ beforeEach(() => {
   runDir = join(home, "run");
 });
 
+/** The fake CLIs and this node on PATH, under the test's temporary home; nothing of the operator's PATH or HOME. */
 function fakeEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
-  return { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, ...extra };
+  return isolatedEnv(home, [bin], extra);
+}
+
+/** For a command that must launch nothing: not even the fakes are on PATH, so a lane that starts anyway finds no CLI. */
+function noCliEnv(): NodeJS.ProcessEnv {
+  return isolatedEnv(home);
 }
 
 /** Plan, run the external probes with the fake CLIs, and attest every native pair. */
@@ -902,14 +909,15 @@ import { spawnSync } from "node:child_process";
 
 const SCRIPT = join(import.meta.dirname, "setup-pstack.ts");
 
-function cli(args: string[], env: NodeJS.ProcessEnv = process.env) {
+/** Run the script. The environment has no default: every call says whether the fakes are in reach (fakeEnv) or nothing is (noCliEnv). */
+function cli(args: string[], env: NodeJS.ProcessEnv) {
   const result = spawnSync(process.execPath, [SCRIPT, ...args], { encoding: "utf8", env });
   return { code: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
 describe("command line", () => {
   it("state prints the parent's state as JSON", () => {
-    const result = cli(["state", "--parent", "claude", "--home", home]);
+    const result = cli(["state", "--parent", "claude", "--home", home], noCliEnv());
     assert.equal(result.code, 0, result.stderr);
     const state = JSON.parse(result.stdout);
     assert.equal(state.exists, false);
@@ -921,7 +929,7 @@ describe("command line", () => {
     const result = cli([
       "plan", "--parent", "codex", "--home", home, "--dir", runDir,
       "--effort", "grok=high", "--role", "swarm workers=auto", "--role", "why synthesizer=claude:claude-opus-5-5@xhigh",
-    ]);
+    ], noCliEnv());
     assert.equal(result.code, 0, result.stderr);
     const { dir, ...printed } = JSON.parse(result.stdout);
     assert.equal(dir, runDir);
@@ -936,7 +944,7 @@ describe("command line", () => {
   });
 
   it("plan chooses a fresh run directory when --dir is omitted", () => {
-    const result = cli(["plan", "--parent", "claude", "--home", home]);
+    const result = cli(["plan", "--parent", "claude", "--home", home], noCliEnv());
     assert.equal(result.code, 0, result.stderr);
     const printed = JSON.parse(result.stdout);
     assert.ok(typeof printed.dir === "string" && existsSync(join(printed.dir, "plan.json")), result.stdout);
@@ -944,7 +952,7 @@ describe("command line", () => {
   });
 
   it("probe runs the external lanes and exits 1 when one fails", () => {
-    cli(["plan", "--parent", "claude", "--home", home, "--dir", runDir]);
+    cli(["plan", "--parent", "claude", "--home", home, "--dir", runDir], noCliEnv());
     const ok = cli(["probe", "--dir", runDir], fakeEnv());
     assert.equal(ok.code, 0, ok.stderr);
     const summary = JSON.parse(ok.stdout);
@@ -952,45 +960,45 @@ describe("command line", () => {
     assert.equal(summary.native.length, 2);
 
     rmSync(runDir, { recursive: true, force: true });
-    cli(["plan", "--parent", "claude", "--home", home, "--dir", runDir]);
+    cli(["plan", "--parent", "claude", "--home", home, "--dir", runDir], noCliEnv());
     const failed = cli(["probe", "--dir", runDir], fakeEnv({ FAKE_GROK_UNAUTH: "1" }));
     assert.equal(failed.code, 1);
     assert.equal(JSON.parse(failed.stdout).externalOk, false);
   });
 
   it("attest records a native probe and write commits only when every probe passed", () => {
-    cli(["plan", "--parent", "claude", "--home", home, "--dir", runDir]);
+    cli(["plan", "--parent", "claude", "--home", home, "--dir", runDir], noCliEnv());
     assert.equal(cli(["probe", "--dir", runDir], fakeEnv()).code, 0);
     const plan = JSON.parse(readFileSync(join(runDir, "plan.json"), "utf8")) as Plan;
 
-    const early = cli(["write", "--dir", runDir, "--home", home]);
+    const early = cli(["write", "--dir", runDir, "--home", home], noCliEnv());
     assert.equal(early.code, 1);
     assert.match(early.stderr, /fable/);
     assert.equal(existsSync(plan.sheetPath), false);
 
     for (const pair of plan.pairs.filter((p) => p.native)) {
-      const bad = cli(["attest", "--dir", runDir, "--pair", pair.pair, "--observed", "no token here"]);
+      const bad = cli(["attest", "--dir", runDir, "--pair", pair.pair, "--observed", "no token here"], noCliEnv());
       assert.equal(bad.code, 1);
-      const good = cli(["attest", "--dir", runDir, "--pair", pair.pair, "--observed", `reply ${pair.marker}`]);
+      const good = cli(["attest", "--dir", runDir, "--pair", pair.pair, "--observed", `reply ${pair.marker}`], noCliEnv());
       assert.equal(good.code, 0, good.stderr);
     }
-    const written = cli(["write", "--dir", runDir, "--home", home]);
+    const written = cli(["write", "--dir", runDir, "--home", home], noCliEnv());
     assert.equal(written.code, 0, written.stderr);
     const result = JSON.parse(written.stdout);
     assert.deepEqual([result.sheet, result.integration, result.ledger], ["created", "created", "created"]);
     assert.equal(readFileSync(plan.sheetPath, "utf8"), plan.sheet);
 
-    const again = JSON.parse(cli(["write", "--dir", runDir, "--home", home]).stdout);
+    const again = JSON.parse(cli(["write", "--dir", runDir, "--home", home], noCliEnv()).stdout);
     assert.deepEqual([again.sheet, again.integration, again.ledger], ["unchanged", "unchanged", "unchanged"]);
   });
 
   it("rejects a bad subcommand, a malformed --effort, and a missing --parent with exit 64 and usage", () => {
     for (const args of [["frobnicate"], ["plan", "--parent", "claude", "--effort", "grok"], ["plan", "--home", home], ["probe", "--dir", runDir, "--repo", "acme/app", "--pr", "7"], []]) {
-      const result = cli(args);
+      const result = cli(args, noCliEnv());
       assert.equal(result.code, 64, JSON.stringify(args));
       assert.match(result.stderr, /Usage: setup-pstack/);
     }
-    const help = cli(["--help"]);
+    const help = cli(["--help"], noCliEnv());
     assert.equal(help.code, 0);
     assert.match(help.stdout, /Usage: setup-pstack/);
     assert.match(help.stdout, /--pair <family>@<effort>/);
@@ -998,13 +1006,13 @@ describe("command line", () => {
   });
 
   it("attest --pair records a native probe and attest --family is unknown", () => {
-    cli(["plan", "--parent", "claude", "--home", home, "--dir", runDir]);
+    cli(["plan", "--parent", "claude", "--home", home, "--dir", runDir], noCliEnv());
     const plan = JSON.parse(readFileSync(join(runDir, "plan.json"), "utf8")) as Plan;
     const fable = plan.pairs.find((p) => p.pair === "fable@max")!;
-    const unknown = cli(["attest", "--dir", runDir, "--family", "fable", "--observed", `reply ${fable.marker}`]);
+    const unknown = cli(["attest", "--dir", runDir, "--family", "fable", "--observed", `reply ${fable.marker}`], noCliEnv());
     assert.equal(unknown.code, 64, unknown.stderr);
     assert.match(unknown.stderr, /Usage: setup-pstack/);
-    const good = cli(["attest", "--dir", runDir, "--pair", "fable@max", "--observed", `reply ${fable.marker}`]);
+    const good = cli(["attest", "--dir", runDir, "--pair", "fable@max", "--observed", `reply ${fable.marker}`], noCliEnv());
     assert.equal(good.code, 0, good.stderr);
     const printed = JSON.parse(good.stdout);
     assert.equal(printed.pair, "fable@max");
@@ -1012,14 +1020,15 @@ describe("command line", () => {
   });
 
   it("probe refuses a plan.json from the previous schema", () => {
-    assert.equal(cli(["plan", "--parent", "claude", "--home", home, "--dir", runDir]).code, 0);
+    assert.equal(cli(["plan", "--parent", "claude", "--home", home, "--dir", runDir], noCliEnv()).code, 0);
     const path = join(runDir, "plan.json");
     const current = JSON.parse(readFileSync(path, "utf8")) as Plan;
     writeFileSync(path, `${JSON.stringify({ ...current, schemaVersion: 4, warnings: [] }, null, 2)}\n`);
-    const result = cli(["probe", "--dir", runDir]);
+    const result = cli(["probe", "--dir", runDir], noCliEnv());
     assert.equal(result.code, 1);
     assert.match(result.stderr, /plan/);
     assert.match(result.stderr, /run plan again with this version of the script/);
+    assert.deepEqual(readdirSync(runDir), ["plan.json"], "no probe lane ran");
     assert.equal(existsSync(join(home, ".claude", "pstack-models.md")), false);
   });
 });

@@ -5,6 +5,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runProbeLane, type ProbeLane } from "./probe-lane.ts";
+import { isolatedEnv } from "./isolated-env.test-helper.ts";
 
 // Fake provider CLIs in the shapes the runner parses. A model turn echoes the
 // PSTACK marker from its prompt; in a write prompt it also creates probe.txt in
@@ -56,6 +57,11 @@ process.exit(run.status ?? 1);
 let root = "";
 let bin = "";
 
+/** Only the fakes and this node on PATH, under a temporary HOME; no real CLI is in reach. */
+function laneEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+  return isolatedEnv(join(root, "home"), [bin], extra);
+}
+
 function write(path: string, text: string): void {
   writeFileSync(path, text);
   chmodSync(path, 0o755);
@@ -69,7 +75,7 @@ before(() => {
   write(join(bin, "wrap"), fakeWrapper);
   // macOS vets a fresh executable on its first exec; pay that once here.
   for (const name of ["claude", "codex", "grok", "wrap"]) {
-    execFileSync(join(bin, name), name === "wrap" ? ["--", "true"] : ["models"], { stdio: "ignore" });
+    execFileSync(join(bin, name), name === "wrap" ? ["--", process.execPath, "--version"] : ["models"], { stdio: "ignore", env: laneEnv() });
   }
 });
 
@@ -90,7 +96,7 @@ function lane(overrides: Partial<ProbeLane> & Pick<ProbeLane, "provider" | "mode
     promptPath: join(dir, "prompt.md"),
     outputPath: join(dir, "output.md"),
     receiptPath: join(dir, "receipt.json"),
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, ...env },
+    env: laneEnv(env),
     ...overrides,
   };
 }

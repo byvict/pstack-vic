@@ -15,12 +15,14 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { childEnvironment, evidence, findExecutable, runLane } from "./run.ts";
 import { main } from "./cli.ts";
-import { PROVIDERS, type Provider, type RunnerOptions, type RunnerReceipt } from "./types.ts";
+import { cliFor, PROVIDERS, type Provider, type RunnerOptions, type RunnerReceipt } from "./types.ts";
 import { matchObject } from "./match-object.test-helper.ts";
+import { isolatedEnv } from "./isolated-env.test-helper.ts";
 
 let scratch = "";
 let bin = "";
 let previousPath: string | undefined;
+let previousHome: string | undefined;
 
 const fake = `#!/usr/bin/env node
 import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
@@ -114,7 +116,8 @@ if (name === "grok" && stage === "model" && process.env.FAKE_GROK_CONFIG_RECORD_
 }
 if (stage === "model" && process.env.FAKE_DESCENDANT_HOLDS_PIPES_MS) {
   const seconds = Number(process.env.FAKE_DESCENDANT_HOLDS_PIPES_MS) / 1000;
-  const descendant = spawn("/bin/sh", ["-c", "sleep " + seconds], {
+  // By absolute path: the PATH of a lane holds only the fakes and node.
+  const descendant = spawn("/bin/sleep", [String(seconds)], {
     stdio: ["ignore", "inherit", "inherit"],
     detached: true,
   });
@@ -144,8 +147,16 @@ if (process.env.FAKE_MODEL_EXITING_PATH) {
 
 const LAUNCHER = join(import.meta.dirname, "pstack-runner");
 
-function makeExecutable(name: string): void {
-  const path = join(bin, name);
+/** The binary the runner resolves for a provider: `providers.<provider>.cli` in the matrix. */
+function cliOf(provider: Provider): string {
+  const cli = cliFor(provider);
+  assert.ok(cli, `provider ${provider} has no cli in model-matrix.json`);
+  return cli;
+}
+
+/** Write the fake under the name of the CLI the runner resolves for the provider. */
+function makeExecutable(provider: Provider): void {
+  const path = join(bin, cliOf(provider));
   writeFileSync(path, fake);
   chmodSync(path, 0o755);
 }
@@ -154,8 +165,8 @@ function makeExecutable(name: string): void {
 // up to 4.7 s with every core busy, against ~0.1 s for a repeat exec (measured
 // 2026-09-24). Every test writes new fakes, so a test whose deadline must
 // outlast a fake's startup execs the fake once before starting the run.
-function warm(name: string): void {
-  execFileSync(join(bin, name), [], { env: { PATH: process.env.PATH }, stdio: "ignore" });
+function warm(provider: Provider): void {
+  execFileSync(join(bin, cliOf(provider)), [], { env: { PATH: process.env.PATH }, stdio: "ignore" });
 }
 
 function options(provider: Provider, suffix: string = provider): RunnerOptions {
@@ -341,20 +352,32 @@ function clearFakeEnv(): void {
   for (const key of FAKE_ENV) delete process.env[key];
 }
 
+function restoreEnv(key: string, value: string | undefined): void {
+  if (value === undefined) delete process.env[key];
+  else process.env[key] = value;
+}
+
+// runLane reads process.env, and the launcher child inherits it, so the
+// isolation goes on process.env itself: every lane of this file, in process or
+// under the launcher, sees only the fakes and this node under a temporary HOME.
 beforeEach(() => {
   scratch = mkdtempSync(join(tmpdir(), "pstack-runner-test-"));
   bin = join(scratch, "bin");
   mkdirSync(bin);
   writeFileSync(join(bin, "package.json"), '{"type":"module"}\n');
   writeFileSync(join(scratch, "prompt.md"), "Return the marker.");
-  for (const name of PROVIDERS) makeExecutable(name);
+  for (const provider of PROVIDERS) makeExecutable(provider);
+  const isolated = isolatedEnv(join(scratch, "home"), [bin]);
   previousPath = process.env.PATH;
-  process.env.PATH = `${bin}:${dirname(process.execPath)}:${previousPath ?? ""}`;
+  previousHome = process.env.HOME;
+  process.env.PATH = isolated.PATH;
+  process.env.HOME = isolated.HOME;
   clearFakeEnv();
 });
 
 afterEach(() => {
-  process.env.PATH = previousPath;
+  restoreEnv("PATH", previousPath);
+  restoreEnv("HOME", previousHome);
   clearFakeEnv();
   rmSync(scratch, { recursive: true, force: true });
 });
@@ -996,15 +1019,29 @@ describe("childEnvironment", () => {
   });
 });
 
+describe("test isolation", () => {
+  it("leaves no provider CLI on the PATH of the lanes once its fake is gone", () => {
+    for (const provider of PROVIDERS) {
+      const cli = cliOf(provider);
+      assert.equal(findExecutable(cli, process.env.PATH, scratch), join(bin, cli));
+      rmSync(join(bin, cli));
+      assert.equal(findExecutable(cli, process.env.PATH, scratch), null, `a real ${cli} is on the test PATH`);
+    }
+    assert.equal(findExecutable("node", process.env.PATH, scratch), join(process.env.HOME ?? "", ".node-bin", "node"));
+    assert.equal(process.env.HOME, join(scratch, "home"));
+  });
+});
+
 describe("findExecutable", () => {
   it("resolves the first executable regular file on PATH and nothing else", () => {
-    assert.equal(findExecutable("claude", process.env.PATH, scratch), join(bin, "claude"));
+    const cli = cliOf("claude");
+    assert.equal(findExecutable(cli, process.env.PATH, scratch), join(bin, cli));
     assert.equal(findExecutable("no-such-cli", process.env.PATH, scratch), null);
     mkdirSync(join(bin, "a-directory"));
     assert.equal(findExecutable("a-directory", process.env.PATH, scratch), null);
     writeFileSync(join(bin, "not-executable"), "#!/bin/sh\n");
     chmodSync(join(bin, "not-executable"), 0o644);
     assert.equal(findExecutable("not-executable", process.env.PATH, scratch), null);
-    assert.equal(findExecutable("bin/claude", undefined, scratch), join(bin, "claude"));
+    assert.equal(findExecutable(`bin/${cli}`, undefined, scratch), join(bin, cli));
   });
 });

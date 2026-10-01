@@ -21,6 +21,7 @@ import { basename, dirname, join, relative } from "node:path";
 import { loadMatrix, PLUGIN_ROOT } from "../../../scripts/model-matrix.ts";
 import { invocationCommand, preflightCommand } from "../../poteto-mode/scripts/runner/commands.ts";
 import { ACCESS_MODES } from "../../poteto-mode/scripts/runner/types.ts";
+import { isolatedEnv } from "../../poteto-mode/scripts/runner/isolated-env.test-helper.ts";
 import {
   codexStableVersions,
   fetchNotes,
@@ -43,11 +44,16 @@ before(() => {
 
 after(() => rmSync(root, { recursive: true, force: true }));
 
+/** For what runs outside a fake machine: `fakeBins` and this node on PATH, under a temporary HOME, and nothing of the operator's. */
+function isolated(fakeBins: readonly string[] = [], extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+  return isolatedEnv(join(root, "home"), fakeBins, extra);
+}
+
 function executable(path: string, text: string): string {
   writeFileSync(path, text);
   chmodSync(path, 0o755);
   // macOS vets a fresh executable on its first exec; pay that once here.
-  execFileSync(path, ["--version"], { stdio: "ignore", env: { ...process.env, FAKE_WARMUP: "1" } });
+  execFileSync(path, ["--version"], { stdio: "ignore", env: isolated([], { FAKE_WARMUP: "1" }) });
   return path;
 }
 
@@ -129,7 +135,7 @@ describe("fetchNotes", () => {
     const cdn = await serve({ "/CHANGELOG.md": fixture("claude-CHANGELOG.md") });
     try {
       const notes = await fetchNotes("claude", "2.1.275", "2.1.277", {
-        env: { ...process.env, PSTACK_UPDATE_CLIS_CLAUDE_CHANGELOG_URL: `${cdn.url}/CHANGELOG.md` },
+        env: { PSTACK_UPDATE_CLIS_CLAUDE_CHANGELOG_URL: `${cdn.url}/CHANGELOG.md` },
       });
       assert.deepEqual(notes.versions.map((v) => [v.version, v.entries.length]), [
         ["2.1.276", 1],
@@ -146,7 +152,7 @@ describe("fetchNotes", () => {
     try {
       await assert.rejects(
         fetchNotes("claude", "2.1.278", "2.1.279", {
-          env: { ...process.env, PSTACK_UPDATE_CLIS_CLAUDE_CHANGELOG_URL: `${cdn.url}/CHANGELOG.md` },
+          env: { PSTACK_UPDATE_CLIS_CLAUDE_CHANGELOG_URL: `${cdn.url}/CHANGELOG.md` },
         }),
         (error: unknown) => error instanceof NotesError && /no notes for claude 2\.1\.279/.test(error.message)
       );
@@ -160,7 +166,7 @@ describe("fetchNotes", () => {
     cdn.server.close();
     await assert.rejects(
       fetchNotes("claude", "2.1.275", "2.1.277", {
-        env: { ...process.env, PSTACK_UPDATE_CLIS_CLAUDE_CHANGELOG_URL: `${cdn.url}/CHANGELOG.md` },
+        env: { PSTACK_UPDATE_CLIS_CLAUDE_CHANGELOG_URL: `${cdn.url}/CHANGELOG.md` },
       }),
       (error: unknown) => error instanceof NotesError && /could not fetch/.test(error.message)
     );
@@ -169,7 +175,7 @@ describe("fetchNotes", () => {
   it("ignores a source override that is not loopback", async () => {
     await assert.rejects(
       fetchNotes("grok", "1.0.40", "1.0.41", {
-        env: { ...process.env, PSTACK_UPDATE_CLIS_GROK_CHANGELOGS_URL: "http://example.invalid/changelogs" },
+        env: { PSTACK_UPDATE_CLIS_GROK_CHANGELOGS_URL: "http://example.invalid/changelogs" },
         fetch: async (url: string) => {
           throw new Error(`fetched ${url}`);
         },
@@ -185,7 +191,7 @@ describe("fetchNotes", () => {
     });
     try {
       const notes = await fetchNotes("grok", "1.0.38", "1.0.41", {
-        env: { ...process.env, PSTACK_UPDATE_CLIS_GROK_CHANGELOGS_URL: `${cdn.url}/changelogs` },
+        env: { PSTACK_UPDATE_CLIS_GROK_CHANGELOGS_URL: `${cdn.url}/changelogs` },
       });
       assert.deepEqual(notes.versions.map((v) => [v.version, v.entries.length]), [
         ["1.0.39", 13],
@@ -212,7 +218,7 @@ describe("fetchNotes", () => {
     });
     try {
       const notes = await fetchNotes("grok", "1.0.39", "1.0.41", {
-        env: { ...process.env, PSTACK_UPDATE_CLIS_GROK_CHANGELOGS_URL: `${cdn.url}/changelogs` },
+        env: { PSTACK_UPDATE_CLIS_GROK_CHANGELOGS_URL: `${cdn.url}/changelogs` },
       });
       assert.deepEqual(notes.versions.map((v) => [v.version, v.entries.length]), [
         ["1.0.40", 13],
@@ -232,7 +238,7 @@ describe("fetchNotes", () => {
     });
     try {
       const notes = await fetchNotes("grok", "1.0.39", "1.0.41", {
-        env: { ...process.env, PSTACK_UPDATE_CLIS_GROK_CHANGELOGS_URL: `${cdn.url}/changelogs` },
+        env: { PSTACK_UPDATE_CLIS_GROK_CHANGELOGS_URL: `${cdn.url}/changelogs` },
       });
       assert.deepEqual(notes.versions.map((v) => v.entries), [[{ text: "Flag --x is gone.", category: "features", breaking: true }], []]);
       assert.deepEqual(notes.missing, []);
@@ -246,7 +252,7 @@ describe("fetchNotes", () => {
     try {
       await assert.rejects(
         fetchNotes("grok", "1.0.39", "1.0.41", {
-          env: { ...process.env, PSTACK_UPDATE_CLIS_GROK_CHANGELOGS_URL: `${cdn.url}/changelogs` },
+          env: { PSTACK_UPDATE_CLIS_GROK_CHANGELOGS_URL: `${cdn.url}/changelogs` },
         }),
         (error: unknown) => error instanceof NotesError && /no notes for grok 1\.0\.41/.test(error.message)
       );
@@ -273,7 +279,7 @@ if (args[0] === "release" && args[1] === "view") { writeSync(1, readFileSync(fix
 process.exit(2);
 `
     );
-    const env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` };
+    const env = isolated([bin]);
     const notes = await fetchNotes("codex", "0.155.1", "0.156.1", { env });
     assert.deepEqual(notes.versions.map((v) => [v.version, v.date, v.entries.length]), [
       ["0.156.0", "2026-09-22T19:51:01Z", 540],
@@ -294,7 +300,8 @@ process.exit(2);
 
 const SCRIPT = join(import.meta.dirname, "update-clis.ts");
 
-function cli(args: readonly string[], env: NodeJS.ProcessEnv = process.env): Promise<{ code: number; stdout: string; stderr: string }> {
+/** Run the script. The environment has no default: a fake machine's, or isolated(). */
+function cli(args: readonly string[], env: NodeJS.ProcessEnv): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [SCRIPT, ...args], { env, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
@@ -311,7 +318,7 @@ describe("notes command", () => {
     const dir = join(root, "notes-run");
     mkdirSync(dir, { recursive: true });
     try {
-      const env = { ...process.env, PSTACK_UPDATE_CLIS_GROK_CHANGELOGS_URL: `${cdn.url}/changelogs` };
+      const env = isolated([], { PSTACK_UPDATE_CLIS_GROK_CHANGELOGS_URL: `${cdn.url}/changelogs` });
       const result = await cli(["notes", "--cli", "grok", "--from", "1.0.40", "--to", "1.0.41", "--dir", dir], env);
       assert.equal(result.code, 0, result.stderr);
       const printed = JSON.parse(result.stdout);
@@ -325,11 +332,11 @@ describe("notes command", () => {
   it("exits 2 with the reason when the notes cannot be read, and 64 on a bad invocation", async () => {
     const cdn = await serve({});
     cdn.server.close();
-    const env = { ...process.env, PSTACK_UPDATE_CLIS_GROK_CHANGELOGS_URL: `${cdn.url}/changelogs` };
+    const env = isolated([], { PSTACK_UPDATE_CLIS_GROK_CHANGELOGS_URL: `${cdn.url}/changelogs` });
     const down = await cli(["notes", "--cli", "grok", "--from", "1.0.40", "--to", "1.0.41"], env);
     assert.equal(down.code, 2);
     assert.match(down.stderr, /could not fetch/);
-    const bad = await cli(["notes", "--cli", "cursor", "--from", "1.0.40", "--to", "1.0.41"]);
+    const bad = await cli(["notes", "--cli", "cursor", "--from", "1.0.40", "--to", "1.0.41"], isolated());
     assert.equal(bad.code, 64);
     assert.match(bad.stderr, /--cli must be one of: codex, grok, claude/);
   });
