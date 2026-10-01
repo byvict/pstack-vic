@@ -19,6 +19,7 @@ pstack skills retain Claude Code tool language (`Skill`, `Agent`, `AskUserQuesti
 | Wait for a subagent result | `wait_agent` |
 | Free a finished subagent slot | `close_agent` |
 | Track tasks (the todolist / `TodoWrite`) | `update_plan` |
+| The background task list (the audit tick of the autopilot playbooks) | The subagents you spawned and have not closed (`spawn_agent` handles) and your persistent exec sessions |
 | Ask the human a fixed-choice question (`AskUserQuestion`) | Ask in plain text and let the user answer. Codex has no structured-choice tool. |
 | Transcript directory (show-me-your-work audit, session pickup) | `~/.codex/sessions/`, same no-glob rule |
 
@@ -33,10 +34,12 @@ Without it, the native Codex lane is a named dropout. Independent external lanes
 
 ## Subagent policy
 
-poteto-mode's Subagents section sets Claude-specific defaults (`subagent_type: "poteto-agent"`, `run_in_background: true`). On Codex:
+poteto-mode's Subagents section sets Claude-specific defaults (`subagent_type: "poteto-agent"`, `isolation: "worktree"`, `run_in_background: true`). On Codex:
 
 - There is no `poteto-agent` subagent type. Route an ad-hoc subagent through poteto-mode's style by dispatching a `spawn_agent` whose instructions tell it to read the `poteto-mode` skill in full first.
 - `spawn_agent` calls already run concurrently with your turn, so `run_in_background: true` has no separate flag. Issue the dispatch and continue.
+- `spawn_agent` takes no `isolation` parameter. Where the Claude call passes `isolation: "worktree"`, create the worktree with `git worktree add` before the dispatch and name its path in the brief.
+- An Autopilot-full or Autopilot-stack owner is one `spawn_agent` with the model and `reasoning_effort` of its authoring row, a worktree of its own, and instructions to read the `poteto-mode` skill in full first.
 - There is no `comment-sicko` subagent type either. The **no-comments** skill spawns it on Claude Code; on Codex dispatch a `spawn_agent` whose instructions tell it to read `agents/comment-sicko.md` in full first.
 - Claude Code runs every subagent on this machine, so the **swarm** skill's workers and the fan-out playbooks (`orchestrate`, `autopilot-full`, `autopilot-stack`) isolate writers with worktrees. The same holds on Codex.
 - Keep the rest of the policy unchanged. Pass file pointers not inlined context, give each worker its own worktree or branch when they write, review every subagent's diff yourself.
@@ -54,7 +57,7 @@ Some triggers name skills that ship with Claude Code, not pstack. They do not ex
 | `run` (drive a CLI/TUI to see a change work) | Run the app yourself via `shell` and observe the real output. |
 | `verify` (drive a UI to confirm a fix) | Drive the UI with whatever automation you have, or hand the user a concrete manual check. Do not claim done without observing the artifact. |
 | `skill-creator` (Anthropic's SKILL.md authoring skill) | Follow your platform's skill-authoring guidance; the `writing-skills` skill if present. Keep `name` + `description` frontmatter and progressive disclosure. |
-| `loop` (recurring/self-paced re-invocation, used by `babysit`) | Codex has no `loop` skill. Re-run the step yourself on a cadence, or use a Codex scheduled task if available. |
+| `loop` (recurring/self-paced re-invocation, used by `babysit`, `shipping`, and the 30-minute audit tick of the autopilot playbooks) | Codex has no `loop` skill. Re-run the step yourself on a cadence, or use a Codex scheduled task if available. For the 30-minute audit tick, where no scheduled task re-prompts the session, the cadence is the operator's re-prompt. When you state the protocol, tell the operator to send the tick prompt every 30 minutes, and run one full tick on each prompt. |
 
 ## Vendored scripts
 
