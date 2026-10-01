@@ -13,7 +13,7 @@ Os dois remotes têm push desabilitado (`no_push`). Este repo só recebe.
 
 | | `cursor` | `open` |
 | --- | --- | --- |
-| Commit | `5bf2b1544db739998121a306340631963c2ff3de` | `de67e6b40511814171e5e4c8ad7af3b79f07c9ee` |
+| Commit | `12d587dfb20741cafc376c42c696c5f6e2a64487` | `de67e6b40511814171e5e4c8ad7af3b79f07c9ee` |
 | Versão upstream | pstack `0.15.2` | open-pstack `1.4.1` (= Cursor pstack `0.15.1`, `f8abedd`) |
 | Data do sync | 2026-09-17 | 2026-09-17 |
 | Commit equivalente aqui | `91e5b82513c42d3713fe4741aa0dae29c8fa240b` (tip do split) | n/a (entra por cópia auditada; o que já foi copiado está em `NOTICE.md`) |
