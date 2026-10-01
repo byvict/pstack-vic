@@ -134,10 +134,12 @@ O runner chama três CLIs: `claude` (npm, Node 24.21.0), `codex` (npm, Node 24.1
 Para cada CLI, na ordem codex → grok → claude, a skill lê as notas de versão contra `skills/update-clis/references/cli-touchpoints.json`, instala a versão nova e roda a sonda. A sonda roda as lanes `read` e `write` de cada par família@esforço que as duas fichas mandam para aquela CLI pelo runner. Roda também `seatbelt` (grok e claude dentro do `codex sandbox`), `sandbox` (o codex, sem modelo) e `manifest` (o claude, com `claude plugin validate`, sem modelo). Uma lane que falha faz a CLI voltar para a versão anterior e rodar a mesma sonda de novo: se a anterior passa, a versão nova fica segurada numa issue `CLI <nome> <versão> segurada`; se a anterior também falha, o problema é do ambiente e ninguém é segurado. Uma mudança de contrato num ponto sem cobertura segura a versão sem instalar. Os binários que os apps desktop trazem ficam de fora e só aparecem no relatório.
 
 ```shell
-npm run update-clis -- check                  # versão instalada, última do canal, duplicatas e processos em uso, por CLI
+npm run update-clis -- check
 npm run update-clis -- notes --cli grok --from 1.0.5 --to 1.0.41
-npm run update-clis -- --help                 # start, check, notes, install, probe, finish
+npm run update-clis -- --help
 ```
+
+O `check` mostra, para cada CLI, a versão instalada, a última do canal, as duplicatas e os processos em uso. O `--help` lista os subcomandos: `start`, `check`, `notes`, `install`, `probe` e `finish`.
 
 Cada execução guarda notas, prompts, saídas, recibos e o resumo em `~/Library/Caches/pstack-vic/update-clis/<data-hora>/`, e a skill mantém as 10 mais recentes. Uma trava na mesma pasta impede duas execuções ao mesmo tempo.
 
@@ -394,18 +396,20 @@ Vinte e três skills de um princípio cada. `poteto-mode` indexa todas inline e 
 
 ```shell
 npm test
-npm run test:bun       # orch e watch-pr no Bun: bun install --frozen-lockfile, bun test e o typecheck do watch-pr (precisa do bun no PATH)
-npm run matrix:check   # blocos gerados de provider-dispatch.md e setup-pstack em dia
-npm run agents:check   # agents/pstack-*.md em dia com a matriz
+npm run test:bun
+npm run matrix:check
+npm run agents:check
 npm run collision:check
-npm run upstream:digest -- --no-fetch   # digest dos dois upstreams desde o ponto de sync (UPSTREAM.md, seção Digest semanal)
+npm run upstream:digest -- --no-fetch
 node scripts/upstream-parity.ts check
-npm run setup-pstack -- --help   # subcomandos do setup: state, plan, probe, attest, write
-npm run update-clis -- --help    # subcomandos da atualização das CLIs: start, check, notes, install, probe, finish
-claude plugin validate --strict .   # manifest do plugin e do marketplace pelo validador do Claude Code
+npm run setup-pstack -- --help
+npm run update-clis -- --help
+claude plugin validate --strict .
 ```
 
 O `npm test` roda os testes da matriz, do gerador de agents, do runner, do setup-pstack, do update-clis, da referência de skills, dos manifests e do hook, do digest dos upstreams, da paridade dos playbooks do autopilot com a Cursor, do verificador de planos (`check-plan.mjs`) contra o molde do `multi-phase-plan.md` gerado, do release e dos invariantes do pacote. O `node scripts/upstream-parity.ts check` roda só a paridade: confere que os seis playbooks do autopilot são o texto da Cursor mais as trocas de `upstream-substitutions.json`.
+
+O `npm run test:bun` roda no Bun os testes do `orch` e do `watch-pr`: `bun install --frozen-lockfile`, `bun test` e o typecheck do `watch-pr`. Ele precisa do `bun` no PATH. O `npm run matrix:check` confere que os blocos gerados de `provider-dispatch.md` e do `setup-pstack` estão em dia, e o `npm run agents:check` confere que os `agents/pstack-*.md` estão em dia com a matriz. O `npm run upstream:digest -- --no-fetch` monta o digest dos dois upstreams desde o ponto de sync (`UPSTREAM.md`, seção *Digest semanal*). Os dois `--help` listam os subcomandos do setup (`state`, `plan`, `probe`, `attest` e `write`) e os da atualização das CLIs (`start`, `check`, `notes`, `install`, `probe` e `finish`). O `claude plugin validate --strict .` passa o manifest do plugin e o do marketplace pelo validador do Claude Code.
 
 `tests/skill-collision-repro.sh` verifica os invariantes estáticos do pacote (sem camada `commands/`, `principle-*` ocultos e legíveis pelo modelo, skills de fluxo sem `disable-model-invocation`, nome do diretório igual ao `name`, versão única entre manifests, tag do marketplace e `package.json`, logo do Codex resolvendo, aliases móveis de Fable e Opus, vínculo do Bugbot entre a skill `babysit` e o playbook, playbooks sem comandos Graphite, conteúdo Cursor-only ausente). Com `PSTACK_BEHAVIORAL=1` ele também monta um plugin de uma skill e prova, com `claude -p`, que a invocação pela tool `Skill` e pelo `/comando` chegam à skill.
 
