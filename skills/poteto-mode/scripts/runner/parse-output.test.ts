@@ -151,13 +151,6 @@ describe("parseProviderOutput", () => {
     assert.equal(reportedModelMatches("claude", "fable", null), false);
   });
 
-  it("refuses to parse an http provider as CLI output", () => {
-    assert.throws(
-      () => parseProviderOutput("cursor", "{}", "", "composer-2.5"),
-      /provider cursor uses the http transport; it has no CLI output to parse/
-    );
-  });
-
   it("rejects malformed or textless responses", () => {
     assert.throws(
       () => parseProviderOutput("claude", "not-json", "", "fable"),

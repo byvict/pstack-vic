@@ -10,7 +10,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AccessMode, RepoTarget } from "./types.ts";
+import type { AccessMode } from "./types.ts";
 
 export const RUNNER_LAUNCHER = join(import.meta.dirname, "pstack-runner");
 
@@ -46,8 +46,6 @@ export interface ProbeLane extends ProbeExpectation {
   readonly receiptPath: string;
   readonly env: NodeJS.ProcessEnv;
   readonly timeoutSeconds?: number | null;
-  /** The pull request an http lane works on; never passed to a cli lane. */
-  readonly target?: RepoTarget;
 }
 
 export interface LaneVerdict {
@@ -175,9 +173,6 @@ export function runProbeLane(lane: ProbeLane): Promise<LaneVerdict> {
     "--receipt", lane.receiptPath,
   ];
   if (lane.timeoutSeconds) args.push("--timeout", String(lane.timeoutSeconds));
-  if (lane.target !== undefined) {
-    args.push("--repo", `${lane.target.owner}/${lane.target.name}`, "--pr", String(lane.target.pullNumber));
-  }
   const [command, argv] = lane.wrap === undefined
     ? [process.execPath, args]
     : [lane.wrap.command, [...lane.wrap.args, process.execPath, ...args]];

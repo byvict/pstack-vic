@@ -2,8 +2,6 @@ import { reportedModelMatches as familyReportMatches } from "../../../../scripts
 import {
   cliFor,
   familyOf,
-  transportFor,
-  UsageError,
   type NormalizedUsage,
   type ParsedOutput,
   type Provider,
@@ -164,11 +162,6 @@ export function parseProviderOutput(
   stderr: string,
   requestedModel: string
 ): ParsedOutput {
-  if (transportFor(provider) === "http") {
-    throw new UsageError(
-      `provider ${provider} uses the http transport; it has no CLI output to parse`
-    );
-  }
   switch (cliFor(provider)) {
     case "claude":
       return parseClaude(stdout, requestedModel);
