@@ -528,10 +528,19 @@ async function json(args: readonly string[], env: NodeJS.ProcessEnv): Promise<{ 
   return { code: result.code, value, stderr: result.stderr };
 }
 
+/**
+ * `check` on a fake machine. It always names the machine's Applications
+ * folder: without the flag the script reads the real /Applications and runs
+ * the codex binary inside ChatGPT.app.
+ */
+function check(machine: FakeMachine, extra: readonly string[] = [], env: NodeJS.ProcessEnv = machine.env): ReturnType<typeof json> {
+  return json(["check", "--home", machine.home, "--applications", machine.applications, ...extra], env);
+}
+
 describe("check", () => {
   it("reports the copy the parents resolve, its version, the latest of its channel, and duplicates", async () => {
     const machine = fakeMachine();
-    const { code, value, stderr } = await json(["check", "--home", machine.home, "--applications", machine.applications], machine.env);
+    const { code, value, stderr } = await check(machine);
     assert.equal(code, 0, stderr);
     const byCli = Object.fromEntries(value.clis.map((entry: { cli: string }) => [entry.cli, entry]));
     assert.deepEqual(value.clis.map((entry: { cli: string }) => entry.cli), ["codex", "grok", "claude"]);
@@ -558,13 +567,14 @@ describe("check", () => {
     assert.equal(byCli.grok.channel, "stable");
     assert.equal(byCli.grok.latest, "1.0.41");
     for (const entry of value.clis) assert.deepEqual(entry.inUse, [], entry.cli);
+    for (const entry of value.clis) assert.deepEqual(entry.apps, [], `${entry.cli}: a desktop app outside the fake machine`);
   });
 
   it("reads the claude channel from ~/.claude/settings.json and reports a CLI already on it as current", async () => {
     const machine = fakeMachine();
     mkdirSync(join(machine.home, ".claude"), { recursive: true });
     writeFileSync(join(machine.home, ".claude", "settings.json"), JSON.stringify({ autoUpdatesChannel: "stable" }));
-    const { value } = await json(["check", "--cli", "claude", "--home", machine.home], machine.env);
+    const { value } = await check(machine, ["--cli", "claude"]);
     assert.deepEqual(value.clis.map((entry: { cli: string }) => entry.cli), ["claude"]);
     assert.equal(value.clis[0].channel, "stable");
     assert.equal(value.clis[0].latest, "2.1.273");
@@ -573,7 +583,7 @@ describe("check", () => {
 
   it("marks a CLI whose latest version cannot be read as unverified and still checks the others", async () => {
     const machine = fakeMachine();
-    const { code, value } = await json(["check", "--home", machine.home], { ...machine.env, FAKE_NPM_DOWN: "1" });
+    const { code, value } = await check(machine, [], { ...machine.env, FAKE_NPM_DOWN: "1" });
     assert.equal(code, 0);
     const byCli = Object.fromEntries(value.clis.map((entry: { cli: string }) => [entry.cli, entry]));
     assert.equal(byCli.claude.status, "unverified");
@@ -591,7 +601,7 @@ describe("check", () => {
     const resources = join(machine.applications, "ChatGPT.app", "Contents", "Resources");
     mkdirSync(resources, { recursive: true });
     executable(join(resources, "codex"), `#!/usr/bin/env node\nif (process.env.FAKE_WARMUP) process.exit(0);\nconsole.log("codex-cli 0.155.0-alpha.16.3");\n`);
-    const { value } = await json(["check", "--home", machine.home, "--applications", machine.applications], machine.env);
+    const { value } = await check(machine);
     const byCli = Object.fromEntries(value.clis.map((entry: { cli: string }) => [entry.cli, entry]));
     assert.deepEqual(byCli.claude.apps.map((app: { app: string; version: string }) => [app.app, app.version]), [
       ["Claude", "2.1.275"],
@@ -612,13 +622,13 @@ describe("check", () => {
     const running = spawn(helper, ["-e", "setTimeout(() => {}, 60000)"], { stdio: "ignore" });
     try {
       await new Promise((resolve) => setTimeout(resolve, 300));
-      const busy = await json(["check", "--cli", "codex", "--home", machine.home], machine.env);
+      const busy = await check(machine, ["--cli", "codex"]);
       assert.deepEqual(busy.value.clis[0].inUse.map((process: { pid: number }) => process.pid), [running.pid]);
     } finally {
       running.kill();
       await new Promise((resolve) => running.once("exit", resolve));
     }
-    const idle = await json(["check", "--cli", "codex", "--home", machine.home], machine.env);
+    const idle = await check(machine, ["--cli", "codex"]);
     assert.deepEqual(idle.value.clis[0].inUse, []);
   });
 });
@@ -730,8 +740,8 @@ describe("install", () => {
     assert.equal(back.code, 0, back.stderr);
     assert.deepEqual([back.value.method, back.value.version, back.value.ok], ["restored-copy", "1.0.5", true]);
     assert.match(back.value.detail, /grok update --version 1\.0\.5 failed/);
-    const check = await json(["check", "--cli", "grok", "--home", machine.home], machine.env);
-    assert.equal(check.value.clis[0].resolved.version, "1.0.5");
+    const restored = await check(machine, ["--cli", "grok"]);
+    assert.equal(restored.value.clis[0].resolved.version, "1.0.5");
   });
 
   it("fails without a copy to go back to when grok update fails", async () => {
