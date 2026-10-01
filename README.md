@@ -32,6 +32,8 @@ Este port mantém a prosa da Cursor onde ela não depende da Cursor e substitui 
 ## Documentos
 
 - [`docs/reference.md`](docs/reference.md) — instalação, layout, dependências, o [autopilot](docs/reference.md#autopilot), todas as skills, subagents, o que ficou de fora.
+- [`CONTEXT.md`](CONTEXT.md) — o glossário do autopilot, com Raiz, Dono, Enxame, Veredito, Rodada, Tick e os outros termos de um programa.
+- [`docs/adr/`](docs/adr/) — as decisões registradas. O [ADR 0005](docs/adr/0005-autopilot-substitui-converge.md) aposenta o converge, supera os ADRs 0001 a 0004 e registra o que entrou no lugar.
 - [`UPSTREAM.md`](UPSTREAM.md) — os dois upstreams (Cursor, fonte de merge; open-pstack, só leitura) e o ponto de sync de cada um.
 - [`NOTICE.md`](NOTICE.md) — proveniência de cada arquivo copiado e o que é escrita nova.
 - [`CHANGES.md`](CHANGES.md) — veredito por hunk e por skill de cada fase do port.
