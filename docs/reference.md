@@ -45,16 +45,20 @@ As duas linhas de `sandbox_workspace_write` são para as lanes externas: o runne
 
 Para desenvolver ou testar um checkout antes de publicar:
 
+No Claude Code, este comando carrega o clone como plugin da sessão (manifest, agents e skills):
+
 ```shell
-# Claude Code: carrega o clone como plugin da sessão (manifest, hook, agents e skills)
 claude --plugin-dir ~/Dev/Skills/pstack-vic
 ```
 
+No Codex, estes dois comandos instalam o clone por um marketplace local, sem tag:
+
 ```shell
-# Codex: marketplace local, sem tag; desfaz com plugin remove + marketplace remove
 codex plugin marketplace add ~/Dev/Skills/pstack-vic
 codex plugin add pstack@pstack-vic
 ```
+
+Para desfazer no Codex, rode `codex plugin remove pstack@pstack-vic` e depois `codex plugin marketplace remove pstack-vic`.
 
 Rode `/setup-pstack` uma vez em cada pai para escrever o sheet de modelos (`~/.claude/pstack-models.md` e `~/.codex/pstack-models.md`). O último passo dele confere a [autorização permanente](#autorização-permanente), que o autopilot e o playbook Shipping exigem para mergear sem aprovação humana. Depois, `/poteto-mode` é o ponto de entrada para qualquer tarefa que peça rigor.
 
