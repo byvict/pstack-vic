@@ -89,12 +89,12 @@ function pair(id: string, from: string, to: string, count = 1): RowPair {
 
 describe("upstream-parity: pair semantics", () => {
   it("applies the pairs of a file at once, whatever their order", () => {
-    const upstream = "On the go, arm a `/goal`. Re-read it from trunk.\n";
+    const upstream = "Triage Bugbot. Re-read it from trunk.\n";
     const pairs = [
-      pair("T1", "arm a `/goal`", "write the standing orders"),
+      pair("T3", "Bugbot", "the review-bot"),
       pair("T6", "from trunk", "from the installed plugin"),
     ];
-    const expected = "On the go, write the standing orders. Re-read it from the installed plugin.\n";
+    const expected = "Triage the review-bot. Re-read it from the installed plugin.\n";
     assert.deepEqual(applyPairs(upstream, pairs), { text: expected, problems: [] });
     assert.deepEqual(applyPairs(upstream, [...pairs].reverse()), { text: expected, problems: [] });
   });
@@ -239,7 +239,7 @@ describe("upstream-parity: residue diff", () => {
 
 describe("upstream-parity: table shape", () => {
   const files = [{ upstream: "pstack/skills/poteto-mode/playbooks/a.md", local: FILE }];
-  const row = { id: "T1", reason: "The objective goes into the standing orders.", pairs: [{ file: FILE, from: "a", to: "b", count: 1 }] };
+  const row = { id: "T6", reason: "The installed plugin is the stable source.", pairs: [{ file: FILE, from: "a", to: "b", count: 1 }] };
 
   it("reads files and rows, and hands a file its pairs with their row ids", () => {
     const table = parseTable(
@@ -247,7 +247,7 @@ describe("upstream-parity: table shape", () => {
     );
     assert.deepEqual(table.files, files);
     assert.deepEqual(pairsFor(table, FILE), [
-      { id: "T1", file: FILE, from: "a", to: "b", count: 1 },
+      { id: "T6", file: FILE, from: "a", to: "b", count: 1 },
       { id: "T2", file: FILE, from: "c", to: "", count: 2 },
     ]);
     assert.deepEqual(pairsFor(table, "skills/poteto-mode/playbooks/other.md"), []);
@@ -307,13 +307,13 @@ function put(repo: string, path: string, text: string): void {
 }
 
 const UPSTREAM_PATH = "pstack/skills/poteto-mode/playbooks/a.md";
-const UPSTREAM_TEXT = "### A\n\nOne Cursor cloud agent per PR owns the build.\n\nThe tick re-reads the armed `/goal`.\n";
-const GENERATED_TEXT = "### A\n\nOne background subagent per PR owns the build.\n\nThe tick re-reads the standing objective.\n";
+const UPSTREAM_TEXT = "### A\n\nOne Cursor cloud agent per PR owns the build.\n\nThe tick re-reads the playbook from trunk.\n";
+const GENERATED_TEXT = "### A\n\nOne background subagent per PR owns the build.\n\nThe tick re-reads the playbook from the installed plugin.\n";
 const TABLE: SubstitutionTable = {
   files: [{ upstream: UPSTREAM_PATH, local: FILE }],
   rows: [
-    { id: "T1", reason: "The objective goes into the standing orders.", pairs: [{ file: FILE, from: "the armed `/goal`", to: "the standing objective", count: 1 }] },
     { id: "T2", reason: "No cloud agents.", pairs: [{ file: FILE, from: "Cursor cloud agent", to: "background subagent", count: 1 }] },
+    { id: "T6", reason: "The installed plugin is the stable source.", pairs: [{ file: FILE, from: "from trunk", to: "from the installed plugin", count: 1 }] },
   ],
 };
 

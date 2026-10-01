@@ -177,7 +177,7 @@ A Raiz não começa por conta própria. A execução só começa com o seu "go" 
    ```
 
    Troque `<versão>` pela versão instalada, que `claude plugin list` mostra. A segunda linha mostra o código de saída da primeira: 0 é autorizado, 1 não. Com 1, o JSON que o comando imprime diz o motivo e traz o comando que concede a autorização. Sem ela, o modo automático do Claude Code nega o merge quando o Dono chega nele. Nenhum playbook roda essa conferência. Ela existe aqui e no passo 10 do `/setup-pstack`. Você também pode pedir à Raiz que rode o `check` e mostre o resultado junto com o protocolo.
-6. Dê o "go". A Raiz grava o objetivo do programa nas ordens permanentes dela, que são as instruções que valem até o fim do programa, e o repete na todolist, que é a lista de afazeres da sessão. As ordens permanentes ficam num arquivo, `standing-orders.md`, ao lado da trilha de decisões da Raiz (`decisions.tsv`) e fora do git, como ela. A Raiz relê esse arquivo a cada Tick. O objetivo vale até a fila acabar. Depois ela cria um Dono por PR.
+6. Dê o "go". A Raiz arma um `/goal` com o objetivo completo do programa. O `/goal` é o objetivo da sessão e vale de um turno para o outro até a fila acabar. No Claude Code a Raiz o propõe pela ferramenta `ProposeGoal`, e o Claude Code pode pedir a sua aprovação com uma tecla. Se a sessão não tiver essa ferramenta, a Raiz pede que você digite `/goal` com o objetivo. Depois ela cria um Dono por PR.
 
 Para um trabalho de várias fases, peça antes um plano. O playbook [Multi-phase plan](../skills/poteto-mode/playbooks/multi-phase-plan.md) escreve o plano como uma lista de itens com caixas de marcar, com uma seção por PR, e o plano diz qual playbook vai executá-lo. A sessão roda o verificador do plano (`check-plan.mjs`), entrega o caminho do arquivo e para. A execução também só começa com o seu "go".
 
@@ -212,7 +212,7 @@ A Raiz junta os resultados num Veredito. Sem a lane ao vivo, o Veredito não é 
 
 A cada 30 minutos, mais ou menos, a Raiz audita todos os Donos. Essa auditoria se chama Tick. Em cada Tick ela faz isto:
 
-1. Relê o playbook, direto do plugin instalado, e relê o objetivo do programa. Confere a operação contra os dois e corrige o desvio no próprio Tick.
+1. Relê o playbook, direto do plugin instalado, e relê o `/goal` armado. Confere a operação contra os dois e corrige o desvio no próprio Tick.
 2. Sonda cada Dono, para saber se ele está vivo e em que estado está, e recolhe as trilhas de decisão.
 3. Conta como progresso só o que deixou efeito: commits, pushes, mudanças no PR ou nos checks e relatórios gravados.
 4. Trata como travada a lane que dá erro, ou que passa do tempo esperado sem deixar efeito. Ela derruba essa lane e põe outra no lugar na hora, sem esperar resposta.
@@ -231,7 +231,7 @@ Sua parte num programa é esta:
 
 - **Dá o "go".** Depois deixa a sessão aberta até o último merge e a resposta final da Raiz.
 - **Clica no merge dos seus itens.** O Dono leva um item seu até o Merge-ready e para ali. Quem revisa e clica no merge é você, e nenhum Dono mergeia um item seu. Num programa com plano, um PR que muda uma interação também espera você. As capturas de tela e um vídeo vão para o chat, e você revisa antes do merge.
-- **Aprova o que a sua autorização não cobre.** Alguns limites o CI só deixa apertar, como um gate ou um orçamento fixado. Subir um limite desses pede o aval da Raiz (*countersign*), que ela só dá depois da prova de um verificador. Quando a sua autorização ou as ordens permanentes cobrem aprovações, o aval da Raiz é a aprovação, e o Dono a registra apontando para ele. Quando não cobrem, a aprovação continua sendo sua. A Raiz também nunca dá nem contorna uma aprovação que o GitHub exige. Absorver um valor que já entrou na `main` não conta como subir limite.
+- **Aprova o que a sua autorização não cobre.** Alguns limites o CI só deixa apertar, como um gate ou um orçamento fixado. Subir um limite desses pede o aval da Raiz (*countersign*), que ela só dá depois da prova de um verificador. Quando a sua autorização ou as suas ordens permanentes, que são as instruções que você deu para o programa todo, cobrem aprovações, o aval da Raiz é a aprovação, e o Dono a registra apontando para ele. Quando não cobrem, a aprovação continua sendo sua. A Raiz também nunca dá nem contorna uma aprovação que o GitHub exige. Absorver um valor que já entrou na `main` não conta como subir limite.
 - **Manda parar quando quiser.** Um "para" seu chega na hora a todos os Donos como ordem de não escrever mais nada. Eles seguram o trabalho até você liberar.
 - **Revisa e mergeia a pilha, no Autopilot-stack.** A entrega é uma cadeia de PRs verificados, cada um com o Veredito no corpo do PR ou num comentário. Você revisa de baixo para cima e mergeia com os seus cliques, ou arma o *merge-when-ready*, que no GitHub é o auto-merge.
 - **Lê a resposta final.** No Autopilot-full ela traz a fila com o Dono, o estado e o head de cada PR, e cada Veredito com o Enxame que o produziu. Traz também o que foi mergeado, o que cada Dono pegou em seguida, os avais dados com o motivo de cada um, o que ainda espera você e onde estão as trilhas de decisão. No Autopilot-stack ela traz os links da base e da ponta da pilha, um resumo do Veredito de cada PR e o que ficou de fora, com o motivo.
@@ -258,10 +258,11 @@ Até a 0.4.19 o plugin tinha um fluxo próprio, em que um robô no Mac conferia 
 
 ### Limites no Codex
 
-No Codex o programa segue os mesmos playbooks. Mudam quatro coisas, que estão em [`codex-tools.md`](../skills/poteto-mode/references/codex-tools.md):
+No Codex o programa segue os mesmos playbooks. Mudam cinco coisas, que estão em [`codex-tools.md`](../skills/poteto-mode/references/codex-tools.md):
 
 - **Não há `/loop`.** O Codex não chama a sessão de volta. Onde nenhuma tarefa agendada do Codex faz isso, quem dá a cadência do Tick é você. A Raiz avisa isso quando declara o protocolo. Você manda o prompt do Tick a cada 30 minutos, e ela roda um Tick inteiro a cada envio.
 - **Os Donos precisam de `multi_agent`.** No Codex o Dono é um `spawn_agent`, que é a ferramenta de criar subagentes. Ela só funciona com `multi_agent = true` em `~/.codex/config.toml` ([Instalação, Codex](#codex)). Sem isso não há Donos.
+- **O `/goal` precisa do recurso `goals`.** No Codex a Raiz arma o `/goal` com a ferramenta `create_goal`. Ela só existe com `goals = true` em `[features]` no `~/.codex/config.toml` e numa sessão que o Codex guarda.
 - **A Raiz cria o worktree antes.** O `spawn_agent` não cria worktree. A Raiz cria um com `git worktree add` e passa o caminho ao Dono.
 - **Não há `run` nem `verify`.** A lane ao vivo roda o app pelo shell. Para uma tela, ela usa a automação que tiver ou entrega a você uma checagem manual concreta.
 

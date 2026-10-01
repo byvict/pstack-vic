@@ -11,10 +11,9 @@ import {
 } from "../skills/poteto-mode/scripts/runner/isolated-env.test-helper.ts";
 import { PLUGIN_ROOT } from "./model-matrix.ts";
 
-// check-plan.mjs pins the harness wording of the plan template: the objective
-// in the standing orders, the reads from the installed plugin, the 30-minute
-// tick, the status message, and the Verify, live line on the `swarm workers`
-// role. The template lives in a playbook that scripts/upstream-parity.ts
+// check-plan.mjs pins the wording of the plan template: the `/goal` that holds
+// the objective, the reads from the installed plugin, the 30-minute tick, the
+// status message, and the Verify, live line on the `swarm workers` role. The template lives in a playbook that scripts/upstream-parity.ts
 // regenerates from the substitution table, so a pair that changes one of
 // those wordings must change the checker in the same commit.
 const CHECK_PLAN = join(PLUGIN_ROOT, "skills", "poteto-mode", "scripts", "check-plan.mjs");
@@ -69,7 +68,7 @@ describe("check-plan: the plan template of multi-phase-plan.md", () => {
 
   const LANES = "Ten lanes on the configured `swarm workers` role at the PR head";
   const cases: readonly { wording: string; without: string; problem: string }[] = [
-    { wording: "standing orders", without: "orders", problem: 'Program checklist lacks "standing orders"' },
+    { wording: "/goal", without: "goal", problem: 'Program checklist lacks "/goal"' },
     { wording: "the installed plugin", without: "the plugin", problem: 'Program checklist lacks "the installed plugin"' },
     { wording: "30-minute", without: "half-hour", problem: 'Program checklist lacks "/30[- ]minute/"' },
     { wording: "status message", without: "note", problem: 'Program checklist lacks "status message"' },

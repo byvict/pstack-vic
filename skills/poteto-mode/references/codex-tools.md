@@ -19,6 +19,7 @@ pstack skills retain Claude Code tool language (`Skill`, `Agent`, `AskUserQuesti
 | Wait for a subagent result | `wait_agent` |
 | Free a finished subagent slot | `close_agent` |
 | Track tasks (the todolist / `TodoWrite`) | `update_plan` |
+| Arm a `/goal` (the autopilot playbooks; `ProposeGoal` on Claude Code) | `create_goal`, read back with `get_goal`. The goal tools need `goals = true` under `[features]` in `~/.codex/config.toml` and a persistent thread. |
 | The background task list (the audit tick of the autopilot playbooks) | The subagents you spawned and have not closed (`spawn_agent` handles) and your persistent exec sessions |
 | Ask the human a fixed-choice question (`AskUserQuestion`) | Ask in plain text and let the user answer. Codex has no structured-choice tool. |
 | Transcript directory (show-me-your-work audit, session pickup) | `~/.codex/sessions/`, same no-glob rule |

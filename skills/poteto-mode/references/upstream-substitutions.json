@@ -27,48 +27,6 @@
   ],
   "rows": [
     {
-      "id": "T1",
-      "reason": "Both harnesses ship a `/goal` (read in Claude Code 2.1.285 and Codex 0.159.2), but not one form a root can arm the same way on both. On Claude Code it is a stop condition the operator types, capped at 4000 characters and refused in an untrusted workspace or with hooks restricted; the model's own route is the `ProposeGoal` tool, which the operator can switch off and which refuses to run in a subagent or outside an interactive local session. On Codex it sits behind the experimental goals feature and needs a saved session. A file is the same on both harnesses and the tick can re-read it: the program objective goes into the standing orders and is restated in the todolist (`update_plan` on Codex). The Platform Adaptation section of SKILL.md names the file that holds the standing orders.",
-      "pairs": [
-        {
-          "file": "skills/poteto-mode/playbooks/autopilot-full.md",
-          "from": "arm a `/goal` with the full program objective. The goal continues",
-          "to": "write the full program objective into the standing orders and restate it in your todolist. That objective stands",
-          "count": 1
-        },
-        {
-          "file": "skills/poteto-mode/playbooks/autopilot-full.md",
-          "from": "the armed `/goal`",
-          "to": "the standing objective",
-          "count": 1
-        },
-        {
-          "file": "skills/poteto-mode/playbooks/autopilot-stack.md",
-          "from": "arm a `/goal` with the full program objective. The goal continues",
-          "to": "write the full program objective into the standing orders and restate it in your todolist. That objective stands",
-          "count": 1
-        },
-        {
-          "file": "skills/poteto-mode/playbooks/autopilot-stack.md",
-          "from": "the armed `/goal`",
-          "to": "the standing objective",
-          "count": 1
-        },
-        {
-          "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
-          "from": "arm a `/goal` with this exact text",
-          "to": "write the program objective into the standing orders and your todolist with this exact text",
-          "count": 1
-        },
-        {
-          "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
-          "from": "from trunk and the armed /goal.",
-          "to": "from the installed plugin and the standing orders.",
-          "count": 1
-        }
-      ]
-    },
-    {
       "id": "T2",
       "reason": "There is no remote worker environment and no cloud root. An owner or a lane is a background subagent isolated by its own worktree. The tool parameters (`Agent`, `subagent_type: poteto-agent`, `isolation: worktree`, `run_in_background: true`, the model of the authoring row; `spawn_agent` on Codex) live in the Subagents section of SKILL.md and in codex-tools.md, not in the playbook sentence.",
       "pairs": [
@@ -232,6 +190,12 @@
           "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
           "from": "Read these from trunk",
           "to": "Read these from the installed plugin",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
+          "from": "from trunk and",
+          "to": "from the installed plugin and",
           "count": 1
         },
         {
