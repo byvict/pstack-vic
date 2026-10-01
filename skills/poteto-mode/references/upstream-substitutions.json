@@ -1,0 +1,270 @@
+{
+  "files": [
+    {
+      "upstream": "pstack/skills/poteto-mode/playbooks/autopilot-full.md",
+      "local": "skills/poteto-mode/playbooks/autopilot-full.md"
+    },
+    {
+      "upstream": "pstack/skills/poteto-mode/playbooks/autopilot-stack.md",
+      "local": "skills/poteto-mode/playbooks/autopilot-stack.md"
+    },
+    {
+      "upstream": "pstack/skills/poteto-mode/playbooks/babysit.md",
+      "local": "skills/poteto-mode/playbooks/babysit.md"
+    },
+    {
+      "upstream": "pstack/skills/poteto-mode/playbooks/opening-a-pr.md",
+      "local": "skills/poteto-mode/playbooks/opening-a-pr.md"
+    },
+    {
+      "upstream": "pstack/skills/poteto-mode/playbooks/shipping.md",
+      "local": "skills/poteto-mode/playbooks/shipping.md"
+    },
+    {
+      "upstream": "pstack/skills/poteto-mode/playbooks/multi-phase-plan.md",
+      "local": "skills/poteto-mode/playbooks/multi-phase-plan.md"
+    }
+  ],
+  "rows": [
+    {
+      "id": "T2",
+      "reason": "There is no remote worker environment. An owner or a lane is a background subagent isolated by its own worktree. The tool parameters (`Agent`, `subagent_type: poteto-agent`, `isolation: worktree`, `run_in_background: true`, the family alias of the authoring row as `model`; `spawn_agent` on Codex) live in the Subagents section of SKILL.md and in codex-tools.md, not in the playbook sentence.",
+      "pairs": [
+        {
+          "file": "skills/poteto-mode/playbooks/autopilot-full.md",
+          "from": "One Cursor cloud agent per PR owns",
+          "to": "One background subagent per PR, in its own worktree, owns",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/autopilot-stack.md",
+          "from": "One Cursor cloud agent per PR owns",
+          "to": "One background subagent per PR, in its own worktree, owns",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/shipping.md",
+          "from": "each a Cursor cloud agent,",
+          "to": "each in its own worktree,",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
+          "from": "on its own cloud VM",
+          "to": "in its own worktree",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
+          "from": "a lane VM",
+          "to": "a live lane",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "T4",
+      "reason": "This plugin ships its own copy of the deslop skill. There is no `cursor-team-kit` plugin to take it from.",
+      "pairs": [
+        {
+          "file": "skills/poteto-mode/playbooks/autopilot-full.md",
+          "from": "the `deslop` skill from the `cursor-team-kit` plugin (`/deslop`)",
+          "to": "the **deslop** skill, `/deslop`",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/autopilot-stack.md",
+          "from": "the `deslop` skill from the `cursor-team-kit` plugin (`/deslop`)",
+          "to": "the **deslop** skill, `/deslop`",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/opening-a-pr.md",
+          "from": " from `cursor-team-kit`",
+          "to": "",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "T5",
+      "reason": "`control-cli` and `control-ui` are `cursor-team-kit` skills. The Claude Code built-ins are `run` (CLIs and TUIs) and `verify` (UIs), and the port calls them the driver skill. Read in Claude Code 2.1.285, never run: `run` has no gate and its own description also covers Electron and browser-driven apps; `verify` is always a command the operator can type, but the model may invoke it only when the rollout flag `tengu_opal_circuit` is on (default off), so a session's skill list may not show it. The Platform Adaptation section of SKILL.md says what a UI lane uses then, and what the `<driver skill path>` box of a plan names for a built-in, which has no file. Codex substitutes per codex-tools.md. The upstream clause \"or a named driver where none exists\" stays.",
+      "pairs": [
+        {
+          "file": "skills/poteto-mode/playbooks/autopilot-full.md",
+          "from": "control skill, such as `control-cli` or `control-ui` from `cursor-team-kit`,",
+          "to": "driver skill, such as `run` for CLIs and TUIs or `verify` for UIs,",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/shipping.md",
+          "from": "control skill (such as `control-ui` or `control-cli` from `cursor-team-kit`)",
+          "to": "driver skill (such as `verify` for UIs or `run` for CLIs and TUIs)",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
+          "from": "control skill",
+          "to": "driver skill",
+          "count": 4
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
+          "from": "**Control skill.**",
+          "to": "**Driver skill.**",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
+          "from": "`control-ui` from `cursor-team-kit`. CLIs and TUIs use `control-cli` from `cursor-team-kit`.",
+          "to": "the `verify` skill. CLIs and TUIs use the `run` skill. On Codex, substitute per `../references/codex-tools.md`.",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
+          "from": "`control-ui` or `control-cli` from `cursor-team-kit`",
+          "to": "`verify` (UIs) or `run` (CLIs and TUIs)",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "T6",
+      "reason": "The installed plugin is the stable source of the playbooks and skills. This repository has no `pstack/` prefix, and a working repository has no copy of the plugin on its trunk for `git show origin/main:` to read. Relative paths that upstream writes without the prefix stay as upstream writes them.",
+      "pairs": [
+        {
+          "file": "skills/poteto-mode/playbooks/autopilot-full.md",
+          "from": "trunk with `git show origin/main:pstack/skills/poteto-mode/playbooks/autopilot-full.md`",
+          "to": "`skills/poteto-mode/playbooks/autopilot-full.md` under the installed plugin",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/autopilot-stack.md",
+          "from": "trunk with `git show origin/main:pstack/skills/poteto-mode/playbooks/autopilot-stack.md`",
+          "to": "`skills/poteto-mode/playbooks/autopilot-stack.md` under the installed plugin",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
+          "from": "pstack/skills/",
+          "to": "skills/",
+          "count": 10
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
+          "from": "git show origin/main:",
+          "to": "",
+          "count": 5
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
+          "from": "Read these from trunk",
+          "to": "Read these from the installed plugin",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
+          "from": "from trunk and",
+          "to": "from the installed plugin and",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
+          "from": " <plan.md>`",
+          "to": " <plan.md>` under the installed plugin",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
+          "from": "<execution playbook>.md`.",
+          "to": "<execution playbook>.md` under the installed plugin.",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "T9",
+      "reason": "Model defaults are ours (rule 2 of the port). A playbook cites a role row of provider-dispatch.md, rendered from model-matrix.json, never a Cursor model selector. `check-plan.mjs` pins the Verify, live wording in `LANES`.",
+      "pairs": [
+        {
+          "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
+          "from": "on the `swarm workers` model (default `grok-4.7-xhigh-fast`)",
+          "to": "on the configured `swarm workers` role (default: its row in the role table of `../references/provider-dispatch.md`)",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
+          "from": "`<swarm workers model>`",
+          "to": "the configured `swarm workers` role",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "T12",
+      "reason": "The Claude Code subagent tool is `Agent`, not `Task`. A configured role can be provider-qualified (model and effort): on Claude Code it runs through the shipped frontier agent definitions and on other providers through the launcher (the Subagents section of SKILL.md, provider-dispatch.md), so the parent resolves the role instead of passing `poteto-agent` with a model (with T9). Upstream takes the explorers' model from the Subagents section, and ours sends exploration to the fast code family, so the explorers of the plan's step 3 resolve the `how explorer` row, whose lane reads a subsystem and reports with file and line evidence. The Claude Code built-in `Plan` agent would bypass this skill.",
+      "pairs": [
+        {
+          "file": "skills/poteto-mode/playbooks/opening-a-pr.md",
+          "from": "`Task` calls",
+          "to": "`Agent` calls",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
+          "from": " with `subagent_type: \"poteto-agent\"` and an explicit model per the Subagents section (the **guard-the-context-window** principle skill).",
+          "to": " (the **guard-the-context-window** principle skill). Resolve the configured `how explorer` role through `../references/provider-dispatch.md`; use `poteto-agent` only for an `inherit-parent` / `auto` native helper. Never use Claude Code's built-in `Plan` agent, which ignores this skill.",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "T13",
+      "reason": "The tick runs on Claude Code's `loop` skill. Dynamic mode re-arms itself through `ScheduleWakeup` (60 to 3600 s), so the root arms each tick, as upstream's local root does. Read in Claude Code 2.1.285, never run: both `/loop` forms are cron entries of the session (`CronCreate` for a fixed interval, one `ScheduleWakeup` entry per tick in dynamic mode) and end after 7 days (`recurringMaxAgeMs`). Codex has no `loop` skill and codex-tools.md names its cadence. There is no cloud root, so each pair also takes upstream's cloud-root alternative (the cloud-sleeper wake chain) with it. The upstream sentence about leaving the cadence to memory follows the pair unchanged in all three places.",
+      "pairs": [
+        {
+          "file": "skills/poteto-mode/playbooks/autopilot-full.md",
+          "from": "A local root arms each tick as a real terminal `/loop`. The loop uses a monitored-shell 30-minute sleep and emits an output-notification sentinel. A cloud root uses the existing cloud-sleeper wake chain instead.",
+          "to": "Arm the 30-minute audit tick as a real `/loop` in dynamic mode (on Codex, the cadence `../references/codex-tools.md` names).",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/autopilot-stack.md",
+          "from": "A local root arms each tick as a real terminal `/loop`. The loop uses a monitored-shell 30-minute sleep and emits an output-notification sentinel. A cloud root uses the existing cloud-sleeper wake chain instead.",
+          "to": "Arm the 30-minute audit tick as a real `/loop` in dynamic mode (on Codex, the cadence `../references/codex-tools.md` names).",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
+          "from": "Arm the 30-minute audit tick. In a local session, a real terminal `/loop`. In a cloud root, a cloud-sleeper wake chain.",
+          "to": "Arm the 30-minute audit tick as a real `/loop` in dynamic mode (on Codex, the cadence `../references/codex-tools.md` names).",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "T17",
+      "reason": "There is no Cursor agent store. A plan file goes under the `docs/` of the working repository.",
+      "pairs": [
+        {
+          "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
+          "from": "the agent store's `docs/`",
+          "to": "the working repository's `docs/`",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "T20",
+      "reason": "Cursor's built-in babysit skill does not exist here. The port ships a standalone babysit skill whose description matches the same words. The verb stays upstream's.",
+      "pairs": [
+        {
+          "file": "skills/poteto-mode/playbooks/babysit.md",
+          "from": "Cursor's built-in babysit skill",
+          "to": "the standalone **babysit** skill",
+          "count": 1
+        }
+      ]
+    }
+  ]
+}

@@ -10,7 +10,7 @@
 // `~/.claude/settings.json`. Claude Code reads that list from no repository
 // and from no plugin, so the entry has to be the operator's act.
 
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -263,6 +263,9 @@ export async function main(argv: readonly string[], io: Io = {
   }
 }
 
-if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+// Node resolves the main module to its real path and leaves argv[1] as typed.
+// Comparing real paths keeps a `check` through a symlinked directory from
+// exiting 0, which reads as authorized, without checking anything.
+if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
   process.exitCode = await main(process.argv.slice(2));
 }

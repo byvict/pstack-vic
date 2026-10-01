@@ -1,22 +1,36 @@
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { isolatedEnv, isolateProcessEnv } from "../../poteto-mode/scripts/runner/isolated-env.test-helper.ts";
 import { ALLOW_ENTRY, MARKER, backupPathFor, checkAuthorization, main, settingsPathFor } from "./authorize.ts";
 
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "authorize.ts");
 
+let base = "";
 let home = "";
+let processHome = "";
+let restoreProcessEnv: () => void = () => {};
 
+// The script falls back to the HOME of its process when `--home` is lost, and
+// `apply` writes there. So the test process and every child it spawns get a
+// temporary HOME of their own, apart from the `home` every call names: a lost
+// `--home` writes under `processHome`, the assertions on `home` fail, and the
+// operator's ~/.claude/settings.json is never reached.
 beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), "pstack-authorize-"));
+  base = mkdtempSync(join(tmpdir(), "pstack-authorize-"));
+  home = join(base, "home");
+  processHome = join(base, "process-home");
+  mkdirSync(home);
+  restoreProcessEnv = isolateProcessEnv(processHome);
 });
 
 afterEach(() => {
-  rmSync(home, { recursive: true, force: true });
+  restoreProcessEnv();
+  rmSync(base, { recursive: true, force: true });
 });
 
 function put(path: string, text: string): string {
@@ -52,6 +66,14 @@ async function run(argv: readonly string[], answer?: string): Promise<Run> {
   return { code, stdout, stderr, questions };
 }
 
+describe("test isolation", () => {
+  it("keeps the HOME of the test process temporary and apart from the --home of the tests", () => {
+    assert.equal(homedir(), processHome);
+    assert.equal(settingsPathFor("claude"), join(processHome, ".claude", "settings.json"));
+    assert.notEqual(settingsPathFor("claude"), settingsPathFor("claude", home));
+  });
+});
+
 describe("check on a Claude Code parent", () => {
   it("refuses without a settings file and says what the operator runs", async () => {
     const result = await run(["check", "--parent", "claude"]);
@@ -83,6 +105,17 @@ describe("check on a Claude Code parent", () => {
     assert.equal(result.code, 1);
     assert.match(result.stderr, /is not valid JSON/);
   });
+
+  it("refuses the same when the script path goes through a symlinked directory", () => {
+    const link = join(base, "scripts-link");
+    symlinkSync(dirname(SCRIPT), link);
+    const result = spawnSync(process.execPath, [join(link, "authorize.ts"), "check", "--parent", "claude", "--home", home], {
+      encoding: "utf8",
+      env: isolatedEnv(processHome),
+    });
+    assert.equal(result.status, 1, result.stderr);
+    assert.equal(JSON.parse(result.stdout).authorized, false);
+  });
 });
 
 describe("apply on a Claude Code parent", () => {
@@ -90,6 +123,7 @@ describe("apply on a Claude Code parent", () => {
     const result = spawnSync(process.execPath, [SCRIPT, "apply", "--parent", "claude", "--home", home], {
       encoding: "utf8",
       input: "yes\n",
+      env: isolatedEnv(processHome),
     });
     assert.equal(result.status, 1);
     assert.match(result.stderr, /needs a terminal/);
