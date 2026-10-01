@@ -1,6 +1,0 @@
-#!/usr/bin/env node
-const { main } = await import('./certify.ts');
-const args = process.argv.slice(2);
-const result = await main(args);
-process.exitCode = result;
-export {};

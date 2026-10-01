@@ -1,4 +1,0 @@
-#!/usr/bin/env node
-const { main } = await import('./linear-pr-body.ts');
-process.exitCode = await main(process.argv.slice(2));
-export {};
