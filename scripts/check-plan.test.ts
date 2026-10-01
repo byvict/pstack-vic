@@ -16,8 +16,7 @@ import { PLUGIN_ROOT } from "./model-matrix.ts";
 // tick, the status message, and the Verify, live line on the `swarm workers`
 // role. The template lives in a playbook that scripts/upstream-parity.ts
 // regenerates from the substitution table, so a pair that changes one of
-// those wordings must change the checker in the same commit. These tests fail
-// when the two disagree.
+// those wordings must change the checker in the same commit.
 const CHECK_PLAN = join(PLUGIN_ROOT, "skills", "poteto-mode", "scripts", "check-plan.mjs");
 const PLAYBOOK = join(PLUGIN_ROOT, "skills", "poteto-mode", "playbooks", "multi-phase-plan.md");
 

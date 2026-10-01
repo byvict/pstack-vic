@@ -40,7 +40,6 @@ let scratch = "";
 let gitBin = "";
 let restoreProcessEnv: () => void = () => {};
 
-/** The git the developer's PATH resolves. A lookup only: nothing is launched. */
 function findGit(): string {
   for (const dir of (process.env.PATH ?? "").split(delimiter)) {
     if (dir === "") continue;
@@ -57,9 +56,7 @@ function findGit(): string {
 }
 
 // The tool reads the pin with git and the fixtures are git repositories, so
-// git is the one program these tests run. The PATH of the test process holds
-// a link to it and a link to node, and HOME is a temporary directory: no
-// claude, codex, grok or gh is in reach, whatever the tool or a test spawns.
+// git is the one program these tests run.
 before(() => {
   const realGit = findGit();
   scratch = mkdtempSync(join(tmpdir(), "pstack-parity-"));

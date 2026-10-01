@@ -339,7 +339,7 @@ export function buildReport(repo: string = PLUGIN_ROOT): ParityReport {
 }
 
 export function problemsOf(report: ParityReport): string[] {
-  return report.files.flatMap((f) => [...f.problems]);
+  return report.files.flatMap((f) => f.problems);
 }
 
 export function residueOf(report: ParityReport): string[] {
@@ -392,7 +392,7 @@ export function main(argv: readonly string[]): number {
     report = buildReport(repo);
   } catch (err) {
     if (err instanceof ParityError || err instanceof DigestError) {
-      console.error((err as Error).message);
+      console.error(err.message);
       return 2;
     }
     throw err;
