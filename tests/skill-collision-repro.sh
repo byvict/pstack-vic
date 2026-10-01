@@ -207,7 +207,7 @@ fi
 # O playbook e a skill standalone têm de apontar um para o outro, senão um pedido
 # de status de PR dentro do poteto-mode pode cair na skill e vice-versa.
 supersede_bad=""
-grep -Fq 'supersedes the standalone **babysit** skill' "$playbook" || supersede_bad="${supersede_bad}playbook does not claim precedence over the standalone skill"$'\n'
+grep -Fq 'replaces the standalone **babysit** skill' "$playbook" || supersede_bad="${supersede_bad}playbook does not claim precedence over the standalone skill"$'\n'
 grep -Fq 'not the standalone **babysit** skill' "$repo/skills/poteto-mode/SKILL.md" || supersede_bad="${supersede_bad}poteto-mode trigger does not exclude the standalone skill"$'\n'
 grep -Fq 'playbooks/babysit.md' "$skill" || supersede_bad="${supersede_bad}standalone skill does not defer to the playbook inside poteto-mode"$'\n'
 if [ -n "$supersede_bad" ]; then
@@ -215,7 +215,7 @@ if [ -n "$supersede_bad" ]; then
   note "$supersede_bad"
   fail=1
 else
-  note "ok: babysit playbook supersedes the standalone skill and both say so"
+  note "ok: babysit playbook replaces the standalone skill and both say so"
 fi
 
 forge_neutral_files=(
