@@ -1416,3 +1416,14 @@ Na execução, as regras do port resolveram o resto:
 - `npm run test:bun`: 52 testes, 0 falhas, typecheck limpo. `npm run matrix:check`, `npm run agents:check`, `npm run collision:check` e `git diff --check` limpos. O `collision:check` confere a versão 0.5.1 nos manifestos, na tag do marketplace e no `package.json`, e acha a frase "replaces the standalone **babysit** skill" no `babysit.md` gerado.
 - `scripts/upstream-digest.test.ts` segue verde. A célula Commit do `UPSTREAM.md` tem os dois hashes completos, de 40 caracteres, e os dois existem no clone.
 - A varredura de resíduo da tarefa 1.10 do plano acha 45 linhas em 19 arquivos nesta versão. Na 0.5.0 eram 38 linhas em 17 arquivos. As 7 linhas novas casam com o termo "Cursor cloud" e nenhuma é converge: 3 são textos `from` da linha T2 em `upstream-substitutions.json`, isto é, o texto da Cursor que a troca tira, e 4 são fixtures de `scripts/upstream-parity.test.ts`. O resto é a lista da 0.5.0.
+
+# Sem versão — Consertos de texto depois da 0.5.1 (2026-10-01)
+
+Estas mudanças entram no PR da etapa 5 do plano, que não sobe a versão: ela continua 0.5.1. A próxima versão as leva. Quase todas vêm dos achados menores do verificador independente do PR #67.
+
+- `skills/poteto-mode/references/upstream-substitutions.json`: os motivos das linhas T2 e T13 dizem a escolha do port (Donos e lanes rodam como subagentes locais, cada um no seu worktree, e a Raiz é uma sessão local), em vez de dizer que o Claude Code não tem ambiente remoto nem Raiz na nuvem; nenhuma troca muda e o `--write` não reescreve nada.
+- `scripts/upstream-digest.ts`: o rodapé "Como aplicar" do digest semanal diz que os seis playbooks do autopilot não entram por merge do split, e sim pelo `node scripts/upstream-parity.ts --write` quando o ponto de sync avança.
+- `skills/poteto-mode/SKILL.md` e `docs/reference.md`: o motivo de uma lane externa não ter `run` nem `verify` passa a ser o que o runner faz (o Claude com as skills desligadas e uma lista `--tools`, o grok com uma lista `--tools`) e o fato de o Codex não trazer essas duas skills.
+- Neste arquivo: as "Decisões" da 0.5.1 voltam aos três pontos do plano (a lane travada, o verbo do Babysit e o push do Orchestrate fora da autorização v2), e a forma única do Tick fica numa linha própria, como linha T13 da tabela do plano.
+- `docs/reference.md`: os blocos de comando de *A partir do clone*, *Versões das CLIs* e *Verificação* perdem os comentários com `#`, que vão para o texto em volta, porque o zsh interativo do operador não trata `#` como comentário; o texto do clone deixa de citar um hook, que o plugin não tem desde a 0.1.5.
+- `skills/poteto-mode/playbooks/orchestrate.md`: a linha de worker e verificador diz a escolha do port (subagentes locais, isolados por worktree ou branch) e que o `isolation: "remote"` do Claude Code depende de login no claude.ai e de um recurso ligado e, sem eles, cai num worktree.
