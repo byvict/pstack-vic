@@ -10,7 +10,8 @@ permissions:
 
 # PR runs share a group per PR, so a new push cancels the superseded run.
 # Every push to main gets its own group, so each main commit keeps its own
-# run: a later push neither cancels nor replaces it.
+# run: a later push neither cancels nor replaces it, and the run of a release
+# commit lives to tag it.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -81,3 +82,27 @@ jobs:
           else
             echo "::notice::No previous commit for this push; skipping git diff --check"
           fi
+
+  # The release tag. Once the tests pass on a push to main, the commit gets
+  # the tag v<version of package.json>, unless origin already has that tag.
+  # Both marketplaces install from the tag; scripts/release.ts then moves the
+  # two parents to it.
+  tag:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      # This checkout keeps its credentials: the push below needs the token.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - name: Tag the version
+        run: |
+          V=$(node -p "require('./package.json').version")
+          git ls-remote --exit-code --tags origin "refs/tags/v$V" && exit 0
+          git tag "v$V" "$GITHUB_SHA"
+          git push origin "refs/tags/v$V"
