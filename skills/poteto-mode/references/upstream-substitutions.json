@@ -202,7 +202,7 @@
     },
     {
       "id": "T12",
-      "reason": "The Claude Code subagent tool is `Agent`, not `Task`. A configured role can be provider-qualified (model and effort): on Claude Code it runs through the shipped frontier agent definitions and on other providers through the launcher (the Subagents section of SKILL.md, provider-dispatch.md), so the parent resolves the role instead of passing `poteto-agent` with a model (with T9). The Claude Code built-in `Plan` agent would bypass this skill.",
+      "reason": "The Claude Code subagent tool is `Agent`, not `Task`. A configured role can be provider-qualified (model and effort): on Claude Code it runs through the shipped frontier agent definitions and on other providers through the launcher (the Subagents section of SKILL.md, provider-dispatch.md), so the parent resolves the role instead of passing `poteto-agent` with a model (with T9). Upstream takes the explorers' model from the Subagents section, and ours sends exploration to the fast code family, so the explorers of the plan's step 3 resolve the `how explorer` row, whose lane reads a subsystem and reports with file and line evidence. The Claude Code built-in `Plan` agent would bypass this skill.",
       "pairs": [
         {
           "file": "skills/poteto-mode/playbooks/opening-a-pr.md",
@@ -213,7 +213,7 @@
         {
           "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
           "from": " with `subagent_type: \"poteto-agent\"` and an explicit model per the Subagents section (the **guard-the-context-window** principle skill).",
-          "to": " (the **guard-the-context-window** principle skill). Resolve the configured `judgment and prose` role through `../references/provider-dispatch.md`; use `poteto-agent` only for an `inherit-parent` / `auto` native helper. Never use Claude Code's built-in `Plan` agent, which ignores this skill.",
+          "to": " (the **guard-the-context-window** principle skill). Resolve the configured `how explorer` role through `../references/provider-dispatch.md`; use `poteto-agent` only for an `inherit-parent` / `auto` native helper. Never use Claude Code's built-in `Plan` agent, which ignores this skill.",
           "count": 1
         }
       ]
@@ -250,18 +250,6 @@
           "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
           "from": "the agent store's `docs/`",
           "to": "the working repository's `docs/`",
-          "count": 1
-        }
-      ]
-    },
-    {
-      "id": "T18",
-      "reason": "Claude Code reads `CLAUDE.md` as its instruction file. Codex reads `AGENTS.md`.",
-      "pairs": [
-        {
-          "file": "skills/poteto-mode/playbooks/autopilot-full.md",
-          "from": "the repo's AGENTS.md files and rules",
-          "to": "the repository's instruction files (`CLAUDE.md` on Claude Code, `AGENTS.md` on Codex) and rules",
           "count": 1
         }
       ]
