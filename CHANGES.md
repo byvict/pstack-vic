@@ -1271,3 +1271,17 @@ Victor fechou todas em 2026-09-30. D6, D8, D9, D13 e D14 foram decididas pelo pl
 | D15 | As linhas `swarm workers` ficam como estão (Opus no Claude Code, Sol no Codex). O grok entra como braço de corrida nomeado nas lanes de auditoria do diff. |
 
 O plano também decidiu três pontos que só entram na 0.5.1: a regra de lane travada volta a ser a do upstream (tempo esperado em `children.tsv`), o verbo da frase do Babysit volta ao do upstream ("replaces") e o push direto na trunk do Orchestrate não entra na autorização v2.
+
+## Verificação
+
+- `npm test`: 261 testes, 0 falhas. A 0.4.19 tinha 1118. Saem os 769 da árvore do converge e mais 99 fora dela: 60 do runner (os 41 de `http-lane.test.ts`, 11 de `run.test.ts`, 4 de `cli.test.ts`, 3 de `commands.test.ts` e 1 de `parse-output.test.ts`), 16 de `setup-pstack.test.ts`, 10 de `after-merge.test.ts`, 8 do `update-clis` (os 7 da sonda do Linear e 1 de `update-clis.test.ts`) e 5 de `model-matrix.test.ts`. Entram os 11 de `release.test.ts`. A conta foi medida arquivo por arquivo nos dois lados: os 17 arquivos de teste da 0.4.19 fora do converge somam 349, que é 1118 menos 769, e os 15 arquivos desta versão somam 261.
+- `npm run test:bun`: 52 testes, 0 falhas, typecheck limpo. `npm run matrix:check`, `npm run agents:check`, `npm run collision:check` e `git diff --check` limpos.
+- Varredura de resíduo (tarefa 1.10 do plano), fora deste arquivo, de `docs/arquivo/`, de `docs/adr/` e do próprio plano. O que ela ainda acha não é converge:
+  - o verbo inglês "converge" e a palavra "convergence" na prosa do `poteto-mode`, das skills `principle-*`, da `arena`, da `reflect` e da `why`;
+  - "The PR owner" em `references/bugbot-triage.md`, texto da Cursor;
+  - "client certificates" no changelog do Claude que serve de fixture ao `update-clis`;
+  - o prefixo `pstack-authorize-` do diretório temporário de `authorize.test.ts` e o nome do backup `settings.json.before-pstack-authorization` (em `authorize.ts`, no passo 10 do `/setup-pstack` e em `docs/reference.md`), que casam com `Pstack-Author` porque a busca ignora maiúsculas;
+  - "per-PR verifier" no texto da autorização v2, que casa com `pr verifier`;
+  - a lista `RETIRED_CONVERGE_ROLES` de `setup-pstack.ts`, com os nomes dos seis papéis aposentados, e o teste dela, que ficam para o `/setup-pstack` continuar lendo um sheet antigo.
+- Nenhum arquivo rastreado fora desses lugares cita um caminho apagado ou movido.
+- `babysit.md`, `shipping.md` e `opening-a-pr.md` diferem do texto da Cursor em `12d587d` só nas trocas de harness e nos trechos de autopilot que a 0.5.1 aplica. Duas dessas trocas o plano devolve ao texto da Cursor na 0.5.1: o verbo da frase do Babysit ("supersedes" hoje) e o caminho do `watch-pr` no Babysit e no Shipping. O `SKILL.md` do `poteto-mode` difere também na seção *Platform Adaptation* e nos dois parágrafos de delegação.
