@@ -160,7 +160,7 @@
     },
     {
       "id": "T5",
-      "reason": "`control-cli` and `control-ui` are `cursor-team-kit` skills. The Claude Code built-ins are `run` (CLIs and TUIs) and `verify` (UIs), and the port calls them the driver skill. Codex substitutes per codex-tools.md. The upstream clause \"or a named driver where none exists\" stays.",
+      "reason": "`control-cli` and `control-ui` are `cursor-team-kit` skills. The Claude Code built-ins are `run` (CLIs and TUIs) and `verify` (UIs), and the port calls them the driver skill. Read in Claude Code 2.1.285, never run: `run` has no gate and its own description also covers Electron and browser-driven apps; `verify` is always a command the operator can type, but the model may invoke it only when the rollout flag `tengu_opal_circuit` is on (default off), so a session's skill list may not show it. The Platform Adaptation section of SKILL.md says what a UI lane uses then, and what the `<driver skill path>` box of a plan names for a built-in, which has no file. Codex substitutes per codex-tools.md. The upstream clause \"or a named driver where none exists\" stays.",
       "pairs": [
         {
           "file": "skills/poteto-mode/playbooks/autopilot-full.md",
@@ -291,19 +291,19 @@
         {
           "file": "skills/poteto-mode/playbooks/autopilot-full.md",
           "from": "A local root arms each tick as a real terminal `/loop`. The loop uses a monitored-shell 30-minute sleep and emits an output-notification sentinel.",
-          "to": "Arm the 30-minute audit tick as a real `/loop` in dynamic mode (on Codex, the cadence `codex-tools.md` names).",
+          "to": "Arm the 30-minute audit tick as a real `/loop` in dynamic mode (on Codex, the cadence `../references/codex-tools.md` names).",
           "count": 1
         },
         {
           "file": "skills/poteto-mode/playbooks/autopilot-stack.md",
           "from": "A local root arms each tick as a real terminal `/loop`. The loop uses a monitored-shell 30-minute sleep and emits an output-notification sentinel.",
-          "to": "Arm the 30-minute audit tick as a real `/loop` in dynamic mode (on Codex, the cadence `codex-tools.md` names).",
+          "to": "Arm the 30-minute audit tick as a real `/loop` in dynamic mode (on Codex, the cadence `../references/codex-tools.md` names).",
           "count": 1
         },
         {
           "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
           "from": "Arm the 30-minute audit tick. In a local session, a real terminal `/loop`. In a cloud root, a cloud-sleeper wake chain.",
-          "to": "Arm the 30-minute audit tick as a real `/loop` in dynamic mode (on Codex, the cadence `codex-tools.md` names).",
+          "to": "Arm the 30-minute audit tick as a real `/loop` in dynamic mode (on Codex, the cadence `../references/codex-tools.md` names).",
           "count": 1
         }
       ]

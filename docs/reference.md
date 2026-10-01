@@ -123,7 +123,7 @@ Nada é declarado em manifest. O que as skills usam:
 - **`lsof`** — só para `update-clis`, que o usa para saber se alguém está rodando a CLI que ela trocaria.
 - **`bun`** — só para `watch-pr` e `orch`, que vieram da Cursor sem mudança, e para os testes deles e o typecheck do `watch-pr` (`npm run test:bun`).
 - **`jq` e `rg`** — só para `worktree-audit.sh` (playbook Worktree cleanup); sem eles o audit avisa e deixa colunas em branco.
-- **`run`, `verify`, `loop`** — built-ins do Claude Code; **`skill-creator`** — skill oficial da Anthropic para autoria de SKILL.md. Os quatro têm substituto em `codex-tools.md`.
+- **`run`, `verify`, `loop`** — built-ins do Claude Code; **`skill-creator`** — skill oficial da Anthropic para autoria de SKILL.md. Os quatro têm substituto em `codex-tools.md`. O `verify` nem sempre fica ao alcance do agente, e a seção [Autopilot](#autopilot) diz o que a lane de tela usa nesse caso.
 
 ## Versões das CLIs
 
@@ -203,6 +203,8 @@ A Raiz é dona dos Vereditos, nunca dos PRs. Ela verifica cada Rodada. Uma Rodad
 - Rodam o mesmo cenário na trunk, para comparar. É a lane de regressão.
 
 Uma lane externa não tem `run` nem `verify`. Lane externa é a que roda no runner, numa CLI que não é a do pai: o grok nos dois pais, o Codex no Claude Code e o Claude no Codex. O runner abre essa CLI com as skills desligadas e uma lista curta de ferramentas, e o grok ainda corta cada comando em 300 segundos. Por isso as lanes de gates, ao vivo e de regressão pedem, na sua folha de modelos, uma linha `swarm workers` nativa do pai. O padrão do plugin para essa linha é o grok. As suas folhas a trocam por um modelo nativo, Opus no Claude Code e Sol no Codex. O grok entra como braço de corrida nomeado nas lanes que auditam o diff.
+
+Mesmo numa lane nativa do Claude Code, o `verify` pode faltar. Você sempre pode digitar `/verify`. O agente só consegue chamá-lo quando ele aparece na lista de skills da sessão, e na versão 2.1.285 isso depende de um recurso que a Anthropic ainda libera aos poucos. Neste Mac ele não aparece: em 2026-10-01 a lista de skills de uma sessão trazia o `run` e não trazia o `verify`. Sem o `verify`, a lane de tela usa o `run`, que também opera apps Electron e apps de navegador, ou o driver que o repositório nomeia. Os seus dois repositórios não dependem do `verify`: o pstack-vic não tem tela e o Clinext tem o driver próprio, `verify-clinext`. O `run` e o `verify` são embutidos no Claude Code e não têm arquivo. Por isso, num plano, a caixa `<driver skill path>` leva o nome da skill, e a Raiz a lê carregando a skill. Um driver do repositório ela lê pelo caminho dele.
 
 A Raiz junta os resultados num Veredito. Sem a lane ao vivo, o Veredito não é limpo. Sem Veredito limpo, não há merge. Os achados provados voltam ao Dono num só pedido de conserto. Para cada achado de comportamento, a Raiz pede um teste vermelho, isto é, um teste que falha enquanto o defeito existe. Onde nenhum teste mostra o defeito, ela pede um recibo de reprodução. O head novo ganha Enxame e Veredito novos. A exceção são os resultados que continuam válidos pela regra do patch-id do playbook [Shipping](../skills/poteto-mode/playbooks/shipping.md).
 

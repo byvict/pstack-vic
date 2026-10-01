@@ -317,21 +317,29 @@ const TABLE: SubstitutionTable = {
   ],
 };
 
+const SECOND_FILE = "skills/poteto-mode/playbooks/b.md";
+const SECOND_UPSTREAM_PATH = "pstack/skills/poteto-mode/playbooks/b.md";
+
 /**
  * A checkout with one guarded file: a commit that holds the upstream text
  * under `pstack/`, and a working tree with UPSTREAM.md, the table and the
- * local file. `pin` is the sync point UPSTREAM.md names.
+ * local file. `pin` is the sync point UPSTREAM.md names. `second` adds a
+ * second upstream file to that commit and its local file to the working tree.
  */
-function fixture(options: { table?: SubstitutionTable; local?: string; pin?: string } = {}): string {
+function fixture(
+  options: { table?: SubstitutionTable; local?: string; pin?: string; second?: { upstream: string; local: string } } = {},
+): string {
   const repo = mkdtempSync(join(scratch, "repo-"));
   sh(repo, "init", "-q");
   put(repo, UPSTREAM_PATH, UPSTREAM_TEXT);
+  if (options.second) put(repo, SECOND_UPSTREAM_PATH, options.second.upstream);
   sh(repo, "add", ".");
   sh(repo, "commit", "-q", "-m", "upstream");
   const pin = options.pin ?? sh(repo, "rev-parse", "HEAD");
   put(repo, "UPSTREAM.md", `| | \`cursor\` | \`open\` |\n| --- | --- | --- |\n| Commit | \`${pin}\` | \`${"1".repeat(40)}\` |\n`);
   put(repo, TABLE_PATH, JSON.stringify(options.table ?? TABLE));
   put(repo, FILE, options.local ?? GENERATED_TEXT);
+  if (options.second) put(repo, SECOND_FILE, options.second.local);
   return repo;
 }
 
@@ -386,6 +394,35 @@ describe("upstream-parity: check and --write on a fixture checkout", () => {
     const report = buildReport(repo);
     assert.equal(problemsOf(report).length, 1);
     assert.deepEqual(writeGenerated(repo, report), []);
+  });
+
+  it("a dead pair on one file keeps --write from writing any other file", () => {
+    const table: SubstitutionTable = {
+      files: [...TABLE.files, { upstream: SECOND_UPSTREAM_PATH, local: SECOND_FILE }],
+      rows: [
+        ...TABLE.rows,
+        { id: "T3", reason: "Bugbot is Cursor's.", pairs: [{ file: FILE, from: "Bugbot", to: "review-bot", count: 1 }] },
+        { id: "T4", reason: "The plugin ships its own deslop.", pairs: [{ file: SECOND_FILE, from: " from `cursor-team-kit`", to: "", count: 1 }] },
+      ],
+    };
+    const stale = "### B\n\nA file rewritten by hand.\n";
+    const repo = fixture({
+      table,
+      second: { upstream: "### B\n\nRun `/deslop` from `cursor-team-kit` over the diff.\n", local: stale },
+    });
+
+    const result = run(repo, "--write");
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /^upstream-parity: nothing written, fix the table first$/m);
+    assert.doesNotMatch(result.stdout, /^wrote /m);
+    assert.equal(readFileSync(join(repo, SECOND_FILE), "utf8"), stale);
+
+    const report = buildReport(repo);
+    const second = report.files.find((f) => f.file.local === SECOND_FILE);
+    assert.equal(second?.generated, "### B\n\nRun `/deslop` over the diff.\n", "the second file has no problem of its own");
+    assert.notEqual(second?.residue, null, "and its local text is stale");
+    assert.deepEqual(writeGenerated(repo, report), []);
+    assert.equal(readFileSync(join(repo, SECOND_FILE), "utf8"), stale);
   });
 
   it("a local file that is missing is all residue", () => {
