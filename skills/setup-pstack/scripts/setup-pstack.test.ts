@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { loadMatrix, renderRoleSheet } from "../../../scripts/model-matrix.ts";
-import { isolatedEnv } from "../../poteto-mode/scripts/runner/isolated-env.test-helper.ts";
+import { clisOutsideFakes, isolatedEnv, isolateProcessEnv } from "../../poteto-mode/scripts/runner/isolated-env.test-helper.ts";
 import {
   SetupError,
   buildPlan,
@@ -19,12 +19,19 @@ import {
 const matrix = loadMatrix();
 
 let home = "";
+let restoreProcessEnv: () => void = () => {};
 
+// The test process itself holds no CLI, fake or real, and its HOME is the
+// temporary one: a probe whose `env` gets lost on the way to the launcher
+// inherits this and finds nothing, and a path that falls back to the home
+// directory lands in the temporary one.
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "pstack-setup-"));
+  restoreProcessEnv = isolateProcessEnv(home);
 });
 
 afterEach(() => {
+  restoreProcessEnv();
   rmSync(home, { recursive: true, force: true });
 });
 
@@ -579,6 +586,16 @@ function fakeEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
 function noCliEnv(): NodeJS.ProcessEnv {
   return isolatedEnv(home);
 }
+
+describe("test isolation", () => {
+  it("keeps every provider CLI and gh off the PATH of the test process, and off the PATH of a probe outside the fakes", () => {
+    assert.deepEqual(clisOutsideFakes(process.env.PATH), [], "a CLI is on the PATH of the test process");
+    assert.equal(process.env.PATH, join(home, ".node-bin"));
+    assert.equal(process.env.HOME, home);
+    assert.deepEqual(clisOutsideFakes(fakeEnv().PATH, [bin]), [], "a real CLI is on the PATH of the probes");
+    assert.deepEqual(clisOutsideFakes(noCliEnv().PATH), [], "a CLI is on the PATH of a command that must launch nothing");
+  });
+});
 
 /** Plan, run the external probes with the fake CLIs, and attest every native pair. */
 async function planAndProbe(parent: string, input: { efforts?: Record<string, string>; roles?: Record<string, string[]> } = {}) {

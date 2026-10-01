@@ -21,7 +21,7 @@ import { basename, dirname, join, relative } from "node:path";
 import { loadMatrix, PLUGIN_ROOT } from "../../../scripts/model-matrix.ts";
 import { invocationCommand, preflightCommand } from "../../poteto-mode/scripts/runner/commands.ts";
 import { ACCESS_MODES } from "../../poteto-mode/scripts/runner/types.ts";
-import { isolatedEnv } from "../../poteto-mode/scripts/runner/isolated-env.test-helper.ts";
+import { clisOutsideFakes, isolatedEnv, isolateProcessEnv } from "../../poteto-mode/scripts/runner/isolated-env.test-helper.ts";
 import {
   codexStableVersions,
   fetchNotes,
@@ -37,12 +37,22 @@ const FIXTURES = join(import.meta.dirname, "fixtures");
 const fixture = (name: string): string => readFileSync(join(FIXTURES, name), "utf8");
 
 let root = "";
+let restoreProcessEnv: () => void = () => {};
 
+// The test process itself holds no CLI, fake or real, and its HOME is a
+// temporary one: a gh call or a probe whose `env` gets lost inherits this and
+// finds nothing. No system directory is on this PATH either, because on
+// Linux gh installs into /usr/bin; a test that needs a system tool in process
+// names the PATH it looks the tool up on.
 before(() => {
   root = mkdtempSync(join(tmpdir(), "pstack-update-clis-"));
+  restoreProcessEnv = isolateProcessEnv(join(root, "home"));
 });
 
-after(() => rmSync(root, { recursive: true, force: true }));
+after(() => {
+  restoreProcessEnv();
+  rmSync(root, { recursive: true, force: true });
+});
 
 /** For what runs outside a fake machine: `fakeBins` and this node on PATH, under a temporary HOME, and nothing of the operator's. */
 function isolated(fakeBins: readonly string[] = [], extra: Record<string, string> = {}): NodeJS.ProcessEnv {
@@ -76,6 +86,16 @@ async function serve(routes: Record<string, string>): Promise<{ url: string; ser
   if (address === null || typeof address === "string") throw new Error("no port");
   return { url: `http://127.0.0.1:${address.port}`, server, hits };
 }
+
+describe("test isolation", () => {
+  it("keeps every provider CLI and gh off the PATH of the test process, and off the isolated PATH outside the fakes", () => {
+    assert.deepEqual(clisOutsideFakes(process.env.PATH), [], "a CLI is on the PATH of the test process");
+    assert.equal(process.env.PATH, join(root, "home", ".node-bin"));
+    assert.equal(process.env.HOME, join(root, "home"));
+    const fakes = join(root, "isolation-fakes");
+    assert.deepEqual(clisOutsideFakes(isolated([fakes]).PATH, [fakes]), [], "a real CLI is on the isolated PATH");
+  });
+});
 
 describe("notes parsers", () => {
   it("reads one version per CHANGELOG section with its bullet entries", () => {
@@ -582,8 +602,9 @@ describe("check", () => {
   });
 
   it("reports a running process of the resolved install as in use, and nothing once it exits", async (t) => {
-    if (spawnSync("lsof", ["-v"], { stdio: "ignore" }).error) return t.skip("lsof not on PATH");
     const machine = fakeMachine();
+    // Looked up on the PATH of the fake machine, where the script finds it; the PATH of this process holds only node.
+    if (spawnSync("lsof", ["-v"], { stdio: "ignore", env: machine.env }).error) return t.skip("lsof not on PATH");
     const helper = join(machine.node19, "lib", "node_modules", "@openai", "codex", "vendor", "codex-helper");
     mkdirSync(dirname(helper), { recursive: true });
     copyFileSync(process.execPath, helper, fsConstants.COPYFILE_FICLONE);

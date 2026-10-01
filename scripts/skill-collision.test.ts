@@ -14,6 +14,15 @@ type Cleanup = { after(fn: () => void): void };
 // and HOME stay out, so the behavioral leg reaches only a fake that a test
 // puts in front; if the opt-in guard regressed, `claude` would not be found.
 const SYSTEM_PATH = "/usr/bin:/bin";
+// Checked before any test runs, by a lookup that launches nothing: with a
+// claude in one of these directories the behavioral leg could reach it.
+for (const dir of SYSTEM_PATH.split(":")) {
+  assert.equal(
+    existsSync(join(dir, "claude")),
+    false,
+    `${join(dir, "claude")} exists: these tests run the collision script under PATH=${SYSTEM_PATH} on the premise that it holds no claude`
+  );
+}
 const home = mkdtempSync(join(tmpdir(), "pstack-collision-home-"));
 after(() => rmSync(home, { recursive: true, force: true }));
 

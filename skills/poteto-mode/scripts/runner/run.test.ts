@@ -17,12 +17,11 @@ import { childEnvironment, evidence, findExecutable, runLane } from "./run.ts";
 import { main } from "./cli.ts";
 import { cliFor, PROVIDERS, type Provider, type RunnerOptions, type RunnerReceipt } from "./types.ts";
 import { matchObject } from "./match-object.test-helper.ts";
-import { isolatedEnv } from "./isolated-env.test-helper.ts";
+import { clisOutsideFakes, isolateProcessEnv } from "./isolated-env.test-helper.ts";
 
 let scratch = "";
 let bin = "";
-let previousPath: string | undefined;
-let previousHome: string | undefined;
+let restoreProcessEnv: () => void = () => {};
 
 const fake = `#!/usr/bin/env node
 import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
@@ -352,11 +351,6 @@ function clearFakeEnv(): void {
   for (const key of FAKE_ENV) delete process.env[key];
 }
 
-function restoreEnv(key: string, value: string | undefined): void {
-  if (value === undefined) delete process.env[key];
-  else process.env[key] = value;
-}
-
 // runLane reads process.env, and the launcher child inherits it, so the
 // isolation goes on process.env itself: every lane of this file, in process or
 // under the launcher, sees only the fakes and this node under a temporary HOME.
@@ -367,17 +361,12 @@ beforeEach(() => {
   writeFileSync(join(bin, "package.json"), '{"type":"module"}\n');
   writeFileSync(join(scratch, "prompt.md"), "Return the marker.");
   for (const provider of PROVIDERS) makeExecutable(provider);
-  const isolated = isolatedEnv(join(scratch, "home"), [bin]);
-  previousPath = process.env.PATH;
-  previousHome = process.env.HOME;
-  process.env.PATH = isolated.PATH;
-  process.env.HOME = isolated.HOME;
+  restoreProcessEnv = isolateProcessEnv(join(scratch, "home"), [bin]);
   clearFakeEnv();
 });
 
 afterEach(() => {
-  restoreEnv("PATH", previousPath);
-  restoreEnv("HOME", previousHome);
+  restoreProcessEnv();
   clearFakeEnv();
   rmSync(scratch, { recursive: true, force: true });
 });
@@ -1021,6 +1010,7 @@ describe("childEnvironment", () => {
 
 describe("test isolation", () => {
   it("leaves no provider CLI on the PATH of the lanes once its fake is gone", () => {
+    assert.deepEqual(clisOutsideFakes(process.env.PATH, [bin]), [], "a real CLI is on the PATH of the test process");
     for (const provider of PROVIDERS) {
       const cli = cliOf(provider);
       assert.equal(findExecutable(cli, process.env.PATH, scratch), join(bin, cli));

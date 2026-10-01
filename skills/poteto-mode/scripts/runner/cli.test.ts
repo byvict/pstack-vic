@@ -1,8 +1,34 @@
-import { describe, it } from "node:test";
+import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { main, parseArgs } from "./cli.ts";
 import { UsageError } from "./types.ts";
+import { clisOutsideFakes, isolateProcessEnv } from "./isolated-env.test-helper.ts";
+
+let home = "";
+let restoreProcessEnv: () => void = () => {};
+
+// main() runs in this process. Every case here stops in the argument parser;
+// if one ever gets past it, the process holds no CLI and a temporary HOME.
+before(() => {
+  home = mkdtempSync(join(tmpdir(), "pstack-runner-cli-"));
+  restoreProcessEnv = isolateProcessEnv(home);
+});
+
+after(() => {
+  restoreProcessEnv();
+  rmSync(home, { recursive: true, force: true });
+});
+
+describe("test isolation", () => {
+  it("keeps every provider CLI and gh off the PATH of the test process", () => {
+    assert.deepEqual(clisOutsideFakes(process.env.PATH), [], "a CLI is on the PATH of the test process");
+    assert.equal(process.env.PATH, join(home, ".node-bin"));
+    assert.equal(process.env.HOME, home);
+  });
+});
 
 function argv(extra: readonly string[] = []): string[] {
   return [
