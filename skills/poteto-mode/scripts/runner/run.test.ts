@@ -43,9 +43,7 @@ after(() => {
   rmSync(bareRepo, { recursive: true, force: true });
 });
 
-const CLI_PROVIDERS: readonly string[] = Object.entries(MATRIX.providers)
-  .filter(([, spec]) => spec.transport === "cli")
-  .map(([name]) => name);
+const CLI_PROVIDERS: readonly string[] = Object.keys(MATRIX.providers);
 
 const fake = `#!/usr/bin/env node
 import { appendFileSync, existsSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
