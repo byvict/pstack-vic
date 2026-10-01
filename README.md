@@ -22,7 +22,7 @@ Este port mantém a prosa da Cursor onde ela não depende da Cursor e substitui 
    codex plugin add pstack@pstack-vic
    ```
 
-2. Rode `/setup-pstack` uma vez em cada pai para escolher os modelos por papel. No fim, ele confere a autorização permanente do Pré-PR e, no Claude Code, entrega o comando que você roda uma vez para concedê-la.
+2. Rode `/setup-pstack` uma vez em cada pai para escolher os modelos por papel. No fim, ele confere a autorização permanente, exigida para o autopilot e o playbook Shipping mergearem sem aprovação humana, e, no Claude Code, entrega o comando que você roda uma vez para concedê-la.
 3. Use `/poteto-mode` sempre que a tarefa pedir rigor. O modo só entra por esse comando; o agente não o liga sozinho.
 
 ```text

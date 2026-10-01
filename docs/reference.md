@@ -56,7 +56,7 @@ codex plugin marketplace add ~/Dev/Skills/pstack-vic
 codex plugin add pstack@pstack-vic
 ```
 
-Rode `/setup-pstack` uma vez em cada pai para escrever o sheet de modelos (`~/.claude/pstack-models.md` e `~/.codex/pstack-models.md`). O último passo dele confere a [autorização permanente](#autorização-permanente) do Pré-PR. Depois, `/poteto-mode` é o ponto de entrada para qualquer tarefa que peça rigor.
+Rode `/setup-pstack` uma vez em cada pai para escrever o sheet de modelos (`~/.claude/pstack-models.md` e `~/.codex/pstack-models.md`). O último passo dele confere a [autorização permanente](#autorização-permanente), exigida para o autopilot e o playbook Shipping mergearem sem aprovação humana. Depois, `/poteto-mode` é o ponto de entrada para qualquer tarefa que peça rigor.
 
 ### Publicar uma versão
 
@@ -192,7 +192,7 @@ As notificações do Daemon aparecem na Central de Notificações deste Mac, com
 
 ### Autorização permanente
 
-O pstack mergeia um PR que outra Família de modelo revisou e que nenhum humano aprovou. O modo automático do Claude Code bloqueia isso de fábrica (regras "Merge Without Review" e "Self-Approval"), e o verificador dele lê as mensagens do usuário e os comandos, não as perguntas do agente: um "ok" a uma pergunta não autoriza nada, e o Pré-PR parava no meio. O operador grava a decisão uma vez, numa entrada de `autoMode.allow` no `~/.claude/settings.json` dele. O Claude Code não lê essa lista de nenhum repositório nem de plugin, então o plugin não a entrega.
+Nos playbooks do pstack, um agente mergeia um PR que nenhum humano aprovou, em dois casos: o dono de um PR num programa de autopilot, depois do veredito limpo do enxame da Raiz, dado por verificadores que não escreveram o código; e a sessão que roda o playbook Shipping, depois do veredito do verificador independente daquele PR. O modo automático do Claude Code bloqueia isso de fábrica (regras "Merge Without Review" e "Self-Approval"), e o classificador dele lê as mensagens do usuário e os comandos, não as perguntas do agente: um "ok" a uma pergunta não autoriza nada, e o merge é negado. O operador grava a decisão uma vez, numa entrada de `autoMode.allow` no `~/.claude/settings.json` dele. O Claude Code não lê essa lista de nenhum repositório nem de plugin, então o plugin não a entrega.
 
 ```shell
 AUTHORIZE=~/.claude/plugins/cache/pstack-vic/pstack/<versão>/skills/setup-pstack/scripts/authorize.ts
@@ -201,7 +201,9 @@ node $AUTHORIZE apply --parent claude   # num terminal: mostra a entrada, pede u
 node $AUTHORIZE check --parent codex    # 0 quando approval_policy = "never" no topo do ~/.codex/config.toml
 ```
 
-A entrada vale em qualquer repositório: certificar a branch, publicar o `verdict`, armar e mergear um PR sem aprovação humana, lançar as lanes do pstack. Continuam bloqueados `--admin` e qualquer outro desvio de check obrigatório, mudança em proteção de branch e tudo o que as outras regras protegem (arquivos e branches destruídos, produção, segredos, dado que sai). O `apply` recusa sem terminal, porque a autorização é um ato do operador e não do agente. Ele mantém as regras de fábrica (`"$defaults"`) e todas as outras configurações, e copia o arquivo anterior para `settings.json.before-pstack-authorization`. Para retirar a autorização, apague a entrada. O Pré-PR roda o `check` antes da Posse; sem a autorização, para ali e pede uma vez. O Daemon não precisa dela: lança a Raiz sem etapa de aprovação.
+A entrada vale em qualquer repositório. Ela cobre três coisas: o merge com `gh pr merge` nesses dois casos (squash, ou `--auto` quando o playbook ou o operador pede); a Raiz criar subagentes donos e verificadores, empurrar as branches dos donos com `--force-with-lease` e publicar vereditos como comentários no PR; e lançar pelo `pstack-runner` as lanes que os playbooks nomeiam (dono, verificador, revisor, juiz ou worker em claude, codex ou grok). Continuam bloqueados `--admin` e qualquer outro desvio de check obrigatório, mudança em proteção de branch, rulesets ou checks obrigatórios e tudo o que as outras regras protegem (arquivos, branches e histórico destruídos, produção, segredos, dado que sai). O `apply` recusa sem terminal, porque a autorização é um ato do operador e não do agente. Ele mantém as regras de fábrica (`"$defaults"`) e todas as outras configurações, e copia o arquivo anterior para `settings.json.before-pstack-authorization`. Para retirar a autorização, apague a entrada.
+
+A entrada traz a versão no nome (`pstack standing authorization v2`). Quem tem a v1, do fluxo antigo, roda o `apply` de novo: ele troca a entrada no lugar, e até lá o `check` sai 1. Nenhum playbook roda o `check`. Quem confere é o operador: o passo 10 do `/setup-pstack` roda o `check`, e vale rodá-lo antes do "go" de um programa de autopilot, quando a Raiz declara o protocolo. Sem a entrada, o modo automático nega o merge quando o dono ou a sessão do Shipping chega nele.
 
 ## Skills
 

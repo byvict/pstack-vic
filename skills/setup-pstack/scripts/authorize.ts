@@ -1,12 +1,14 @@
 #!/usr/bin/env node
-// pstack merges a pull request that a different model family reviewed and no
-// human approved. Claude Code's auto mode blocks that by default, and its
-// classifier reads the user's messages and the commands, never the agent's
-// questions, so it stops the Pré-PR on every pull request until the operator
-// records the decision where the classifier reads it: one entry in
-// `autoMode.allow` of the operator's own `~/.claude/settings.json`. Claude Code
-// reads that list from no repository and from no plugin, so the entry has to
-// be the operator's act.
+// Under pstack's playbooks an agent merges a pull request that no human
+// approved: an autopilot owner after the root's clean swarm verdict, or the
+// session running the Shipping playbook after the verdict of that pull
+// request's independent verifier. Claude Code's auto mode blocks that by
+// default, and its classifier reads the user's messages and the commands,
+// never the agent's questions, so it stops the autopilot and the Shipping
+// playbook at the merge until the operator records the decision where the
+// classifier reads it: one entry in `autoMode.allow` of the operator's own
+// `~/.claude/settings.json`. Claude Code reads that list from no repository
+// and from no plugin, so the entry has to be the operator's act.
 
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -25,10 +27,10 @@ function usage(message: string): never {
 }
 
 const GRANT_NAME = "pstack standing authorization";
-const GRANT_VERSION = 1;
+const GRANT_VERSION = 2;
 export const MARKER = `${GRANT_NAME} v${GRANT_VERSION}`;
 
-export const ALLOW_ENTRY = `${MARKER}: the operator who wrote this entry is the only human on their projects, so no pull request waits for a human approval, and this holds in every repository a session works in. An agent may certify its own branch with pstack's converge scripts (converge-local, converge-certify, converge-reconcile, publish.ts, converge-arm), publish the verdict commit status and the certificate comment on a pull request it works on, arm GitHub auto-merge on that pull request, and merge it with gh pr merge, although no human reviewed or approved it: a different model family reviews the change and the repository's required checks gate the merge. None of that is Merge Without Review or Self-Approval. An agent may also launch the lanes pstack's playbooks name through pstack-runner (a reviewer, a fixer or a certifier on claude, codex or grok, in the mode the playbook names), which is not Create Unsafe Agents. This covers nothing else: not --admin or any other way around a required check, not a change to branch protection, rulesets or required checks, and nothing the other rules protect (destroying files, branches or history, production systems, secrets, data leaving the trust boundary).`;
+export const ALLOW_ENTRY = `${MARKER}: the operator who wrote this entry is the only human on their projects, so no pull request waits for a human approval, and this holds in every repository a session works in. Under pstack's playbooks, an agent may merge a pull request with gh pr merge (a squash, or --auto for merge-when-ready when the playbook or the operator asks for it) although no human reviewed or approved it, in two cases: an autopilot owner merging its own pull request after the root's clean swarm verdict, given by verifiers that did not write the code; and the session running the Shipping playbook after the independent per-PR verifier verdict. The root may spawn owner and verifier subagents, push its owners' branches with --force-with-lease, and post verdicts as pull request comments. None of that is Merge Without Review or Self-Approval. An agent may also launch the lanes pstack's playbooks name through pstack-runner (an owner, a verifier, a reviewer, a judge or a worker on claude, codex or grok, in the mode the playbook names), which is not Create Unsafe Agents. This covers nothing else: not --admin or any other way around a required check, not a change to branch protection, rulesets or required checks, and nothing the other rules protect (destroying files, branches or history, production systems, secrets, data leaving the trust boundary).`;
 
 const BUILT_IN_RULES = "$defaults";
 
@@ -193,7 +195,7 @@ async function apply(home: string, io: Io): Promise<number> {
 const USAGE = `Usage: authorize <check|apply> [options]
 
   check  --parent <${Object.keys(TARGETS).join("|")}> [--home <dir>]
-         Exit 0 when the parent runs the Pré-PR without a stop for approval, 1 when it does not.
+         Exit 0 when the parent may run the autopilot and the Shipping playbook without a stop for approval, 1 when it may not.
   apply  --parent claude [--home <dir>]
          Add the standing authorization to autoMode.allow of ~/.claude/settings.json.
          Asks for a yes on a terminal; refuses without one.
