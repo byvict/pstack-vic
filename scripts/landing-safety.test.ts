@@ -260,6 +260,32 @@ describe("fix4 complete boundaries", () => {
     assert.equal(forgeCalls(f.stateFile).filter((c) => c.args[0] === "pr").length, 0);
   });
 
+  it("refuses a stale cached PR base before merge and still permits withdrawal", () => {
+    const f = forgeFixture();
+    git(f.path, "branch", "owned", f.head);
+    const advancedBase = commit(f.path, "base-change", "base advanced\n");
+    git(f.path, "switch", "owned");
+    const remote = join(f.path, ".git", "remote.git");
+    git(f.path, "push", remote, "refs/heads/main:refs/heads/main", "refs/heads/owned:refs/heads/owned");
+    changeForge(f.stateFile, { branch: "owned" });
+    const values = { ...f.values, op_branch: "owned" };
+    const result = recipe(f.path, command('GH_HOST="${op_host:?}" gh pr merge '), values);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Authoritative base ref mismatch/);
+    assert.ok(result.stderr.includes(advancedBase));
+    assert.equal(forgeCalls(f.stateFile).filter((c) => c.args[0] === "pr" && c.args[1] === "merge").length, 0);
+    assert.equal(JSON.parse(readFileSync(f.stateFile, "utf8")).base, f.head);
+    assert.equal(git(remote, "rev-parse", "refs/heads/main"), advancedBase);
+    assert.equal(git(remote, "rev-parse", "refs/heads/owned"), f.head);
+
+    changeForge(f.stateFile, { queue: true, auto: true });
+    const withdrawn = recipe(f.path, command('_operation=withdraw'), values);
+    assert.equal(withdrawn.status, 0, withdrawn.stderr);
+    const state = JSON.parse(readFileSync(f.stateFile, "utf8"));
+    assert.equal(state.queue, false);
+    assert.equal(state.auto, false);
+  });
+
   for (const outcome of ["merged", "queue", "auto", "noop"]) it(`observes actual ${outcome} after merge submission and preserves literal body`, () => {
     const f = forgeFixture(); const body = 'Literal $(not-code) and `data`  \nSecond line\n'; changeForge(f.stateFile, { body });
     const result = recipe(f.path, command('GH_HOST="${op_host:?}" gh pr merge '), { ...f.values, op_queue_authorized: outcome === "queue" ? "true" : "false", MERGE_OUTCOME: outcome });

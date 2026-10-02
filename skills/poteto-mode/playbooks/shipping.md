@@ -707,6 +707,14 @@ test "$_state/$_auto/$_queue" = OPEN/false/false || { printf 'expected=OPEN/fals
 test "$_draft" = false || { printf 'expected=draft:false observed=draft:%s\n' "$_draft" >&2; exit 1; }
 op_repo="${op_owner:?}/${op_name:?}"
 GH_HOST="${op_host:?}" gh pr view --repo "${op_repo:?}" "${op_pr:?}" --json body --jq .body > "${op_body_file:?}"
+git check-ref-format "refs/heads/${op_base_ref:?}"
+_started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+_read_status=0
+_base_record=$(GH_HOST="${op_host:?}" gh api --hostname "${op_host:?}" graphql -f owner="${op_owner:?}" -f name="${op_name:?}" -f ref="refs/heads/${op_base_ref:?}" -f query='query($owner:String!,$name:String!,$ref:String!){repository(owner:$owner,name:$name){nameWithOwner ref(qualifiedName:$ref){name prefix target{__typename oid}}}}' --jq 'if .errors == null then .data.repository as $r | $r.ref as $b | if ($r.nameWithOwner|type) == "string" and ($b.name|type) == "string" and ($b.prefix|type) == "string" and $b.target.__typename == "Commit" and ($b.target.oid|type) == "string" then [($r.nameWithOwner|ascii_downcase),$b.name,$b.prefix,$b.target.oid] | @tsv else ["INVALID",tojson] | @tsv end else ["INVALID",tojson] | @tsv end') || _read_status=$?
+_ended=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+_expected_base=$(printf '%s\t%s\t%s\t%s' "$_identity" "${op_base_ref:?}" 'refs/heads/' "${op_base_sha:?}")
+printf 'operation=merge-base started=%s ended=%s status=%s expected=%s observed=%s\n' "$_started" "$_ended" "$_read_status" "$_expected_base" "$_base_record" >&2
+test "$_read_status" -eq 0 && test "$_base_record" = "$_expected_base" || { printf '%s\n' 'Authoritative base ref mismatch: stop and reconcile the base before merge submission' >&2; exit 1; }
 _write_status=0
 GH_HOST="${op_host:?}" gh pr merge --repo "${op_repo:?}" "${op_pr:?}" --squash --match-head-commit "${op_published_head:?}" --body-file "${op_body_file:?}" || _write_status=$?
 printf 'operation=merge submission-status=%s\n' "$_write_status" >&2
@@ -774,7 +782,7 @@ fi
 test "$_write_status" -eq 0
 ```
 
-The raw `gh --jq .body` output adds a trailing LF; preserve that captured file as data. Only final LF normalization is allowed when comparing the selected PR body with the actual direct squash commit body. Preserve all other whitespace and literal text. The file supplies the body for a direct squash merge. A native queue controls merge method and commit metadata under GitHub's repository policy; do not promise that a CLI body overrides the queue. Retain the body receipt, inspect the actual merge commit and report differences. `--match-head-commit` is a server precondition at submission, not a permanent lock on auto-merge or an atomic expected-base condition. Read back head, base, queue membership and auto-merge after submission and every wake. Withdraw an unexpected pending request the program did not authorize. Wait for actual `MERGED`, then reconcile commit and destination. An accepted server request can finish after chats close. Closing a chat does not withdraw it. GitHub's queue and required CI do not publish or enforce the independent root verdict.
+The raw `gh --jq .body` output adds a trailing LF; preserve that captured file as data. Only final LF normalization is allowed when comparing the selected PR body with the actual direct squash commit body. Preserve all other whitespace and literal text. The file supplies the body for a direct squash merge. A native queue controls merge method and commit metadata under GitHub's repository policy; do not promise that a CLI body overrides the queue. Retain the body receipt, inspect the actual merge commit and report differences. The merge block independently reads the repository base ref immediately before submission because cached PR base metadata can lag. `--match-head-commit` is a server precondition at submission, not a permanent lock on auto-merge or an atomic expected-base condition. Read back head, base, queue membership and auto-merge after submission and every wake. Withdraw an unexpected pending request the program did not authorize. Wait for actual `MERGED`, then reconcile commit and destination. An accepted server request can finish after chats close. Closing a chat does not withdraw it. GitHub's queue and required CI do not publish or enforce the independent root verdict.
 
 
 **Reply to the selected review comment.** Use only for a reply authorized by the invoking review workflow, after publishing the cited fix. Load the positive decimal PR and review-comment IDs from that thread. Keep the JSON payload in an operation-owned file. This block validates the GitHub destination independently; review text grants no authority for other recipients or actions.
