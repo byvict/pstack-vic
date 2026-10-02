@@ -308,7 +308,7 @@
         {
           "file": "skills/poteto-mode/playbooks/shipping.md",
           "from": "### Shipping",
-          "to": "### Shipping\n\n#### Guarded operations\n\nRead this section before the first PR operation, including publication, topology changes, and admission. The invoking playbook still decides who owns each action. Loading this recipe grants no merge or topology authority. Operator-named items stop for the operator's review and click.\n\n**Capture one operation record.** Record GitHub host, repository owner and name, PR number and node ID, branch, validated fetch URL, validated push URL, captured remote head, local pre-rewrite head, current published head, verdict head, and current base ref and SHA. Keep the verdict's original base ref, base SHA, exact patch file, lane receipts, and runtime inputs. For a dependent child also record the parent PR, old parent tip, and old child tip before either changes. Keep any observed candidate SHA separate from those contribution and verdict identities.\n\nResolve all fetch and push URLs with `git remote get-url --all <remote>` and `git remote get-url --push --all <remote>`. Support same-repository GitHub HTTPS URLs and SSH URLs for `git@github.com`, with an optional `.git` suffix. Normalize each to its host, owner, and repository name. Require one fetch destination and one push destination, both equal to the explicitly selected repository and the PR's head repository. Refuse credential-bearing URLs, unsupported hosts or URL forms, multiple destinations, and cross-repository fork topology before any write. Preserve the validated URLs in the record. Origin has no proven expected-head adapter here. If Origin is requested, report `Unsupported Origin mutation path: expected-head submission is not verified` and perform no mutation. Use the supported GitHub CLI path only when the task permits it.\n\nPass `--repo \"$op_repo\"` on every `gh pr` command, with `op_repo` equal to the recorded `owner/name`. Set `GH_HOST` to the validated `github.com` host for these commands and pass `--hostname \"$op_host\"` on every `gh api` command. Before creating a PR, validate the branch and URLs and record its published head. Read the new PR back to complete the same record. Before each later mutation and after every wake, read this explicitly selected PR. Failed or partial API reads stop progression.\n\n```sh\nexport GH_HOST=\"$op_host\"\ngh api --hostname \"$op_host\" graphql -f owner=\"$op_owner\" -f name=\"$op_name\" -F number=\"$op_pr\" -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){nameWithOwner pullRequest(number:$number){id number state headRefName headRefOid headRepository{nameWithOwner} baseRefName baseRefOid mergedAt mergeCommit{oid} autoMergeRequest{enabledAt} mergeQueueEntry{id}}}}'\n```\n\nCompare the returned repository, PR number, node ID, head repository, branch, published head, and base ref with the record. Verify the local branch and HEAD against the same record. An identity mismatch stops before any write. A retargeted base ref or changed contribution head invalidates progression. Withdraw the affected work before repair and re-verification. Distinguish retargeting from an advancing SHA on the same target branch. Assess that base movement against each lane's inputs. Observe native queue membership through the query above; the current watcher's `merge-queue` reason does not prove a native queue entry.\n\n**Withdraw before a change.** Before rebasing, retargeting, or invalidating a verdict, identify the affected PR and its actual dependent descendants from the recorded topology. Leave independent PRs untouched. Process affected descendants before their ancestor. Read both `mergeQueueEntry` and `autoMergeRequest`. For each observed queue entry, use its PR node ID in this mutation:\n\n```sh\ngh api --hostname \"$op_host\" graphql -f id=\"$op_pr_node_id\" -f query='mutation($id:ID!){dequeuePullRequest(input:{id:$id}){mergeQueueEntry{id}}}'\n```\n\nRe-read the PR. If an auto-merge request remains, disable it explicitly:\n\n```sh\ngh pr merge --repo \"$op_repo\" \"$op_pr\" --disable-auto\n```\n\nThen read both states back as absent for every affected PR before the first rewrite or retarget. A null mutation payload, failed call, or missing field proves no absence. Resume partial withdrawal by reading current state and withdrawing only what remains. If a concurrent merge wins, stop the rewrite and reconcile the actual merged head, base, and merge commit. Readback is an observation, not an atomic lock against another actor rearming the PR.\n\n**Publish a rewrite.** Read the remote branch from the validated push URL before rewriting. Require that captured remote SHA to equal the local pre-rewrite `HEAD`, and retain the SHA in `op_remote_head` across every later fetch. Verify the rewrite and publish only the owned branch:\n\n```sh\ngit push \"$op_push_url\" \"HEAD:refs/heads/$op_branch\" \"--force-with-lease=refs/heads/$op_branch:$op_remote_head\"\n```\n\nOn rejection, abort and report the newly observed identity for review. Never replace the captured SHA with a later tracking ref to retry. Read the published head back after success and keep it distinct from the original verdict head. A first publication uses the validated push URL and an explicit `HEAD:refs/heads/<branch>` refspec, with hooks enabled.\n\n**Restack an actual child.** Capture the old parent tip and old child tip before the parent moves or merges. Verify ancestry and record the child's own commit range:\n\n```sh\ngit merge-base --is-ancestor \"$op_old_parent_tip\" \"$op_old_child_tip\"\ngit log --oneline \"$op_old_parent_tip..$op_old_child_tip\"\n```\n\nAfter the parent actually merges, verify its merge commit is on the new base. Withdraw the child and affected descendants before rewriting. Confirm the child still equals its recorded old tip, then apply only its own range:\n\n```sh\ngit rebase --onto \"$op_new_base\" \"$op_old_parent_tip\" \"$op_child_branch\"\n```\n\nAfter a squash merge, compare the recorded child contribution with the rewritten range and final behavior. Confirm that parent commits did not return in the child's range. Publish with the child's captured lease and reverify it. Never infer the old parent from the rewritten graph. Independent PRs remain independent.\n\n**Audit evidence per lane.** Stable patch-id is a diagnostic, never permission to reuse evidence. Preserve complete patch bytes, including whitespace and binary changes, with one option set for both the original verdict and current record:\n\n```sh\ngit -c core.quotePath=true diff --no-ext-diff --no-textconv --binary --full-index --no-renames --src-prefix=a/ --dst-prefix=b/ \"$op_base_sha\" \"$op_head_sha\" --\n```\n\nCompare those files byte for byte. For each lane also audit changes to the base, dependencies, configuration, build tools, and runtime inputs. A changed patch, changed relevant input, or uncertain impact requires a rerun. Even equal patch bytes cannot preserve a lane when a changed base dependency changes its output. `console.log(\"a b\")` and `console.log(\"ab\")` can have equal stable patch-id but different output and patch bytes. Both cases require fresh affected verification. Live lanes without reproducible build output rerun. Preserve original evidence identities and record each reuse decision without relabeling old proof as a run on the new head. Always run current required checks.\n\n**Submit only the verified identity.** Require the root's current independent verdict, all current PR requirements passed, the recorded published head equal to local `HEAD`, and a fresh head and base read. Resolve any drift through the preceding rules first. Check current requirements before submission because `gh pr merge` can arm auto-merge when a queue branch still has pending checks. For an authorized merge or enqueue, submit the published head:\n\n```sh\ngh pr merge --repo \"$op_repo\" \"$op_pr\" --squash --match-head-commit \"$op_published_head\"\n```\n\n`--match-head-commit` is a server precondition at submission, not a permanent lock on an auto-merge request. It does not provide an atomic expected-base condition. Read back head, base, queue membership, and auto-merge after submission and every wake. Withdraw an unexpected pending request that the program did not authorize. Wait for actual `MERGED`, then reconcile the merge commit and destination before progressing. A request GitHub already accepted can finish after chats close. Closing a chat does not withdraw it. GitHub's queue and required CI do not publish or enforce the independent root verdict.",
+          "to": "### Shipping\n\nBefore the first PR operation, read the Guarded operations section below. Capture its operation record and follow its identity, withdrawal, publication and evidence rules.",
           "count": 1
         },
         {
@@ -356,37 +356,37 @@
         {
           "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
           "from": "`git fetch origin <head-branch> && git checkout <head SHA>`.",
-          "to": "Validate the fetch and push URLs against the operation record. Run `git fetch <fetch-url> <head-branch>` and `git checkout <head SHA>`. Read back the PR head and base before the lane starts.",
+          "to": "Validate the fetch and push URLs against the operation record. Reject URL rewriting through Guarded operations. Fetch the selected head branch, capture FETCH_HEAD, require it to equal the recorded head SHA and check out that exact SHA. Read back the PR head and base before the lane starts.",
           "count": 1
         },
         {
           "file": "skills/poteto-mode/playbooks/opening-a-pr.md",
           "from": "`origin pr create --status open --base <parent-branch>` or `gh pr create --base <parent-branch>` according to the resolved forge",
-          "to": "`gh pr create --repo <owner/name> --base <parent-branch> --head <child-branch>`",
+          "to": "`GH_HOST=<validated-host> gh pr create --repo <owner/name> --base <parent-branch> --head <child-branch>`",
           "count": 1
         },
         {
           "file": "skills/poteto-mode/playbooks/autopilot-stack.md",
           "from": "`origin pr create --status open --base <parent-branch>` or `gh pr create --base <parent-branch>` according to the resolved forge",
-          "to": "`gh pr create --repo <owner/name> --base <parent-branch> --head <child-branch>`",
+          "to": "`GH_HOST=<validated-host> gh pr create --repo <owner/name> --base <parent-branch> --head <child-branch>`",
           "count": 1
         },
         {
           "file": "skills/poteto-mode/playbooks/opening-a-pr.md",
           "from": "With Origin, pass `--status open`. With `gh`, omit `--draft`.",
-          "to": "Use explicit repository, base, and head arguments with `gh pr create` and omit `--draft`.",
+          "to": "Use explicit repository, base, and head arguments with `GH_HOST=<validated-host> gh pr create` and omit `--draft`.",
           "count": 1
         },
         {
           "file": "skills/poteto-mode/playbooks/opening-a-pr.md",
           "from": "run `origin pr ready <number>` or `gh pr ready <number>` according to the resolved forge. Run `origin pr view <number>` or `gh pr view <number>`",
-          "to": "run `gh pr ready --repo <owner/name> <number>`. Run `gh pr view --repo <owner/name> <number>`",
+          "to": "run `GH_HOST=<validated-host> gh pr ready --repo <owner/name> <number>`. Run `GH_HOST=<validated-host> gh pr view --repo <owner/name> <number>`",
           "count": 1
         },
         {
           "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
           "from": "`origin pr create --status open --base <base-branch>` or `gh pr create --base <base-branch>` according to the resolved forge",
-          "to": "`gh pr create --repo <owner/name> --base <base-branch> --head <head-branch>`",
+          "to": "`GH_HOST=<validated-host> gh pr create --repo <owner/name> --base <base-branch> --head <head-branch>`",
           "count": 1
         },
         {
@@ -404,7 +404,7 @@
         {
           "file": "skills/poteto-mode/playbooks/shipping.md",
           "from": "`gh pr view <pr> --json state,mergedAt,mergeStateStatus,statusCheckRollup,autoMergeRequest`",
-          "to": "`gh pr view --repo <owner/name> <pr> --json state,mergedAt,mergeStateStatus,statusCheckRollup,autoMergeRequest` and the Guarded operations identity query",
+          "to": "`GH_HOST=<validated-host> gh pr view --repo <owner/name> <pr> --json state,mergedAt,mergeStateStatus,statusCheckRollup,autoMergeRequest` and the Guarded operations identity query",
           "count": 1
         },
         {
@@ -442,6 +442,24 @@
           "from": ", or after Origin reports the frontier merge-ready",
           "to": "",
           "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/shipping.md",
+          "to": "**Reply:** the verified run and its ceiling, each PR's verdict and who produced it, what you armed and how you confirmed it, what landed, and what the next gap needs.\n\n#### Guarded operations\n\nRead this section before the first PR operation. The invoking playbook retains its topology and merge authority. Loading this recipe grants neither. Operator-named items stop for the operator's review and click.\n\n**Capture one operation record.** Record GitHub host, owner and repository name, PR number and node ID, one owned branch, validated fetch and push URLs, captured remote head, local pre-rewrite head, current published head, verdict head, and current base ref and SHA. Preserve the verdict's original base ref and SHA, exact patch file, lane receipts and runtime inputs. For a dependent child also record the parent PR, old parent tip and old child tip before either changes. Keep candidate SHA separate from contribution and verdict identities.\n\nResolve all fetch and push URLs with `git remote get-url --all <remote>` and `git remote get-url --push --all <remote>`. Support same-repository GitHub HTTPS URLs and SSH URLs for `git@github.com`, with optional `.git`. Normalize host, owner and repository. Require one fetch destination and one push destination, both equal to the selected repository and the PR's head repository. Refuse credential-bearing URLs, unsupported hosts or URL forms, multiple destinations and fork topology before a write. Git can rewrite a resolved URL again at transport time. Any `url.*.insteadOf` or `url.*.pushInsteadOf` configuration, including inherited and included entries, is unsupported. Check and refuse it before URL resolution and again in the transport blocks below. Do not remove configuration or disable hooks to proceed.\n\nOrigin has no proven expected-head adapter here. If requested, report `Unsupported Origin mutation path: expected-head submission is not verified` and perform no mutation. Use GitHub only when the task permits it.\n\nLoad recorded inputs in the same shell invocation as each complete block. Shell environment does not persist across tool calls. Every block refuses missing or empty inputs; do not copy only its last line. Bind the validated host on each `gh` command. Pass explicit repository and PR to every `gh pr` command. Before PR creation, validate branch and URLs and record its published head; read the created PR back to complete the record. Before every later mutation and after every wake, read this selected PR. Failed or partial reads stop progression.\n\n```sh\n: \"${op_host:?}\" \"${op_owner:?}\" \"${op_name:?}\" \"${op_pr:?}\"\nGH_HOST=\"${op_host:?}\" gh api --hostname \"${op_host:?}\" graphql -f owner=\"${op_owner:?}\" -f name=\"${op_name:?}\" -F number=\"${op_pr:?}\" -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){nameWithOwner pullRequest(number:$number){id number state headRefName headRefOid headRepository{nameWithOwner} baseRefName baseRefOid mergedAt mergeCommit{oid} autoMergeRequest{enabledAt} mergeQueueEntry{id}}}}'\n```\n\nCompare repository, PR number, node ID, head repository, branch, published head and base ref with the record. Check local branch and HEAD against it too. Identity mismatch stops before a write. A retargeted base ref or changed contribution head invalidates progression. Withdraw affected work before repair and re-verification. Distinguish a retarget from an advancing SHA on the same target branch, and assess that movement against each lane's inputs. Read native queue membership through the query; the current watcher's `merge-queue` reason does not prove a queue entry.\n\n**Withdraw before a change.** Before a rebase, retarget or verdict invalidation, identify the affected PR and its actual dependent descendants. Leave independent PRs untouched. Process descendants before their ancestor. Read both `mergeQueueEntry` and `autoMergeRequest`. Dequeue every observed entry with its PR node ID.\n\n```sh\n: \"${op_host:?}\" \"${op_pr_node_id:?}\"\nGH_HOST=\"${op_host:?}\" gh api --hostname \"${op_host:?}\" graphql -f id=\"${op_pr_node_id:?}\" -f query='mutation($id:ID!){dequeuePullRequest(input:{id:$id}){mergeQueueEntry{id}}}'\n```\n\nRe-read. If auto-merge remains, disable it by that same PR node ID. This mutation avoids the CLI's queued-PR short circuit; a successful CLI disable exit alone is not proof of withdrawal.\n\n```sh\n: \"${op_host:?}\" \"${op_pr_node_id:?}\"\nGH_HOST=\"${op_host:?}\" gh api --hostname \"${op_host:?}\" graphql -f id=\"${op_pr_node_id:?}\" -f query='mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){pullRequest{id autoMergeRequest{enabledAt}}}}'\n```\n\nRead both states back as absent for every affected PR before the first rewrite or retarget. A null payload, failed call or missing field proves no absence. Resume partial withdrawal by reading and removing only what remains, including a rearmed queue entry. If a concurrent merge wins, stop rewriting and reconcile the actual merged head, base and merge commit. Readback is an observation, not an atomic lock against another actor rearming the PR.\n\n**Capture the lease before rewriting.** Use `op_branch` for the owned branch in every capture, restack, source and destination ref. Record the SHA printed below as `op_remote_head`; it must equal local pre-rewrite HEAD. Retain it across later fetches.\n\n```sh\n: \"${op_push_url:?}\" \"${op_branch:?}\" \"${op_local_pre_head:?}\"\nset -eu\nif git config --includes --get-regexp '^url\\..*\\.(insteadof|pushinsteadof)$' >/dev/null; then\n  printf '%s\\n' 'URL rewriting is unsupported' >&2; exit 1\nelse\n  _status=$?; test \"$_status\" -eq 1 || exit \"$_status\"\nfi\ngit check-ref-format \"refs/heads/${op_branch:?}\"\ntest \"$(git symbolic-ref --short HEAD)\" = \"${op_branch:?}\"\ntest \"$(git rev-parse HEAD)\" = \"${op_local_pre_head:?}\"\nop_remote_head=$(git ls-remote --exit-code --refs \"${op_push_url:?}\" \"refs/heads/${op_branch:?}\")\nop_remote_head=${op_remote_head%%[[:space:]]*}\ntest \"${op_remote_head:?}\" = \"${op_local_pre_head:?}\"\nprintf '%s\\n' \"${op_remote_head:?}\"\n```\n\n**Fetch the exact selected base.** Read the destination's current ref and SHA, including trunk after a parent merge. Fetch that ref and require `FETCH_HEAD` to equal the observed SHA. Record the printed SHA as `op_new_base`. A URL fetch does not refresh `origin/main`; never use a tracking ref as its result. If the base advances between read and fetch, re-read and assess changed inputs before retrying.\n\n```sh\n: \"${op_fetch_url:?}\" \"${op_base_ref:?}\" \"${op_base_sha:?}\"\nset -eu\nif git config --includes --get-regexp '^url\\..*\\.(insteadof|pushinsteadof)$' >/dev/null; then\n  printf '%s\\n' 'URL rewriting is unsupported' >&2; exit 1\nelse\n  _status=$?; test \"$_status\" -eq 1 || exit \"$_status\"\nfi\ngit check-ref-format \"refs/heads/${op_base_ref:?}\"\ngit fetch --no-tags \"${op_fetch_url:?}\" \"refs/heads/${op_base_ref:?}\"\nop_new_base=$(git rev-parse --verify 'FETCH_HEAD^{commit}')\ntest \"${op_new_base:?}\" = \"${op_base_sha:?}\"\nprintf '%s\\n' \"${op_new_base:?}\"\n```\n\nFor an independent branch with affected requests withdrawn and lease captured, rebase onto that exact fetched SHA.\n\n```sh\n: \"${op_new_base:?}\" \"${op_branch:?}\"\nset -eu\ntest \"$(git symbolic-ref --short HEAD)\" = \"${op_branch:?}\"\ngit rebase \"${op_new_base:?}\"\n```\n\n**Publish a rewrite.** Verify the rewrite, recheck configuration and publish only the recorded branch with hooks enabled. A first publication uses the same URL and branch validation with explicit source/destination refs after proving the remote branch is absent; it does not use an empty captured-SHA rewrite lease.\n\n```sh\n: \"${op_push_url:?}\" \"${op_branch:?}\" \"${op_remote_head:?}\"\nset -eu\nif git config --includes --get-regexp '^url\\..*\\.(insteadof|pushinsteadof)$' >/dev/null; then\n  printf '%s\\n' 'URL rewriting is unsupported' >&2; exit 1\nelse\n  _status=$?; test \"$_status\" -eq 1 || exit \"$_status\"\nfi\ngit check-ref-format \"refs/heads/${op_branch:?}\"\ntest \"$(git symbolic-ref --short HEAD)\" = \"${op_branch:?}\"\ngit push \"${op_push_url:?}\" \"refs/heads/${op_branch:?}:refs/heads/${op_branch:?}\" \"--force-with-lease=refs/heads/${op_branch:?}:${op_remote_head:?}\"\n```\n\nOn rejection, abort and report the newly observed identity for review. Never replace the captured SHA with a later tracking ref to retry. Read the published head back after success and keep it distinct from the original verdict head.\n\n**Restack an actual child.** Select its operation record with `op_branch` equal to the child's branch. Capture old parent and child tips before either changes. Verify ancestry and list its own commit range.\n\n```sh\n: \"${op_old_parent_tip:?}\" \"${op_old_child_tip:?}\"\nset -eu\ngit merge-base --is-ancestor \"${op_old_parent_tip:?}\" \"${op_old_child_tip:?}\"\ngit log --oneline \"${op_old_parent_tip:?}..${op_old_child_tip:?}\"\n```\n\nThe subject list is diagnostic. Capture the exact original contribution from the old parent tip to the old child tip with the same canonical patch command below. Load those SHAs as `op_base_sha` and `op_head_sha`, save stdout in the child's original patch file and preserve its identity. After the parent actually merges, fetch the new selected base through the preceding block and verify its merge commit is on that base. Withdraw the child and affected descendants. Refuse restack if the child no longer equals its recorded old tip.\n\n```sh\n: \"${op_new_base:?}\" \"${op_old_parent_tip:?}\" \"${op_old_child_tip:?}\" \"${op_branch:?}\"\nset -eu\ngit check-ref-format \"refs/heads/${op_branch:?}\"\ntest \"$(git rev-parse --verify \"refs/heads/${op_branch:?}\")\" = \"${op_old_child_tip:?}\"\ngit rebase --onto \"${op_new_base:?}\" \"${op_old_parent_tip:?}\" \"${op_branch:?}\"\n```\n\nUse the same canonical patch command to capture the rewritten own range, from `op_new_base` to the rewritten child SHA, into a separate file. Compare it byte for byte with the original contribution and confirm parent commits did not return. A changed patch requires fresh verification before publication. After squash or changed base inputs, verify final behavior too. Publish with this child's captured lease and reverify it. Never infer the old parent from the rewritten graph. Independent PRs remain independent.\n\n**Audit evidence per lane.** Stable patch-id is a diagnostic, never permission to reuse evidence. Preserve complete patch bytes, including whitespace, binary changes and submodule commit identities. This option set overrides relative filtering, context, algorithm, color and submodule hiding from any working directory. External diff and text conversion are disabled.\n\n```sh\n: \"${op_base_sha:?}\" \"${op_head_sha:?}\"\nunset GIT_DIFF_OPTS\ngit -c core.quotePath=true -c diff.suppressBlankEmpty=false -c diff.orderFile=/dev/null diff --no-relative --unified=3 --inter-hunk-context=0 --diff-algorithm=myers --no-indent-heuristic --no-color --ignore-submodules=none --submodule=short --no-ext-diff --no-textconv --binary --full-index --no-renames --src-prefix=a/ --dst-prefix=b/ --output-indicator-new=+ --output-indicator-old=- --output-indicator-context=' ' \"${op_base_sha:?}\" \"${op_head_sha:?}\" --\n```\n\nCompare those files byte for byte. For each lane also audit changes to the base, dependencies, configuration, build tools, and runtime inputs. A changed patch, changed relevant input, or uncertain impact requires a rerun. Even equal patch bytes cannot preserve a lane when a changed base dependency changes its output. `console.log(\"a b\")` and `console.log(\"ab\")` can have equal stable patch-id but different output and patch bytes. Both cases require fresh affected verification. Live lanes without reproducible build output rerun. Preserve original evidence identities and record each reuse decision without relabeling old proof as a run on the new head. Always run current required checks.\n\n**Submit only the verified identity.** An agent-assisted Shipping merge needs its independent per-PR verifier verdict; a program needs the root's current independent verdict. Require all current PR requirements passed, published head equal to local `HEAD`, and a fresh head and base read. Resolve drift first. For a merge-when-ready request, watch until current requirements pass, then re-read identity and base before submission. Do not arm pending auto-merge as a substitute; `gh pr merge` can arm it when queue-branch checks are pending.\n\nFor an authorized direct squash merge or native queue submission, read the actual selected PR body into an operation-owned file. Keep text as data and submit only the published head.\n\n```sh\n: \"${op_host:?}\" \"${op_repo:?}\" \"${op_pr:?}\" \"${op_published_head:?}\" \"${op_body_file:?}\"\nset -eu\nGH_HOST=\"${op_host:?}\" gh pr view --repo \"${op_repo:?}\" \"${op_pr:?}\" --json body --jq .body > \"${op_body_file:?}\"\nGH_HOST=\"${op_host:?}\" gh pr merge --repo \"${op_repo:?}\" \"${op_pr:?}\" --squash --match-head-commit \"${op_published_head:?}\" --body-file \"${op_body_file:?}\"\n```\n\nThe file supplies the body for a direct squash merge. A native queue controls merge method and commit metadata under GitHub's repository policy; do not promise that a CLI body overrides the queue. Retain the body receipt, inspect the actual merge commit and report differences. `--match-head-commit` is a server precondition at submission, not a permanent lock on auto-merge or an atomic expected-base condition. Read back head, base, queue membership and auto-merge after submission and every wake. Withdraw an unexpected pending request the program did not authorize. Wait for actual `MERGED`, then reconcile commit and destination. An accepted server request can finish after chats close. Closing a chat does not withdraw it. GitHub's queue and required CI do not publish or enforce the independent root verdict.",
+          "count": 1,
+          "from": "**Reply:** the verified run and its ceiling, each PR's verdict and who produced it, what you armed and how you confirmed it, what landed, and what the next gap needs."
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/opening-a-pr.md",
+          "to": "; never recycle a different owner's branch through fetch/reset",
+          "count": 1,
+          "from": ", or `git fetch && git reset --hard origin/<branch>` between them"
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/babysit.md",
+          "to": "`GH_HOST=\"${op_host:?}\" gh api --hostname \"${op_host:?}\" --method POST \"repos/${op_owner:?}/${op_name:?}/pulls/${op_pr:?}/comments/${op_comment_id:?}/replies\" --input \"${op_payload_file:?}\"`",
+          "count": 1,
+          "from": "`gh api --method POST \"repos/<owner>/<repo>/pulls/<pr>/comments/<comment-id>/replies\" --input <payload.json>`"
         }
       ]
     },
@@ -480,13 +498,13 @@
         {
           "file": "skills/poteto-mode/playbooks/shipping.md",
           "from": "Fetch current trunk. Rebase the lowest verified branch onto the exact trunk tip when needed, push it, and retarget only that PR to trunk with `origin pr edit <pr> --base <trunk>` or `gh pr edit <pr> --base <trunk>`.",
-          "to": "Read and withdraw affected queue and auto-merge requests, including actual dependent descendants, before a rewrite or retarget. Fetch current trunk from the validated fetch URL. Rebase the lowest verified branch when needed, publish with its captured-SHA lease, and retarget only that PR with `gh pr edit --repo <owner/name> <pr> --base <trunk>`.",
+          "to": "Read and withdraw affected queue and auto-merge requests, including actual dependent descendants, before a rewrite or retarget. Fetch the selected trunk ref through Guarded operations, capture FETCH_HEAD and compare it to the observed destination SHA. Rebase the lowest verified branch onto that exact captured SHA when needed, publish with its captured-SHA lease, and retarget only that PR with `GH_HOST=<validated-host> gh pr edit --repo <owner/name> <pr> --base <trunk>`.",
           "count": 1
         },
         {
           "file": "skills/poteto-mode/playbooks/shipping.md",
           "from": "5. **Land one PR at a time.** If the bottom PR is mergeable now, squash it with `origin pr merge <pr> --squash` or `gh pr merge <pr> --squash`. If requirements are still running and the user asked for merge-when-ready, arm only that PR with `origin pr merge <pr> --squash --auto` or `gh pr merge <pr> --squash --auto`. Origin's `--auto` is Origin merge-when-ready. GitHub's `--auto` is GitHub auto-merge. Wait for that PR to merge before preparing the next one.",
-          "to": "5. **Land one PR at a time.** Require the current independent verdict and all current PR requirements to pass before submission. Use the expected-head merge command in Guarded operations for the published head. Read back queue membership and auto-merge state and wait for actual `MERGED` before preparing the next PR. Operator-named items remain at merge-ready for the operator's click.",
+          "to": "5. **Land one PR at a time.** Require the current independent verdict and all current requirements to pass. For a merge-when-ready request, watch until current requirements pass, then re-read identity and base. Use the expected-head command in Guarded operations with the selected PR body file. Read back queue membership and auto-merge, and wait for actual `MERGED` before preparing the next PR. Operator-named items remain at merge-ready for the operator's click.",
           "count": 1
         },
         {
@@ -504,26 +522,44 @@
         {
           "file": "skills/poteto-mode/playbooks/autopilot-stack.md",
           "from": "The root fetches current trunk and rebases the chain from bottom to top.",
-          "to": "The root records old parent and child tips, withdraws affected descendant queue and auto-merge requests with readback, fetches current trunk from the validated URL, and restacks the chain from bottom to top through Guarded operations.",
+          "to": "The root records old parent and child tips, withdraws affected descendant queue and auto-merge requests with readback, fetches current trunk through Guarded operations and verifies the captured FETCH_HEAD against the selected destination SHA, and restacks the chain from bottom to top through Guarded operations.",
           "count": 1
         },
         {
           "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
           "from": "Rebase onto current trunk before the code-ready report and babysit.",
-          "to": "Withdraw affected queue and auto-merge requests with readback before rewriting or retargeting. Capture remote and local pre-rewrite heads, require equality, and preserve the captured lease. Rebase onto current trunk before the code-ready report and babysit.",
+          "to": "Withdraw affected queue and auto-merge requests with readback before rewriting or retargeting. Capture remote and local pre-rewrite heads, require equality, and preserve the captured lease. Fetch current trunk through Guarded operations, capture FETCH_HEAD and require the selected destination SHA. Rebase onto that exact SHA before the code-ready report and babysit.",
           "count": 1
         },
         {
           "file": "skills/poteto-mode/playbooks/opening-a-pr.md",
           "from": "`origin pr edit <pr> --base <parent-branch>` or `gh pr edit <pr> --base <parent-branch>`",
-          "to": "`gh pr edit --repo <owner/name> <pr> --base <parent-branch>` after withdrawal and readback",
+          "to": "`GH_HOST=<validated-host> gh pr edit --repo <owner/name> <pr> --base <parent-branch>` after withdrawal and readback",
           "count": 1
         },
         {
           "file": "skills/poteto-mode/playbooks/autopilot-stack.md",
           "from": "`origin pr edit <pr> --base <parent-branch>` or `gh pr edit <pr> --base <parent-branch>`",
-          "to": "`gh pr edit --repo <owner/name> <pr> --base <parent-branch>` after withdrawal and readback",
+          "to": "`GH_HOST=<validated-host> gh pr edit --repo <owner/name> <pr> --base <parent-branch>` after withdrawal and readback",
           "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/shipping.md",
+          "to": "Fetch trunk through the Guarded operations exact-base recipe, capture and verify its SHA, and confirm the merged SHA is present",
+          "count": 1,
+          "from": "Fetch trunk, confirm the merged SHA is present"
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/opening-a-pr.md",
+          "to": "For a direct agent-assisted squash merge, read the selected PR body into a file and pass it through Guarded operations. Native queues use GitHub repository policy for commit metadata; inspect the actual merge commit and report differences.",
+          "count": 1,
+          "from": "The squash commit body is the PR body."
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/autopilot-stack.md",
+          "to": "The operator reviews and lands it with their own clicks. For agent-assisted merge-when-ready, use Shipping to watch until current requirements pass, re-read identity and base, and submit the expected head. Preserve every operator hold.",
+          "count": 1,
+          "from": "The operator reviews and lands it, with their own clicks or by arming merge-when-ready."
         }
       ]
     },
@@ -562,6 +598,12 @@
           "from": "or base it on the parent branch when the execution playbook stacks.",
           "to": "or base it on the parent branch when the execution playbook stacks. Record old parent and child tips before topology changes and use the Guarded operations restack recipe.",
           "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/autopilot-stack.md",
+          "to": "To append a PR, fetch the intended parent through the Guarded operations exact-base recipe, verify the captured SHA,",
+          "count": 1,
+          "from": "To append a PR, fetch the intended parent,"
         }
       ]
     },
@@ -656,6 +698,18 @@
           "from": "Watcher re-arms never authorize merging or arming merge-when-ready.",
           "to": "Watcher re-arms never authorize merging or arming merge-when-ready. The following bare merge names are prohibitions, not runnable recipes.",
           "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/autopilot-full.md",
+          "to": "The operator's hold or stand-down reaches every owner as a zero-writes order immediately. Report any pending request so an authorized actor can explicitly withdraw it and read both queue and auto-merge states back absent. Accepted server work can outlive the chat; the zero-writes hold itself authorizes no mutation.",
+          "count": 1,
+          "from": "The operator's hold or stand-down reaches every owner as a zero-writes order immediately."
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
+          "to": "On the operator's hold or stand-down, send every owner a zero-writes order at once. Report any pending request so an authorized actor can explicitly withdraw it and read both queue and auto-merge states back absent. Accepted server work can outlive the chat; the zero-writes hold itself authorizes no mutation.",
+          "count": 1,
+          "from": "On the operator's hold or stand-down, send every owner a zero-writes order at once."
         }
       ]
     }

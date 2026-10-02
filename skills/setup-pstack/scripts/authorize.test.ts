@@ -8,6 +8,8 @@ import { fileURLToPath } from "node:url";
 import { isolatedEnv, isolateProcessEnv } from "../../poteto-mode/scripts/runner/isolated-env.test-helper.ts";
 import { ALLOW_ENTRY, MARKER, backupPathFor, checkAuthorization, main, settingsPathFor } from "./authorize.ts";
 
+const LEGACY_V2_ENTRY = "pstack standing authorization v2: the operator who wrote this entry is the only human on their projects, so no pull request waits for a human approval, and this holds in every repository a session works in. Under pstack's playbooks, an agent may merge a pull request with gh pr merge (a squash, or --auto for merge-when-ready when the playbook or the operator asks for it) although no human reviewed or approved it, in two cases: an autopilot owner merging its own pull request after the root's clean swarm verdict, given by verifiers that did not write the code; and the session running the Shipping playbook after the independent per-PR verifier verdict. The root may spawn owner and verifier subagents, push its owners' branches with --force-with-lease, and post verdicts as pull request comments. None of that is Merge Without Review or Self-Approval. An agent may also launch the lanes pstack's playbooks name through pstack-runner (an owner, a verifier, a reviewer, a judge or a worker on claude, codex or grok, in the mode the playbook names), which is not Create Unsafe Agents. This covers nothing else: not --admin or any other way around a required check, not a change to branch protection, rulesets or required checks, and nothing the other rules protect (destroying files, branches or history, production systems, secrets, data leaving the trust boundary).";
+
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "authorize.ts");
 
 let base = "";
@@ -75,6 +77,28 @@ describe("test isolation", () => {
 });
 
 describe("check on a Claude Code parent", () => {
+  it("rejects the actual 0.5.1 v2 body without writing, then applies the current body in place", async () => {
+    const original = { model: "opus", autoMode: { allow: ["$defaults", LEGACY_V2_ENTRY, "Keep this permission"], custom: true } };
+    putSettings(original);
+    const file = settingsPathFor("claude", home);
+    const before = readFileSync(file, "utf8");
+    const stale = await run(["check", "--parent", "claude"]);
+    assert.equal(stale.code, 1);
+    const report = JSON.parse(stale.stdout);
+    assert.equal(report.authorized, false);
+    assert.equal(report.entry, ALLOW_ENTRY);
+    assert.match(report.grant, /apply --parent claude$/);
+    assert.equal(readFileSync(file, "utf8"), before);
+    assert.equal(existsSync(backupPathFor("claude", home)), false);
+    const applied = await run(["apply", "--parent", "claude"], "yes");
+    assert.equal(applied.code, 0);
+    assert.equal(applied.questions.length, 1);
+    assert.deepEqual(settings(), { ...original, autoMode: { ...original.autoMode, allow: ["$defaults", ALLOW_ENTRY, "Keep this permission"] } });
+    assert.equal(readFileSync(backupPathFor("claude", home), "utf8"), before);
+    assert.equal((await run(["check", "--parent", "claude"])).code, 0);
+    assert.equal(MARKER, "pstack standing authorization v2");
+  });
+
   it("refuses without a settings file and says what the operator runs", async () => {
     const result = await run(["check", "--parent", "claude"]);
     assert.equal(result.code, 1);
@@ -140,7 +164,7 @@ describe("apply on a Claude Code parent", () => {
     assert.ok(result.stdout.includes(ALLOW_ENTRY));
     assert.match(result.stdout, /gh pr merge --repo <owner\/name> <pr> --squash --match-head-commit <published-head>/);
     assert.match(result.stdout, /all current required checks pass/);
-    assert.match(result.stdout, /honoring every operator-named merge hold/);
+    assert.match(result.stdout, /Every operator-named merge hold remains in force/);
     assert.match(result.stdout, /validated push URL with --force-with-lease=refs\/heads\/<branch>:<captured-remote-head>/);
     assert.match(result.stdout, /captured before rewriting and equal to the local pre-rewrite head/);
     assert.ok(result.stdout.includes(settingsPathFor("claude", home)));

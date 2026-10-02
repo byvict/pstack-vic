@@ -70,7 +70,7 @@ describe("check-plan: the plan template of multi-phase-plan.md", () => {
     assert.equal(run.status, 0);
   });
 
-  it("rejects a generated safety substitution with an incoherent plan sentence", () => {
+  it("rejects a mid-sentence colon after a counted transform", () => {
     const plan = template();
     const anchor = "Record the repository, PR, node ID";
     const generated = applyPairs(plan, [{ id: "T21", file: PLAYBOOK, from: anchor, to: "Record identity: repository, PR, node ID", count: 1 }]);

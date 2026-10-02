@@ -43,7 +43,7 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
   - [ ] `skills/<each other leaf skill the program uses>`
 - [ ] Arm the 30-minute audit tick as a real `/loop` in dynamic mode (on Codex, the cadence `../references/codex-tools.md` names). Never leave the cadence to memory.
 - [ ] Use this tick prompt, verbatim. "Re-read the execution playbook from the installed plugin and the armed /goal. Audit the operation against both and fix drift in this tick. Probe every active lane and judge progress by side effects only. Stand down a stuck lane and dispatch its replacement now. Then post a short status message to the operator in chat only when the audit found a tracked change that no earlier status message reported, such as a PR opened, a code-ready head, a round launched or closed, a verdict, a merge, a stuck agent and the action taken, a blocker added or cleared, or a decision only the operator can make. Name every such change and nothing else. Do not repeat a table, the merged list, or an unchanged blocker. If the audit found none, end the turn with no reply text. Either way, log this tick's row in your decision trail. The row names the items reported, or none."
-- [ ] On the operator's hold or stand-down, send every owner a zero-writes order at once.
+- [ ] On the operator's hold or stand-down, send every owner a zero-writes order at once. Report any pending request so an authorized actor can explicitly withdraw it and read both queue and auto-merge states back absent. Accepted server work can outlive the chat; the zero-writes hold itself authorizes no mutation.
 
 ### Spawn owners
 
@@ -57,11 +57,11 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
 ### PR mechanics, for every PR
 
 - [ ] Read Guarded operations in `playbooks/shipping.md` before the first operation. Record the repository, PR, node ID, branch, validated fetch and push URLs, captured remote and local heads, published and verdict heads, and current and verdict bases. Use `gh` with explicit `--repo <owner/name>`. Refuse unsupported Origin mutations.
-- [ ] Open the PR ready, never draft, with `gh pr create --repo <owner/name> --base <base-branch> --head <head-branch>`. A stack child targets its parent branch.
+- [ ] Open the PR ready, never draft, with `GH_HOST=<validated-host> gh pr create --repo <owner/name> --base <base-branch> --head <head-branch>`. A stack child targets its parent branch.
 - [ ] Run the repo's lint and typecheck once before the PR-facing push. Push with hooks on.
 - [ ] Run `/deslop` before each commit and `/no-comments` before review.
 - [ ] Triage every Bugbot and security-reviewer comment per `../references/bugbot-triage.md`.
-- [ ] Withdraw affected queue and auto-merge requests with readback before rewriting or retargeting. Capture remote and local pre-rewrite heads, require equality, and preserve the captured lease. Rebase onto current trunk before the code-ready report and babysit. Keep that merge base in fix rounds. Rebase again only at merge prep, on a `git merge-tree` conflict with trunk, or on a CI failure that comes from a change on trunk.
+- [ ] Withdraw affected queue and auto-merge requests with readback before rewriting or retargeting. Capture remote and local pre-rewrite heads, require equality, and preserve the captured lease. Fetch current trunk through Guarded operations, capture FETCH_HEAD and require the selected destination SHA. Rebase onto that exact SHA before the code-ready report and babysit. Keep that merge base in fix rounds. Rebase again only at merge prep, on a `git merge-tree` conflict with trunk, or on a CI failure that comes from a change on trunk.
 
 ### Verdict and merge, for every PR
 
@@ -73,7 +73,7 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
 
 Each live lane runs in its own worktree at the PR head. Drive through `verify` (UIs) or `run` (CLIs and TUIs).
 
-- [ ] Validate the fetch and push URLs against the operation record. Run `git fetch <fetch-url> <head-branch>` and `git checkout <head SHA>`. Read back the PR head and base before the lane starts.
+- [ ] Validate the fetch and push URLs against the operation record. Reject URL rewriting through Guarded operations. Fetch the selected head branch, capture FETCH_HEAD, require it to equal the recorded head SHA and check out that exact SHA. Read back the PR head and base before the lane starts.
 - [ ] <Start the backend and the surface. Wait for ready.>
 - [ ] <Deliver input only through the driver skill's commands. Name the read-only diagnostics.>
 - [ ] Save every screenshot to `/tmp/swarm-<pr-id>/worker-<n>/<slug>.png` and return the paths with the report.
