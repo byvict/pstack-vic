@@ -39,6 +39,20 @@ const cleanCi = {
 } satisfies CiClean;
 const readyPr = {
   kind: "ready-pr",
+  facts: {
+    context,
+    native: { kind: "unknown", reason: "compile fixture" },
+    mergeable: "MERGEABLE",
+    mergeStateStatus: "CLEAN",
+    reviewDecision: "APPROVED",
+    headRefOid: "head",
+    headRefName: "feature",
+    baseRefName: "main",
+    state: "OPEN",
+    mergedAt: null,
+    isDraft: false,
+  },
+  landing: { kind: "ready-unadmitted", reason: "unknown" },
   context,
   proof: {
     mergeability: "clear",

@@ -8,6 +8,53 @@ export const PR_COMMIT_STATUS_QUERY =
 export const PR_CHECK_ROLLUP_QUERY =
   "\nquery PrCheckRollup($owner: String!, $repo: String!, $pr: Int!, $after: String) {\n  repository(owner: $owner, name: $repo) {\n    pullRequest(number: $pr) {\n      commits(last: 1) {\n        nodes {\n          commit {\n            statusCheckRollup {\n              contexts(first: 100, after: $after) {\n                pageInfo {\n                  hasNextPage\n                  endCursor\n                }\n                nodes {\n                  __typename\n                  ... on CheckRun {\n                    name\n                    status\n                    conclusion\n                    detailsUrl\n                  }\n                  ... on StatusContext {\n                    context\n                    state\n                    targetUrl\n                  }\n                }\n              }\n            }\n          }\n        }\n      }\n    }\n  }\n}\n";
 
+export const PR_NATIVE_QUERY = `
+query NativeAdmission($owner: String!, $repo: String!, $pr: Int!) {
+  repository(owner: $owner, name: $repo) {
+    nameWithOwner
+    pullRequest(number: $pr) {
+      id number url mergeable mergeStateStatus reviewDecision
+      headRefOid headRefName baseRefName baseRefOid state mergedAt isDraft
+      baseRef { target { oid } branchProtectionRule {
+        requiredStatusChecks { context app { databaseId slug } }
+      } }
+      autoMergeRequest { enabledAt }
+      mergeQueueEntry {
+        id state position enqueuedAt
+        headCommit { oid url } baseCommit { oid url }
+      }
+      timelineItems(last: 1, itemTypes: [ADDED_TO_MERGE_QUEUE_EVENT, REMOVED_FROM_MERGE_QUEUE_EVENT]) {
+        nodes {
+          __typename
+          ... on AddedToMergeQueueEvent { createdAt }
+          ... on RemovedFromMergeQueueEvent { createdAt reason beforeCommit { oid } }
+        }
+      }
+    }
+  }
+}`;
+const COMMIT_CHECKS_QUERY = `
+query NativeChecks($owner: String!, $repo: String!, $sha: String!, $after: String) {
+  repository(owner: $owner, name: $repo) {
+    object(expression: $sha) {
+      ... on Commit {
+        oid statusCheckRollup {
+          contexts(first: 100, after: $after) {
+            pageInfo { hasNextPage endCursor }
+            nodes {
+              __typename
+              ... on CheckRun {
+                name status conclusion detailsUrl startedAt
+                checkSuite { app { databaseId slug } workflowRun { event workflow { id } } }
+              }
+              ... on StatusContext { context state targetUrl }
+            }
+          }
+        }
+      }
+    }
+  }
+}`;
 interface CommandResult {
   readonly code: number;
   readonly stdout: string;
@@ -408,6 +455,7 @@ export function parsePullRequest(
     missing("pull request.isDraft", object.isDraft);
   return {
     context,
+    native: { kind: "unknown", reason: "native admission was not read" },
     mergeable: enumValue(
       object.mergeable,
       ["MERGEABLE", "CONFLICTING", "UNKNOWN"] as const,
@@ -430,6 +478,376 @@ export function parsePullRequest(
     mergedAt: optionalString(object.mergedAt, "pull request.mergedAt"),
     isDraft: object.isDraft,
   };
+}
+function positiveId(value: unknown, path: string): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0)
+    missing(path, value);
+  return value;
+}
+function queueCommit(value: unknown): T.NativeQueueEntry["candidate"] {
+  if (value === null || value === undefined) return "unknown";
+  const commit = record(value, "queue commit");
+  return {
+    sha: string(commit.oid, "queue commit.oid"),
+    url: string(commit.url, "queue commit.url"),
+  };
+}
+export function parseNativeLanding(
+  value: unknown,
+  context: T.PrContext
+): Omit<Extract<T.NativeLandingFacts, { kind: "observed" }>, "requirements"> {
+  const repository = record(at(value, ["data", "repository"]), "repository");
+  const pr = record(repository.pullRequest, "pull request");
+  const repositoryName = string(
+    repository.nameWithOwner,
+    "repository.nameWithOwner"
+  );
+  const number = parsePrNumber(pr.number);
+  const url = string(pr.url, "pull request.url");
+  const parsedUrl = parsePrUrl(url);
+  if (
+    repositoryName.toLowerCase() !==
+      `${context.owner}/${context.repo}`.toLowerCase() ||
+    number !== context.number ||
+    parsedUrl.number !== context.number ||
+    `${parsedUrl.owner}/${parsedUrl.repo}`.toLowerCase() !==
+      repositoryName.toLowerCase()
+  )
+    missing("canonical pull request identity", pr);
+  const base =
+    pr.baseRef === null ? null : record(pr.baseRef, "pull request.baseRef");
+  const auto =
+    pr.autoMergeRequest === null
+      ? null
+      : record(pr.autoMergeRequest, "autoMergeRequest");
+  const queue =
+    pr.mergeQueueEntry === null
+      ? null
+      : record(pr.mergeQueueEntry, "mergeQueueEntry");
+  const events = list(at(pr, ["timelineItems", "nodes"]), "queue events");
+  let lastQueueEvent: Extract<
+    T.NativeLandingFacts,
+    { kind: "observed" }
+  >["lastQueueEvent"] = null;
+  if (events.length > 0) {
+    const event = record(events[0], "queue event");
+    const createdAt = string(event.createdAt, "queue event.createdAt");
+    if (event.__typename === "AddedToMergeQueueEvent")
+      lastQueueEvent = { kind: "added", createdAt };
+    else if (event.__typename === "RemovedFromMergeQueueEvent")
+      lastQueueEvent = {
+        kind: "removed",
+        createdAt,
+        removedCandidateSha:
+          event.beforeCommit === null
+            ? "unknown"
+            : string(
+                at(event, ["beforeCommit", "oid"]),
+                "queue event.beforeCommit.oid"
+              ),
+        reason: optionalString(event.reason, "queue event.reason") ?? "unknown",
+      };
+    else missing("queue event.__typename", event.__typename);
+  }
+  return {
+    kind: "observed",
+    repository: repositoryName,
+    prNodeId: string(pr.id, "pull request.id"),
+    prNumber: number,
+    prUrl: url,
+    headSha: string(pr.headRefOid, "pull request.headRefOid"),
+    baseRef: string(pr.baseRefName, "pull request.baseRefName"),
+    prBaseSha: string(pr.baseRefOid, "pull request.baseRefOid"),
+    currentBaseSha:
+      base === null || base.target === null
+        ? "unknown"
+        : string(at(base, ["target", "oid"]), "baseRef.target.oid"),
+    autoMerge:
+      auto === null
+        ? null
+        : { enabledAt: string(auto.enabledAt, "autoMergeRequest.enabledAt") },
+    candidate: queue === null ? "unknown" : queueCommit(queue.headCommit),
+    queueEntry:
+      queue === null
+        ? null
+        : {
+            id: string(queue.id, "mergeQueueEntry.id"),
+            state: enumValue(
+              queue.state,
+              [
+                "QUEUED",
+                "AWAITING_CHECKS",
+                "LOCKED",
+                "MERGEABLE",
+                "UNMERGEABLE",
+              ],
+              "mergeQueueEntry.state"
+            ),
+            position: positiveId(queue.position, "mergeQueueEntry.position"),
+            enqueuedAt: string(queue.enqueuedAt, "mergeQueueEntry.enqueuedAt"),
+            candidate: queueCommit(queue.headCommit),
+            base: queueCommit(queue.baseCommit),
+          },
+    lastQueueEvent,
+  };
+}
+interface Requirement {
+  readonly context: string;
+  readonly appId: number | "any";
+}
+export function parseRequirements(
+  value: unknown,
+  rules: unknown
+): readonly Requirement[] {
+  const pr = at(value, ["data", "repository", "pullRequest"]);
+  const base = at(pr, ["baseRef"]);
+  if (base === null) missing("baseRef for current requirements");
+  const protection = at(base, ["branchProtectionRule"]);
+  const checks: Requirement[] =
+    protection === null
+      ? []
+      : list(
+          at(protection, ["requiredStatusChecks"]),
+          "requiredStatusChecks"
+        ).map((value) => {
+          const check = record(value, "required status check");
+          return {
+            context: string(check.context, "required check.context"),
+            appId:
+              check.app === null
+                ? "any"
+                : positiveId(
+                    at(check, ["app", "databaseId"]),
+                    "required check.appId"
+                  ),
+          };
+        });
+  for (const value of list(rules, "effective branch rules")) {
+    const rule = record(value, "effective branch rule");
+    if (rule.type !== "required_status_checks") continue;
+    for (const value of list(
+      at(rule, ["parameters", "required_status_checks"]),
+      "required_status_checks"
+    )) {
+      const check = record(value, "required status check");
+      checks.push({
+        context: string(check.context, "required check.context"),
+        appId:
+          check.integration_id === null || check.integration_id === undefined
+            ? "any"
+            : positiveId(check.integration_id, "required check.integration_id"),
+      });
+    }
+  }
+  return [
+    ...new Map(
+      checks.map((check) => [`${check.context}:${check.appId}`, check])
+    ).values(),
+  ];
+}
+export type ProducedCheck =
+  | {
+      readonly kind: "status-context";
+      readonly check: T.Check;
+      readonly producer: "unknown";
+    }
+  | {
+      readonly kind: "check-run";
+      readonly check: T.Check;
+      readonly producer: T.CheckProducer | "unknown";
+      readonly attempt:
+        | {
+            readonly workflowId: string;
+            readonly event: string;
+            readonly startedAt: number;
+          }
+        | "unknown";
+    };
+export function parseProducedCheck(value: unknown): ProducedCheck {
+  const node = record(value, "commit check");
+  const check = mapRollupNode(node);
+  if (check === null) missing("commit check.__typename", node.__typename);
+  if (node.__typename === "StatusContext")
+    return { kind: "status-context", check, producer: "unknown" };
+  const app = at(node, ["checkSuite", "app"]);
+  const run = at(node, ["checkSuite", "workflowRun"]);
+  const startedAt = optionalString(node.startedAt, "commit check.startedAt");
+  const startTime = startedAt === null ? null : Date.parse(startedAt);
+  if (startTime !== null && !Number.isFinite(startTime))
+    missing("commit check.startedAt", startedAt);
+  return {
+    kind: "check-run",
+    check,
+    producer:
+      app === null
+        ? "unknown"
+        : {
+            appId: positiveId(at(app, ["databaseId"]), "check producer.appId"),
+            slug: string(at(app, ["slug"]), "check producer.slug"),
+          },
+    attempt:
+      run === null || startTime === null
+        ? "unknown"
+        : {
+            workflowId: string(
+              at(run, ["workflow", "id"]),
+              "check workflow.id"
+            ),
+            event: string(at(run, ["event"]), "check workflow.event"),
+            startedAt: startTime,
+          },
+  };
+}
+function currentAttempts(
+  checks: readonly ProducedCheck[]
+): readonly ProducedCheck[] {
+  const selected = new Map<
+    string,
+    { readonly startedAt: number; readonly checks: readonly ProducedCheck[] }
+  >();
+  const separate: ProducedCheck[] = [];
+  for (const check of checks) {
+    if (
+      check.kind !== "check-run" ||
+      check.producer === "unknown" ||
+      check.attempt === "unknown"
+    ) {
+      separate.push(check);
+      continue;
+    }
+    const key = JSON.stringify([
+      check.producer.appId,
+      check.check.name,
+      check.attempt.workflowId,
+      check.attempt.event,
+    ]);
+    const prior = selected.get(key);
+    if (prior === undefined || check.attempt.startedAt > prior.startedAt)
+      selected.set(key, {
+        startedAt: check.attempt.startedAt,
+        checks: [check],
+      });
+    else if (check.attempt.startedAt === prior.startedAt)
+      selected.set(key, {
+        startedAt: prior.startedAt,
+        checks: [...prior.checks, check],
+      });
+  }
+  return [...selected.values()]
+    .flatMap((bucket) => bucket.checks)
+    .concat(separate);
+}
+export function requiredCheckResult(
+  requirement: Requirement,
+  checks: readonly ProducedCheck[] | "unknown"
+): T.RequiredCheckResult {
+  if (checks === "unknown")
+    return { state: "unknown", producer: "unknown", links: [] };
+  const matching = currentAttempts(checks).filter(
+    ({ check, producer }) =>
+      check.name === requirement.context &&
+      (requirement.appId === "any" ||
+        (producer !== "unknown" && producer.appId === requirement.appId))
+  );
+  if (matching.length === 0)
+    return { state: "pending", producer: "unknown", links: [] };
+  const ambiguous =
+    matching.length > 1 &&
+    matching.some(
+      (check) => check.kind === "check-run" && check.attempt === "unknown"
+    );
+  const state = ambiguous
+    ? "unknown"
+    : matching.some(({ check }) => check.kind === "failed")
+      ? "failed"
+      : matching.some(
+            ({ check }) =>
+              check.kind === "pending" || check.kind === "code-review-gate"
+          )
+        ? "pending"
+        : "passed";
+  const firstProducer = matching[0].producer;
+  const producer =
+    firstProducer !== "unknown" &&
+    matching.every(
+      (check) =>
+        check.producer !== "unknown" &&
+        check.producer.appId === firstProducer.appId &&
+        check.producer.slug === firstProducer.slug
+    )
+      ? firstProducer
+      : "unknown";
+  return {
+    state,
+    producer,
+    links: matching.flatMap(({ check }) => (check.link ? [check.link] : [])),
+  };
+}
+async function readProducedChecks(
+  context: T.PrContext,
+  sha: string
+): Promise<readonly ProducedCheck[]> {
+  const checks: ProducedCheck[] = [];
+  let after: string | null = null;
+  do {
+    const argv = graphqlArgs(COMMIT_CHECKS_QUERY, context);
+    argv.push("-f", `sha=${sha}`);
+    if (after !== null) argv.push("-f", `after=${after}`);
+    const value = await runJson(argv);
+    const commit = record(
+      at(value, ["data", "repository", "object"]),
+      "commit checks"
+    );
+    if (commit.oid !== sha) missing("commit checks.oid", commit.oid);
+    if (commit.statusCheckRollup === null) return checks;
+    const contexts = at(commit, ["statusCheckRollup", "contexts"]);
+    for (const value of list(at(contexts, ["nodes"]), "commit check nodes"))
+      checks.push(parseProducedCheck(value));
+    const page = record(at(contexts, ["pageInfo"]), "commit checks.pageInfo");
+    if (typeof page.hasNextPage !== "boolean")
+      missing("commit checks.hasNextPage", page.hasNextPage);
+    const next = page.hasNextPage
+      ? string(page.endCursor, "commit checks.endCursor")
+      : null;
+    if (next !== null && next === after)
+      missing("advancing commit checks cursor", next);
+    after = next;
+  } while (after !== null);
+  return checks;
+}
+async function readRequirements(
+  value: unknown,
+  context: T.PrContext,
+  native: ReturnType<typeof parseNativeLanding>
+): Promise<T.RequiredChecks> {
+  try {
+    const rules = await runJson([
+      "gh",
+      "api",
+      `repos/${context.owner}/${context.repo}/rules/branches/${encodeURIComponent(native.baseRef)}`,
+    ]);
+    const requirements = parseRequirements(value, rules);
+    if (requirements.length === 0) return { kind: "known", checks: [] };
+    const head = await readProducedChecks(context, native.headSha);
+    const candidate = native.queueEntry?.candidate;
+    const candidateChecks =
+      candidate === undefined || candidate === "unknown"
+        ? "unknown"
+        : candidate.sha === native.headSha
+          ? head
+          : await readProducedChecks(context, candidate.sha);
+    return {
+      kind: "known",
+      checks: requirements.map((requirement) => ({
+        ...requirement,
+        head: requiredCheckResult(requirement, head),
+        candidate: requiredCheckResult(requirement, candidateChecks),
+      })),
+    };
+  } catch (error) {
+    if (!(error instanceof WatcherQueryError)) throw error;
+    return { kind: "unknown", reason: error.failure.detail };
+  }
 }
 function graphqlArgs(
   query: string,
@@ -467,19 +885,18 @@ export class GhGitHubReader implements T.GitHubReader {
     };
   }
   async pullRequest(context: T.PrContext): Promise<T.PullRequestFacts> {
-    return parsePullRequest(
-      await runJson([
-        "gh",
-        "pr",
-        "view",
-        String(context.number),
-        "--repo",
-        `${context.owner}/${context.repo}`,
-        "--json",
-        "mergeable,mergeStateStatus,reviewDecision,headRefOid,headRefName,baseRefName,state,mergedAt,isDraft",
-      ]),
-      context
-    );
+    const value = await runJson(graphqlArgs(PR_NATIVE_QUERY, context));
+    const native = parseNativeLanding(value, context);
+    return {
+      ...parsePullRequest(
+        at(value, ["data", "repository", "pullRequest"]),
+        context
+      ),
+      native: {
+        ...native,
+        requirements: await readRequirements(value, context, native),
+      },
+    };
   }
   async openPullRequests(
     repository: T.Repository

@@ -38,8 +38,86 @@ export type ReviewDecision =
   | "CHANGES_REQUESTED"
   | "REVIEW_REQUIRED"
   | null;
+export interface CheckProducer {
+  readonly appId: number;
+  readonly slug: string;
+}
+export interface RequiredCheck {
+  readonly context: string;
+  readonly appId: number | "any";
+  readonly head: RequiredCheckResult;
+  readonly candidate: RequiredCheckResult;
+}
+export interface RequiredCheckResult {
+  readonly state: "passed" | "failed" | "pending" | "unknown";
+  readonly producer: CheckProducer | "unknown";
+  readonly links: readonly string[];
+}
+export type RequiredChecks =
+  | { readonly kind: "unknown"; readonly reason: string }
+  | { readonly kind: "known"; readonly checks: readonly RequiredCheck[] };
+export interface NativeQueueEntry {
+  readonly id: string;
+  readonly state:
+    | "QUEUED"
+    | "AWAITING_CHECKS"
+    | "LOCKED"
+    | "MERGEABLE"
+    | "UNMERGEABLE";
+  readonly position: number;
+  readonly enqueuedAt: string;
+  readonly candidate:
+    | { readonly sha: string; readonly url: string }
+    | "unknown";
+  readonly base: { readonly sha: string; readonly url: string } | "unknown";
+}
+export type NativeLandingFacts =
+  | { readonly kind: "unknown"; readonly reason: string }
+  | {
+      readonly kind: "observed";
+      readonly repository: string;
+      readonly prNodeId: string;
+      readonly prNumber: PrNumber;
+      readonly prUrl: string;
+      readonly headSha: string;
+      readonly baseRef: string;
+      readonly prBaseSha: string;
+      readonly currentBaseSha: string | "unknown";
+      readonly autoMerge: { readonly enabledAt: string } | null;
+      readonly queueEntry: NativeQueueEntry | null;
+      readonly candidate: NativeQueueEntry["candidate"];
+      readonly lastQueueEvent:
+        | { readonly kind: "added"; readonly createdAt: string }
+        | {
+            readonly kind: "removed";
+            readonly createdAt: string;
+            readonly reason: string;
+            readonly removedCandidateSha: string;
+          }
+        | null;
+      readonly requirements: RequiredChecks;
+    };
+export type LandingObservation =
+  | {
+      readonly kind:
+        | "ready-unadmitted"
+        | "not-admitted"
+        | "auto-merge-pending"
+        | "queued"
+        | "group-running"
+        | "failed"
+        | "merged"
+        | "unknown";
+      readonly reason: string;
+    }
+  | {
+      readonly kind: "removed";
+      readonly reason: string;
+      readonly headBinding: "current" | "unknown";
+    };
 export interface PullRequestFacts {
   readonly context: PrContext;
+  readonly native: NativeLandingFacts;
   readonly mergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
   readonly mergeStateStatus: MergeStateStatus;
   readonly reviewDecision: ReviewDecision;
@@ -147,17 +225,21 @@ export type PrSnapshot =
       readonly kind: "merged" | "closed";
       readonly context: PrContext;
       readonly facts: PullRequestFacts;
+      readonly landing: LandingObservation;
     }
   | {
       readonly kind: "open";
       readonly context: PrContext;
       readonly facts: PullRequestFacts;
+      readonly landing: LandingObservation;
       readonly threads: readonly ReviewThread[];
       readonly ci: CiState;
       readonly reviewAutomationRunning: boolean;
     };
 export interface ReadyPr {
   readonly kind: "ready-pr";
+  readonly facts: PullRequestFacts;
+  readonly landing: LandingObservation;
   readonly context: PrContext;
   readonly proof: {
     readonly mergeability: "clear";
@@ -172,6 +254,8 @@ export interface ReadyPr {
 }
 export interface MergedPr {
   readonly kind: "merged-pr";
+  readonly facts: PullRequestFacts;
+  readonly landing: LandingObservation;
   readonly context: PrContext;
   readonly mergedAt: string | null;
 }
@@ -180,6 +264,11 @@ export type MergeGateReason =
   | "draft-pr"
   | "changes-requested";
 export type MergeBlocker =
+  | {
+      readonly kind: "native-admission";
+      readonly pr: PrContext;
+      readonly snapshot: PrSnapshot;
+    }
   | {
       readonly kind: "merge-conflicts";
       readonly pr: PrContext;
@@ -248,10 +337,12 @@ export interface WaitingDecision {
 export type PrDecision =
   | { readonly kind: "blocker"; readonly blocker: MergeBlocker }
   | WaitingDecision
+  | { readonly kind: "admitted"; readonly snapshot: PrSnapshot }
   | { readonly kind: "ready"; readonly pr: ReadyPr }
   | { readonly kind: "merged"; readonly pr: MergedPr };
 export type StackDecision =
   | { readonly kind: "blocker"; readonly blocker: MergeBlocker }
+  | { readonly kind: "admitted"; readonly snapshot: PrSnapshot }
   | WaitingDecision
   | { readonly kind: "clear"; readonly prs: NonEmpty<ReadyPr | MergedPr> };
 export type WatchMode = "single" | "stack" | "queued-stack";
@@ -275,6 +366,7 @@ interface Terminal<
   readonly exitCode: C;
 }
 export type ProgressVerdict =
+  | (Progress<"LANDING"> & { readonly snapshot: PrSnapshot })
   | (Progress<"QUEUE", "queued-stack"> & {
       readonly queue: NonEmpty<PrContext>;
     })
@@ -289,7 +381,11 @@ export type ProgressVerdict =
             readonly kind: "pending-checks";
             readonly pending: NonEmpty<PendingCheck>;
           }
-        | { readonly kind: "merge-queue"; readonly unmergedCount: number };
+        | { readonly kind: "merge-queue"; readonly unmergedCount: number }
+        | {
+            readonly kind: "native-admission";
+            readonly observation: LandingObservation;
+          };
     })
   | (Progress<"ADVANCE", "queued-stack"> & {
       readonly merged: PrContext;
@@ -302,6 +398,12 @@ export type ProgressVerdict =
       readonly retryInSeconds: number;
     });
 export type BlockerVerdict =
+  | (Terminal<"BLOCKER", 8> & {
+      readonly blocker: Extract<
+        MergeBlocker,
+        { readonly kind: "native-admission" }
+      >;
+    })
   | (Terminal<"BLOCKER", 2> & {
       readonly blocker: Extract<
         MergeBlocker,

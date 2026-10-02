@@ -300,11 +300,14 @@ describe("queued-stack cadence", () => {
     expect(timeline).toEqual([
       "emit:QUEUE",
       "read:20",
+      "emit:LANDING",
       "fail:21",
       "emit:RETRY",
       "sleep",
       "read:21",
+      "emit:LANDING",
       "read:22",
+      "emit:LANDING",
       "emit:STATUS",
       "emit:WAITING",
       "sleep",
@@ -383,11 +386,13 @@ describe("queued-stack cadence", () => {
     await expect(running).rejects.toThrow("stop after advance proof");
     expect(emitted.some((event) => event.kind === "ADVANCE")).toBe(true);
     const firstSleep = timeline.indexOf("sleep");
-    expect(timeline.slice(firstSleep, firstSleep + 5)).toEqual([
+    expect(timeline.slice(firstSleep, firstSleep + 7)).toEqual([
       "sleep",
       "read:40",
+      "emit:LANDING",
       "emit:ADVANCE",
       "read:41",
+      "emit:LANDING",
       "emit:WAITING",
     ]);
   });
