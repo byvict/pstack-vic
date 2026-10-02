@@ -19,8 +19,12 @@ Uma execução de modelo lançada pela Raiz ou por um Dono, com papel, modo de a
 _Avoid_: subagente, worker, child
 
 **Família**:
-O fornecedor de um modelo (Claude, Codex, Grok); duas lanes são cruzadas quando suas famílias diferem.
+O fornecedor de um modelo (Claude, Codex, Grok); duas lanes são cruzadas quando suas famílias diferem. Na matriz de modelos é a coluna Provider. A coluna Family da matriz é a linha do modelo, e trocar Sol por Astra, ou Opus por Fable, não muda a Família.
 _Avoid_: provider, vendor, modelo
+
+**Executor**:
+Uma Família que escreveu o trabalho de uma execução: a da sessão que o fez, sempre, e a de cada Lane de escrita cujo resultado entrou na entrega. Uma Lane só de leitura não é Executor. A revisão da trilha de decisões vem do papel `trail reviewer pool` e nunca de uma Família executora.
+_Avoid_: autor, pai, escritor
 
 ### O programa
 

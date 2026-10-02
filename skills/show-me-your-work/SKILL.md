@@ -63,14 +63,18 @@ Correct the log, not the story. The audit never edits or removes a row, even an 
 
 ## Cross-model review of the trail
 
-Before handing back, spawn a subagent on a different model family from the one that did the work. Self-review is not a substitute. The subagent reads the audit trail and the run's transcript, then flags what the user should pay attention to. Not a redo of the work, a scan for what's suboptimal or risky.
+Before handing back, launch one reviewer lane from the `trail reviewer pool` role, on a provider that wrote none of the work. Self-review is not a substitute. The reviewer reads the audit trail and the run's transcript, then flags what the user should pay attention to. Not a redo of the work, a scan for what's suboptimal or risky.
+
+Pick and dispatch the lane per the Cross-family selection section of [`provider-dispatch.md`](../poteto-mode/references/provider-dispatch.md). The script picks, not you. The executors are this session's provider plus the provider of every write lane whose output is in the result. The brief names the trail and the transcript by path. Log the pick as a row, with the lane's receipt as evidence. A run that is itself a subagent does not launch the reviewer: it returns its trail and its transcript path with its report, and the top-level session launches one reviewer per trail.
 
 - Decisions logged with weak or absent evidence.
 - Verification steps skipped or claimed without proof in the transcript.
 - Choices that look risky in hindsight (premature, scope-creeping, papering over a symptom).
 - Gaps the user would otherwise miss on a casual skim.
 
-Every reply for a run that produced a trail ends with an "Attention" section. Lead with the reviewer's model on its own line (`reviewed by <model>`), then list each flag pointing to specific rows or moments. "No flags" is a valid value. The model name is not.
+Every reply for a run that produced a trail ends with an "Attention" section. Lead with the reviewer's model on its own line (`reviewed by <model>`), then list each flag pointing to specific rows or moments. "No flags" is a valid value. The model name is not. Take the name from the lane's receipt, as provider-dispatch says, never from the reviewer's own words.
+
+When the pool yields no lane, the trail is not reviewed. Lead with `not reviewed: no cross-family reviewer` instead. Then name the executors, and say why each entry of the row was skipped or dropped out, with the receipt of each dropout. A launch that the harness refuses is a dropout with no receipt, such as Claude Code's auto mode refusing to send the transcript to another provider. Quote the refusal and do not work around it. Never name a lane on an executor's provider, or this session, as the reviewer.
 
 ## Reviewing the trail
 

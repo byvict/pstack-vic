@@ -47,11 +47,19 @@ export interface Family {
 export type RoleSpec = string | readonly string[];
 export type RoleDefault = RoleSpec | Readonly<Record<string, RoleSpec>>;
 
+/** How a list role yields its lanes when it is not a panel. */
+export type RoleSelection = "cross-family";
+
 export interface Role {
   readonly role: string;
   /** One line on what a lane in this role does; /setup-pstack shows it when asking for the role. */
   readonly description: string;
   readonly default: RoleDefault;
+  /**
+   * `cross-family`: the list is a pool from which one lane runs, the first
+   * entry whose provider wrote none of the work. Absent: one lane per entry.
+   */
+  readonly selection?: RoleSelection;
 }
 
 export interface ModelMatrix {
@@ -295,6 +303,11 @@ export function validateMatrix(raw: unknown): ModelMatrix {
     if (typeof description !== "string" || description.trim().length === 0 || description.includes("\n")) {
       fail(`${label}: description must be one non-empty line`);
     }
+    if (entry.selection !== undefined && entry.selection !== "cross-family") {
+      fail(`${label}: selection must be "cross-family" when present`);
+    }
+    const selection: { selection?: RoleSelection } =
+      entry.selection === undefined ? {} : { selection: entry.selection };
     const value = entry.default;
     if (isRecord(value)) {
       const keys = Object.keys(value).sort();
@@ -305,9 +318,9 @@ export function validateMatrix(raw: unknown): ModelMatrix {
       for (const [parent, spec] of Object.entries(value)) {
         byParent[parent] = checkSpec(spec, `${label}.${parent}`);
       }
-      return { role: label, description, default: byParent };
+      return { role: label, description, default: byParent, ...selection };
     }
-    return { role: label, description, default: checkSpec(value, label) };
+    return { role: label, description, default: checkSpec(value, label), ...selection };
   });
   const labels = new Set<string>();
   for (const r of roles) {
@@ -315,7 +328,7 @@ export function validateMatrix(raw: unknown): ModelMatrix {
     labels.add(r.role);
   }
 
-  return {
+  const matrix: ModelMatrix = {
     schemaVersion: 1,
     notes,
     efforts,
@@ -326,6 +339,14 @@ export function validateMatrix(raw: unknown): ModelMatrix {
     families,
     roles,
   };
+  for (const r of roles) {
+    if (r.selection !== "cross-family") continue;
+    for (const parent of parentNames) {
+      const problem = crossFamilyRowProblem(matrix, parent, r.role, roleDefault(matrix, r.role, parent));
+      if (problem !== null) fail(`${problem} (default for parent ${parent})`);
+    }
+  }
+  return matrix;
 }
 
 /** Read and validate the matrix at `path` (defaults to the plugin's model-matrix.json). */
@@ -464,6 +485,96 @@ export function roleDefault(matrix: ModelMatrix, label: string, parent: string):
   return entries.map((e) => expandRoleEntry(matrix, e));
 }
 
+/** Provider that runs natively when `parent` is the top-level harness. */
+export function nativeProviderOf(matrix: ModelMatrix, parent: string): string {
+  const provider = Object.keys(matrix.providers).find((p) => matrix.providers[p].nativeIn === parent);
+  if (provider === undefined) fail(`unknown parent ${parent}`);
+  return provider;
+}
+
+/**
+ * Why `lanes` cannot be the row of a cross-family role under `parent`, or null
+ * when it can. The session that did the work always runs on the parent's
+ * native provider, so an alias or a row with no other provider never yields a
+ * lane.
+ */
+export function crossFamilyRowProblem(
+  matrix: ModelMatrix,
+  parent: string,
+  label: string,
+  lanes: readonly string[]
+): string | null {
+  const native = nativeProviderOf(matrix, parent);
+  const alias = lanes.find((lane) => matrix.aliases.includes(lane));
+  if (alias !== undefined) {
+    return `role ${JSON.stringify(label)} takes provider-qualified lanes only: ${alias} runs on the parent model, which never reviews its own work`;
+  }
+  if (lanes.every((lane) => parseDescriptor(lane)?.provider === native)) {
+    return `role ${JSON.stringify(label)} needs at least one lane from a provider other than ${native}, the parent's own; got ${lanes.join(", ")}`;
+  }
+  return null;
+}
+
+/** One lane of a pool, resolved against the matrix. */
+export interface PoolLane {
+  readonly descriptor: string;
+  readonly provider: string;
+  readonly model: string;
+  readonly effort: string;
+  readonly route: Route;
+}
+
+export interface PoolSkip {
+  readonly lane: string;
+  readonly reason: string;
+}
+
+export interface CrossFamilyPick {
+  /** Providers that wrote the work, the parent's native provider first. */
+  readonly executors: readonly string[];
+  /** The first eligible lane, or null when the pool yields none. */
+  readonly chosen: PoolLane | null;
+  /** Every lane whose provider is no executor, in list order; the next one follows a dropout. */
+  readonly eligible: readonly PoolLane[];
+  readonly skipped: readonly PoolSkip[];
+}
+
+/**
+ * Pick from a pool row the lanes whose provider wrote none of the work.
+ * `lanes` are normalized sheet entries in the operator's order of preference.
+ * `executors` are the providers of the write lanes whose output is part of the
+ * result; the parent's native provider is always added, because the session
+ * that did the work runs on it.
+ */
+export function pickCrossFamily(
+  matrix: ModelMatrix,
+  parent: string,
+  lanes: readonly string[],
+  executors: readonly string[]
+): CrossFamilyPick {
+  for (const provider of executors) {
+    if (!(provider in matrix.providers)) {
+      fail(`unknown provider ${JSON.stringify(provider)}; expected one of ${Object.keys(matrix.providers).join(", ")}`);
+    }
+  }
+  const all = [...new Set([nativeProviderOf(matrix, parent), ...executors])];
+  const eligible: PoolLane[] = [];
+  const skipped: PoolSkip[] = [];
+  for (const lane of lanes) {
+    if (matrix.aliases.includes(lane)) {
+      skipped.push({ lane, reason: "alias: runs on the parent model" });
+      continue;
+    }
+    const { descriptor } = resolveDescriptor(matrix, lane);
+    if (all.includes(descriptor.provider)) {
+      skipped.push({ lane, reason: `same family: ${descriptor.provider} wrote part of the work` });
+      continue;
+    }
+    eligible.push({ descriptor: lane, ...descriptor, route: routeFor(matrix, parent, descriptor.provider) });
+  }
+  return { executors: all, chosen: eligible[0] ?? null, eligible, skipped };
+}
+
 /**
  * Map a Cursor pstack selector (for example `grok-4.6-fast-xhigh`) to the
  * family and effort it stands for, or null when no family claims it.
@@ -573,7 +684,7 @@ export function renderRoleDefaultsMarkdown(matrix: ModelMatrix): string {
   }
   lines.push("");
   lines.push(
-    "A list is a panel: one lane per entry, in this order. A role whose two columns differ takes a family native to each parent: the frontier family for the frontier solo roles, the code family for the four authoring rows. Aliases run on the parent model through its native subagent primitive."
+    "A list is a panel: one lane per entry, in this order. A row whose label ends in `pool` is the exception: one lane runs, picked by the Cross-family selection rule below. A role whose two columns differ takes a family native to each parent: the frontier family for the frontier solo roles, the code family for the four authoring rows. Aliases run on the parent model through its native subagent primitive."
   );
   lines.push("");
   lines.push(ROLES_END);

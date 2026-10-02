@@ -5,9 +5,9 @@ description: Configure pstack's provider-qualified models, per-lane requested ef
 
 # Setup pstack
 
-Configure one portable model sheet for the current parent harness. Read [`provider-dispatch.md`](../poteto-mode/references/provider-dispatch.md) before probing or writing anything. Its model matrix, descriptor grammar, route table, and role defaults are the contract. Each lane carries its own effort, so two roles may run the same family at different efforts. Do not add a second configuration file, a runtime resolver, or a weaker-model fallback.
+Configure one portable model sheet for the current parent harness. Read [`provider-dispatch.md`](../poteto-mode/references/provider-dispatch.md) before probing or writing anything. Its model matrix, descriptor grammar, route table, and role defaults are the contract. Each lane carries its own effort, so two roles may run the same family at different efforts. Do not add a second configuration file, a runtime resolver, or a weaker-model fallback. The `pick` subcommand is none of these: it applies the Cross-family selection rule of `provider-dispatch.md` to a row the operator wrote, and never leaves that row.
 
-The deterministic half of this skill is `scripts/setup-pstack.ts`, next to this file (Node 24, no dependencies; run it as `node <this skill's directory>/scripts/setup-pstack.ts <subcommand>`). It reads the matrix, reads and normalizes the current sheet, renders the new one, runs the external probes through the runner, refuses to write while any required probe is missing, and writes with snapshot, read-back, and restore. You own the conversation (parent, efforts, role changes, confirmation) and the native one-turn probes. Every subcommand prints JSON; `--help` prints the usage. Never edit the sheet or the integration files by hand, and never paste a rendered sheet as the result. A second script, `scripts/authorize.ts`, checks the operator's standing authorization (step 10).
+The deterministic half of this skill is `scripts/setup-pstack.ts`, next to this file (Node 24, no dependencies; run it as `node <this skill's directory>/scripts/setup-pstack.ts <subcommand>`). It reads the matrix, reads and normalizes the current sheet, renders the new one, runs the external probes through the runner, refuses to write while any required probe is missing, and writes with snapshot, read-back, and restore. You own the conversation (parent, efforts, role changes, confirmation) and the native one-turn probes. Every subcommand prints JSON; `--help` prints the usage. Never edit the sheet or the integration files by hand, and never paste a rendered sheet as the result. A sixth subcommand, `pick`, is not a setup step: a skill calls it at dispatch time to take one lane from a pool row. A second script, `scripts/authorize.ts`, checks the operator's standing authorization (step 10).
 
 Claude Code writes `~/.claude/pstack-models.md` and loads it from `~/.claude/CLAUDE.md` with:
 
@@ -54,6 +54,8 @@ When the operator chose "Change roles" without typing lanes, ask which roles in 
 
 A panel role (a list) gets one question instead of two: the current lanes as the "(keep)" option, the parent's matrix default panel when it differs, and "Other" for a typed list of descriptors, one per lane, in the order they should run. Explain that one lane runs per entry and that the list length is the fan-out count.
 
+A pool role (`arena cross-judge pool`, `trail reviewer pool`) gets the same single question with a different explanation: one lane runs, and the order of the list is the order of preference. For `trail reviewer pool`, say that the lane that runs is the first entry from a provider that wrote none of the work, that this parent's own provider never qualifies, and that the row therefore needs at least one other provider and takes no alias. Two other providers keep a reviewer available when a lane of one of them wrote.
+
 Each lane keeps the effort written in its descriptor, so `bug-fix: codex:gpt-6-sol@xhigh` next to `hillclimb: codex:gpt-6-sol@high` is a valid map; there is no per-family effort question. A role that brings a family into the map carries that family's effort in its answer. Why and Reflect roles need the parent's live MCP surface, so recommend `inherit-parent` or `auto` for them in the question.
 
 ### 4. Collect the changes
@@ -67,9 +69,9 @@ node scripts/setup-pstack.ts plan --parent <parent> \
   [--effort <family>=<effort>]... [--role "<label>=<lane>[, <lane>]"]...
 ```
 
-The plan is the in-memory render: it starts from the loaded rows (or the first-run map), materializes any missing documented role from the defaults, rewrites every lane of a family named in `--effort` to that effort, then applies the named role changes lane by lane. It refuses an unqualified slug, an unknown role or family, an effort outside the family's row, and a family-wide `--effort` for a family outside the map. A family-wide `--effort` updates every lane of that family and moves no role.
+The plan is the in-memory render: it starts from the loaded rows (or the first-run map), materializes any missing documented role from the defaults, rewrites every lane of a family named in `--effort` to that effort, then applies the named role changes lane by lane. It refuses an unqualified slug, an unknown role or family, an effort outside the family's row, and a family-wide `--effort` for a family outside the map. It also refuses a `trail reviewer pool` row that holds an alias or names no provider other than this parent's own, because such a row can never yield a reviewer. A family-wide `--effort` updates every lane of that family and moves no role.
 
-The output carries `dir` (a fresh run directory holding `plan.json`; pass `--dir` to choose it), the distinct `efforts` per family in the final map, the `rows`, the `sheet` bytes, the `migrations`, `verified` (the families of the map already in this parent's ledger, which are not probed), and `pairs`: one probe per family of the map missing from the ledger, at the family's lowest effort in use (`sol@high` when `sol` runs at `high` and `xhigh`), with its route for this parent and, for native pairs, how to probe it. A plan that only changes efforts or moves roles between verified families has no `pairs`.
+The output carries `dir` (a fresh run directory holding `plan.json`; pass `--dir` to choose it), the distinct `efforts` per family in the final map, the `rows`, the `sheet` bytes, the `migrations`, `verified` (the families of the map already in this parent's ledger, which are not probed), and `pairs`: one probe per family of the map missing from the ledger, at the family's lowest effort in use (`sol@high` when `sol` runs at `high` and `xhigh`), with its route for this parent and, for native pairs, how to probe it. A plan that only changes efforts or moves roles between verified families has no `pairs`. `warnings` lists the rows that are valid but can leave a run without a lane, such as a `trail reviewer pool` with one provider besides the parent's. Show each warning to the operator in step 7.
 
 ### 6. Probe new families
 
@@ -91,7 +93,7 @@ node scripts/setup-pstack.ts attest --dir <dir> --pair <family>@<effort> --obser
 
 ### 7. Confirm and commit
 
-Show any model migrations as original and normalized descriptors. Show the route table for this parent and every rendered row from `plan.json`. Say which families were probed in step 6 and which were already verified (`verified`). Say when `inherit-parent` or `auto` reduces a panel's provider diversity. Why and Reflect require the parent's live MCP surface; keep their roles on `inherit-parent` or `auto`, because the bounded external runner deliberately omits ambient MCPs. For panel roles, one lane runs per entry and the list length is the fan-out count. `arena cross-judge pool` is a list from which Arena chooses a provider different from the parent and base candidate when possible. `swarm workers` is the default for every worker unless a race explicitly assigns another descriptor.
+Show any model migrations as original and normalized descriptors. Show the route table for this parent and every rendered row from `plan.json`. Say which families were probed in step 6 and which were already verified (`verified`). Say when `inherit-parent` or `auto` reduces a panel's provider diversity. Why and Reflect require the parent's live MCP surface; keep their roles on `inherit-parent` or `auto`, because the bounded external runner deliberately omits ambient MCPs. For panel roles, one lane runs per entry and the list length is the fan-out count. `arena cross-judge pool` is a list from which Arena chooses a provider different from the parent and base candidate when possible. `trail reviewer pool` is a list from which one lane reviews a run's decision trail: the first entry from a provider that wrote none of the work, and no lane at all when every entry is from a provider that wrote. Show every `warnings` line of the plan. `swarm workers` is the default for every worker unless a race explicitly assigns another descriptor.
 
 Ask for confirmation. After the operator confirms:
 
@@ -175,6 +177,7 @@ arena cross-judge pool: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@x
 swarm workers: grok:grok-4.6@xhigh
 architect runners: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:claude-opus-5-5@xhigh
 interrogate reviewers: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:claude-opus-5-5@xhigh
+trail reviewer pool: claude:claude-opus-5-5@xhigh, codex:gpt-6.1-sol@xhigh, grok:grok-4.7@xhigh
 ```
 
 Codex parent:
@@ -201,6 +204,7 @@ arena cross-judge pool: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@x
 swarm workers: grok:grok-4.6@xhigh
 architect runners: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:claude-opus-5-5@xhigh
 interrogate reviewers: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:claude-opus-5-5@xhigh
+trail reviewer pool: claude:claude-opus-5-5@xhigh, codex:gpt-6.1-sol@xhigh, grok:grok-4.7@xhigh
 ```
 
 <!-- role-sheet:end -->

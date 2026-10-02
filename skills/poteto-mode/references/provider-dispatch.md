@@ -64,8 +64,9 @@ Skills name roles by the labels below, the same labels `/setup-pstack` writes to
 | `swarm workers` | Default worker for every swarm lane: coverage matrices, races, gauntlets, exploration partitions. | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
 | `architect runners` | Each lane proposes a design (types, module shape) for the same problem before implementation. One lane per entry. | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` |
 | `interrogate reviewers` | Each lane reviews the diff adversarially from its own angle; a different provider per lane widens the blind spots covered. | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` |
+| `trail reviewer pool` | Reviews the decision trail of a finished run; one lane runs, the first entry whose provider wrote none of the work. | `claude:claude-opus-5-5@xhigh`, `codex:gpt-6.1-sol@xhigh`, `grok:grok-4.7@xhigh` | `claude:claude-opus-5-5@xhigh`, `codex:gpt-6.1-sol@xhigh`, `grok:grok-4.7@xhigh` |
 
-A list is a panel: one lane per entry, in this order. A role whose two columns differ takes a family native to each parent: the frontier family for the frontier solo roles, the code family for the four authoring rows. Aliases run on the parent model through its native subagent primitive.
+A list is a panel: one lane per entry, in this order. A row whose label ends in `pool` is the exception: one lane runs, picked by the Cross-family selection rule below. A role whose two columns differ takes a family native to each parent: the frontier family for the frontier solo roles, the code family for the four authoring rows. Aliases run on the parent model through its native subagent primitive.
 
 <!-- role-defaults:end -->
 
@@ -77,7 +78,7 @@ Normalize configured descriptors before matching them to the matrix or choosing 
 
 This read-time rule makes an older installed sheet use the configured families immediately without writing user files. Once per parent run, report that the persisted sheet is stale and that `/setup-pstack` will rewrite it after its normal probes and confirmation. Unknown versioned Claude models remain invalid. The external runner accepts only model IDs registered in the matrix.
 
-The legacy Cursor selector `grok-4.6-fast-{effort}` maps to CLI model `grok-4.6`. The CLI's separate `grok-4.7-build-fast` model is not registered in this matrix. The portable Grok route pins the selected CLI model. `grok-4.6` remains the first-run default; `grok-4.7` is available as the `grok-4-7` family without changing existing roles. Both default to `xhigh`; Grok 4.7 supports `low`, `medium`, `high`, and `xhigh`.
+The legacy Cursor selector `grok-4.6-fast-{effort}` maps to CLI model `grok-4.6`. The CLI's separate `grok-4.7-build-fast` model is not registered in this matrix. The portable Grok route pins the selected CLI model. `grok-4.6` remains the first-run default of every role but `trail reviewer pool`, whose default names `grok-4.7`. `grok-4.7` is available to the other roles as the `grok-4-7` family without changing them. Both default to `xhigh`; Grok 4.7 supports `low`, `medium`, `high`, and `xhigh`.
 
 ## The parent owns the route
 
@@ -86,6 +87,38 @@ The top-level harness resolves the route once. A child receives an assigned prov
 The route table is the one rendered above from `model-matrix.json`: a provider is native in exactly one parent and goes through the external runner everywhere else.
 
 `inherit-parent` and `auto` remain aliases. They use the parent's current model and effort through its native subagent primitive. In a panel they still consume one lane, but they reduce provider diversity; say so in the synthesis record.
+
+## Cross-family selection
+
+A pool role is a list from which one lane runs. `trail reviewer pool` reviews the decision trail of a finished run (the **show-me-your-work** skill). `arena cross-judge pool` judges the arena candidates. Both pick their lane with the rule in this section.
+
+Two lanes are cross-family when their providers differ. The provider is the Provider column of the model matrix. The Family column names one model line, so it does not decide: `gpt-6-sol` reviewing `gpt-6-astra` is the same provider, and so is `fable` reviewing `claude-opus-5-5`. The route does not decide either. A `claude:*` lane that a Codex parent launches through the runner is still a Claude lane. Each provider in the matrix serves the models of one vendor. A provider that serves another vendor's models needs a vendor field in the matrix before it enters a pool.
+
+The executors of a piece of work are the providers that wrote it:
+
+- The session that did the work, always. A root session and every native subagent under it, an autopilot owner included, run on the parent's native provider.
+- Every lane dispatched with `isolated-write` whose output is part of the result: an authoring lane, the base candidate of an arena, a swarm worker that wrote.
+
+A `read-only` lane is not an executor.
+
+The top-level session picks the lane with the `pick` subcommand of `skills/setup-pstack/scripts/setup-pstack.ts` under the installed plugin. It does not choose by reading the row:
+
+```text
+node <plugin>/skills/setup-pstack/scripts/setup-pstack.ts pick \
+  --parent <claude|codex> \
+  --role "<pool role>" \
+  [--executor <provider>]...
+```
+
+`--parent` makes the parent's native provider an executor. Pass one `--executor` for each other provider that wrote. The script reads the role's row from the parent's sheet, or the role-table default when the sheet has no such row. It drops every entry whose provider is an executor and every alias, because an alias runs on the parent model. It prints the entries that remain as `eligible`, in the operator's order, the first of them as `chosen`, and the dropped entries as `skipped` with the reason. Exit code 1 means that no entry is eligible.
+
+Dispatch `chosen` as written, with its model and its effort, in `read-only` mode. The parent's provider is always an executor, so the chosen lane is always an external lane. If that lane drops out (see **Completion and dropouts**), keep its receipt and dispatch the next entry of `eligible`. This is the dropout policy of a pool, and the one case where another provider follows a dropout: the operator wrote every entry of the row as an accepted choice. After a dropout, never dispatch a model outside the row and never substitute the parent model.
+
+When `eligible` is empty, or every eligible lane dropped out, the pool yields no cross-family lane. The calling skill says what happens then: for `trail reviewer pool` no lane runs, and for `arena cross-judge pool` the arena skill names the fallback. No skill may count a lane on an executor's provider as cross-family.
+
+Name the lane that ran from its receipt, never from what the lane says about itself: `reportedModel` when `modelEvidence` is `provider-report`, and the requested model marked as not confirmed when it is `pinned-argv`.
+
+A subagent does not launch a pool lane. It returns what the lane needs with its report, and the top-level session runs the script and dispatches.
 
 ## Native lanes
 
@@ -158,6 +191,6 @@ Success requires all of these:
 
 The receipt also carries elapsed time, token usage when the CLI exposes it, and cost when available. Keep it with the arena or review artifacts so parent-harness comparisons are evidence-based.
 
-Any missing CLI, failed login, unavailable model, explicit timeout, cancellation, catchable post-reservation launcher failure, non-zero child exit, malformed result, or model mismatch is a receipt-bearing dropout. Record it and apply the calling skill's existing dropout policy. A `cancelled` receipt proves that the runner received the signal; its `signal` field is non-null only when the runner sent that signal to a still-active direct CLI child, and remains null when cancellation only stopped a post-exit pipe drain. The provider CLI owns any processes it starts beneath that direct child; the receipt does not claim a process-tree kill. Do not delete or overwrite the receipt. Never substitute the parent model, retry another provider, or reinterpret an external descriptor as a native model slug.
+Any missing CLI, failed login, unavailable model, explicit timeout, cancellation, catchable post-reservation launcher failure, non-zero child exit, malformed result, or model mismatch is a receipt-bearing dropout. Record it and apply the calling skill's existing dropout policy. For a pool role, that policy is the next eligible entry of the row (see **Cross-family selection**). A `cancelled` receipt proves that the runner received the signal; its `signal` field is non-null only when the runner sent that signal to a still-active direct CLI child, and remains null when cancellation only stopped a post-exit pipe drain. The provider CLI owns any processes it starts beneath that direct child; the receipt does not claim a process-tree kill. Do not delete or overwrite the receipt. Never substitute the parent model, retry another provider outside that pool policy, or reinterpret an external descriptor as a native model slug.
 
 Start native and external lanes in the same fan-out phase, then wait for all of them before judging. A judge must not read candidate paths while their owners are still writing.
