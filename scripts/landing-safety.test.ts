@@ -22,7 +22,7 @@ before(() => {
   mkdirSync(bin);
   mkdirSync(home);
   symlinkSync(realGit, join(bin, "git"));
-  for (const utility of ["basename", "sed", "uname", "dirname", "rm", "mkdir", "cat", "grep", "cut", "tr", "sort", "head", "wc", "sh", "xargs", "expr", "touch", "cp", "mv", "awk", "rmdir", "cmp", "mktemp"]) {
+  for (const utility of ["basename", "sed", "uname", "dirname", "rm", "mkdir", "cat", "grep", "cut", "tr", "sort", "head", "wc", "sh", "xargs", "expr", "touch", "cp", "mv", "awk", "rmdir", "cmp", "mktemp", "date", "jq", "true"]) {
     const executable = execFileSync("/usr/bin/which", [utility], { encoding: "utf8" }).trim();
     symlinkSync(executable, join(bin, utility));
   }
@@ -72,6 +72,7 @@ function recipe(path: string, text: string, values: Record<string, string>) {
     ...env, TMPDIR: scratch, op_host: "github.com", op_owner: "fixture", op_name: "intended", op_remote: "origin",
     op_pr: "12", op_pr_node_id: "PR_fixture", op_base_ref: "main", op_base_sha: fixture?.base ?? "0".repeat(40),
     op_push_receipt: join(path, ".git", "push.receipt"),
+    op_diff_inputs: join(scratch, "diff-inputs"),
     ...(existsSync(ssh) ? { GIT_SSH_COMMAND: ssh, GIT_SSH_VARIANT: "ssh" } : {}),
     ...(fixture ? { FIXTURE_STATE: stateFile, PATH: `${join(path, ".git", "fixture-bin")}:${env.PATH}`, ...(fixture.url.startsWith("https:") ? { GIT_EXEC_PATH: join(path, ".git", "fixture-bin") } : {}) } : {}),
     ...values,
@@ -100,14 +101,35 @@ if(a[0]==="pr"){
  if(a[1]==="create"){s.branch=option("--head");s.baseRef=option("--base");s.base=oid("refs/heads/"+s.baseRef);s.draft=false;process.stdout.write("https://github.com/fixture/intended/pull/12\\n");}
  else if(a[1]==="edit"){s.baseRef=option("--base");s.base=oid("refs/heads/"+s.baseRef);}
  else if(a[1]==="ready")s.draft=false;
+ else if(a[1]==="view"){process.stdout.write((s.body||"literal body")+"\\n");process.exit(0);}
+ else if(a[1]==="merge"){
+  if(option("--match-head-commit")!==oid("refs/heads/"+(s.branch||process.env.op_branch)))process.exit(79);
+  s.mergedBody=fs.readFileSync(option("--body-file"),"utf8");
+  if(process.env.MERGE_OUTCOME==="queue")s.queue=true;
+  else if(process.env.MERGE_OUTCOME==="auto")s.auto=true;
+  else if(process.env.MERGE_OUTCOME!=="noop")s.state="MERGED";
+ }
  else process.exit(76);
  fs.writeFileSync(p,JSON.stringify(s));process.exit(0);
+}
+if(a.includes("--method")){process.stdout.write("{}\\n");process.exit(0);}
+if(field("query")?.startsWith("mutation")){
+ if(field("id")!=="PR_fixture")process.exit(80);
+ if(process.env.WITHDRAW_OUTCOME==="merged")s.state="MERGED";
+ if(field("query").includes("dequeuePullRequest"))s.queue=false;
+ if(field("query").includes("disablePullRequestAutoMerge"))s.auto=false;
+ fs.writeFileSync(p,JSON.stringify(s));process.stdout.write("{}\\n");process.exit(0);
 }
 if(field("owner").toLowerCase()!=="fixture"||field("name").toLowerCase()!=="intended"||process.env.GH_HOST!=="github.com")process.exit(77);
 const ref=field("ref"), branch=s.branch||process.env.op_branch;
 const head=process.env.FORGE_MODE==="mismatch"?"0".repeat(40):oid(ref||"refs/heads/"+branch);
-const row=ref?["fixture/intended",ref,head]:["fixture/intended","12","PR_fixture","fixture/intended",branch,head,s.baseRef||"main",s.base,String(s.draft)];
-process.stdout.write(row.join("\\t")+"\\n");
+const pr={id:"PR_fixture",number:12,state:s.state||"OPEN",isDraft:s.draft,headRepository:{nameWithOwner:"fixture/intended"},headRefName:branch,headRefOid:head,baseRefName:s.baseRef||"main",baseRefOid:s.base,autoMergeRequest:s.auto?{enabledAt:"2026-01-01T00:00:00Z"}:null,mergeQueueEntry:s.queue?{id:"QUEUE_fixture"}:null,mergedAt:s.state==="MERGED"?"2026-01-01T00:00:00Z":null,mergeCommit:s.state==="MERGED"?{oid:head}:null,...s.fields};
+for(const key of s.omit||[])delete pr[key];
+const response={data:{repository:{nameWithOwner:s.repo||"fixture/intended",pullRequest:pr,ref:{name:ref?.replace("refs/heads/",""),prefix:"refs/heads/",target:{oid:head,__typename:"Commit"}}}}};
+const filter=option("--jq");
+if(!a.includes("--jq")){process.stdout.write(JSON.stringify(response));process.exit(0);}
+const parsed=spawnSync("jq",["-r",filter],{input:JSON.stringify(response),encoding:"utf8"});
+process.stdout.write(parsed.stdout);process.stderr.write(parsed.stderr);process.exit(parsed.status??78);
 `;
   writeFileSync(join(bin, "gh"), gh); chmodSync(join(bin, "gh"), 0o755);
   const https = `#!${process.execPath}
@@ -134,6 +156,222 @@ function patchId(path: string, patch: string): string {
 function output(path: string): string {
   return execFileSync(process.execPath, ["app.mjs"], { cwd: path, env, encoding: "utf8" });
 }
+
+function forgeFixture() {
+  const path = repo();
+  const head = commit(path, "file", "original\n");
+  const remote = join(path, ".git", "remote.git");
+  git(path, "clone", "-q", "--bare", path, remote);
+  transport(path, remote);
+  const stateFile = join(path, ".git", "fixture.json");
+  const values = { op_branch: "main", op_published_head: head, op_body_file: join(path, ".git", "body"), op_queue_authorized: "false" };
+  return { path, head, stateFile, values };
+}
+
+function changeForge(stateFile: string, values: Record<string, unknown>) {
+  writeFileSync(stateFile, JSON.stringify({ ...JSON.parse(readFileSync(stateFile, "utf8")), ...values }));
+}
+
+function forgeCalls(stateFile: string): { args: string[]; host: string }[] {
+  return existsSync(stateFile + ".calls") ? readFileSync(stateFile + ".calls", "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)) : [];
+}
+
+describe("fix4 complete boundaries", () => {
+  it("refuses a shallow boundary that hides a raw merge parent", () => {
+    const path = repo(); const base = commit(path, "base", "base\n");
+    git(path, "switch", "-c", "side"); commit(path, "side", "side\n");
+    git(path, "switch", "-c", "owned", base); commit(path, "own", "own\n");
+    git(path, "merge", "--no-ff", "--no-commit", "side"); const merged = commit(path, "resolution", "merge-only\n");
+    git(path, "switch", "main"); const newBase = commit(path, "advance", "advance\n"); git(path, "switch", "owned");
+    writeFileSync(join(path, ".git", "shallow"), merged + "\n");
+    assert.equal(git(path, "rev-parse", "--is-shallow-repository"), "true");
+    const refs = git(path, "for-each-ref", "--format=%(refname) %(objectname)");
+    const result = recipe(path, command('git rebase "'), { op_branch: "owned", op_new_base: newBase });
+    assert.notEqual(result.status, 0);
+    assert.equal(git(path, "for-each-ref", "--format=%(refname) %(objectname)"), refs);
+    assert.equal(readFileSync(join(path, "resolution"), "utf8"), "merge-only\n");
+  });
+
+  for (const graft of [false, true]) it(`refuses unrelated raw ancestry with graft=${graft} at range and restack`, () => {
+    const path = repo(); const root = commit(path, "base", "base\n");
+    git(path, "switch", "-c", "parent"); const parent = commit(path, "parent", "parent\n");
+    git(path, "switch", "-c", "child", root); const child = commit(path, "own", "own\n");
+    if (graft) writeFileSync(join(path, ".git", "info", "grafts"), `${child} ${parent}\n`);
+    const before = git(path, "for-each-ref", "--format=%(refname) %(objectname)");
+    for (const prefix of ["git log --oneline ", "git rebase --onto "]) {
+      const result = recipe(path, command(prefix), { op_branch: "child", op_old_parent_tip: parent, op_old_child_tip: child, op_new_base: root });
+      assert.notEqual(result.status, 0, `${prefix}: unrelated raw parent must refuse`);
+      assert.equal(git(path, "for-each-ref", "--format=%(refname) %(objectname)"), before);
+      assert.equal(git(path, "status", "--porcelain"), "");
+    }
+  });
+
+  for (const graft of [false, true]) for (const child of [false, true]) it(`preserves raw merge-only content in ${child ? "child" : "bottom"} rebase with graft=${graft}`, () => {
+    const path = repo(); const base = commit(path, "base", "base\n");
+    git(path, "switch", "-c", "side"); const side = commit(path, "side", "side\n");
+    git(path, "switch", "-c", "owned", base); const first = commit(path, "own", "own\n");
+    git(path, "merge", "--no-ff", "--no-commit", "side");
+    const merged = commit(path, "resolution", "merge-only content\n");
+    git(path, "switch", "main"); const nextBase = commit(path, "advance", "advance\n"); git(path, "switch", "owned");
+    assert.match(git(path, "cat-file", "-p", merged), new RegExp(`parent ${first}\\nparent ${side}`));
+    if (graft) writeFileSync(join(path, ".git", "info", "grafts"), `${merged} ${base}\n`);
+    const refs = git(path, "for-each-ref", "--format=%(refname) %(objectname)");
+    const result = recipe(path, command(child ? "git rebase --onto " : 'git rebase "'), { op_branch: "owned", op_old_parent_tip: base, op_old_child_tip: merged, op_new_base: nextBase });
+    assert.notEqual(result.status, 0, result.stdout + result.stderr);
+    assert.equal(git(path, "for-each-ref", "--format=%(refname) %(objectname)"), refs);
+    assert.equal(readFileSync(join(path, "resolution"), "utf8"), "merge-only content\n");
+  });
+
+  for (const linked of [false, true]) it(`refuses restack outside the actual child checkout with linked=${linked}`, () => {
+    const path = repo(); const base = commit(path, "base", "base\n");
+    git(path, "switch", "-c", "child"); const child = commit(path, "own", "own\n");
+    git(path, "switch", "main"); const nextBase = commit(path, "trunk", "trunk\n");
+    const owner = join(scratch, `owner-${linked}`);
+    if (linked) git(path, "worktree", "add", owner, "child");
+    const refs = git(path, "for-each-ref", "--format=%(refname) %(objectname)");
+    const result = recipe(path, command("git rebase --onto "), { op_branch: "child", op_old_parent_tip: base, op_old_child_tip: child, op_new_base: nextBase });
+    assert.notEqual(result.status, 0);
+    assert.equal(git(path, "for-each-ref", "--format=%(refname) %(objectname)"), refs);
+    assert.equal(git(path, "symbolic-ref", "HEAD"), "refs/heads/main");
+    assert.equal(git(path, "status", "--porcelain"), "");
+    if (linked) {
+      assert.equal(git(owner, "status", "--porcelain"), "");
+      const legitimate = recipe(owner, command("git rebase --onto "), { op_branch: "child", op_old_parent_tip: base, op_old_child_tip: child, op_new_base: nextBase });
+      assert.equal(legitimate.status, 0, legitimate.stderr);
+      assert.equal(git(owner, "status", "--porcelain"), "");
+      assert.equal(readFileSync(join(owner, "trunk"), "utf8"), "trunk\n");
+      assert.equal(git(path, "symbolic-ref", "HEAD"), "refs/heads/main");
+    }
+  });
+
+  it("reports actual failed post-read tuples, times, status and operation", () => {
+    const f = forgeFixture();
+    commit(f.path, "file", "published change\n");
+    const result = recipe(f.path, command('git push "'), { ...f.values, op_remote_head: f.head, FORGE_MODE: "mismatch" });
+    assert.notEqual(result.status, 0);
+    for (const field of ["expected=", "observed=", "started=", "ended=", "status=", "operation=publish"]) assert.ok(result.stderr.includes(field), field);
+    assert.ok(result.stderr.includes("0".repeat(40)));
+  });
+
+  for (const bad of [{ fields: { id: "PR_wrong" } }, { fields: { headRefOid: "0".repeat(40) } }, { fields: { baseRefName: "wrong" } }, { queue: true }, { auto: true }]) it(`refuses merge before writes for ${JSON.stringify(bad)}`, () => {
+    const f = forgeFixture(); changeForge(f.stateFile, bad);
+    const result = recipe(f.path, command('GH_HOST="${op_host:?}" gh pr merge '), f.values);
+    assert.notEqual(result.status, 0);
+    assert.equal(forgeCalls(f.stateFile).filter((c) => c.args[0] === "pr").length, 0);
+  });
+
+  for (const outcome of ["merged", "queue", "auto", "noop"]) it(`observes actual ${outcome} after merge submission and preserves literal body`, () => {
+    const f = forgeFixture(); const body = 'Literal $(not-code) and `data`  \nSecond line\n'; changeForge(f.stateFile, { body });
+    const result = recipe(f.path, command('GH_HOST="${op_host:?}" gh pr merge '), { ...f.values, op_queue_authorized: outcome === "queue" ? "true" : "false", MERGE_OUTCOME: outcome });
+    assert.equal(result.status === 0, outcome === "merged" || outcome === "queue", result.stderr);
+    const state = JSON.parse(readFileSync(f.stateFile, "utf8")); assert.equal(state.mergedBody, body + "\n");
+    assert.equal(Boolean(state.auto), false, "unexpected auto request must be withdrawn");
+    if (outcome === "queue") assert.equal(state.queue, true);
+    assert.ok(forgeCalls(f.stateFile).filter((c) => c.args.includes("graphql")).length >= 2);
+  });
+
+  for (const mode of ["queue", "auto", "both", "absent", "winning-merge"]) it(`withdraws only observed ${mode} and reads both states back`, () => {
+    const f = forgeFixture(); changeForge(f.stateFile, { queue: ["queue", "both", "winning-merge"].includes(mode), auto: ["auto", "both"].includes(mode) });
+    const block = blocks.filter((b) => b.includes('dequeuePullRequest') || b.includes('disablePullRequestAutoMerge')).filter((b) => !b.includes('gh pr merge ')).join("\n");
+    const result = recipe(f.path, block, { ...f.values, WITHDRAW_OUTCOME: mode === "winning-merge" ? "merged" : "normal" });
+    assert.equal(result.status === 0, mode !== "winning-merge", result.stderr);
+    const state = JSON.parse(readFileSync(f.stateFile, "utf8")); assert.equal(Boolean(state.queue), false); assert.equal(Boolean(state.auto), false);
+    const calls = forgeCalls(f.stateFile); assert.ok(calls.filter((c) => c.args.some((a) => a.startsWith('query=query'))).length >= 2);
+    assert.equal(calls.filter((c) => c.args.some((a) => a.includes('query=mutation'))).length, mode === "both" ? 2 : mode === "absent" ? 0 : 1);
+  });
+
+  for (const values of [{ op_host: "elsewhere.invalid" }, { op_pr_node_id: "PR_other" }, { op_pr: "--admin" }, { op_pr: "00" }]) it(`refuses withdrawal identity ${JSON.stringify(values)}`, () => {
+    const f = forgeFixture(); changeForge(f.stateFile, { queue: true, auto: true });
+    const block = blocks.filter((b) => b.includes('dequeuePullRequest') || b.includes('disablePullRequestAutoMerge')).filter((b) => !b.includes('gh pr merge ')).join("\n");
+    const result = recipe(f.path, block, { ...f.values, ...values }); assert.notEqual(result.status, 0);
+    assert.equal(forgeCalls(f.stateFile).filter((c) => c.args.some((a) => a.includes('query=mutation'))).length, 0);
+  });
+
+  it("routes cloud-default creation and reviewer replies through complete guards", () => {
+    const opening = readFileSync(join(PLUGIN_ROOT, "skills/poteto-mode/playbooks/opening-a-pr.md"), "utf8");
+    assert.doesNotMatch(opening, /set `draft: false` on every PR creation call/);
+    assert.ok(blocks.some((b) => b.includes('/replies') && b.includes('set -eu')));
+    assert.ok(blocks.some((b) => b.includes("op_reviewed_rewritten_head")), "changed-contribution recovery must have a guarded completion");
+  });
+
+  for (const conflict of [false, true]) it(`completes reviewed changed restack with conflict=${conflict}`, () => {
+    const path = repo(); const lines = Array.from({ length: 20 }, (_, i) => `line ${i}`).join("\n") + "\n";
+    const base = commit(path, "file", lines); git(path, "switch", "-c", "child");
+    const child = commit(path, "file", lines.replace("line 19", "child")); git(path, "switch", "main");
+    const moved = commit(path, "file", lines.replace(conflict ? "line 19" : "line 0", "base drift")); git(path, "switch", "child");
+    const values = { op_branch: "child", op_old_parent_tip: base, op_old_child_tip: child, op_new_base: moved };
+    const strict = recipe(path, command("git rebase --onto "), values); assert.notEqual(strict.status, 0);
+    assert.equal(git(path, "rev-parse", "refs/heads/child"), child);
+    if (conflict) {
+      writeFileSync(join(path, "file"), lines.replace("line 19", "resolved child and base")); git(path, "add", "file");
+      const continued = recipe(path, "GIT_EDITOR=true GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE=/dev/null git rebase --continue", {});
+      assert.equal(continued.status, 0, continued.stderr);
+    }
+    const rewritten = git(path, "rev-parse", "HEAD");
+    assert.equal(readFileSync(join(path, "file"), "utf8"), conflict ? lines.replace("line 19", "resolved child and base") : lines.replace("line 0", "base drift").replace("line 19", "child"));
+    const reviewFile = join(path, ".git", "review"); writeFileSync(reviewFile, "");
+    const recovery = blocks.find((b) => b.includes("op_reviewed_rewritten_head")); assert.ok(recovery);
+    const inputs = { ...values, op_child_git_dir: git(path, "rev-parse", "--absolute-git-dir"), op_reviewed_rewritten_head: rewritten, op_restack_review_file: reviewFile };
+    const prepared = recipe(path, recovery, inputs); assert.notEqual(prepared.status, 0);
+    assert.equal(git(path, "rev-parse", "refs/heads/child"), child);
+    assert.equal(git(path, "rev-parse", "HEAD"), rewritten);
+    assert.notEqual(spawnSync("git", ["symbolic-ref", "HEAD"], { cwd: path, env }).status, 0);
+    const approved = prepared.stderr.match(/^expected=(reviewed-changed-contribution.+)$/m)?.[1]; assert.ok(approved);
+    writeFileSync(reviewFile, approved + "\n");
+    const complete = recipe(path, recovery, inputs); assert.equal(complete.status, 0, complete.stderr);
+    assert.equal(git(path, "rev-parse", "refs/heads/child"), rewritten); assert.equal(git(path, "status", "--porcelain"), "");
+    assert.equal(git(path, "symbolic-ref", "HEAD"), "refs/heads/child");
+  });
+
+  it("binds effective attributes and driver settings while retaining same-size raw blob changes", () => {
+    const path = repo(); const base = commit(path, "file", "old\n"); const first = commit(path, "file", "one\n"); const second = commit(path, "file", "two\n");
+    const plain = exactPatch(path, base, first); const plainInputs = readFileSync(join(scratch, "diff-inputs"));
+    writeFileSync(join(path, ".git", "info", "attributes"), "file -diff\n");
+    const binary = exactPatch(path, base, first); const binaryInputs = readFileSync(join(scratch, "diff-inputs"));
+    assert.notDeepEqual(plainInputs, binaryInputs); assert.notEqual(plain, binary);
+    assert.match(binary, /GIT binary patch/); assert.notEqual(binary, exactPatch(path, base, second));
+    git(path, "config", "diff.fixture.binary", "true");
+    exactPatch(path, base, first); assert.match(readFileSync(join(scratch, "diff-inputs"), "utf8"), /diff.fixture.binary/);
+  });
+
+  it("uses identical real jq parsers and rejects incomplete or incorrectly typed records", () => {
+    const filters = [...shipping.matchAll(/--jq '(.*?)'/g)].map((m) => m[1]).filter((s) => s.includes("$r.pullRequest"));
+    assert.ok(filters.length >= 7); assert.equal(new Set(filters).size, 1);
+    const f = forgeFixture();
+    for (const invalid of [{ omit: ["mergeQueueEntry"] }, { omit: ["autoMergeRequest"] }, { fields: { isDraft: "false" } }, { fields: { number: "12" } }, { fields: { headRepository: null } }, { fields: { mergeQueueEntry: {} } }, { fields: { autoMergeRequest: {} } }, { fields: { state: "ALIEN" } }]) {
+      changeForge(f.stateFile, { fields: {}, omit: [], ...invalid });
+      const result = recipe(f.path, command("op_remote_head=$(git ls-remote"), { ...f.values, op_local_pre_head: f.head });
+      assert.notEqual(result.status, 0, JSON.stringify(invalid)); assert.match(result.stderr, /observed=INVALID/);
+    }
+    changeForge(f.stateFile, { fields: {}, omit: [] });
+    assert.equal(recipe(f.path, command("op_remote_head=$(git ls-remote"), { ...f.values, op_local_pre_head: f.head }).status, 0);
+  });
+
+  for (const values of [{ op_host: "other.invalid" }, { op_owner: "../other" }, { op_name: "../other" }, { op_pr: "0" }, { op_comment_id: "00" }, { op_comment_id: "--admin" }, {}]) it(`guards selected reviewer reply ${JSON.stringify(values)}`, () => {
+    const f = forgeFixture(); const payload = join(f.path, ".git", "reply.json"); writeFileSync(payload, JSON.stringify({ body: "literal $(data)" }));
+    const block = blocks.find((b) => b.includes('/replies')); assert.ok(block);
+    const result = recipe(f.path, block, { ...f.values, op_comment_id: "43", op_payload_file: payload, ...values });
+    const valid = Object.keys(values).length === 0;
+    assert.equal(result.status === 0, valid, result.stderr); assert.equal(forgeCalls(f.stateFile).length, valid ? 1 : 0);
+  });
+
+  for (const prefix of ["op_remote_head=$(git ls-remote", 'git push "', 'if _push_output=$(git push --porcelain', 'op_created_url=$(', 'GH_HOST="${op_host:?}" gh pr edit ', 'if test "$_draft" = true;', '_operation=reconcile', '_operation=withdraw', 'GH_HOST="${op_host:?}" gh pr merge ']) it(`retains mismatch evidence at ${prefix}`, () => {
+    const f = forgeFixture();
+    if (prefix.startsWith('if _push_output')) git(f.path, "switch", "-c", "new");
+    writeFileSync(f.values.op_body_file, "literal\n");
+    const result = recipe(f.path, command(prefix), { ...f.values, op_branch: prefix.startsWith('if _push_output') ? "new" : "main", op_local_pre_head: f.head, op_remote_head: f.head, op_target_base: "main", op_target_base_sha: f.head, op_title: "Title", FORGE_MODE: "mismatch" });
+    assert.notEqual(result.status, 0);
+    for (const field of ["expected=", "observed=", "started=", "ended=", "status=", "operation="]) assert.ok(result.stderr.includes(field), `${prefix}: ${field}`);
+    assert.ok(result.stderr.includes("0".repeat(40)));
+  });
+
+  it("observes both pending modes in the read-only reconciliation block", () => {
+    const f = forgeFixture(); changeForge(f.stateFile, { auto: true, queue: true });
+    const result = recipe(f.path, command('_operation=reconcile'), f.values);
+    assert.equal(result.status, 0, result.stderr); assert.match(result.stdout, /OPEN\ttrue\ttrue/);
+    assert.equal(forgeCalls(f.stateFile).length, 1);
+  });
+});
 
 describe("generated Shipping recipes on disposable Git repositories", () => {
   it("keeps live provider CLIs and gh out of every command environment", () => {
@@ -181,6 +419,7 @@ describe("generated Shipping recipes on disposable Git repositories", () => {
     git(path, "merge", "--squash", "parent");
     git(path, "commit", "-qm", "squash parent");
     values.op_new_base = git(path, "rev-parse", "HEAD");
+    git(path, "checkout", "child");
     const result = recipe(path, command("git rebase --onto "), values);
     assert.equal(result.status, 0, result.stderr);
     assert.equal(git(path, "rev-list", "--count", "main..child"), "1");
@@ -278,6 +517,7 @@ describe("generated Shipping recipes on disposable Git repositories", () => {
     git(path, "merge", "--squash", "parent");
     git(path, "commit", "-qm", "squash");
     const values = { op_new_base: git(path, "rev-parse", "HEAD"), op_old_parent_tip: oldParent, op_old_child_tip: oldChild, op_branch: "child" };
+    git(path, "checkout", "child");
     const restack = recipe(path, command("git rebase --onto "), values);
     assert.equal(restack.status, 0, restack.stderr);
     const badPush = recipe(path, command('git push "'), { op_branch: "parent", op_remote_head: oldParent });
@@ -289,11 +529,11 @@ describe("generated Shipping recipes on disposable Git repositories", () => {
   it("rebases onto the fetched SHA while a named remote tracking ref stays stale", () => {
     const path = repo();
     const old = commit(path, "base", "old\n");
-    const remote = join(path, "remote.git");
+    const remote = join(path, ".git", "remote.git");
     git(path, "clone", "-q", "--bare", path, remote);
     transport(path, remote);
     git(path, "fetch", "-q", "origin");
-    const writer = join(path, "writer");
+    const writer = join(scratch, "fetch-writer");
     git(path, "clone", "-q", remote, writer);
     const current = commit(writer, "base", "current\n");
     git(writer, "push", "-q", "origin", "HEAD:refs/heads/main");
@@ -344,31 +584,21 @@ describe("generated Shipping recipes on disposable Git repositories", () => {
     assert.equal(git(path, "rev-parse", "child"), changed);
   });
 
-  it("preserves selected PR body as file data and binds each gh invocation to its host", () => {
-    const bin = join(scratch, "body-gh");
-    mkdirSync(bin);
-    const log = join(scratch, "body-calls");
-    const body = 'Review body\nLiteral $(not-a-command) and `also data`\nTrailing spaces stay literal  \n';
-    const file = join(scratch, "pr-body.md");
-    writeFileSync(join(bin, "gh"), '#!/usr/bin/env node\nconst fs=require("node:fs");const a=process.argv.slice(2);fs.appendFileSync(process.env.CALL_LOG,JSON.stringify({args:a,host:process.env.GH_HOST})+"\\n");if(a.includes("view"))process.stdout.write(process.env.PR_BODY+"\\n");\n');
-    chmodSync(join(bin, "gh"), 0o755);
-    const merge = blocks.find((block) => block.includes("--match-head-commit"));
-    assert.ok(merge);
-    const values = { ...env, PATH: `${bin}:${env.PATH}`, CALL_LOG: log, PR_BODY: body, GH_HOST: "wrong.invalid", op_host: "github.com", op_owner: "fixture", op_name: "project", op_repo: "wrong.invalid/elsewhere/other", op_pr: "12", op_published_head: "a".repeat(40), op_body_file: file };
-    const result = spawnSync("/bin/sh", ["-c", merge], { cwd: scratch, env: values, encoding: "utf8" });
+  it("binds literal-body merge commands to the explicit host and repository", () => {
+    const f = forgeFixture(); const body = 'Review body\nLiteral $(not-a-command) and `also data`\nTrailing spaces stay literal  \n';
+    changeForge(f.stateFile, { body });
+    const merge = command('GH_HOST="${op_host:?}" gh pr merge ');
+    const result = recipe(f.path, merge, { ...f.values, GH_HOST: "wrong.invalid", op_repo: "wrong.invalid/elsewhere/other" });
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(readFileSync(file, "utf8"), body + "\n");
-    assert.match(shipping, /Only final LF normalization/);
-    const calls = readFileSync(log, "utf8").trim().split("\n").map((s) => JSON.parse(s));
-    assert.equal(calls.length, 2);
-    for (const call of calls) { assert.equal(call.host, "github.com"); assert.ok(call.args.includes("fixture/project")); assert.ok(call.args.includes("12")); }
-    assert.ok(calls[1].args.includes("--body-file"));
-    assert.ok(calls[1].args.includes(file));
-    assert.ok(calls[1].args.includes("a".repeat(40)));
-    writeFileSync(log, "");
-    const refused = spawnSync("/bin/sh", ["-c", merge], { cwd: scratch, env: { ...values, op_pr: "--admin" }, encoding: "utf8" });
-    assert.notEqual(refused.status, 0);
-    assert.equal(readFileSync(log, "utf8"), "");
+    assert.equal(readFileSync(f.values.op_body_file, "utf8"), body + "\n");
+    const calls = forgeCalls(f.stateFile);
+    assert.ok(calls.every((c) => c.host === "github.com"));
+    const submit = calls.find((c) => c.args[1] === "merge"); assert.ok(submit);
+    assert.equal(submit.args[submit.args.indexOf("--repo") + 1], "fixture/intended");
+    assert.ok(submit.args.includes(f.head)); assert.ok(submit.args.includes(f.values.op_body_file));
+    writeFileSync(f.stateFile + ".calls", "");
+    assert.notEqual(recipe(f.path, merge, { ...f.values, op_pr: "--admin" }).status, 0);
+    assert.deepEqual(forgeCalls(f.stateFile), []);
   });
 
   it("pins the generated entry, evidence, withdrawal, contribution and hold contracts", () => {
@@ -392,7 +622,7 @@ describe("generated Shipping recipes on disposable Git repositories", () => {
     }
     assert.match(shipping, /merge-when-ready.*watch until current requirements pass/i);
     assert.doesNotMatch(readFileSync(join(directory, "opening-a-pr.md"), "utf8"), /git fetch && git reset/);
-    assert.match(readFileSync(join(directory, "babysit.md"), "utf8"), /gh api --hostname/);
+    assert.match(readFileSync(join(directory, "babysit.md"), "utf8"), /complete Guarded operations Reply block/);
   });
 
   for (const redirect of ["url", "pushurl"]) it(`refuses an included URL-named remote ${redirect} before capture, fetch or push`, () => {
@@ -555,7 +785,9 @@ describe("generated Shipping recipes on disposable Git repositories", () => {
     git(path, "checkout", "main");
     commit(path, "advance", "base changed\n");
     git(path, "cherry-pick", child);
-    const result = recipe(path, command("git rebase --onto "), { op_new_base: git(path, "rev-parse", "HEAD"), op_old_parent_tip: base, op_old_child_tip: child, op_branch: "child" });
+    const newBase = git(path, "rev-parse", "HEAD");
+    git(path, "checkout", "child");
+    const result = recipe(path, command("git rebase --onto "), { op_new_base: newBase, op_old_parent_tip: base, op_old_child_tip: child, op_branch: "child" });
     assert.notEqual(result.status, 0);
     assert.match(result.stdout, /Original child commits: 1/);
     assert.match(result.stdout, /Rewritten child commits: 0/);
@@ -634,6 +866,7 @@ describe("generated Shipping recipes on disposable Git repositories", () => {
       const hook = join(path, ".git", "hooks", "pre-rebase");
       writeFileSync(hook, `#!/bin/sh\nprintf yes > '${marker}'\nexit 1\n`); chmodSync(hook, 0o755);
     }
+    git(path, "checkout", "child");
     const beforeRefs = git(path, "for-each-ref", "--format=%(refname) %(objectname)");
     const result = recipe(path, command("git rebase --onto "), { op_branch: "child", op_old_parent_tip: base, op_old_child_tip: oldChild, op_new_base: newBase });
     assert.notEqual(result.status, 0);
@@ -687,7 +920,7 @@ describe("generated Shipping recipes on disposable Git repositories", () => {
   });
 
   it("uses one identical transport boundary in all five operations", () => {
-    const guards = blocks.filter((b) => b.includes("git remote get-url")).map((b) => b.slice(b.indexOf("set -eu"), b.indexOf("\ndone") + 5));
+    const guards = blocks.filter((b) => b.includes("git remote get-url")).map((b) => b.slice(b.indexOf('test "${op_host'), b.indexOf("\ndone") + 5));
     assert.equal(guards.length, 5);
     assert.equal(new Set(guards).size, 1);
   });
@@ -707,6 +940,7 @@ describe("generated Shipping recipes on disposable Git repositories", () => {
       const hook = join(path, ".git", "hooks", "post-rewrite");
       writeFileSync(hook, `#!/bin/sh\ngit update-ref refs/heads/child ${base} ${child}\n`); chmodSync(hook, 0o755);
     }
+    git(path, "checkout", "child");
     const result = recipe(path, command("git rebase --onto "), { op_branch: "child", op_old_parent_tip: base, op_old_child_tip: child, op_new_base: newBase });
     assert.notEqual(result.status, 0);
     assert.equal(git(path, "rev-parse", "refs/heads/child"), failure === "patch" ? child : base);
@@ -790,7 +1024,7 @@ describe("generated Shipping recipes on disposable Git repositories", () => {
     assert.match(shipping, /Git 2\.38/);
     assert.match(shipping, /missed capture stops publication/);
     assert.match(shipping, /SSH host authentication, TLS, custom transport programs and enabled hooks remain trusted/);
-    for (const block of blocks.filter((b) => /git (rebase|merge-base)|core.quotePath|FETCH_HEAD/.test(b))) assert.match(block, /export GIT_NO_REPLACE_OBJECTS=1/);
+    for (const block of blocks.filter((b) => /git (rebase|merge-base|rev-parse|rev-list)|core.quotePath|FETCH_HEAD/.test(b))) assert.match(block, /export GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE=\/dev\/null/);
     const stack = readFileSync(join(PLUGIN_ROOT, "skills/poteto-mode/playbooks/autopilot-stack.md"), "utf8");
     assert.match(stack.split("\n").find((s) => s.startsWith("1. ")) ?? "", /First publication/);
     assert.match(stack.split("\n").find((s) => s.startsWith("7. ")) ?? "", /later-wave/);
