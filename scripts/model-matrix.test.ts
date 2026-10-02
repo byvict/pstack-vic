@@ -9,12 +9,14 @@ import {
   crossFamilyRowProblem,
   cursorSlugPattern,
   declaredAgentNames,
+  declaredOwnerNames,
   defaultDescriptor,
   familyFor,
   fromCursorSlug,
   loadMatrix,
   nativeParentOf,
   nativeProviderOf,
+  ownerAgentName,
   parseDescriptor,
   pickCrossFamily,
   renderMatrixMarkdown,
@@ -665,7 +667,7 @@ describe("consumers", () => {
 
   it("ship pstack-* agents only for declared families and efforts", () => {
     const agentsDir = join(PLUGIN_ROOT, "agents");
-    const declared = new Set(declaredAgentNames(matrix));
+    const declared = new Set([...declaredAgentNames(matrix), ...declaredOwnerNames(matrix)]);
     const shipped = readdirSync(agentsDir)
       .filter((n) => n.startsWith("pstack-") && n.endsWith(".md"))
       .map((n) => n.slice(0, -3))
@@ -674,11 +676,11 @@ describe("consumers", () => {
       assert.ok(declared.has(name), `${name} is not declared by the matrix`);
       const fields = parseFrontmatter(readFileSync(join(agentsDir, `${name}.md`), "utf8"));
       const family = matrix.families.find(
-        (f) => f.agentStem !== null && name.startsWith(`pstack-${f.agentStem}-`)
+        (f) => agentName(f, fields.effort) === name || ownerAgentName(f, fields.effort) === name
       ) as Family;
+      assert.ok(family, `${name} is not the lane or the owner of a family at effort ${fields.effort}`);
       assert.equal(fields.name, name);
       assert.equal(fields.model, family.model);
-      assert.equal(agentName(family, fields.effort), name);
     }
     // The missing/stale directions and the generator live in generate-agents.test.ts (fase 3).
   });

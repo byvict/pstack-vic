@@ -455,6 +455,28 @@ export function declaredAgentNames(matrix: ModelMatrix): string[] {
   return names;
 }
 
+/**
+ * Claude-native autopilot owner agent for a family and effort, or null when
+ * the family has no stem. An owner is poteto-agent pinned to the model and
+ * effort of its authoring row; unlike a lane it keeps the Agent tool.
+ */
+export function ownerAgentName(f: Family, effort: string): string | null {
+  if (f.agentStem === null) return null;
+  return `pstack-owner-${f.agentStem}-${effort}`;
+}
+
+/** Every Claude-native owner agent name the matrix declares. */
+export function declaredOwnerNames(matrix: ModelMatrix): string[] {
+  const names: string[] = [];
+  for (const f of matrix.families) {
+    for (const effort of f.efforts) {
+      const name = ownerAgentName(f, effort);
+      if (name !== null) names.push(name);
+    }
+  }
+  return names;
+}
+
 export function roleNamed(matrix: ModelMatrix, label: string): Role | null {
   return matrix.roles.find((r) => r.role === label) ?? null;
 }
