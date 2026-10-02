@@ -138,6 +138,11 @@ describe("apply on a Claude Code parent", () => {
     assert.equal(result.code, 1);
     assert.equal(result.questions.length, 1);
     assert.ok(result.stdout.includes(ALLOW_ENTRY));
+    assert.match(result.stdout, /gh pr merge --repo <owner\/name> <pr> --squash --match-head-commit <published-head>/);
+    assert.match(result.stdout, /all current required checks pass/);
+    assert.match(result.stdout, /honoring every operator-named merge hold/);
+    assert.match(result.stdout, /validated push URL with --force-with-lease=refs\/heads\/<branch>:<captured-remote-head>/);
+    assert.match(result.stdout, /captured before rewriting and equal to the local pre-rewrite head/);
     assert.ok(result.stdout.includes(settingsPathFor("claude", home)));
     assert.match(result.stderr, /Nothing written/);
     assert.equal(readFileSync(settingsPathFor("claude", home), "utf8"), before);

@@ -50,3 +50,17 @@ O código fica nas tags `v0.4.18` e `v0.4.19`, que já estão no GitHub. As tags
 - **O GitHub exige só o CI.** A garantia de que ninguém mergeia sem verificação independente sai dos checks obrigatórios. Ela passa para o playbook, com o Veredito da Raiz, e para a autorização permanente.
 - **No Codex não há relógio.** Victor pede o Tick a cada 30 minutos, e o Codex precisa de `multi_agent` ligado para ter Donos.
 - **O texto do autopilot é o do upstream.** Uma frase que não é do upstream nem troca de harness é defeito. A partir da 0.5.1 um teste regenera do upstream os seis playbooks ligados ao autopilot (Autopilot-full, Autopilot-stack, Babysit, Opening a PR, Shipping e Multi-phase plan) e falha se sobrar diferença.
+
+## Exceção aprovada na 0.5.2
+
+Em 2026-10-02 Victor aprovou uma exceção limitada para operações protegidas de PR. As seções anteriores preservam a decisão histórica da 0.5.0 e da 0.5.1. Esta seção substitui, para a política atual, a exclusividade das trocas de harness e as afirmações de que fechar a sessão impede um merge já pedido.
+
+A tabela continua a reconstruir os mesmos seis playbooks a partir do pin da Cursor. Cada linha tem tipo e motivo. `platform` adapta o harness. `safety` exige também uma fonte e só cobre os riscos descritos abaixo. Os pares continuam literais, contados no upstream original, sem sobreposição e aplicados de uma vez. Não se permite editar os playbooks gerados à mão nem aproveitar a exceção para uma reescrita editorial livre.
+
+A receita Guarded operations do Shipping concentra o contrato. Os cinco consumidores a leem antes da primeira operação e conservam suas autoridades de topologia e de merge. O registro de operação liga host, repositório, PR, node ID, branch, URLs e heads e bases da publicação e da evidência. A publicação de uma reescrita usa o SHA remoto capturado antes dela, igual ao head local naquele momento, num lease explícito para o URL de escrita validado. A submissão exige o Veredito independente atual, os checks atuais e `--match-head-commit` do head publicado. Uma mutação pelo Origin fica recusada até haver adaptador equivalente provado.
+
+Antes de reescrever, retargetar ou invalidar o Veredito, o responsável retira da fila e do auto-merge o PR afetado e seus descendentes dependentes, com leitura dos dois estados como ausentes. PRs independentes ficam de fora. Um merge concorrente interrompe a reescrita e exige reconciliar o merge real. O restack conserva o tip antigo do pai e reaplica apenas a contribuição do filho com `rebase --onto`, inclusive depois de squash.
+
+Patch-id estável serve como diagnóstico. Reutilizar evidência exige comparar os bytes exatos do patch e auditar, para cada lane, mudanças na base, dependências, configuração e runtime. Whitespace executável pode mudar o resultado sem mudar o patch-id. Uma dependência da base pode mudar o resultado mesmo com patch idêntico. Inputs relevantes alterados ou impacto incerto exigem nova prova. Checks atuais sempre rodam; evidência anterior conserva sua identidade original.
+
+Fila e auto-merge são estados diferentes. `--match-head-commit` é uma precondição na submissão, não uma trava permanente nem uma precondição atômica da base. Um pedido aceito pelo GitHub pode terminar depois que as sessões fecham. Fechar o chat não o retira; a retirada exige ação explícita e leitura posterior. A política de checks e fila de produção não muda nesta versão. O GitHub exige CI, mas não publica nem impõe o Veredito independente da Raiz. Não volta um publicador de veredito no servidor.

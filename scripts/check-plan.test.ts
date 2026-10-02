@@ -10,6 +10,7 @@ import {
   isolatedEnv,
 } from "../skills/poteto-mode/scripts/runner/isolated-env.test-helper.ts";
 import { PLUGIN_ROOT } from "./model-matrix.ts";
+import { applyPairs } from "./upstream-parity.ts";
 
 // check-plan.mjs pins the wording of the plan template: the `/goal` that holds
 // the objective, the box that reads the playbooks from the installed plugin
@@ -67,6 +68,17 @@ describe("check-plan: the plan template of multi-phase-plan.md", () => {
     assert.deepEqual(run.problems, []);
     assert.match(run.stdout, /\n1 PR sections, 0 problems\n$/);
     assert.equal(run.status, 0);
+  });
+
+  it("rejects a generated safety substitution with an incoherent plan sentence", () => {
+    const plan = template();
+    const anchor = "Record the repository, PR, node ID";
+    const generated = applyPairs(plan, [{ id: "T21", file: PLAYBOOK, from: anchor, to: "Record identity: repository, PR, node ID", count: 1 }]);
+    assert.deepEqual(generated.problems, []);
+    assert.notEqual(generated.text, null);
+    const run = check("incoherent-safety.md", generated.text ?? "");
+    assert.equal(run.status, 1);
+    assert.ok(run.problems.some((problem) => /colon/i.test(problem)), run.problems.join("\n"));
   });
 
   const LANES = "Ten lanes on the configured `swarm workers` role at the PR head";

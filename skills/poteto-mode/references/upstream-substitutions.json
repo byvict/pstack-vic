@@ -60,7 +60,8 @@
           "to": "a live lane",
           "count": 1
         }
-      ]
+      ],
+      "kind": "platform"
     },
     {
       "id": "T4",
@@ -84,7 +85,8 @@
           "to": "",
           "count": 1
         }
-      ]
+      ],
+      "kind": "platform"
     },
     {
       "id": "T5",
@@ -126,7 +128,8 @@
           "to": "`verify` (UIs) or `run` (CLIs and TUIs)",
           "count": 1
         }
-      ]
+      ],
+      "kind": "platform"
     },
     {
       "id": "T6",
@@ -180,7 +183,8 @@
           "to": "<execution playbook>.md` under the installed plugin.",
           "count": 1
         }
-      ]
+      ],
+      "kind": "platform"
     },
     {
       "id": "T9",
@@ -198,7 +202,8 @@
           "to": "the configured `swarm workers` role",
           "count": 1
         }
-      ]
+      ],
+      "kind": "platform"
     },
     {
       "id": "T12",
@@ -216,7 +221,8 @@
           "to": " (the **guard-the-context-window** principle skill). Resolve the configured `how explorer` role through `../references/provider-dispatch.md`; use `poteto-agent` only for an `inherit-parent` / `auto` native helper. Never use Claude Code's built-in `Plan` agent, which ignores this skill.",
           "count": 1
         }
-      ]
+      ],
+      "kind": "platform"
     },
     {
       "id": "T13",
@@ -240,7 +246,8 @@
           "to": "Arm the 30-minute audit tick as a real `/loop` in dynamic mode (on Codex, the cadence `../references/codex-tools.md` names).",
           "count": 1
         }
-      ]
+      ],
+      "kind": "platform"
     },
     {
       "id": "T17",
@@ -252,7 +259,8 @@
           "to": "the working repository's `docs/`",
           "count": 1
         }
-      ]
+      ],
+      "kind": "platform"
     },
     {
       "id": "T20",
@@ -262,6 +270,391 @@
           "file": "skills/poteto-mode/playbooks/babysit.md",
           "from": "Cursor's built-in babysit skill",
           "to": "the standalone **babysit** skill",
+          "count": 1
+        }
+      ],
+      "kind": "platform"
+    },
+    {
+      "id": "T21",
+      "kind": "safety",
+      "reason": "Bind every PR mutation to a validated repository and operation record.",
+      "source": "docs/adr/0005-autopilot-substitui-converge.md#exceção-aprovada-na-052",
+      "pairs": [
+        {
+          "file": "skills/poteto-mode/playbooks/autopilot-full.md",
+          "from": "### Autopilot-full",
+          "to": "### Autopilot-full\n\nBefore the first PR operation, read the Guarded operations section of `playbooks/shipping.md` under the installed plugin. Capture its operation record and follow its identity, withdrawal, publication, and evidence rules. The invoking playbook retains its topology authority and every operator merge hold.",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/autopilot-stack.md",
+          "from": "### Autopilot-stack",
+          "to": "### Autopilot-stack\n\nBefore the first PR operation, read the Guarded operations section of `playbooks/shipping.md` under the installed plugin. Capture its operation record and follow its identity, withdrawal, publication, and evidence rules. The invoking playbook retains its topology authority and every operator merge hold.",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/babysit.md",
+          "from": "### Babysit",
+          "to": "### Babysit\n\nBefore the first PR operation, read the Guarded operations section of `playbooks/shipping.md` under the installed plugin. Capture its operation record and follow its identity, withdrawal, publication, and evidence rules. The invoking playbook retains its topology authority and every operator merge hold.",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/opening-a-pr.md",
+          "from": "### Opening a PR",
+          "to": "### Opening a PR\n\nBefore the first PR operation, read the Guarded operations section of `playbooks/shipping.md` under the installed plugin. Capture its operation record and follow its identity, withdrawal, publication, and evidence rules. The invoking playbook retains its topology authority and every operator merge hold.",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/shipping.md",
+          "from": "### Shipping",
+          "to": "### Shipping\n\n#### Guarded operations\n\nRead this section before the first PR operation, including publication, topology changes, and admission. The invoking playbook still decides who owns each action. Loading this recipe grants no merge or topology authority. Operator-named items stop for the operator's review and click.\n\n**Capture one operation record.** Record GitHub host, repository owner and name, PR number and node ID, branch, validated fetch URL, validated push URL, captured remote head, local pre-rewrite head, current published head, verdict head, and current base ref and SHA. Keep the verdict's original base ref, base SHA, exact patch file, lane receipts, and runtime inputs. For a dependent child also record the parent PR, old parent tip, and old child tip before either changes. Keep any observed candidate SHA separate from those contribution and verdict identities.\n\nResolve all fetch and push URLs with `git remote get-url --all <remote>` and `git remote get-url --push --all <remote>`. Support same-repository GitHub HTTPS URLs and SSH URLs for `git@github.com`, with an optional `.git` suffix. Normalize each to its host, owner, and repository name. Require one fetch destination and one push destination, both equal to the explicitly selected repository and the PR's head repository. Refuse credential-bearing URLs, unsupported hosts or URL forms, multiple destinations, and cross-repository fork topology before any write. Preserve the validated URLs in the record. Origin has no proven expected-head adapter here. If Origin is requested, report `Unsupported Origin mutation path: expected-head submission is not verified` and perform no mutation. Use the supported GitHub CLI path only when the task permits it.\n\nPass `--repo \"$op_repo\"` on every `gh pr` command, with `op_repo` equal to the recorded `owner/name`. Set `GH_HOST` to the validated `github.com` host for these commands and pass `--hostname \"$op_host\"` on every `gh api` command. Before creating a PR, validate the branch and URLs and record its published head. Read the new PR back to complete the same record. Before each later mutation and after every wake, read this explicitly selected PR. Failed or partial API reads stop progression.\n\n```sh\nexport GH_HOST=\"$op_host\"\ngh api --hostname \"$op_host\" graphql -f owner=\"$op_owner\" -f name=\"$op_name\" -F number=\"$op_pr\" -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){nameWithOwner pullRequest(number:$number){id number state headRefName headRefOid headRepository{nameWithOwner} baseRefName baseRefOid mergedAt mergeCommit{oid} autoMergeRequest{enabledAt} mergeQueueEntry{id}}}}'\n```\n\nCompare the returned repository, PR number, node ID, head repository, branch, published head, and base ref with the record. Verify the local branch and HEAD against the same record. An identity mismatch stops before any write. A retargeted base ref or changed contribution head invalidates progression. Withdraw the affected work before repair and re-verification. Distinguish retargeting from an advancing SHA on the same target branch. Assess that base movement against each lane's inputs. Observe native queue membership through the query above; the current watcher's `merge-queue` reason does not prove a native queue entry.\n\n**Withdraw before a change.** Before rebasing, retargeting, or invalidating a verdict, identify the affected PR and its actual dependent descendants from the recorded topology. Leave independent PRs untouched. Process affected descendants before their ancestor. Read both `mergeQueueEntry` and `autoMergeRequest`. For each observed queue entry, use its PR node ID in this mutation:\n\n```sh\ngh api --hostname \"$op_host\" graphql -f id=\"$op_pr_node_id\" -f query='mutation($id:ID!){dequeuePullRequest(input:{id:$id}){mergeQueueEntry{id}}}'\n```\n\nRe-read the PR. If an auto-merge request remains, disable it explicitly:\n\n```sh\ngh pr merge --repo \"$op_repo\" \"$op_pr\" --disable-auto\n```\n\nThen read both states back as absent for every affected PR before the first rewrite or retarget. A null mutation payload, failed call, or missing field proves no absence. Resume partial withdrawal by reading current state and withdrawing only what remains. If a concurrent merge wins, stop the rewrite and reconcile the actual merged head, base, and merge commit. Readback is an observation, not an atomic lock against another actor rearming the PR.\n\n**Publish a rewrite.** Read the remote branch from the validated push URL before rewriting. Require that captured remote SHA to equal the local pre-rewrite `HEAD`, and retain the SHA in `op_remote_head` across every later fetch. Verify the rewrite and publish only the owned branch:\n\n```sh\ngit push \"$op_push_url\" \"HEAD:refs/heads/$op_branch\" \"--force-with-lease=refs/heads/$op_branch:$op_remote_head\"\n```\n\nOn rejection, abort and report the newly observed identity for review. Never replace the captured SHA with a later tracking ref to retry. Read the published head back after success and keep it distinct from the original verdict head. A first publication uses the validated push URL and an explicit `HEAD:refs/heads/<branch>` refspec, with hooks enabled.\n\n**Restack an actual child.** Capture the old parent tip and old child tip before the parent moves or merges. Verify ancestry and record the child's own commit range:\n\n```sh\ngit merge-base --is-ancestor \"$op_old_parent_tip\" \"$op_old_child_tip\"\ngit log --oneline \"$op_old_parent_tip..$op_old_child_tip\"\n```\n\nAfter the parent actually merges, verify its merge commit is on the new base. Withdraw the child and affected descendants before rewriting. Confirm the child still equals its recorded old tip, then apply only its own range:\n\n```sh\ngit rebase --onto \"$op_new_base\" \"$op_old_parent_tip\" \"$op_child_branch\"\n```\n\nAfter a squash merge, compare the recorded child contribution with the rewritten range and final behavior. Confirm that parent commits did not return in the child's range. Publish with the child's captured lease and reverify it. Never infer the old parent from the rewritten graph. Independent PRs remain independent.\n\n**Audit evidence per lane.** Stable patch-id is a diagnostic, never permission to reuse evidence. Preserve complete patch bytes, including whitespace and binary changes, with one option set for both the original verdict and current record:\n\n```sh\ngit -c core.quotePath=true diff --no-ext-diff --no-textconv --binary --full-index --no-renames --src-prefix=a/ --dst-prefix=b/ \"$op_base_sha\" \"$op_head_sha\" --\n```\n\nCompare those files byte for byte. For each lane also audit changes to the base, dependencies, configuration, build tools, and runtime inputs. A changed patch, changed relevant input, or uncertain impact requires a rerun. Even equal patch bytes cannot preserve a lane when a changed base dependency changes its output. `console.log(\"a b\")` and `console.log(\"ab\")` can have equal stable patch-id but different output and patch bytes. Both cases require fresh affected verification. Live lanes without reproducible build output rerun. Preserve original evidence identities and record each reuse decision without relabeling old proof as a run on the new head. Always run current required checks.\n\n**Submit only the verified identity.** Require the root's current independent verdict, all current PR requirements passed, the recorded published head equal to local `HEAD`, and a fresh head and base read. Resolve any drift through the preceding rules first. Check current requirements before submission because `gh pr merge` can arm auto-merge when a queue branch still has pending checks. For an authorized merge or enqueue, submit the published head:\n\n```sh\ngh pr merge --repo \"$op_repo\" \"$op_pr\" --squash --match-head-commit \"$op_published_head\"\n```\n\n`--match-head-commit` is a server precondition at submission, not a permanent lock on an auto-merge request. It does not provide an atomic expected-base condition. Read back head, base, queue membership, and auto-merge after submission and every wake. Withdraw an unexpected pending request that the program did not authorize. Wait for actual `MERGED`, then reconcile the merge commit and destination before progressing. A request GitHub already accepted can finish after chats close. Closing a chat does not withdraw it. GitHub's queue and required CI do not publish or enforce the independent root verdict.",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
+          "from": "### Multi-phase or multi-PR plan",
+          "to": "### Multi-phase or multi-PR plan\n\nBefore the first PR operation, read the Guarded operations section of `playbooks/shipping.md` under the installed plugin. Capture its operation record and follow its identity, withdrawal, publication, and evidence rules. The invoking playbook retains its topology authority and every operator merge hold.",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/opening-a-pr.md",
+          "from": "GitHub CLI (`gh`) is the default. If `command -v origin` succeeds and Origin can resolve the repository, prefer `origin pr ...`. If Origin is absent or cannot resolve the repository, stay on `gh` and record the fallback. Do not require Graphite (`gt`).",
+          "to": "Use the supported GitHub CLI path from Guarded operations with the captured operation record and explicit `--repo <owner/name>`. Refuse an Origin mutation path because its expected-head adapter is unproven. Never require Graphite (`gt`).",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/babysit.md",
+          "from": "GitHub CLI (`gh`) is the default. If `command -v origin` succeeds and Origin can resolve the repository, use `origin pr ...` for view, checks, threads, and later shipping. Otherwise stay on `gh` and record the fallback. Never require Graphite (`gt`).",
+          "to": "Use the supported GitHub CLI path from Guarded operations with the captured operation record and explicit `--repo <owner/name>`. Refuse an Origin mutation path because its expected-head adapter is unproven. Never require Graphite (`gt`).",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/autopilot-full.md",
+          "from": "GitHub CLI (`gh`) is the default. If `command -v origin` succeeds and Origin can resolve the repository, use `origin pr ...` for PR create, edit, view, watch, and merge operations. Otherwise stay on `gh` and record the fallback. Never require Graphite (`gt`).",
+          "to": "Use the supported GitHub CLI path from Guarded operations with the captured operation record and explicit `--repo <owner/name>`. Refuse an Origin mutation path because its expected-head adapter is unproven. Never require Graphite (`gt`).",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/autopilot-stack.md",
+          "from": "GitHub CLI (`gh`) is the default. If `command -v origin` succeeds and Origin can resolve the repository, use `origin pr ...` for PR create, edit, view, watch, and merge operations. Otherwise stay on `gh` and record the fallback. Never require Graphite (`gt`).",
+          "to": "Use the supported GitHub CLI path from Guarded operations with the captured operation record and explicit `--repo <owner/name>`. Refuse an Origin mutation path because its expected-head adapter is unproven. Never require Graphite (`gt`).",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/shipping.md",
+          "from": "GitHub CLI (`gh`) is the default. If `command -v origin` succeeds and Origin can resolve the repository, use `origin pr ...` for PR view, watch, edit, and merge operations. Otherwise stay on `gh` and record the fallback. Never require Graphite (`gt`).",
+          "to": "Use the supported GitHub CLI path from Guarded operations with the captured operation record and explicit `--repo <owner/name>`. Refuse an Origin mutation path because its expected-head adapter is unproven. Never require Graphite (`gt`).",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
+          "from": "Resolve the forge once. Default to `gh`; if `command -v origin` succeeds and Origin can resolve the repository, use `origin pr` for every PR operation. Record any fallback to `gh`. Never require `gt`.",
+          "to": "Read Guarded operations in `playbooks/shipping.md` before the first operation. Record the repository, PR, node ID, branch, validated fetch and push URLs, captured remote and local heads, published and verdict heads, and current and verdict bases. Use `gh` with explicit `--repo <owner/name>`. Refuse unsupported Origin mutations.",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
+          "from": "`git fetch origin <head-branch> && git checkout <head SHA>`.",
+          "to": "Validate the fetch and push URLs against the operation record. Run `git fetch <fetch-url> <head-branch>` and `git checkout <head SHA>`. Read back the PR head and base before the lane starts.",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/opening-a-pr.md",
+          "from": "`origin pr create --status open --base <parent-branch>` or `gh pr create --base <parent-branch>` according to the resolved forge",
+          "to": "`gh pr create --repo <owner/name> --base <parent-branch> --head <child-branch>`",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/autopilot-stack.md",
+          "from": "`origin pr create --status open --base <parent-branch>` or `gh pr create --base <parent-branch>` according to the resolved forge",
+          "to": "`gh pr create --repo <owner/name> --base <parent-branch> --head <child-branch>`",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/opening-a-pr.md",
+          "from": "With Origin, pass `--status open`. With `gh`, omit `--draft`.",
+          "to": "Use explicit repository, base, and head arguments with `gh pr create` and omit `--draft`.",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/opening-a-pr.md",
+          "from": "run `origin pr ready <number>` or `gh pr ready <number>` according to the resolved forge. Run `origin pr view <number>` or `gh pr view <number>`",
+          "to": "run `gh pr ready --repo <owner/name> <number>`. Run `gh pr view --repo <owner/name> <number>`",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
+          "from": "`origin pr create --status open --base <base-branch>` or `gh pr create --base <base-branch>` according to the resolved forge",
+          "to": "`gh pr create --repo <owner/name> --base <base-branch> --head <head-branch>`",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/shipping.md",
+          "from": "With Origin, use `origin pr view <pr> --checks --comments` and `origin pr checks <pr> --watch`, then re-read the PR until it reports merged or blocked. With GitHub, use",
+          "to": "Use",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/shipping.md",
+          "from": "`scripts/watch-pr/watch-pr --queued-stack --stack-prs <bottom>`",
+          "to": "`scripts/watch-pr/watch-pr --owner <owner> --repo <repo> --queued-stack --stack-prs <bottom>`",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/shipping.md",
+          "from": "`gh pr view <pr> --json state,mergedAt,mergeStateStatus,statusCheckRollup,autoMergeRequest`",
+          "to": "`gh pr view --repo <owner/name> <pr> --json state,mergedAt,mergeStateStatus,statusCheckRollup,autoMergeRequest` and the Guarded operations identity query",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/babysit.md",
+          "from": "On Origin, reply with `origin pr thread reply <thread-id> <pr> --body-file <reply-file>`. On GitHub, call",
+          "to": "On the supported GitHub path, call",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/babysit.md",
+          "from": "On Origin, use `origin pr view <pr> --checks --comments`, `origin pr thread list <pr>`, and `origin pr checks <pr> --watch`. Re-read the PR and threads whenever the check watch returns. The public watcher remains GitHub-specific, so do not pretend it covers Origin or add an Origin implementation just to run this playbook. Trust the selected path's merge state and blocker class instead of mixing forge state.",
+          "to": "Pass the recorded owner and repository to the watcher. Re-read the selected PR through Guarded operations whenever the watch returns. The public watcher remains GitHub-specific.",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/babysit.md",
+          "from": "Stop conditions are forge-specific. On Origin, stop `drive` when the frontier is merge-ready: checks are green, `origin pr view` reports mergeable with no blockers, and `origin pr thread list` has no unresolved blockers. Origin does not wait for `READY`, `WAITING`, `ADVANCE`, or `COMPLETE`. Those are GitHub watcher verdicts.",
+          "to": "The following stop conditions are GitHub watcher verdicts. They do not authorize an unsupported Origin mutation path.",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/babysit.md",
+          "from": " On Origin, that is the merge-ready state defined above.",
+          "to": "",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/babysit.md",
+          "from": " On Origin, derive the pass count from `origin pr thread list` and the review history.",
+          "to": "",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/babysit.md",
+          "from": ", or after Origin reports the frontier merge-ready",
+          "to": "",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "T22",
+      "kind": "safety",
+      "reason": "Publish rewrites against the remote SHA captured before rewriting.",
+      "source": "docs/adr/0005-autopilot-substitui-converge.md#exceção-aprovada-na-052",
+      "pairs": [
+        {
+          "file": "skills/poteto-mode/playbooks/autopilot-full.md",
+          "from": "push the owner's own branch with `git push --force-with-lease` after an `ls-remote` check",
+          "to": "withdraw affected requests, require the captured remote head to equal the local pre-rewrite head, and publish the owner's branch to its validated push URL with the explicit captured-SHA lease from Guarded operations",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/autopilot-stack.md",
+          "from": "push with `--force-with-lease` only after an `ls-remote` check",
+          "to": "publish to the validated push URL with the captured-SHA lease from Guarded operations, requiring the captured remote and local pre-rewrite heads to match",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/babysit.md",
+          "from": "publishes it with `git push --force-with-lease` per `playbooks/autopilot-full.md` step 2",
+          "to": "withdraws affected requests and publishes it with the captured-SHA lease from Guarded operations per `playbooks/autopilot-full.md` step 2",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "T23",
+      "kind": "safety",
+      "reason": "Withdraw dependent requests and submit only the independently verified head.",
+      "source": "docs/adr/0005-autopilot-substitui-converge.md#exceção-aprovada-na-052",
+      "pairs": [
+        {
+          "file": "skills/poteto-mode/playbooks/shipping.md",
+          "from": "Fetch current trunk. Rebase the lowest verified branch onto the exact trunk tip when needed, push it, and retarget only that PR to trunk with `origin pr edit <pr> --base <trunk>` or `gh pr edit <pr> --base <trunk>`.",
+          "to": "Read and withdraw affected queue and auto-merge requests, including actual dependent descendants, before a rewrite or retarget. Fetch current trunk from the validated fetch URL. Rebase the lowest verified branch when needed, publish with its captured-SHA lease, and retarget only that PR with `gh pr edit --repo <owner/name> <pr> --base <trunk>`.",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/shipping.md",
+          "from": "5. **Land one PR at a time.** If the bottom PR is mergeable now, squash it with `origin pr merge <pr> --squash` or `gh pr merge <pr> --squash`. If requirements are still running and the user asked for merge-when-ready, arm only that PR with `origin pr merge <pr> --squash --auto` or `gh pr merge <pr> --squash --auto`. Origin's `--auto` is Origin merge-when-ready. GitHub's `--auto` is GitHub auto-merge. Wait for that PR to merge before preparing the next one.",
+          "to": "5. **Land one PR at a time.** Require the current independent verdict and all current PR requirements to pass before submission. Use the expected-head merge command in Guarded operations for the published head. Read back queue membership and auto-merge state and wait for actual `MERGED` before preparing the next PR. Operator-named items remain at merge-ready for the operator's click.",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/shipping.md",
+          "from": "6. **Do not read GitHub `autoMergeRequest` as stack readiness.** At most it says GitHub auto-merge was requested for one GitHub PR. It does not prove Origin merge-when-ready is armed, that a descendant is queued, that a patch verdict is current, or that the contiguous stack is safe. Confirm the active forge's state for the current bottom PR, and say that the state is unknown if the active forge cannot report it.",
+          "to": "6. **Read queue membership and auto-merge separately.** Use the Guarded operations query. `autoMergeRequest` means auto-merge was requested; `mergeQueueEntry` means the PR is admitted to the queue. Neither proves that its independent verdict is current or that a descendant is ready. Failed reads and missing fields leave state unknown and stop progression.",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/autopilot-full.md",
+          "from": "The owner squash-merges its own PR through the resolved forge",
+          "to": "After current checks and the independent verdict pass, the owner submits its published head with the expected-head command in Guarded operations, reads back queue and auto-merge states, waits for actual `MERGED`,",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/autopilot-stack.md",
+          "from": "The root fetches current trunk and rebases the chain from bottom to top.",
+          "to": "The root records old parent and child tips, withdraws affected descendant queue and auto-merge requests with readback, fetches current trunk from the validated URL, and restacks the chain from bottom to top through Guarded operations.",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
+          "from": "Rebase onto current trunk before the code-ready report and babysit.",
+          "to": "Withdraw affected queue and auto-merge requests with readback before rewriting or retargeting. Capture remote and local pre-rewrite heads, require equality, and preserve the captured lease. Rebase onto current trunk before the code-ready report and babysit.",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/opening-a-pr.md",
+          "from": "`origin pr edit <pr> --base <parent-branch>` or `gh pr edit <pr> --base <parent-branch>`",
+          "to": "`gh pr edit --repo <owner/name> <pr> --base <parent-branch>` after withdrawal and readback",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/autopilot-stack.md",
+          "from": "`origin pr edit <pr> --base <parent-branch>` or `gh pr edit <pr> --base <parent-branch>`",
+          "to": "`gh pr edit --repo <owner/name> <pr> --base <parent-branch>` after withdrawal and readback",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "T24",
+      "kind": "safety",
+      "reason": "Restack only the child contribution using the recorded old-parent boundary.",
+      "source": "docs/adr/0005-autopilot-substitui-converge.md#exceção-aprovada-na-052",
+      "pairs": [
+        {
+          "file": "skills/poteto-mode/playbooks/shipping.md",
+          "from": "A host may retarget a child automatically, but do not assume it did.",
+          "to": "A host may retarget a child automatically, but do not assume it did. Restack through Guarded operations using the recorded old parent and child tips, the ancestry and own-range checks, and `rebase --onto`. After a squash, confirm the rewritten range contains only the child contribution.",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/opening-a-pr.md",
+          "from": "Each child branch rebases onto its parent's exact tip and its PR targets the parent branch.",
+          "to": "Record the old parent and child tips before restacking. Apply only the child's own range with the Guarded operations `rebase --onto` recipe; its PR targets the parent branch.",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/autopilot-stack.md",
+          "from": "rebase the child branch onto that exact parent tip",
+          "to": "record the old parent and child tips, withdraw affected requests, and apply only the child contribution onto that exact parent tip with the Guarded operations restack recipe",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/autopilot-full.md",
+          "from": "may hold a short private base-branch stack.",
+          "to": "may hold a short private base-branch stack. Record old parent and child tips and restack only the child contribution through Guarded operations.",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
+          "from": "or base it on the parent branch when the execution playbook stacks.",
+          "to": "or base it on the parent branch when the execution playbook stacks. Record old parent and child tips before topology changes and use the Guarded operations restack recipe.",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "T25",
+      "kind": "safety",
+      "reason": "Audit evidence against exact patch bytes and each lane's base and runtime inputs.",
+      "source": "docs/adr/0005-autopilot-substitui-converge.md#exceção-aprovada-na-052",
+      "pairs": [
+        {
+          "file": "skills/poteto-mode/playbooks/shipping.md",
+          "from": "3. **Re-check that each verdict still describes the patch.** Record the verdict head SHA, base SHA, and stable `git patch-id` of that PR's base-to-head diff. A rebase or base retarget rewrites SHAs and can silently invalidate a verdict without touching a check. Before landing a PR, compare the recorded patch-id with its current base-to-head patch-id. When the two patches differ only in tests, docs, or lint config, build what each lane ran. Build it twice at the verdict SHA and once at the current head. A difference is noise if the two builds at the verdict SHA also show it, or if it is an embedded commit SHA. Judge each difference, not each file, and report each kind of noise with its files. If only noise differs, that lane's result stays valid, and checks and a review of the change run fresh. Do not reuse a lane result from a dev server or from anything else with no build output. Rerun that lane. Re-verify anything else when the patch changed. When it did not, keep the code verdict but re-run mergeability and CI at the current head. Never use matching commit messages or a green check from an older SHA as a substitute.",
+          "to": "3. **Audit each verdict against current inputs.** Preserve the original verdict head and base, exact patch bytes, and each lane's receipts and runtime inputs. Follow Guarded operations to compare exact patch bytes and audit changed base dependencies, configuration, build tools, and runtime inputs per lane. Matching stable patch-id alone never preserves evidence. Rerun a lane when its patch or relevant inputs changed, when impact is uncertain, or when live proof has no reproducible build output. Record any reuse against the original evidence identity. Always run current required checks.",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/autopilot-full.md",
+          "from": "A new head voids the verdict unless the patch-id is unchanged.",
+          "to": "A new head requires a current verdict supported by the per-lane exact patch and base-input audit. Equal patch-id alone never preserves evidence.",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/autopilot-full.md",
+          "from": "the patch-id rule decides whether the round's verdict still holds",
+          "to": "the exact patch and base-input evidence rule decides whether the round's verdict still holds",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/autopilot-full.md",
+          "from": "the patch-id rule in `playbooks/shipping.md`",
+          "to": "the exact patch and base-input evidence rule in `playbooks/shipping.md`",
+          "count": 2
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/autopilot-stack.md",
+          "from": "the patch-id rule in `playbooks/shipping.md`",
+          "to": "the exact patch and base-input evidence rule in `playbooks/shipping.md`",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
+          "from": "the patch-id rule in `playbooks/shipping.md`",
+          "to": "the exact patch and base-input evidence rule in `playbooks/shipping.md`",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
+          "from": "the patch-id rule from `playbooks/shipping.md`",
+          "to": "the exact patch and base-input evidence rule from `playbooks/shipping.md`",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
+          "from": "Rebased onto current trunk after the verdict, patch-id unchanged.",
+          "to": "Rebased onto current trunk after the verdict. Audit the final head and base against exact patch bytes and each lane's inputs, record reuse decisions, and rerun affected lanes and all current required checks.",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/shipping.md",
+          "from": "the new bottom PR's base, head, checks, and patch-id",
+          "to": "the new bottom PR's base, head, checks, and verdict inputs",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/autopilot-stack.md",
+          "from": "even when the patch-id is unchanged",
+          "to": "even when exact patch bytes are unchanged",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "T26",
+      "kind": "safety",
+      "reason": "Preserve operator authority and acknowledge accepted server requests outlive chats.",
+      "source": "docs/adr/0005-autopilot-substitui-converge.md#exceção-aprovada-na-052",
+      "pairs": [
+        {
+          "file": "skills/poteto-mode/playbooks/autopilot-full.md",
+          "from": "Operator-named items stop at merge-ready and wait for the operator's click.",
+          "to": "Operator-named items stop at merge-ready and wait for the operator's click. An accepted server request can finish after chats close; closing a chat does not withdraw it. Before an authorized rewrite or verdict invalidation, explicitly withdraw affected queue and auto-merge requests and read both states back absent.",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/autopilot-stack.md",
+          "from": "On the operator's stop, every owner takes an immediate zero-writes hold.",
+          "to": "On the operator's stop, every owner takes an immediate zero-writes hold. An accepted server request can finish after chats close; closing a chat does not withdraw it. Report any pending request so an authorized actor can explicitly withdraw it and read both states back absent.",
+          "count": 1
+        },
+        {
+          "file": "skills/poteto-mode/playbooks/babysit.md",
+          "from": "Watcher re-arms never authorize merging or arming merge-when-ready.",
+          "to": "Watcher re-arms never authorize merging or arming merge-when-ready. The following bare merge names are prohibitions, not runnable recipes.",
           "count": 1
         }
       ]

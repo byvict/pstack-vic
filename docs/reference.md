@@ -92,7 +92,7 @@ Cada passo confere o que já foi feito, então rodar o script duas vezes não es
 ├── scripts/                          # loader/validação da matriz, render dos blocos gerados, gerador de agents, digest semanal dos upstreams, upstream-parity.ts (a guarda dos seis playbooks do autopilot), release.ts (troca o plugin nos dois pais depois do merge), testes (inclui manifests.test.ts)
 ├── skills/                           # 55 skills compartilhadas por Claude Code e Codex
 │   ├── poteto-mode/agents/           # openai.yaml: no Codex, poteto-mode só por invocação explícita
-│   ├── poteto-mode/references/       # provider-dispatch.md (rota e papéis), codex-tools.md (mapa de tools), bugbot-triage.md, upstream-substitutions.json (as trocas de harness dos seis playbooks do autopilot)
+│   ├── poteto-mode/references/       # provider-dispatch.md (rota e papéis), codex-tools.md (mapa de tools), bugbot-triage.md, upstream-substitutions.json (as trocas classificadas dos seis playbooks do autopilot)
 │   ├── poteto-mode/scripts/          # runner externo (Node 24, com probe-lane.ts, a sonda de uma lane), watch-pr, orch, check-plan.mjs, worktree-audit.sh
 │   ├── setup-pstack/scripts/         # setup-pstack.ts: estado, plano, probe, atestado e escrita do sheet, e a escolha de uma lane de um papel de pool (Node 24); authorize.ts: a autorização permanente (autopilot e Shipping)
 │   └── update-clis/                  # scripts/update-clis.ts (check, notes, install, probe) e references/cli-touchpoints.json
@@ -126,7 +126,7 @@ Nada é declarado em manifest. O que as skills usam:
 
 - **Node 24** — o runner externo, os scripts da matriz, o `check-plan.mjs` e o `npm test` rodam TypeScript direto, sem build e sem Bun.
 - **CLIs `claude`, `codex` e `grok`** — autenticados, só os que o sheet de modelos usa. O runner recusa provider igual ao do pai (essa lane é nativa). A versão delas muda só pela skill `update-clis` (seção [Versões das CLIs](#versões-das-clis)).
-- **`gh`** — forge padrão dos playbooks de PR e da skill `babysit`; `origin` é usado quando resolve o repositório; `gt` só no playbook Orchestrate. A skill `update-clis` também o usa para ler as releases do codex.
+- **`gh`** — forge dos seis playbooks protegidos de PR; uma mutação pelo Origin é recusada enquanto não houver adaptador provado com precondição de head; `gt` só no playbook Orchestrate. A skill `update-clis` também o usa para ler as releases do codex.
 - **`lsof`** — só para `update-clis`, que o usa para saber se alguém está rodando a CLI que ela trocaria.
 - **`bun`** — só para `watch-pr` e `orch`, que vieram da Cursor sem mudança, e para os testes deles e o typecheck do `watch-pr` (`npm run test:bun`).
 - **`jq` e `rg`** — só para `worktree-audit.sh` (playbook Worktree cleanup); sem eles o audit avisa e deixa colunas em branco.
@@ -166,7 +166,7 @@ Faça a execução semanal da skill `pstack:update-clis` (plugin pstack instalad
 
 ## Autopilot
 
-O autopilot leva uma fila de PRs até o merge dentro de uma sessão sua. Uma execução dessas se chama programa. Você abre a sessão, pede o programa e dá o "go". Essa sessão é a Raiz. Ela cria um Dono para cada PR. O Dono é um subagente, ou seja, um agente que a sessão cria e que trabalha em segundo plano. Ele cuida daquele PR do começo ao fim. A Raiz confere o trabalho de cada Dono com verificadores independentes e só então libera o merge. Nada roda fora dessa sessão. Se ela fecha, o programa para.
+O autopilot leva uma fila de PRs até o merge dentro de uma sessão sua. Uma execução dessas se chama programa. Você abre a sessão, pede o programa e dá o "go". Essa sessão é a Raiz. Ela cria um Dono para cada PR. O Dono é um subagente, ou seja, um agente que a sessão cria e que trabalha em segundo plano. Ele cuida daquele PR do começo ao fim. A Raiz confere o trabalho de cada Dono com verificadores independentes e só então libera o merge. A coordenação precisa dessa sessão. Um pedido que o GitHub já aceitou pode terminar depois que ela fecha. Fechar o chat não retira um PR da fila nem cancela auto-merge; a retirada exige comando explícito e leitura dos dois estados como ausentes.
 
 O autopilot tem dois playbooks, e os dois vêm do pstack da Cursor. Um playbook é o roteiro que o agente segue. No [Autopilot-full](../skills/poteto-mode/playbooks/autopilot-full.md), cada Dono mergeia o próprio PR depois do Veredito limpo da Raiz. O Veredito é o resultado da conferência dela. No [Autopilot-stack](../skills/poteto-mode/playbooks/autopilot-stack.md), nenhum agente mergeia. A Raiz monta uma pilha de PRs verificados, em que cada PR se apoia no anterior, e você revisa e mergeia. Use o Autopilot-full quando os PRs são independentes e você deu a autoridade de merge. Use o Autopilot-stack quando você quer revisar antes do merge, quando o trabalho é encadeado ou quando você não deu a autoridade de merge. As palavras Raiz, Dono, Enxame, Veredito, Rodada e Tick estão definidas no [`CONTEXT.md`](../CONTEXT.md).
 
@@ -196,12 +196,18 @@ O Dono leva um PR do build ao merge. Cada Dono trabalha num worktree próprio, q
 
 - **Abre o PR cedo.** Em cerca de 15 minutos ele começa uma trilha de decisões (`decisions.tsv`), empurra a primeira versão da branch e abre o PR pronto, nunca como rascunho. O PR abre antes da prova, para que o endereço, as decisões e os checks fiquem registrados desde o começo. A trilha não entra no commit. Ela volta para a Raiz junto com os avisos.
 - **Constrói, prova e limpa.** Ele prova a mudança no artefato real. Avalia com ceticismo cada comentário do Bugbot, o robô da Cursor que revisa PRs no GitHub, limpa o diff com `/deslop` e tira os comentários do código com `/no-comments`.
-- **Rebaseia na hora certa, no Autopilot-full.** Rebasear é reaplicar os commits da branch sobre a trunk atual, e a trunk é a `main`. O primeiro rebase vem antes do aviso de Code-ready. Nos consertos que a Raiz pede, a base não muda. Ele só rebaseia de novo no preparo do merge, num conflito com a trunk ou numa falha de CI causada por uma mudança na trunk. Para publicar um rebase, ele empurra a própria branch com `git push --force-with-lease`. Uma branch compartilhada ele nunca força.
+- **Rebaseia na hora certa, no Autopilot-full.** Rebasear é reaplicar os commits da branch sobre a trunk atual, e a trunk é a `main`. O primeiro rebase vem antes do aviso de Code-ready. Nos consertos que a Raiz pede, a base não muda. Ele só rebaseia de novo no preparo do merge, num conflito com a trunk ou numa falha de CI causada por uma mudança na trunk. Para publicar um rebase, ele valida o URL de escrita, captura o head remoto antes da reescrita, exige igualdade com o head local e usa o lease explícito `--force-with-lease=refs/heads/<branch>:<SHA-capturado>`. Um fetch posterior não altera esse SHA. Uma branch compartilhada ele nunca força.
 - **Avisa a Raiz em dois momentos.** No Code-ready, o código a entregar está final, e o aviso leva o head, que é o último commit da branch. No Merge-ready, terminaram a prova dele, o CI (os testes automáticos do GitHub) e o babysit, que é acompanhar o PR até o CI ficar verde. Entre um aviso e outro, essas três coisas correm em paralelo com a verificação da Raiz. Ele também avisa o head de cada push posterior que muda o patch, que é o conteúdo da mudança.
 - **Acompanha o próprio PR sem `/loop`, no Claude Code.** O playbook do Babysit manda acompanhar o PR dentro de um `/loop`. No Claude Code 2.1.285, um subagente em segundo plano não tem as ferramentas que o `/loop` usa (`ScheduleWakeup` e `CronCreate`). Por isso o Dono roda o vigia do PR, `scripts/watch-pr/watch-pr`, que espera sozinho até o PR chegar a um resultado final, e o roda de novo depois de cada push e de cada resultado em que ele age.
 - **Anota os subagentes que cria.** O arquivo `children.tsv` guarda o ID, o tempo esperado e o estado de cada um. O tempo esperado é, no mínimo, o da execução mais longa já vista daquele tipo.
-- **Mergeia, no Autopilot-full.** O merge é o único passo que o Dono não dá sozinho. Com o Veredito limpo da Raiz, ele rebaseia na trunk atual, avisa o head novo e espera o CI passar nesse head. O head novo anula o Veredito, a não ser que o patch-id seja o mesmo. O patch-id é um identificador do conteúdo da mudança, que não muda quando o rebase só reescreve os commits. Aí o Dono faz o squash merge do próprio PR, que junta os commits num só, e pega o próximo item independente da fila.
+- **Mergeia, no Autopilot-full.** O merge é o único passo que o Dono não dá sozinho. Com o Veredito limpo da Raiz, ele rebaseia na trunk atual, avisa o head novo e espera o CI passar nesse head. Um head novo exige Veredito atual. A Raiz compara os bytes exatos do patch e audita base, dependências, configuração e runtime de cada lane; patch-id igual sozinho não preserva evidência. Depois dos checks atuais, o Dono usa `gh pr merge --repo <owner/name> <pr> --squash --match-head-commit <head-publicado>` e espera o estado `MERGED` do próprio PR, que junta os commits num só, e pega o próximo item independente da fila.
 - **Não mergeia nem mexe na pilha, no Autopilot-stack.** Ele empurra só a própria branch e avisa STACK-READY quando o loop de babysit dele fica verde. Com o Veredito limpo, a Raiz põe o PR na pilha. Só a Raiz rebaseia e ordena a pilha.
+
+### Como cada operação fica ligada ao PR certo
+
+Os seis playbooks leem Guarded operations no Shipping antes da primeira operação. A receita registra host, repositório, PR, node ID, branch, URLs validados e heads e bases da publicação e do Veredito. Antes de reescrever, retargetar ou invalidar evidência, retira pedidos da fila e de auto-merge do PR e dos descendentes dependentes, e relê ambos como ausentes. PRs independentes ficam de fora. Se um merge concorrente vence, o agente para e reconcilia o merge real. Para restack após squash, conserva o tip antigo do pai e reaplica apenas os commits próprios do filho com `rebase --onto`.
+
+A precondição `--match-head-commit` vale na submissão; não congela para sempre um pedido de auto-merge nem vincula atomicamente a base. Cada wake relê head, base, fila e auto-merge. O GitHub exige CI, mas não publica nem impõe o Veredito independente da Raiz.
 
 ### O que a Raiz confere antes do merge
 
@@ -216,7 +222,7 @@ Uma lane externa não tem `run` nem `verify`. Lane externa é a que roda no runn
 
 Mesmo numa lane nativa do Claude Code, o `verify` pode faltar. Você sempre pode digitar `/verify`. O agente só consegue chamá-lo quando ele aparece na lista de skills da sessão, e na versão 2.1.285 isso depende de um recurso que a Anthropic ainda libera aos poucos. Neste Mac ele não aparece: em 2026-10-01 a lista de skills de uma sessão trazia o `run` e não trazia o `verify`. Sem o `verify`, a lane de tela usa o `run`, que também opera apps Electron e apps de navegador, ou o driver que o repositório nomeia. Os seus dois repositórios não dependem do `verify`: o pstack-vic não tem tela e o Clinext tem o driver próprio, `verify-clinext`. O `run` e o `verify` são embutidos no Claude Code e não têm arquivo. Por isso, num plano, a caixa `<driver skill path>` leva o nome da skill, e a Raiz a lê carregando a skill. Um driver do repositório ela lê pelo caminho dele.
 
-A Raiz junta os resultados num Veredito. Sem a lane ao vivo, o Veredito não é limpo. Sem Veredito limpo, não há merge. Os achados provados voltam ao Dono num só pedido de conserto. Para cada achado de comportamento, a Raiz pede um teste vermelho, isto é, um teste que falha enquanto o defeito existe. Onde nenhum teste mostra o defeito, ela pede um recibo de reprodução. O head novo ganha Enxame e Veredito novos. A exceção são os resultados que continuam válidos pela regra do patch-id do playbook [Shipping](../skills/poteto-mode/playbooks/shipping.md).
+A Raiz junta os resultados num Veredito. Sem a lane ao vivo, o Veredito não é limpo. Sem Veredito limpo, não há merge. Os achados provados voltam ao Dono num só pedido de conserto. Para cada achado de comportamento, a Raiz pede um teste vermelho, isto é, um teste que falha enquanto o defeito existe. Onde nenhum teste mostra o defeito, ela pede um recibo de reprodução. O head novo ganha Enxame e Veredito novos. A exceção são os resultados que continuam válidos pela auditoria de patch exato e inputs de cada lane do playbook [Shipping](../skills/poteto-mode/playbooks/shipping.md).
 
 ### O que a Raiz faz a cada 30 minutos
 
@@ -254,15 +260,15 @@ O resto é da Raiz e dos Donos: build, PR, CI, verificação e, no Autopilot-ful
 
 Um PR do Dependabot, ou um que você abriu à mão, não tem Dono. Ninguém mexe nele até você decidir. Há dois caminhos:
 
-- **Você mergeia.** Espere o CI ficar verde e clique no merge, ou rode `gh pr merge <número> --squash`.
+- **Você mergeia.** Depois do Veredito independente e dos checks atuais, revise o PR reservado e clique no merge. Se usar a CLI, capture de novo head e base e siga a receita Guarded operations do Shipping, com repositório e head explícitos.
 - **Um programa adota o PR.** Ao pedir o programa, cite o PR como um item da fila. A Raiz cria um Dono para ele, como para qualquer item, e valem as mesmas regras: Rodada do Enxame, Veredito limpo e, no Autopilot-full, merge pelo Dono. Os playbooks não têm um passo separado de adoção. Adotar é pôr o PR na fila. Se você quer clicar no merge, diga que o item é seu.
 
 ### O que mudou em relação ao fluxo antigo
 
 Até a 0.4.19 o plugin tinha um fluxo próprio, em que um robô no Mac conferia e mergeava PRs sozinho, mesmo com todas as sessões fechadas. A 0.5.0 aposentou esse fluxo. A decisão está no ADR 0005, em [`docs/adr/`](adr/). Os documentos antigos estão em [`docs/arquivo/`](arquivo/), só como história. Para você, mudou isto:
 
-- **Nada mergeia sozinho.** Não existe mais robô de madrugada. Um PR só anda enquanto uma sessão sua, a Raiz, está aberta rodando um programa.
-- **A sessão da Raiz fica aberta até o fim do programa.** Se você fechar a sessão, os Donos param. Nada acontece até você abrir de novo e retomar.
+- **Não existe mais o daemon local.** A coordenação roda numa sessão sua. Um pedido de merge ou fila que o GitHub já aceitou pode terminar depois que essa sessão fecha.
+- **Fechar a sessão não retira pedidos.** Antes de uma mudança autorizada na branch ou no Veredito, o responsável retira explicitamente fila e auto-merge e relê ambos como ausentes. Ao retomar, a Raiz relê o estado real do servidor.
 - **PR aberto fora de um programa espera.** Ou você mergeia, ou um programa o adota como item da fila ([PR aberto fora de um programa](#pr-aberto-fora-de-um-programa)).
 - **O GitHub só exige o CI.** Os checks `verdict` e `hold` saíram das regras, e um rótulo no PR não trava mais nada. O que segura um merge é o Veredito da Raiz, dentro da sessão. Para ficar com um PR, diga isso na sessão.
 - **A versão sai em dois passos.** O CI cria a tag. Trocar o plugin nos dois pais é um comando seu no Mac ([Publicar uma versão](#publicar-uma-versão)).
@@ -302,8 +308,8 @@ Troque `<versão>` pela versão instalada. O primeiro comando confere o Claude C
 
 A entrada vale em qualquer repositório. Ela cobre três coisas:
 
-- O merge com `gh pr merge` nesses dois casos, por squash ou com `--auto` quando o playbook ou você pede.
-- O trabalho da Raiz de criar subagentes Donos e verificadores, empurrar as branches dos Donos com `--force-with-lease` e publicar Vereditos como comentários no PR.
+- O merge nesses dois casos, com repositório e PR explícitos, `--match-head-commit <head-publicado>`, Veredito independente atual e checks atuais aprovados. Itens reservados pelo operador continuam à espera do clique dele.
+- O trabalho da Raiz de criar subagentes Donos e verificadores, empurrar as branches dos Donos para o URL validado com lease explícito do SHA capturado antes da reescrita, igual ao head local naquele momento, e publicar Vereditos como comentários no PR.
 - O lançamento, pelo `pstack-runner`, das lanes que os playbooks nomeiam (Dono, verificador, revisor, juiz ou worker em claude, codex ou grok).
 
 Continuam bloqueados:
@@ -318,7 +324,7 @@ A entrada traz a versão no nome (`pstack standing authorization v2`). Se você 
 
 ### De onde vem o texto dos playbooks
 
-Seis playbooks são o texto da Cursor mais uma tabela de trocas. São eles `autopilot-full`, `autopilot-stack`, `babysit`, `opening-a-pr`, `shipping` e `multi-phase-plan`. Cada troca tira um termo que só existe na Cursor e põe o equivalente do Claude Code ou do Codex. A tabela está em [`upstream-substitutions.json`](../skills/poteto-mode/references/upstream-substitutions.json), com o motivo de cada linha. Ninguém edita esses seis arquivos à mão. Para mudar uma frase, mude uma troca na tabela e rode `node scripts/upstream-parity.ts --write`, que gera os seis de novo. O `npm test` roda `node scripts/upstream-parity.ts check`. Esse comando refaz os seis a partir do commit da Cursor anotado em [`UPSTREAM.md`](../UPSTREAM.md) e compara com o que está no repositório. Ele falha quando um arquivo tem uma frase que não é da Cursor nem da tabela. Também falha quando uma troca da tabela não encontra mais o texto dela na Cursor.
+Seis playbooks são o texto da Cursor mais uma tabela de trocas. São eles `autopilot-full`, `autopilot-stack`, `babysit`, `opening-a-pr`, `shipping` e `multi-phase-plan`. As linhas `platform` adaptam o harness. As linhas `safety` protegem identidade, publicação, retirada, restack e reutilização de evidência conforme a exceção da 0.5.2 no ADR 0005. Todas exigem motivo; `safety` também exige fonte. A tabela está em [`upstream-substitutions.json`](../skills/poteto-mode/references/upstream-substitutions.json), com o tipo, o motivo e a fonte exigida de cada linha. Ninguém edita esses seis arquivos à mão. Para mudar uma frase, mude uma troca na tabela e rode `node scripts/upstream-parity.ts --write`, que gera os seis de novo. O `npm test` roda `node scripts/upstream-parity.ts check`. Esse comando refaz os seis a partir do commit da Cursor anotado em [`UPSTREAM.md`](../UPSTREAM.md) e compara com o que está no repositório. Ele falha quando um arquivo tem uma frase que não é da Cursor nem da tabela. Também falha quando uma troca da tabela não encontra mais o texto dela na Cursor.
 
 ## Skills
 

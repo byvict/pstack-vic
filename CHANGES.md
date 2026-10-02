@@ -1419,7 +1419,7 @@ Na execução, as regras do port resolveram o resto:
 
 # Sem versão — Consertos de texto depois da 0.5.1 (2026-10-01)
 
-Estas mudanças entram no PR da etapa 5 do plano, que não sobe a versão: ela continua 0.5.1. A próxima versão as leva. Quase todas vêm dos achados menores do verificador independente do PR #67.
+Estas mudanças entraram no PR da etapa 5 do plano, que não subiu a versão. A 0.5.2 as leva. Quase todas vêm dos achados menores do verificador independente do PR #67.
 
 - `skills/poteto-mode/references/upstream-substitutions.json`: os motivos das linhas T2 e T13 dizem a escolha do port (Donos e lanes nativas rodam como subagentes locais, cada um no seu worktree, as lanes externas rodam pelo runner, e a Raiz é uma sessão local), em vez de dizer que o Claude Code não tem ambiente remoto nem Raiz na nuvem; nenhuma troca muda e o `--write` não reescreve nada.
 - `skills/poteto-mode/references/codex-tools.md`: a frase sobre onde rodam os subagentes do Claude Code diz a escolha do port e que o `isolation: "remote"` fica atrás de uma trava e cai num worktree.
@@ -1480,3 +1480,13 @@ O default do papel é a lista do Victor. Por isso `sol-6-1` e `grok-4-7` entram 
 - Não verificado: a passagem da trilha de um Dono para a Raiz. Só o caminho de uma sessão sozinha rodou de verdade. A passagem precisa de um programa de autopilot.
 - A revisão real da trilha desta sessão rodou no pai Claude. O `pick` escolheu `codex:gpt-6.1-sol@xhigh`, porque a sessão foi o único executor. A lane rodou pelo runner em `read-only`, leu a trilha e o transcript, terminou em 278 segundos com recibo `complete` e devolveu cinco apontamentos. O Codex não informa o modelo servido, então o recibo traz `pinned-argv`: o modelo foi pedido, não confirmado. A trilha, o recibo e a resposta estão em `~/Dev/Skills/pstack-vic-runs/2026-10-02-trail-reviewer-pool/`.
 - Um dos apontamentos vale para quem lê esta entrada: a regra de queda do pool vale também para o juiz do arena. Antes, nenhum outro fornecedor rodava depois de uma queda. Agora, se o juiz escolhido cai, roda a próxima entrada elegível do `arena cross-judge pool`. Os caminhos de reserva do arena são texto da skill e não têm teste; só a escolha bem-sucedida tem.
+
+# 0.5.2 — Operações de PR ligadas à identidade verificada (2026-10-02)
+
+A exceção aprovada no [ADR 0005](docs/adr/0005-autopilot-substitui-converge.md#exceção-aprovada-na-052) acrescenta segurança ao protocolo gerado do autopilot. A tabela agora exige `kind` em toda linha. As nove linhas existentes são `platform`, sem mudar seus 31 pares. As seis linhas `safety`, T21–T26, têm motivo e fonte. O parser recusa proveniência ausente e campos desconhecidos de linhas e pares. Contagem, sobreposição, troca morta, aplicação simultânea no upstream original e recusa de escrita parcial continuam valendo.
+
+Uma receita Guarded operations no Shipping registra a identidade do PR, URLs de leitura e escrita, heads da publicação e do Veredito e suas bases. Os cinco consumidores a leem antes da primeira operação. A receita exige lease explícito do SHA remoto capturado antes da reescrita, igual ao head local; retirada da fila e do auto-merge com leitura posterior; restack pela contribuição própria do filho; e submissão com repositório e head explícitos depois do Veredito e dos checks atuais. O Origin fica sem caminho de mutação até haver adaptador equivalente provado. Nenhuma autoridade de topologia ou reserva de merge do operador muda.
+
+Patch-id igual deixa de ser salvo-conduto para reutilizar evidência. A auditoria compara bytes exatos do patch e inputs de cada lane, incluindo a base. Pedidos aceitos pelo GitHub podem terminar depois que os chats fecham. A redação ativa em `CONTEXT.md`, na referência e na autorização permanente acompanha essas regras. A autorização continua na versão 2 e conserva o mecanismo de substituição. O release script e as regras de fila de produção não mudam.
+
+As regressões extraem os comandos do Shipping gerado e usam Git real em repositórios descartáveis. Elas cobrem um lease capturado que recusa o segundo escritor mesmo após fetch, o controle negativo com lease implícito, o filho após squash do pai, strings JavaScript com mesmo patch-id e saída diferente e um patch idêntico cuja saída muda com a dependência da base. A guarda também testa recusa atômica sem fonte, sobreposição entre classes e um plano gerado incoerente que o checker rejeita. Esses testes não substituem prova ao vivo, mídia, CI e verificação independente do head publicado.
