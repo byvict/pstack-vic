@@ -84,6 +84,8 @@ The legacy Cursor selector `grok-4.6-fast-{effort}` maps to CLI model `grok-4.6`
 
 The top-level harness resolves the route once. A child receives an assigned provider, model, effort, access mode, prompt, working directory, and output path. A child never detects the harness, chooses a provider, or launches another model. Environment markers may corroborate the top-level harness before fan-out, but nested processes inherit parent markers and must not use them for routing.
 
+An autopilot owner is the one child that dispatches. It is the parent of the lanes it starts, and it resolves their routes by this document on the harness its root runs on. A pool lane stays with the top-level session (see **Cross-family selection**).
+
 The route table is the one rendered above from `model-matrix.json`: a provider is native in exactly one parent and goes through the external runner everywhere else.
 
 `inherit-parent` and `auto` remain aliases. They use the parent's current model and effort through its native subagent primitive. In a panel they still consume one lane, but they reduce provider diversity; say so in the synthesis record.

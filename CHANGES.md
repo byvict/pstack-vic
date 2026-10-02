@@ -1512,3 +1512,36 @@ As substituições safety existentes reforçam veredito e requirements atuais an
 CheckRuns repetidos usam somente o timestamp máximo por app, nome, workflow e evento. Empates permanecem somente nesse timestamp. Workflows e produtores distintos não eliminam um ao outro. Metadados ausentes preservam a incerteza; StatusContext mantém produtor unknown.
 
 Regressões focadas cobrem estados, incerteza, identidade, base atual, produtor obrigatório, recomposição e remoção histórica. A integração agrupada usa a fixture privada existente, com o root como único escritor. A release não altera regras de produção.
+
+# 0.5.5 — O Dono despacha pela planilha e roda no effort da linha (2026-10-02)
+
+Origem: a execução de autopilot da CLI-223 no Clinext, em 2026-10-02, com o plugin 0.5.3 ([CLI-248](https://linear.app/clinextapp/issue/CLI-248/dono-do-autopilot-ajudantes-fora-da-planilha-e-playbook-do-tipo-pulado)). O Dono criou dois agentes `Explore` embutidos, que rodaram no modelo dele, fora da planilha. Nem a Raiz nem o Dono abriram o playbook do tipo da tarefa. O Dono rodou sem o effort da linha de autoria.
+
+## O que a versão faz
+
+- **Trava.** `hooks/agent-guard.mjs` é um hook `PreToolUse` na ferramenta `Agent` do Claude Code. Ele recusa `Explore`, `Plan` e `general-purpose` quando o `agent_type` de quem chama começa com `pstack:`, e a recusa aponta para o provider dispatch. Uma chamada sem `subagent_type` conta como `general-purpose`, que é o padrão da ferramenta. A sessão principal nunca é recusada, porque o Claude Code só manda `agent_type` de dentro de um subagente. Um payload ilegível libera a chamada.
+- **Agentes de Dono.** O gerador emite `pstack-owner-<stem>-<effort>` ao lado de cada lane: o corpo de `poteto-agent.md` com `model` e `effort` no frontmatter e com a ferramenta `Agent`. A Raiz cria o Dono por esse tipo, sem passar `model`.
+- **Texto.** Em `SKILL.md`, seção Subagents, a regra do `poteto-agent` volta à força da Cursor e os agentes embutidos ficam proibidos por nome. O parágrafo Autopilot owners passa a dizer que o brief do Dono nomeia o playbook que rege o build e que o Dono despacha os próprios ajudantes como pai. `provider-dispatch.md` ganha o parágrafo que abre essa exceção à regra "o filho não escolhe rota".
+
+## Comparação com as fontes
+
+| Ponto | Cursor (`7022c81`) | open-pstack (`6c44500`) | Aqui |
+| --- | --- | --- | --- |
+| Tipo do ajudante | "Use `subagent_type: "poteto-agent"` for any subagent you spawn inside a playbook step" | "prefer `poteto-agent`" | regra da Cursor, restrita ao que não é papel configurado |
+| Agentes embutidos | sem regra | "Never use Claude Code's built-in `Plan` agent", só em `multi-phase-plan.md` | `Explore`, `Plan` e `general-purpose`, em Subagents, com trava |
+| Playbook do build do Dono | "owns build", sem nomear | igual | o brief nomeia o playbook; `autopilot-full.md` não muda |
+| Effort do Dono | o seletor de modelo já traz o effort (`claude-opus-5-5-max`) | sem regra | definição de agente gerada da matriz |
+
+## Decisões
+
+1. **O hook volta à pasta `hooks/`, o mandato não.** A 0.1.5 tirou o hook SessionStart do open-pstack e o teste dizia "nenhum hook". O teste agora fixa o conteúdo exato de `hooks.json` e a lista de arquivos de `hooks/`: só a trava, só em `PreToolUse`.
+2. **A trava é escrita nova.** Nenhuma das duas fontes tem trava. Ela é troca de harness: os agentes embutidos são do Claude Code, e a regra que ela impõe é a da Cursor.
+3. **A frase do playbook do build fica em `SKILL.md`.** `autopilot-full.md` é texto da Cursor mais trocas de harness, e a guarda de paridade recusa outra coisa. A lacuna é da Cursor também.
+4. **Um Dono numa linha que não é `claude:*` continua sendo `poteto-agent`.** Só as famílias com `agentStem` têm agente de Dono.
+
+## Verificação
+
+- Claude Code 2.1.287, plugin descartável e `claude -p`: o hook dispara dentro de um subagente com `agent_type` no payload, e a recusa chega ao subagente com o motivo. A sessão principal chama `Explore` e a chamada roda.
+- Mesma versão: uma definição de agente com `model: claude-opus-5-5` e `effort: xhigh` rodou em Opus 5.5 com `effort.level = xhigh` no payload do hook, com a sessão principal em `medium`.
+- `scripts/agent-guard.test.ts` cobre a recusa dos três tipos, o tipo ausente, a sessão principal, agente de outro plugin e payload ilegível.
+- Evidência das provas em `~/Dev/Skills/pstack-vic-runs/2026-10-02-cli-223-owner-audit/`.
