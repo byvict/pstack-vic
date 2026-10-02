@@ -22,7 +22,7 @@ before(() => {
   mkdirSync(bin);
   mkdirSync(home);
   symlinkSync(realGit, join(bin, "git"));
-  for (const utility of ["basename", "sed", "uname", "dirname", "rm", "mkdir", "cat", "grep", "cut", "tr", "sort", "head", "wc", "sh", "xargs", "expr", "touch", "cp", "mv", "awk", "rmdir"]) {
+  for (const utility of ["basename", "sed", "uname", "dirname", "rm", "mkdir", "cat", "grep", "cut", "tr", "sort", "head", "wc", "sh", "xargs", "expr", "touch", "cp", "mv", "awk", "rmdir", "cmp", "mktemp"]) {
     const executable = execFileSync("/usr/bin/which", [utility], { encoding: "utf8" }).trim();
     symlinkSync(executable, join(bin, utility));
   }
@@ -66,19 +66,63 @@ function command(prefix: string): string {
 
 function recipe(path: string, text: string, values: Record<string, string>) {
   const ssh = join(path, ".git", "fixture-ssh");
-  return spawnSync("/bin/sh", ["-c", text], { cwd: path, env: { ...env, op_host: "github.com", op_owner: "fixture", op_name: "intended", op_remote: "origin", ...(existsSync(ssh) ? { GIT_SSH_COMMAND: ssh, GIT_SSH_VARIANT: "ssh" } : {}), ...values }, encoding: "utf8" });
+  const stateFile = join(path, ".git", "fixture.json");
+  const fixture = existsSync(stateFile) ? JSON.parse(readFileSync(stateFile, "utf8")) : null;
+  return spawnSync("/bin/sh", ["-c", text], { cwd: path, env: {
+    ...env, TMPDIR: scratch, op_host: "github.com", op_owner: "fixture", op_name: "intended", op_remote: "origin",
+    op_pr: "12", op_pr_node_id: "PR_fixture", op_base_ref: "main", op_base_sha: fixture?.base ?? "0".repeat(40),
+    op_push_receipt: join(path, ".git", "push.receipt"),
+    ...(existsSync(ssh) ? { GIT_SSH_COMMAND: ssh, GIT_SSH_VARIANT: "ssh" } : {}),
+    ...(fixture ? { FIXTURE_STATE: stateFile, PATH: `${join(path, ".git", "fixture-bin")}:${env.PATH}`, ...(fixture.url.startsWith("https:") ? { GIT_EXEC_PATH: join(path, ".git", "fixture-bin") } : {}) } : {}),
+    ...values,
+  }, encoding: "utf8" });
 }
 
-function transport(path: string, remote: string): void {
-  git(path, "config", "remote.origin.url", fixtureUrl);
+function transport(path: string, remote: string, url = fixtureUrl): void {
+  git(path, "config", "remote.origin.url", url);
   git(path, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*");
   const ssh = join(path, ".git", "fixture-ssh");
-  writeFileSync(ssh, `#!${process.execPath}\nconst {spawnSync}=require("node:child_process");\nconst args=process.argv.slice(2);\nif(!args.includes("git@github.com"))process.exit(63);\nconst m=/^(git-upload-pack|git-receive-pack) 'fixture\\/intended\\.git'$/.exec(args.at(-1));\nif(!m)process.exit(64);\nconst r=spawnSync(m[1],[${JSON.stringify(remote)}],{stdio:"inherit"});\nprocess.exit(r.status??65);\n`);
+  writeFileSync(ssh, `#!${process.execPath}\nconst {spawnSync}=require("node:child_process");\nconst args=process.argv.slice(2);\nif(!args.includes("git@github.com"))process.exit(63);\nconst m=/^(git-upload-pack|git-receive-pack) '\\/?fixture\\/intended(?:\\.git)?'$/i.exec(args.at(-1));\nif(!m)process.exit(64);\nconst r=spawnSync(m[1],[${JSON.stringify(remote)}],{stdio:"inherit"});\nprocess.exit(r.status??65);\n`);
   chmodSync(ssh, 0o755);
+  const bin = join(path, ".git", "fixture-bin"); mkdirSync(bin);
+  writeFileSync(join(path, ".git", "fixture.json"), JSON.stringify({ remote, url, base: git(remote, "rev-parse", "HEAD"), draft: false }));
+  const gh = `#!${process.execPath}
+const fs=require("node:fs"),{spawnSync}=require("node:child_process");
+const a=process.argv.slice(2), p=process.env.FIXTURE_STATE, s=JSON.parse(fs.readFileSync(p,"utf8"));
+const field=k=>a.find(x=>x.startsWith(k+"="))?.slice(k.length+1);
+const option=k=>a[a.indexOf(k)+1];
+fs.appendFileSync(p+".calls",JSON.stringify({args:a,host:process.env.GH_HOST})+"\\n");
+if(process.env.FORGE_MODE==="fail")process.exit(73);
+if(process.env.FORGE_MODE==="missing"){process.stdout.write("\\n");process.exit(0);}
+const oid=ref=>{const r=spawnSync("git",["--git-dir",process.env.FORGE_REMOTE||s.remote,"rev-parse","--verify",ref],{encoding:"utf8"});if(r.status)process.exit(74);return r.stdout.trim();};
+if(a[0]==="pr"){
+ if(option("--repo")!=="fixture/intended"||process.env.GH_HOST!=="github.com")process.exit(75);
+ if(a[1]==="create"){s.branch=option("--head");s.baseRef=option("--base");s.base=oid("refs/heads/"+s.baseRef);s.draft=false;process.stdout.write("https://github.com/fixture/intended/pull/12\\n");}
+ else if(a[1]==="edit"){s.baseRef=option("--base");s.base=oid("refs/heads/"+s.baseRef);}
+ else if(a[1]==="ready")s.draft=false;
+ else process.exit(76);
+ fs.writeFileSync(p,JSON.stringify(s));process.exit(0);
+}
+if(field("owner").toLowerCase()!=="fixture"||field("name").toLowerCase()!=="intended"||process.env.GH_HOST!=="github.com")process.exit(77);
+const ref=field("ref"), branch=s.branch||process.env.op_branch;
+const head=process.env.FORGE_MODE==="mismatch"?"0".repeat(40):oid(ref||"refs/heads/"+branch);
+const row=ref?["fixture/intended",ref,head]:["fixture/intended","12","PR_fixture","fixture/intended",branch,head,s.baseRef||"main",s.base,String(s.draft)];
+process.stdout.write(row.join("\\t")+"\\n");
+`;
+  writeFileSync(join(bin, "gh"), gh); chmodSync(join(bin, "gh"), 0o755);
+  const https = `#!${process.execPath}
+const fs=require("node:fs"),{spawnSync}=require("node:child_process");
+if(!/^https:\\/\\/github.com\\/fixture\\/intended(?:\\.git)?$/i.test(process.argv.at(-1)))process.exit(63);
+function line(){let s="",b=Buffer.alloc(1);while(fs.readSync(0,b,0,1,null)){s+=b.toString();if(s.endsWith("\\n"))return s.trim();}return s;}
+if(line()!=="capabilities")process.exit(64);fs.writeSync(1,"connect\\n\\n");
+const m=/^connect git-(upload-pack|receive-pack)$/.exec(line());if(!m)process.exit(65);
+fs.writeSync(1,"\\n");const r=spawnSync("git",[m[1],${JSON.stringify(remote)}],{stdio:"inherit"});process.exit(r.status??66);
+`;
+  writeFileSync(join(bin, "git-remote-https"), https); chmodSync(join(bin, "git-remote-https"), 0o755);
 }
 
 function exactPatch(path: string, base: string, head: string): string {
-  const result = recipe(path, command("git -c core.quotePath=true "), { op_patch_base: base, op_patch_head: head });
+  const result = recipe(path, command(': "${op_patch_base:?}"'), { op_patch_base: git(path, "--no-replace-objects", "rev-parse", `${base}^{commit}`), op_patch_head: git(path, "--no-replace-objects", "rev-parse", `${head}^{commit}`) });
   assert.equal(result.status, 0, result.stderr);
   return result.stdout;
 }
@@ -227,7 +271,7 @@ describe("generated Shipping recipes on disposable Git repositories", () => {
     const oldParent = commit(path, "parent-file", "parent\n");
     git(path, "checkout", "-qb", "child");
     const oldChild = commit(path, "child-file", "child\n");
-    const remote = join(path, "remote.git");
+    const remote = join(path, ".git", "remote.git");
     git(path, "clone", "-q", "--bare", path, remote);
     transport(path, remote);
     git(path, "checkout", "-q", "main");
@@ -310,7 +354,8 @@ describe("generated Shipping recipes on disposable Git repositories", () => {
     chmodSync(join(bin, "gh"), 0o755);
     const merge = blocks.find((block) => block.includes("--match-head-commit"));
     assert.ok(merge);
-    const result = spawnSync("/bin/sh", ["-c", merge], { cwd: scratch, env: { ...env, PATH: `${bin}:${env.PATH}`, CALL_LOG: log, PR_BODY: body, GH_HOST: "wrong.invalid", op_host: "github.com", op_owner: "fixture", op_name: "project", op_repo: "wrong.invalid/elsewhere/other", op_pr: "12", op_published_head: "a".repeat(40), op_body_file: file }, encoding: "utf8" });
+    const values = { ...env, PATH: `${bin}:${env.PATH}`, CALL_LOG: log, PR_BODY: body, GH_HOST: "wrong.invalid", op_host: "github.com", op_owner: "fixture", op_name: "project", op_repo: "wrong.invalid/elsewhere/other", op_pr: "12", op_published_head: "a".repeat(40), op_body_file: file };
+    const result = spawnSync("/bin/sh", ["-c", merge], { cwd: scratch, env: values, encoding: "utf8" });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(readFileSync(file, "utf8"), body + "\n");
     assert.match(shipping, /Only final LF normalization/);
@@ -320,6 +365,10 @@ describe("generated Shipping recipes on disposable Git repositories", () => {
     assert.ok(calls[1].args.includes("--body-file"));
     assert.ok(calls[1].args.includes(file));
     assert.ok(calls[1].args.includes("a".repeat(40)));
+    writeFileSync(log, "");
+    const refused = spawnSync("/bin/sh", ["-c", merge], { cwd: scratch, env: { ...values, op_pr: "--admin" }, encoding: "utf8" });
+    assert.notEqual(refused.status, 0);
+    assert.equal(readFileSync(log, "utf8"), "");
   });
 
   it("pins the generated entry, evidence, withdrawal, contribution and hold contracts", () => {
@@ -361,7 +410,7 @@ describe("generated Shipping recipes on disposable Git repositories", () => {
     const fetched = recipe(path, command("git fetch "), { op_selected_ref: "main", op_selected_sha: old });
     commit(path, "file", "new\n");
     const pushed = recipe(path, command('git push "'), { op_branch: "main", op_remote_head: old });
-    const first = recipe(path, command("git push --no-follow-tags "), { op_branch: "main" });
+    const first = recipe(path, command("if _push_output=$(git push --porcelain "), { op_branch: "main" });
     assert.ok([resolved, capture, fetched, pushed, first].every((r) => r.status !== 0 && /URL rewriting is unsupported/.test(r.stderr)), "all complete transport blocks must refuse the redirect");
     assert.equal(git(intended, "rev-parse", "main"), old);
     assert.equal(git(wrong, "rev-parse", "main"), old);
@@ -376,7 +425,7 @@ describe("generated Shipping recipes on disposable Git repositories", () => {
     const failures: string[] = [];
     for (const url of [remote, "https://github.com/other/intended.git", "https://github.com/fixture/fork.git", "https://user:password@github.com/fixture/intended.git", "https://elsewhere.invalid/fixture/intended.git", "ssh://git@github.com:22/fixture/intended.git"]) {
       git(path, "config", "remote.origin.url", url);
-      for (const prefix of ['printf \'%s\\n\' "${op_fetch_url', "op_remote_head=$(git ls-remote", "git fetch ", 'git push "', "git push --no-follow-tags "]) {
+      for (const prefix of ['printf \'%s\\n\' "${op_fetch_url', "op_remote_head=$(git ls-remote", "git fetch ", 'git push "', "if _push_output=$(git push --porcelain "]) {
         const result = recipe(path, command(prefix), { op_branch: "main", op_local_pre_head: old, op_remote_head: old, op_selected_ref: "main", op_selected_sha: old, GIT_ALLOW_PROTOCOL: "file" });
         if (result.status === 0 || !/Unsupported Git transport identity/.test(result.stderr)) failures.push(`${prefix}: ${url}`);
       }
@@ -488,10 +537,11 @@ describe("generated Shipping recipes on disposable Git repositories", () => {
     const first = commit(path, "own", "first\n");
     git(path, "config", "push.followTags", "true");
     git(path, "tag", "-am", "must stay local", "v-initial-unowned");
-    const initial = command("git push --no-follow-tags ");
+    const initial = command("if _push_output=$(git push --porcelain ");
     const values = { op_branch: "new-branch" };
     assert.equal(recipe(path, initial, values).status, 0);
     assert.equal(git(remote, "for-each-ref", "--format=%(refname)", "refs/tags"), "");
+    assert.notEqual(recipe(path, initial, values).status, 0, "an existing same-tip ref is not an owned creation");
     commit(path, "own", "second\n");
     assert.notEqual(recipe(path, initial, values).status, 0);
     assert.equal(git(remote, "rev-parse", "new-branch"), first);
@@ -509,6 +559,241 @@ describe("generated Shipping recipes on disposable Git repositories", () => {
     assert.notEqual(result.status, 0);
     assert.match(result.stdout, /Original child commits: 1/);
     assert.match(result.stdout, /Rewritten child commits: 0/);
+    assert.equal(git(path, "rev-parse", "refs/heads/child"), child, "refused restack must preserve the owned ref");
+  });
+
+  it("reads actual contribution objects despite replacement refs", () => {
+    const path = repo();
+    const base = commit(path, "app.mjs", 'console.log("base");\n');
+    const good = commit(path, "app.mjs", 'console.log("good");\n');
+    const previous = exactPatch(path, base, good);
+    git(path, "checkout", "-qb", "bad", base);
+    const bad = commit(path, "app.mjs", 'console.log("bad");\n');
+    const actual = exactPatch(path, base, bad);
+    git(path, "replace", bad, good);
+    assert.equal(execFileSync(process.execPath, ["app.mjs"], { cwd: path, encoding: "utf8" }), "bad\n");
+    assert.notEqual(exactPatch(path, base, bad), previous);
+    assert.equal(exactPatch(path, base, bad), actual);
+  });
+
+  for (const branch of ["--exec=", "--no-verify", "-leading", "@{-1}"]) it(`refuses literal restack branch ${branch} without changing any ref or running an option`, () => {
+    const path = repo();
+    const base = commit(path, "base", "base\n");
+    git(path, "checkout", "-qb", "child");
+    const child = commit(path, "child", "contribution\n");
+    git(path, "checkout", "main");
+    const newBase = commit(path, "advance", "advance\n");
+    git(path, "checkout", "-qb", "decoy", child);
+    commit(path, "decoy", "decoy\n");
+    const marker = join(path, ".git", "marker");
+    const script = join(path, "marker-script");
+    writeFileSync(script, `#!/bin/sh\nprintf marker > '${marker}'\n`); chmodSync(script, 0o755);
+    const hookMarker = join(path, ".git", "hook-marker");
+    if (branch === "--no-verify") {
+      const hook = join(path, ".git", "hooks", "pre-rebase");
+      writeFileSync(hook, `#!/bin/sh\nprintf hook > '${hookMarker}'\nexit 1\n`); chmodSync(hook, 0o755);
+    }
+    const name = branch === "--exec=" ? branch + script : branch;
+    if (branch !== "@{-1}") git(path, "update-ref", `refs/heads/${name}`, child);
+    const beforeRefs = git(path, "for-each-ref", "--format=%(refname) %(objectname)");
+    const result = recipe(path, command("git rebase --onto "), { op_branch: name, op_old_parent_tip: base, op_old_child_tip: child, op_new_base: newBase });
+    assert.notEqual(result.status, 0);
+    assert.equal(existsSync(marker), false);
+    assert.equal(git(path, "for-each-ref", "--format=%(refname) %(objectname)"), beforeRefs);
+  });
+
+  it("does not trust a Git transport result when the canonical forge read fails", () => {
+    const path = repo();
+    const old = commit(path, "file", "old\n");
+    const remote = join(path, "remote.git"); git(path, "clone", "-q", "--bare", path, remote); transport(path, remote);
+    const bin = join(path, ".git", "failed-gh"); mkdirSync(bin);
+    writeFileSync(join(bin, "gh"), "#!/bin/sh\nexit 73\n"); chmodSync(join(bin, "gh"), 0o755);
+    const capture = recipe(path, command("op_remote_head=$(git ls-remote"), { op_branch: "main", op_local_pre_head: old, PATH: `${bin}:${env.PATH}` });
+    assert.notEqual(capture.status, 0, "capture must require a complete actual canonical forge response");
+    commit(path, "file", "new\n");
+    const pushed = recipe(path, command('git push "'), { op_branch: "main", op_remote_head: old, PATH: `${bin}:${env.PATH}` });
+    assert.notEqual(pushed.status, 0, "a successful write without a forge readback must stop progression");
+    assert.equal(git(remote, "rev-parse", "main"), git(path, "rev-parse", "HEAD"), "postcondition failure does not undo an actual write");
+  });
+
+  for (const mode of ["hook", "conflict", "merge"]) it(`preserves all branch tips on refused ${mode} restack`, () => {
+    const path = repo();
+    const base = commit(path, "shared", "base\n");
+    git(path, "checkout", "-qb", "child");
+    const child = commit(path, mode === "conflict" ? "shared" : "own", "child\n");
+    git(path, "checkout", "main");
+    const newBase = commit(path, mode === "conflict" ? "shared" : "advance", "new base\n");
+    let oldChild = child;
+    if (mode === "merge") {
+      git(path, "checkout", "child");
+      git(path, "merge", "--no-ff", "-m", "resolution", "main");
+      oldChild = git(path, "rev-parse", "HEAD");
+    }
+    const marker = join(path, ".git", "hook-ran");
+    if (mode === "hook") {
+      const hook = join(path, ".git", "hooks", "pre-rebase");
+      writeFileSync(hook, `#!/bin/sh\nprintf yes > '${marker}'\nexit 1\n`); chmodSync(hook, 0o755);
+    }
+    const beforeRefs = git(path, "for-each-ref", "--format=%(refname) %(objectname)");
+    const result = recipe(path, command("git rebase --onto "), { op_branch: "child", op_old_parent_tip: base, op_old_child_tip: oldChild, op_new_base: newBase });
+    assert.notEqual(result.status, 0);
+    assert.equal(git(path, "for-each-ref", "--format=%(refname) %(objectname)"), beforeRefs);
+    if (mode === "hook") assert.equal(existsSync(marker), true, "the real hook must run");
+  });
+
+  for (const child of [false, true]) it(`ignores replacements while replaying the ${child ? "child" : "independent"} raw contribution`, () => {
+    const path = repo();
+    const base = commit(path, "base", "base\n");
+    git(path, "checkout", "-qb", "owned");
+    const oldChild = commit(path, "own", "raw contribution\n");
+    git(path, "checkout", "main");
+    const newBase = commit(path, "advance", "new base\n");
+    git(path, "checkout", "owned");
+    git(path, "replace", oldChild, base);
+    const result = recipe(path, command(child ? "git rebase --onto " : 'git rebase "'), { op_branch: "owned", op_old_parent_tip: base, op_old_child_tip: oldChild, op_new_base: newBase });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(git(path, "--no-replace-objects", "show", "refs/heads/owned:own"), "raw contribution");
+    assert.equal(git(path, "--no-replace-objects", "rev-list", "--count", `${newBase}..refs/heads/owned`), "1");
+  });
+
+  it("rejects an option-shaped PR number before a later publication writes", () => {
+    const path = repo(); const old = commit(path, "file", "old\n");
+    const remote = join(path, ".git", "remote.git"); git(path, "clone", "-q", "--bare", path, remote); transport(path, remote);
+    commit(path, "file", "new\n");
+    const result = recipe(path, command('git push "'), { op_branch: "main", op_remote_head: old, op_pr: "--admin" });
+    assert.notEqual(result.status, 0);
+    assert.equal(git(remote, "rev-parse", "refs/heads/main"), old);
+    assert.equal(existsSync(join(path, ".git", "fixture.json.calls")), false);
+  });
+
+  it("selects the exact remote ref rather than a matching tail", () => {
+    const path = repo();
+    const old = commit(path, "file", "old\n");
+    const remote = join(path, "remote.git"); git(path, "clone", "-q", "--bare", path, remote); transport(path, remote);
+    git(path, "checkout", "-qb", "z");
+    git(remote, "update-ref", "refs/heads/a/refs/heads/z", old);
+    const result = recipe(path, command("op_remote_head=$(git ls-remote"), { op_branch: "z", op_local_pre_head: old });
+    assert.notEqual(result.status, 0, "a suffix lookalike does not establish the absent exact ref");
+  });
+
+  it("accepts the full owned symbolic ref even when a tag shares its short name", () => {
+    const path = repo();
+    const old = commit(path, "file", "old\n");
+    const remote = join(path, "remote.git"); git(path, "clone", "-q", "--bare", path, remote); transport(path, remote);
+    git(path, "tag", "main");
+    const capture = recipe(path, command("op_remote_head=$(git ls-remote"), { op_branch: "main", op_local_pre_head: old });
+    assert.equal(capture.status, 0, capture.stderr);
+    assert.equal(capture.stdout.trim(), old);
+  });
+
+  it("uses one identical transport boundary in all five operations", () => {
+    const guards = blocks.filter((b) => b.includes("git remote get-url")).map((b) => b.slice(b.indexOf("set -eu"), b.indexOf("\ndone") + 5));
+    assert.equal(guards.length, 5);
+    assert.equal(new Set(guards).size, 1);
+  });
+
+  it("requires literal full object IDs for exact contribution evidence", () => {
+    const path = repo(); const base = commit(path, "file", "old\n"); commit(path, "file", "new\n");
+    const result = recipe(path, command(': "${op_patch_base:?}"'), { op_patch_base: base, op_patch_head: "HEAD" });
+    assert.notEqual(result.status, 0);
+  });
+
+  for (const failure of ["patch", "concurrent-ref"]) it(`keeps the owned restack ref safe on ${failure} refusal`, () => {
+    const path = repo(); const lines = Array.from({ length: 20 }, (_, i) => `line ${i}`).join("\n") + "\n";
+    const base = commit(path, "file", lines); git(path, "checkout", "-qb", "child");
+    const child = commit(path, "file", lines.replace("line 19", "child")); git(path, "checkout", "main");
+    const newBase = failure === "patch" ? commit(path, "file", lines.replace("line 0", "base drift")) : commit(path, "advance", "advance\n");
+    if (failure === "concurrent-ref") {
+      const hook = join(path, ".git", "hooks", "post-rewrite");
+      writeFileSync(hook, `#!/bin/sh\ngit update-ref refs/heads/child ${base} ${child}\n`); chmodSync(hook, 0o755);
+    }
+    const result = recipe(path, command("git rebase --onto "), { op_branch: "child", op_old_parent_tip: base, op_old_child_tip: child, op_new_base: newBase });
+    assert.notEqual(result.status, 0);
+    assert.equal(git(path, "rev-parse", "refs/heads/child"), failure === "patch" ? child : base);
+    assert.equal(git(path, "rev-parse", "refs/heads/main"), newBase);
+    assert.match(result.stdout, /Rewritten child commits: 1/);
+    const directory = result.stdout.match(/Contribution receipts: (.+)/)?.[1]; assert.ok(directory);
+    assert.ok(existsSync(join(directory, "original.patch"))); assert.ok(existsSync(join(directory, "rewritten.patch")));
+    if (failure === "patch") assert.notEqual(readFileSync(join(directory, "original.patch"), "utf8"), readFileSync(join(directory, "rewritten.patch"), "utf8"));
+    assert.notEqual(spawnSync("git", ["symbolic-ref", "HEAD"], { cwd: path, env }).status, 0, "failed detached work remains available");
+  });
+
+  for (const baseUrl of ["https://github.com/Fixture/Intended", "git@github.com:fixture/intended", "ssh://git@github.com/fixture/intended"]) for (const suffix of ["", ".git"]) it(`runs all five transport operations through ${baseUrl}${suffix}`, () => {
+    const path = repo();
+    const old = commit(path, "file", "old\n");
+    const remote = join(path, ".git", "remote.git"); git(path, "clone", "-q", "--bare", path, remote);
+    transport(path, remote, baseUrl + suffix);
+    const resolved = recipe(path, command('printf \'%s\\n\' "${op_fetch_url'), {});
+    assert.equal(resolved.status, 0, resolved.stderr);
+    assert.equal(resolved.stdout, `${baseUrl}${suffix}\n${baseUrl}${suffix}\n`);
+    const captured = recipe(path, command("op_remote_head=$(git ls-remote"), { op_branch: "main", op_local_pre_head: old });
+    assert.equal(captured.status, 0, captured.stderr); assert.equal(captured.stdout.trim(), old);
+    const fetched = recipe(path, command("git fetch "), { op_selected_ref: "main", op_selected_sha: old });
+    assert.equal(fetched.status, 0, fetched.stderr); assert.equal(fetched.stdout.trim(), old);
+    const next = commit(path, "file", "next\n");
+    const later = recipe(path, command('git push "'), { op_branch: "main", op_remote_head: captured.stdout.trim() });
+    assert.equal(later.status, 0, later.stderr); assert.equal(git(remote, "rev-parse", "refs/heads/main"), next);
+    git(path, "checkout", "-qb", "new"); const firstHead = commit(path, "own", "own\n");
+    const first = recipe(path, command("if _push_output=$(git push --porcelain "), { op_branch: "new" });
+    assert.equal(first.status, 0, first.stderr); assert.equal(git(remote, "rev-parse", "refs/heads/new"), firstHead);
+    assert.match(readFileSync(join(path, ".git", "push.receipt"), "utf8"), /\*\trefs\/heads\/new:refs\/heads\/new\t/);
+  });
+
+  for (const first of [false, true]) for (const mode of ["fail", "missing", "mismatch"]) it(`stops ${first ? "creation" : "later publication"} after ${mode} canonical readback without claiming an undo`, () => {
+    const path = repo(); const old = commit(path, "file", "old\n");
+    const remote = join(path, ".git", "remote.git"); git(path, "clone", "-q", "--bare", path, remote); transport(path, remote);
+    if (first) git(path, "checkout", "-qb", "new");
+    const next = commit(path, "file", "next\n");
+    const branch = first ? "new" : "main";
+    const result = recipe(path, command(first ? "if _push_output=$(git push --porcelain " : 'git push "'), { op_branch: branch, op_remote_head: old, FORGE_MODE: mode });
+    assert.notEqual(result.status, 0);
+    assert.equal(git(remote, "rev-parse", `refs/heads/${branch}`), next);
+  });
+
+  it("rejects capture from a transport pointing at a distinct canonical repository head", () => {
+    const path = repo(); const old = commit(path, "file", "old\n");
+    const actual = join(path, ".git", "actual.git"), canonical = join(path, ".git", "canonical.git");
+    git(path, "clone", "-q", "--bare", path, actual); transport(path, actual);
+    const next = commit(path, "file", "canonical\n"); git(path, "clone", "-q", "--bare", path, canonical);
+    git(path, "checkout", "-qb", "old", old); git(actual, "update-ref", "refs/heads/old", old); git(canonical, "update-ref", "refs/heads/old", next);
+    const result = recipe(path, command("op_remote_head=$(git ls-remote"), { op_branch: "old", op_local_pre_head: old, FORGE_REMOTE: canonical });
+    assert.notEqual(result.status, 0); assert.match(result.stderr, /Canonical PR identity mismatch/);
+    assert.equal(git(actual, "rev-parse", "refs/heads/old"), old); assert.equal(git(canonical, "rev-parse", "refs/heads/old"), next);
+  });
+
+  for (const verb of ["create", "edit", "ready"]) it(`routes actual guarded gh ${verb} argv and readbacks through the derived repository`, () => {
+    const path = repo(); const head = commit(path, "file", "head\n");
+    const remote = join(path, ".git", "remote.git"); git(path, "clone", "-q", "--bare", path, remote); transport(path, remote);
+    git(remote, "update-ref", "refs/heads/target", head);
+    const stateFile = join(path, ".git", "fixture.json");
+    if (verb === "ready") { const state = JSON.parse(readFileSync(stateFile, "utf8")); state.draft = true; writeFileSync(stateFile, JSON.stringify(state)); }
+    const body = join(path, ".git", "body"); writeFileSync(body, "literal body\n");
+    const block = blocks.find((b) => b.includes(`gh pr ${verb} `)); assert.ok(block);
+    const values = { op_branch: "main", op_published_head: head, op_target_base: "target", op_target_base_sha: head, op_title: "Literal title", op_body_file: body, op_repo: "wrong.invalid/other/repo", GH_REPO: "wrong.invalid/other/repo", GH_HOST: "wrong.invalid" };
+    const result = recipe(path, block, values); assert.equal(result.status, 0, result.stderr);
+    const calls = readFileSync(stateFile + ".calls", "utf8").trim().split("\n").map((s) => JSON.parse(s));
+    const mutations = calls.filter((c) => c.args[0] === "pr"); assert.equal(mutations.length, 1);
+    const args = mutations[0].args; assert.equal(args[args.indexOf("--repo") + 1], "fixture/intended");
+    assert.ok(calls.every((c) => c.host === "github.com")); assert.equal(calls.filter((c) => c.args[0] === "api").length, 2);
+    const after = JSON.parse(readFileSync(stateFile, "utf8")); assert.equal(after.draft, false);
+    if (verb === "edit") assert.equal(after.baseRef, "target");
+    writeFileSync(stateFile + ".calls", "");
+    const refused = recipe(path, block, { ...values, FORGE_MODE: "mismatch" }); assert.notEqual(refused.status, 0);
+    assert.ok(readFileSync(stateFile + ".calls", "utf8").trim().split("\n").map((s) => JSON.parse(s)).every((c) => c.args[0] === "api"));
+  });
+
+  it("ships complete guarded create, retarget and ready mutations", () => {
+    for (const verb of ["create", "edit", "ready"]) assert.ok(blocks.some((b) => b.includes(`gh pr ${verb} `)), verb);
+  });
+
+  it("states the bounded capture recovery, Git floor and trusted transport inputs", () => {
+    assert.match(shipping, /Git 2\.38/);
+    assert.match(shipping, /missed capture stops publication/);
+    assert.match(shipping, /SSH host authentication, TLS, custom transport programs and enabled hooks remain trusted/);
+    for (const block of blocks.filter((b) => /git (rebase|merge-base)|core.quotePath|FETCH_HEAD/.test(b))) assert.match(block, /export GIT_NO_REPLACE_OBJECTS=1/);
+    const stack = readFileSync(join(PLUGIN_ROOT, "skills/poteto-mode/playbooks/autopilot-stack.md"), "utf8");
+    assert.match(stack.split("\n").find((s) => s.startsWith("1. ")) ?? "", /First publication/);
+    assert.match(stack.split("\n").find((s) => s.startsWith("7. ")) ?? "", /later-wave/);
   });
 
   it("records that touched-file base drift changes strict patch bytes", () => {
@@ -529,7 +814,8 @@ describe("generated Shipping recipes on disposable Git repositories", () => {
     for (const name of ["shipping", "babysit"]) {
       const text = readFileSync(join(PLUGIN_ROOT, `skills/poteto-mode/playbooks/${name}.md`), "utf8");
       assert.match(text, /GH_HOST=.*scripts\/watch-pr\/watch-pr --owner .* --repo .* --pr /);
-      assert.match(text, /Compare the returned PR and head/);
+      assert.match(text, /Compare the watcher's owner, repository and PR number/);
+      assert.match(text, /after each wake.*Guarded identity query.*compare head, base, queue and auto-merge/);
     }
   });
 

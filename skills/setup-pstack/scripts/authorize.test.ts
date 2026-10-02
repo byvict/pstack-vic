@@ -177,6 +177,9 @@ describe("apply on a Claude Code parent", () => {
     assert.equal(result.code, 1);
     assert.equal(result.questions.length, 1);
     assert.ok(result.stdout.includes(ALLOW_ENTRY));
+    assert.match(result.stdout, /root or the owner of that branch/);
+    assert.match(result.stdout, /--force-with-lease=refs\/heads\/<branch>:/);
+    assert.match(result.stdout, /canonical forge readback/);
     assert.match(result.stdout, /gh pr merge --repo <owner\/name> <pr> --squash --match-head-commit <published-head>/);
     assert.match(result.stdout, /all current required checks pass/);
     assert.match(result.stdout, /Every operator-named merge hold remains in force/);
