@@ -239,11 +239,30 @@ describe("upstream-parity: residue diff", () => {
 
 describe("upstream-parity: table shape", () => {
   const files = [{ upstream: "pstack/skills/poteto-mode/playbooks/a.md", local: FILE }];
-  const row = { id: "T6", reason: "The installed plugin is the stable source.", pairs: [{ file: FILE, from: "a", to: "b", count: 1 }] };
+  const row = { kind: "platform", id: "T6", reason: "The installed plugin is the stable source.", pairs: [{ file: FILE, from: "a", to: "b", count: 1 }] };
+
+  it("preserves safety provenance alongside literal substitution pairs", () => {
+    const safety = { ...row, kind: "safety", source: "docs/adr/0005-autopilot-substitui-converge.md#excecao-aprovada-na-052" };
+    assert.deepEqual(parseTable(JSON.stringify({ files, rows: [safety] })).rows, [safety]);
+  });
+
+  it("rejects unclassified rows, missing provenance and silently discarded metadata", () => {
+    for (const invalid of [
+      { ...row, kind: undefined },
+      { ...row, kind: "editorial" },
+      { ...row, kind: "safety" },
+      { ...row, kind: "safety", source: " " },
+      { ...row, source: "a safety rule mislabeled as platform" },
+      { ...row, sources: ["typo"] },
+      { ...row, pairs: [{ ...row.pairs[0], source: "ignored pair field" }] },
+    ]) {
+      assert.throws(() => parseTable(JSON.stringify({ files, rows: [invalid] })), ParityError);
+    }
+  });
 
   it("reads files and rows, and hands a file its pairs with their row ids", () => {
     const table = parseTable(
-      JSON.stringify({ files, rows: [row, { id: "T2", reason: "No cloud.", pairs: [{ file: FILE, from: "c", to: "", count: 2 }] }] }),
+      JSON.stringify({ files, rows: [row, { kind: "platform", id: "T2", reason: "No cloud.", pairs: [{ file: FILE, from: "c", to: "", count: 2 }] }] }),
     );
     assert.deepEqual(table.files, files);
     assert.deepEqual(pairsFor(table, FILE), [
@@ -312,8 +331,8 @@ const GENERATED_TEXT = "### A\n\nOne background subagent per PR owns the build.\
 const TABLE: SubstitutionTable = {
   files: [{ upstream: UPSTREAM_PATH, local: FILE }],
   rows: [
-    { id: "T2", reason: "No cloud agents.", pairs: [{ file: FILE, from: "Cursor cloud agent", to: "background subagent", count: 1 }] },
-    { id: "T6", reason: "The installed plugin is the stable source.", pairs: [{ file: FILE, from: "from trunk", to: "from the installed plugin", count: 1 }] },
+    { kind: "platform", id: "T2", reason: "No cloud agents.", pairs: [{ file: FILE, from: "Cursor cloud agent", to: "background subagent", count: 1 }] },
+    { kind: "platform", id: "T6", reason: "The installed plugin is the stable source.", pairs: [{ file: FILE, from: "from trunk", to: "from the installed plugin", count: 1 }] },
   ],
 };
 
@@ -348,6 +367,26 @@ function run(repo: string, ...args: string[]) {
 }
 
 describe("upstream-parity: check and --write on a fixture checkout", () => {
+  it("rejects missing safety provenance before writing any file", () => {
+    const repo = fixture({ local: "unchanged\n", second: { upstream: "second\n", local: "also unchanged\n" } });
+    const table = { ...TABLE, rows: [...TABLE.rows, { id: "T21", kind: "safety", reason: "Identity", pairs: [{ file: FILE, from: "owns the build", to: "records identity", count: 1 }] }] };
+    put(repo, TABLE_PATH, JSON.stringify(table));
+    const result = run(repo, "--write");
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /safety row T21 needs a "source"/);
+    assert.equal(readFileSync(join(repo, FILE), "utf8"), "unchanged\n");
+    assert.equal(readFileSync(join(repo, SECOND_FILE), "utf8"), "also unchanged\n");
+  });
+
+  it("rejects overlap between platform and safety pairs", () => {
+    const table: SubstitutionTable = { ...TABLE, rows: [...TABLE.rows, { id: "T21", kind: "safety", source: "ADR", reason: "Identity", pairs: [{ file: FILE, from: "cloud agent per PR", to: "owner per PR", count: 1 }] }] };
+    const repo = fixture({ table, local: "unchanged\n" });
+    const result = run(repo, "--write");
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /T2 and T21 overlap/);
+    assert.equal(readFileSync(join(repo, FILE), "utf8"), "unchanged\n");
+  });
+
   it("check exits 0 when the local file is the upstream text plus the pairs", () => {
     const repo = fixture();
     const result = run(repo, "check");
@@ -381,7 +420,7 @@ describe("upstream-parity: check and --write on a fixture checkout", () => {
   it("a dead pair fails check and keeps --write from writing anything", () => {
     const dead: SubstitutionTable = {
       ...TABLE,
-      rows: [...TABLE.rows, { id: "T17", reason: "There is no Cursor agent store.", pairs: [{ file: FILE, from: "agent store", to: "working repository", count: 1 }] }],
+      rows: [...TABLE.rows, { kind: "platform", id: "T17", reason: "There is no Cursor agent store.", pairs: [{ file: FILE, from: "agent store", to: "working repository", count: 1 }] }],
     };
     const local = "### A\n\nA file rewritten by hand.\n";
     const repo = fixture({ table: dead, local });
@@ -401,8 +440,8 @@ describe("upstream-parity: check and --write on a fixture checkout", () => {
       files: [...TABLE.files, { upstream: SECOND_UPSTREAM_PATH, local: SECOND_FILE }],
       rows: [
         ...TABLE.rows,
-        { id: "T17", reason: "There is no Cursor agent store.", pairs: [{ file: FILE, from: "agent store", to: "working repository", count: 1 }] },
-        { id: "T4", reason: "The plugin ships its own deslop.", pairs: [{ file: SECOND_FILE, from: " from `cursor-team-kit`", to: "", count: 1 }] },
+        { kind: "platform", id: "T17", reason: "There is no Cursor agent store.", pairs: [{ file: FILE, from: "agent store", to: "working repository", count: 1 }] },
+        { kind: "platform", id: "T4", reason: "The plugin ships its own deslop.", pairs: [{ file: SECOND_FILE, from: " from `cursor-team-kit`", to: "", count: 1 }] },
       ],
     };
     const stale = "### B\n\nA file rewritten by hand.\n";

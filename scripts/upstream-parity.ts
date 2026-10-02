@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Guard of the six autopilot playbooks. Each one is the upstream text at the
-// cursor sync point of UPSTREAM.md plus the exact-string harness substitutions
+// cursor sync point of UPSTREAM.md plus the classified exact-string substitutions
 // of skills/poteto-mode/references/upstream-substitutions.json, and nothing else.
 //
 //   node scripts/upstream-parity.ts check            regenerate in memory and diff against the local files
@@ -44,12 +44,16 @@ export interface Pair {
   readonly count: number;
 }
 
-export interface Row {
-  /** Row of the substitution table of the plan (T1 to T20). */
+interface CommonRow {
   readonly id: string;
   readonly reason: string;
   readonly pairs: readonly Pair[];
 }
+
+export type Row = CommonRow & (
+  | { readonly kind: "platform" }
+  | { readonly kind: "safety"; readonly source: string }
+);
 
 export interface SubstitutionTable {
   readonly files: readonly GuardedFile[];
@@ -125,6 +129,12 @@ export function parseTable(json: string): SubstitutionTable {
     }
     const id = entry.id;
     if (rows.some((r) => r.id === id)) throw new ParityError(`${TABLE_PATH}: row ${id} is listed twice`);
+    if (entry.kind !== "platform" && entry.kind !== "safety") {
+      throw new ParityError(`${TABLE_PATH}: row ${id} needs "kind" of "platform" or "safety"`);
+    }
+    const allowed = entry.kind === "safety" ? ["id", "kind", "reason", "pairs", "source"] : ["id", "kind", "reason", "pairs"];
+    const unknown = Object.keys(entry).find((key) => !allowed.includes(key));
+    if (unknown) throw new ParityError(`${TABLE_PATH}: row ${id} has unknown key "${unknown}"`);
     if (typeof entry.reason !== "string" || entry.reason.trim() === "") {
       throw new ParityError(`${TABLE_PATH}: row ${id} needs a "reason"`);
     }
@@ -142,6 +152,8 @@ export function parseTable(json: string): SubstitutionTable {
       ) {
         throw new ParityError(`${TABLE_PATH}: every pair of row ${id} needs "file", "from", "to" and "count"`);
       }
+      const unknown = Object.keys(pair).find((key) => !["file", "from", "to", "count"].includes(key));
+      if (unknown) throw new ParityError(`${TABLE_PATH}: pair of row ${id} has unknown key "${unknown}"`);
       if (!files.some((f) => f.local === pair.file)) {
         throw new ParityError(`${TABLE_PATH}: row ${id} names ${pair.file}, which is not a guarded file`);
       }
@@ -154,7 +166,14 @@ export function parseTable(json: string): SubstitutionTable {
       }
       pairs.push({ file: pair.file, from: pair.from, to: pair.to, count: pair.count });
     }
-    rows.push({ id, reason: entry.reason, pairs });
+    if (entry.kind === "safety") {
+      if (typeof entry.source !== "string" || entry.source.trim() === "") {
+        throw new ParityError(`${TABLE_PATH}: safety row ${id} needs a "source"`);
+      }
+      rows.push({ id, kind: "safety", reason: entry.reason, source: entry.source, pairs });
+    } else {
+      rows.push({ id, kind: "platform", reason: entry.reason, pairs });
+    }
   }
   return { files, rows };
 }

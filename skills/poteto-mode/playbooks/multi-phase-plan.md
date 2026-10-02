@@ -1,5 +1,7 @@
 ### Multi-phase or multi-PR plan
 
+Before the first PR operation, read the Guarded operations section of `playbooks/shipping.md` under the installed plugin. Capture its operation record and follow its identity, withdrawal, publication, and evidence rules. The invoking playbook retains its topology authority and every operator merge hold.
+
 **You own the plan, not the code. The plan is a checklist an owner runs box by box and the operator audits from the evidence.** The plan is the deliverable. Do not implement.
 
 1. When the change is one or two files with an obvious approach, skip the plan. Say so and stop.
@@ -41,12 +43,12 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
   - [ ] `skills/<each other leaf skill the program uses>`
 - [ ] Arm the 30-minute audit tick as a real `/loop` in dynamic mode (on Codex, the cadence `../references/codex-tools.md` names). Never leave the cadence to memory.
 - [ ] Use this tick prompt, verbatim. "Re-read the execution playbook from the installed plugin and the armed /goal. Audit the operation against both and fix drift in this tick. Probe every active lane and judge progress by side effects only. Stand down a stuck lane and dispatch its replacement now. Then post a short status message to the operator in chat only when the audit found a tracked change that no earlier status message reported, such as a PR opened, a code-ready head, a round launched or closed, a verdict, a merge, a stuck agent and the action taken, a blocker added or cleared, or a decision only the operator can make. Name every such change and nothing else. Do not repeat a table, the merged list, or an unchanged blocker. If the audit found none, end the turn with no reply text. Either way, log this tick's row in your decision trail. The row names the items reported, or none."
-- [ ] On the operator's hold or stand-down, send every owner a zero-writes order at once.
+- [ ] On the operator's hold or stand-down, send every owner a zero-writes order at once. Report any pending request so an authorized actor can explicitly withdraw it and read both queue and auto-merge states back absent. Accepted server work can outlive the chat; the zero-writes hold itself authorizes no mutation.
 
 ### Spawn owners
 
 - [ ] Spawn one owner per PR with the full lifecycle the execution playbook names.
-- [ ] Follow this dependency graph. Start dependent work only after its parent merges, or base it on the parent branch when the execution playbook stacks.
+- [ ] Follow this dependency graph. Start dependent work only after its parent merges, or base it on the parent branch when the execution playbook stacks. Record old parent and child tips before topology changes and use the Guarded operations restack recipe.
   - [ ] <PR id> and <PR id> are independent and first. Both branch from `main`.
   - [ ] <PR id> after <PR id>.
 - [ ] Hold the file boundaries. <PR id or class> touches only `<glob>`.
@@ -54,24 +56,24 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
 
 ### PR mechanics, for every PR
 
-- [ ] Resolve the forge once. Default to `gh`; if `command -v origin` succeeds and Origin can resolve the repository, use `origin pr` for every PR operation. Record any fallback to `gh`. Never require `gt`.
-- [ ] Open the PR ready, never draft, with `origin pr create --status open --base <base-branch>` or `gh pr create --base <base-branch>` according to the resolved forge. A stack child targets its parent branch.
-- [ ] Run the repo's lint and typecheck once before the PR-facing push. Push with hooks on.
+- [ ] Read Guarded operations in `playbooks/shipping.md` before the first operation. Record the repository, PR, node ID, branch, validated fetch and push URLs, captured remote and local heads, published and verdict heads, and current and verdict bases. Use `gh` with explicit `--repo <owner/name>`. Refuse unsupported Origin mutations.
+- [ ] Open the PR ready, never draft, with the complete Guarded operations Create block. A stack child targets its parent branch.
+- [ ] Run the repo's lint and typecheck once before the PR-facing push. Use the Guarded operations First publication block for an absent branch. Before later fix commits, capture the actual remote SHA and use the later-wave block with hooks on.
 - [ ] Run `/deslop` before each commit and `/no-comments` before review.
 - [ ] Triage every Bugbot and security-reviewer comment per `../references/bugbot-triage.md`.
-- [ ] Rebase onto current trunk before the code-ready report and babysit. Keep that merge base in fix rounds. Rebase again only at merge prep, on a `git merge-tree` conflict with trunk, or on a CI failure that comes from a change on trunk.
+- [ ] Withdraw affected queue and auto-merge requests with readback before rewriting or retargeting. Capture remote and local pre-rewrite heads, require equality, and preserve the captured lease. Fetch current trunk through Guarded operations, capture FETCH_HEAD and require the selected destination SHA. Rebase onto that exact SHA before the code-ready report and babysit. Keep that merge base in fix rounds. Rebase again only at merge prep, on a `git merge-tree` conflict with trunk, or on a CI failure that comes from a change on trunk.
 
 ### Verdict and merge, for every PR
 
 - [ ] At the code-ready head SHA and at each later push that changes the patch, run the swarm per `skills/swarm/SKILL.md`. One gates lane. The ten live lanes from the PR's **Verify, live** block. The perf lane from its **Verify, perf** block. Two or more audit lanes, each with its own focus, that read the diff and the receipts and distrust the PR body. The root audits the receipts in the merge-ready report before the verdict.
-- [ ] Clean only when every lane is `PASS`. Findings go back to the owner, including a defect that a lane filed as a note. A new head gets a fresh swarm and a fresh verdict, except for results that stay valid under the patch-id rule in `playbooks/shipping.md`.
-- [ ] <The merge or append rule from the execution playbook, with the patch-id rule from `playbooks/shipping.md`.>
+- [ ] Clean only when every lane is `PASS`. Findings go back to the owner, including a defect that a lane filed as a note. A new head gets a fresh swarm and a fresh verdict, except for results that stay valid under the exact patch and base-input evidence rule in `playbooks/shipping.md`.
+- [ ] <The merge or append rule from the execution playbook, with the exact patch and base-input evidence rule from `playbooks/shipping.md`.>
 
 ### Boot recipe, for every live lane
 
 Each live lane runs in its own worktree at the PR head. Drive through `verify` (UIs) or `run` (CLIs and TUIs).
 
-- [ ] `git fetch origin <head-branch> && git checkout <head SHA>`.
+- [ ] Validate the fetch and push URLs against the operation record. Reject URL rewriting through Guarded operations. Fetch the selected head branch, capture FETCH_HEAD, require it to equal the recorded head SHA and check out that exact SHA. Read back the PR head and base before the lane starts.
 - [ ] <Start the backend and the surface. Wait for ready.>
 - [ ] <Deliver input only through the driver skill's commands. Name the read-only diagnostics.>
 - [ ] Save every screenshot to `/tmp/swarm-<pr-id>/worker-<n>/<slug>.png` and return the paths with the report.
@@ -128,7 +130,7 @@ Each live lane runs in its own worktree at the PR head. Drive through `verify` (
 
 - [ ] Root's clean verdict at the exact head SHA.
 - [ ] Bugbot triage done.
-- [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
+- [ ] Rebased onto current trunk after the verdict. Audit the final head and base against exact patch bytes and each lane's inputs, record reuse decisions, and rerun affected lanes and all current required checks.
 - [ ] <The owner squash-merges its own PR, or the root appends it to the base-branch stack and the operator lands it bottom-up.>
 
 ## Close the program

@@ -30,7 +30,7 @@ const GRANT_NAME = "pstack standing authorization";
 const GRANT_VERSION = 2;
 export const MARKER = `${GRANT_NAME} v${GRANT_VERSION}`;
 
-export const ALLOW_ENTRY = `${MARKER}: the operator who wrote this entry is the only human on their projects, so no pull request waits for a human approval, and this holds in every repository a session works in. Under pstack's playbooks, an agent may merge a pull request with gh pr merge (a squash, or --auto for merge-when-ready when the playbook or the operator asks for it) although no human reviewed or approved it, in two cases: an autopilot owner merging its own pull request after the root's clean swarm verdict, given by verifiers that did not write the code; and the session running the Shipping playbook after the independent per-PR verifier verdict. The root may spawn owner and verifier subagents, push its owners' branches with --force-with-lease, and post verdicts as pull request comments. None of that is Merge Without Review or Self-Approval. An agent may also launch the lanes pstack's playbooks name through pstack-runner (an owner, a verifier, a reviewer, a judge or a worker on claude, codex or grok, in the mode the playbook names), which is not Create Unsafe Agents. This covers nothing else: not --admin or any other way around a required check, not a change to branch protection, rulesets or required checks, and nothing the other rules protect (destroying files, branches or history, production systems, secrets, data leaving the trust boundary).`;
+export const ALLOW_ENTRY = `${MARKER}: the operator who wrote this entry is the only human on their projects. This authorization applies in every repository a session works in. Under pstack's playbooks, an agent may merge a pull request without routine human approval in two cases. An autopilot owner may merge its own pull request after the root's clean swarm verdict from verifiers who did not write the code. The session running the Shipping playbook may merge after the independent per-PR verifier verdict. In both cases, the current independent verdict and all current required checks pass before submission. Every operator-named merge hold remains in force, including reserved review and the merge click. The agent binds GH_HOST to the validated host and uses gh pr merge --repo <owner/name> <pr> --squash --match-head-commit <published-head> --body-file <captured-pr-body-file>, following Shipping's direct-merge and native-queue body rules. The root may spawn owner and verifier subagents and post verdicts as pull request comments. The root or the owner of that branch may push that owned branch to the validated push URL with --force-with-lease=refs/heads/<branch>:<captured-remote-head>, captured before rewriting and equal to the local pre-rewrite head. The current local branch and the explicit source and destination refs must identify that same owned branch. Shipping validates Git URL resolution, refuses URL rewrites and URL-named remote aliases, and requires canonical forge readback. Git, SSH/TLS authentication, custom transport programs and enabled hooks remain trusted runtime inputs. First publication uses --force-with-lease=refs/heads/<branch>: and requires the machine-readable new-ref receipt plus canonical readback; a same-tip no-op is not an owned creation. Before later fix commits or rewrites, capture the actual remote SHA. Pushes must not follow tags or recurse into submodules, and rebases must not update other local branches. None of that is Merge Without Review or Self-Approval. An agent may also launch the lanes pstack's playbooks name through pstack-runner (an owner, a verifier, a reviewer, a judge or a worker on claude, codex or grok, in the mode the playbook names), which is not Create Unsafe Agents. This covers nothing else: not --admin or any other way around a required check, not a change to branch protection, rulesets or required checks, and nothing the other rules protect (destroying files, branches or history, production systems, secrets, data leaving the trust boundary).`;
 
 const BUILT_IN_RULES = "$defaults";
 
@@ -85,10 +85,6 @@ function allowList(settings: Settings, path: string): readonly string[] | null {
   return allow;
 }
 
-function isCurrentGrant(entry: string): boolean {
-  return entry.startsWith(`${MARKER}:`);
-}
-
 function isGrantOfAnyVersion(entry: string): boolean {
   return entry.startsWith(`${GRANT_NAME} v`);
 }
@@ -128,14 +124,19 @@ export function checkAuthorization(parent: string, home: string = homedir()): Ch
     const found = policy === null ? "unset" : JSON.stringify(policy);
     return { parent, authorized: false, file, reason: `approval_policy is ${found} at the top level of ${file}: Codex stops this flow to ask for approval unless it is "never"` };
   }
-  const granted = (allowList(parseSettings(text, file), file) ?? []).some(isCurrentGrant);
+  const grants = (allowList(parseSettings(text, file), file) ?? []).filter(isGrantOfAnyVersion);
+  const granted = grants.length === 1 && grants[0] === ALLOW_ENTRY;
   return {
     parent,
     authorized: granted,
     file,
     reason: granted
-      ? `${MARKER} is in autoMode.allow`
-      : `No ${MARKER} in autoMode.allow of ${file}: auto mode blocks a merge that no human approved, and it reads the user's messages and the commands, not the agent's questions`,
+      ? `The current ${MARKER} entry is in autoMode.allow`
+      : grants.length === 0
+        ? `No ${GRANT_NAME} grant in autoMode.allow of ${file}; the operator must review the entry and run the grant command`
+        : grants.length > 1
+          ? `Multiple ${GRANT_NAME} grants in autoMode.allow of ${file}; the operator must review the entry and run the grant command`
+          : `The standing authorization grant in autoMode.allow of ${file} differs from the current entry; the operator must review the entry and run the grant command`,
     entry: ALLOW_ENTRY,
     grant: grantCommand(),
   };
