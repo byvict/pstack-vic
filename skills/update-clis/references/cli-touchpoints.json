@@ -216,6 +216,15 @@
       "measuredOn": "1.0.5"
     },
     {
+      "id": "grok.sandbox-limits",
+      "cli": "grok",
+      "kind": "lane",
+      "contract": "on macOS the `read-only` and `workspace` profiles deny `openpty` (tmux cannot open a pane), crash Playwright's Chromium with SIGSEGV, and refuse `index.lock` under `.git/worktrees/<name>` (no commit in a linked worktree); the same argv with `--sandbox off` passes all three. `--model grok-build` is refused with `unknown model id`",
+      "pointers": [{ "file": "skills/poteto-mode/references/provider-dispatch.md", "anchor": "cannot commit in a linked worktree" }],
+      "coveredBy": [],
+      "measuredOn": "1.0.46"
+    },
+    {
       "id": "grok.headless-timeout",
       "cli": "grok",
       "kind": "lane",
