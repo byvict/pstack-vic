@@ -1545,3 +1545,38 @@ Origem: a execução de autopilot da CLI-223 no Clinext, em 2026-10-02, com o pl
 - Mesma versão: uma definição de agente com `model: claude-opus-5-5` e `effort: xhigh` rodou em Opus 5.5 com `effort.level = xhigh` no payload do hook, com a sessão principal em `medium`.
 - `scripts/agent-guard.test.ts` cobre a recusa dos três tipos, o tipo ausente, a sessão principal, agente de outro plugin e payload ilegível.
 - Evidência das provas em `~/Dev/Skills/pstack-vic-runs/2026-10-02-cli-223-owner-audit/`.
+
+# 0.5.6 — O que o sandbox do Grok ainda nega na 1.0.46, e o que o T3 chama de "Grok Build" (2026-10-02)
+
+Em 2026-10-02 uma thread do T3 Code (modelo "Grok Build", permissão Full access, worktree linkado em `~/.t3/worktrees/clinext/`) commitou, fez push, dirigiu 11 features do verify-clinext e abriu o Clinextapp/clinext#3004, tudo que a guidance dizia que uma lane Grok não faz no macOS. Três hipóteses foram medidas: (a) o T3 lança o grok sem sandbox; (b) "Grok Build" é outro CLI ou outro modelo; (c) a versão do CLI mudou e tirou os limites. Só a (a) é verdadeira. Rastro bruto em `~/Dev/Skills/pstack-vic-runs/2026-10-02-grok-build-t3/`.
+
+## Medido
+
+Worktree descartável do Clinext em `ce522a479` (`git worktree add` linkado ao `~/Dev/clinext`), Grok CLI 1.0.46, modelo `grok-4.7@xhigh`, modelo servido `grok-4.7-build`, argv do runner em `isolated-write` em todas as lanes (só o `--sandbox` muda), overlay `inherit = "core"` em todas.
+
+| Lane | Sandbox | `git commit --allow-empty` no worktree linkado | pty / tmux | Chromium (Playwright) | launch / doctor / drive-login / cleanup |
+| --- | --- | --- | --- | --- | --- |
+| A, pelo runner (`--mode isolated-write`) | `workspace` | exit 128, `Unable to create .git/worktrees/<nome>/index.lock: Operation not permitted` | `create window failed: fork failed` | não chegou (launch parou no tmux) | 1 / 1 / 1 / 0 |
+| D, pelo runner, sondas diretas | `workspace` | não testado | `openpty` EPERM; tmux `fork failed` | `SIGSEGV` (`SEGV_ACCERR 0x10`), a mesma assinatura de 2026-09-25 na 1.0.41 | não testado |
+| B, grok direto com o argv do runner | `off` | exit 0 | ok | ok (`drive-login` PASS, 2 screenshots) | 0 / 0 / 0 / 0; status do checkout vazio depois |
+| C, grok direto, `--model grok-build` | `off` | não chegou | | | o CLI recusa: `Couldn't set model 'grok-build': unknown model id` |
+| Thread do T3 (`grok agent --always-approve stdio`, pid 44747, sem `--sandbox`) | `off` (`summary.json` da sessão) | ok (PR #3004) | ok | ok | ok (14 screenshots) |
+
+Nas lanes A, B e D o shell da lane viu 37 variáveis e nenhuma com `TOKEN`, `KEY` ou `SECRET`: o overlay e a guarda do `~/.zshenv` valem com e sem sandbox.
+
+"Grok Build" é um rótulo do T3, não um modelo. O bundle do T3 define `grok-build` como "o nome do produto, não um id que o ACP aceita; selecionar significa usar o modelo que a sessão Grok já roda". A sessão da thread gravou `current_model_id = grok-4.7`, `reasoning_effort = xhigh` (o default do `~/.grok/config.toml`) e `sandbox_profile = off`. O T3 lança `grok [--permission-mode <modo>] agent stdio` ou, em Full access, `grok agent --always-approve stdio`, e não passa `--sandbox` em nenhum modo. O CLI 1.0.44 trocou o backend do sandbox no macOS para `sandbox-exec`, e o resultado é o mesmo da 1.0.41.
+
+## O que muda
+
+- **`provider-dispatch.md`.** Parágrafo novo sobre o que os perfis `read-only` e `workspace` negam no macOS (pty, Chromium e commit em worktree linkado), com a regra de que a lane entrega o diff e o pai commita, e a nota de que o runner não tem modo sem sandbox desde a 0.5.0. A tabela de modelos ganha a frase sobre o "Grok Build" do T3.
+- **`cli-touchpoints.json`.** Ponto de contato novo `grok.sandbox-limits` (medido na 1.0.46, sem lane de sonda), para que uma versão nova que mexa no sandbox apareça na leitura das notas.
+- **`docs/reference.md`.** A seção de lanes externas ganha a frase do sandbox. A seção de versões registra o que foi medido: o binário do `grok` foi para 1.0.44 em 2026-09-29 e para 1.0.46 em 2026-10-02 fora da skill `update-clis` (última execução em 2026-09-28), com `auto_update = false` mantido; o mecanismo não foi identificado.
+- **Clinext.** A frase do `.cursor/skills/verify-clinext/SKILL.md` que citava só a 1.0.41 é reescrita no Clinextapp/clinext#3005.
+
+## Decisão pendente do Victor
+
+Nenhuma troca de modelo: "Grok Build" não existe como família, e as lanes `grok:grok-4.7@xhigh` do sheet já rodam o mesmo modelo servido que a thread do T3. Sobre rodar lanes `isolated-write` do Grok sem o sandbox `workspace`: não por padrão. A lane roda em always-approve, então o sandbox é o único confinamento que ela tem; sem ele, só a lista de tools e o prompt separam a lane do resto do disco, e um prompt injection no repositório vira escrita fora do worktree. O custo é igual (mesmo modelo, mesmos tokens: lane B custou US$ 0,052 em preço de lista, lane A US$ 0,060). Quando um playbook precisar que o Grok commite num worktree linkado ou dirija o app, o caminho é um modo explícito e opt-in no runner, como o `unsandboxed` da 0.2.4 (D2 da 0.5.0 o tirou junto com o converge), com a conferência de HEAD e `git status` depois da lane.
+
+## Verificação
+
+- `npm test`, `npm run matrix:check`, `npm run agents:check`, `npm run collision:check` e `git diff --check`: ver o PR.
