@@ -58,7 +58,7 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
 
 - [ ] Read Guarded operations in `playbooks/shipping.md` before the first operation. Record the repository, PR, node ID, branch, validated fetch and push URLs, captured remote and local heads, published and verdict heads, and current and verdict bases. Use `gh` with explicit `--repo <owner/name>`. Refuse unsupported Origin mutations.
 - [ ] Open the PR ready, never draft, with `GH_HOST=<validated-host> gh pr create --repo <owner/name> --base <base-branch> --head <head-branch>`. A stack child targets its parent branch.
-- [ ] Run the repo's lint and typecheck once before the PR-facing push. Push with hooks on.
+- [ ] Run the repo's lint and typecheck once before the PR-facing push. Use the Guarded operations First publication block for an absent branch. Before later fix commits, capture the actual remote SHA and use the later-wave block with hooks on.
 - [ ] Run `/deslop` before each commit and `/no-comments` before review.
 - [ ] Triage every Bugbot and security-reviewer comment per `../references/bugbot-triage.md`.
 - [ ] Withdraw affected queue and auto-merge requests with readback before rewriting or retargeting. Capture remote and local pre-rewrite heads, require equality, and preserve the captured lease. Fetch current trunk through Guarded operations, capture FETCH_HEAD and require the selected destination SHA. Rebase onto that exact SHA before the code-ready report and babysit. Keep that merge base in fix rounds. Rebase again only at merge prep, on a `git merge-tree` conflict with trunk, or on a CI failure that comes from a change on trunk.

@@ -128,7 +128,7 @@ On exit 0, say in one line that the parent is authorized.
 On exit 1 on Claude Code, the JSON carries the `reason`, the `entry` and the `grant` command. Show the operator the `entry` in full. Say in their language what the entry allows in every repository:
 
 - In those two cases, an agent submits the selected PR through Shipping after the current independent verdict and required checks pass, binding the validated host, explicit repository and PR, expected head and captured body file. Every operator hold still applies.
-- The root spawns owner and verifier subagents, pushes only the current owned branch to its validated push URL with an explicit lease of the remote SHA captured before rewriting and equal to the local pre-rewrite head, and posts verdicts as pull request comments. Source and destination refs name that same branch. URL rewrite configuration is unsupported and refused before transport.
+- The root spawns owner and verifier subagents, pushes only the current owned branch to its validated push URL with an explicit lease of the remote SHA captured before rewriting and equal to the local pre-rewrite head, and posts verdicts as pull request comments. Source and destination refs name that same branch. The executable Shipping boundary validates both remote URLs against the recorded GitHub identity and refuses URL rewriting and URL-named remote aliases. First publication atomically requires an absent remote ref; later waves capture the actual remote SHA before new commits. Pushes suppress implicit tags and submodule recursion, and rebases leave other local refs fixed.
 - An agent launches pstack's lanes through the runner.
 
 Say what stays blocked:
@@ -143,7 +143,7 @@ The authorization is the operator's act. Never run `apply` yourself, never write
 
 On exit 1 on Codex, show the `reason`. Codex has no such list. Codex asks for no approval when `approval_policy` is `"never"` at the top level of `~/.codex/config.toml`. The operator sets that value, or accepts that Codex stops to ask.
 
-The entry names its version (`pstack standing authorization v2`). `check` requires the current exact entry, so both v1 and an older v2 body fail without changing settings. The 0.5.2 safety correction keeps version 2 and requires the operator to review the current entry and run `apply` again. The existing in-place replacement, typed confirmation and backup remain unchanged. To withdraw the authorization, the operator deletes the entry from `autoMode.allow`.
+The entry names its version (`pstack standing authorization v2`). `check` requires exactly one grant-shaped entry and that entry must be the current exact body. Missing, stale, duplicate and coexisting grants fail without changing settings; the diagnostic identifies which condition was observed. The 0.5.2 safety correction keeps version 2 and requires the operator to review the current entry and run `apply` again. The existing in-place replacement, typed confirmation and backup remain unchanged. To withdraw the authorization, the operator deletes the entry from `autoMode.allow`.
 
 No playbook runs this check. Without the entry, auto mode denies the merge when an autopilot owner or the Shipping session reaches it.
 

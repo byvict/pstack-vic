@@ -77,6 +77,21 @@ describe("test isolation", () => {
 });
 
 describe("check on a Claude Code parent", () => {
+  for (const [label, grants, reason] of [
+    ["missing", [], /No pstack standing authorization grant/],
+    ["v1", ["pstack standing authorization v1: legacy"], /differs from the current entry/],
+    ["old v2", [LEGACY_V2_ENTRY], /differs from the current entry/],
+    ["current and stale", [ALLOW_ENTRY, LEGACY_V2_ENTRY], /Multiple pstack standing authorization grants/],
+    ["duplicate current", [ALLOW_ENTRY, ALLOW_ENTRY], /Multiple pstack standing authorization grants/],
+  ] as const) it(`refuses ${label} grants with an accurate read-only diagnostic`, async () => {
+    putSettings({ model: "keep", autoMode: { allow: ["$defaults", ...grants, "Unrelated permission"] } });
+    const before = readFileSync(settingsPathFor("claude", home), "utf8");
+    const result = await run(["check", "--parent", "claude"]);
+    assert.equal(result.code, 1);
+    assert.match(JSON.parse(result.stdout).reason, reason);
+    assert.equal(readFileSync(settingsPathFor("claude", home), "utf8"), before);
+    assert.equal(existsSync(backupPathFor("claude", home)), false);
+  });
   it("rejects the actual 0.5.1 v2 body without writing, then applies the current body in place", async () => {
     const original = { model: "opus", autoMode: { allow: ["$defaults", LEGACY_V2_ENTRY, "Keep this permission"], custom: true } };
     putSettings(original);
