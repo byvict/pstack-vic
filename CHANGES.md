@@ -1509,4 +1509,6 @@ A remoção mantém o beforeCommit como candidato removido. O polling só atribu
 
 As substituições safety existentes reforçam veredito e requirements atuais antes de admissão, diagnóstico antes de tentar novamente, congelamento do PR independente durante recomposição e retirada antes de rewrite. Pilhas continuam bottom-up com restack pelo limite antigo do pai. Os seis playbooks são regenerados pela tabela classificada. Os blocos Guarded operations da 0.5.3 permanecem iguais.
 
+CheckRuns repetidos usam somente o timestamp máximo por app, nome, workflow e evento. Empates permanecem somente nesse timestamp. Workflows e produtores distintos não eliminam um ao outro. Metadados ausentes preservam a incerteza; StatusContext mantém produtor unknown.
+
 Regressões focadas cobrem estados, incerteza, identidade, base atual, produtor obrigatório, recomposição e remoção histórica. A integração agrupada usa a fixture privada existente, com o root como único escritor. A release não altera regras de produção.

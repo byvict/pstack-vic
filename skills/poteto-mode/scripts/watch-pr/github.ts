@@ -44,8 +44,8 @@ query NativeChecks($owner: String!, $repo: String!, $sha: String!, $after: Strin
             nodes {
               __typename
               ... on CheckRun {
-                name status conclusion detailsUrl
-                checkSuite { app { databaseId slug } }
+                name status conclusion detailsUrl startedAt
+                checkSuite { app { databaseId slug } workflowRun { event workflow { id } } }
               }
               ... on StatusContext { context state targetUrl }
             }
@@ -645,9 +645,97 @@ export function parseRequirements(
     ).values(),
   ];
 }
-interface ProducedCheck {
-  readonly check: T.Check;
-  readonly producer: T.CheckProducer | "unknown";
+export type ProducedCheck =
+  | {
+      readonly kind: "status-context";
+      readonly check: T.Check;
+      readonly producer: "unknown";
+    }
+  | {
+      readonly kind: "check-run";
+      readonly check: T.Check;
+      readonly producer: T.CheckProducer | "unknown";
+      readonly attempt:
+        | {
+            readonly workflowId: string;
+            readonly event: string;
+            readonly startedAt: number;
+          }
+        | "unknown";
+    };
+export function parseProducedCheck(value: unknown): ProducedCheck {
+  const node = record(value, "commit check");
+  const check = mapRollupNode(node);
+  if (check === null) missing("commit check.__typename", node.__typename);
+  if (node.__typename === "StatusContext")
+    return { kind: "status-context", check, producer: "unknown" };
+  const app = at(node, ["checkSuite", "app"]);
+  const run = at(node, ["checkSuite", "workflowRun"]);
+  const startedAt = optionalString(node.startedAt, "commit check.startedAt");
+  const startTime = startedAt === null ? null : Date.parse(startedAt);
+  if (startTime !== null && !Number.isFinite(startTime))
+    missing("commit check.startedAt", startedAt);
+  return {
+    kind: "check-run",
+    check,
+    producer:
+      app === null
+        ? "unknown"
+        : {
+            appId: positiveId(at(app, ["databaseId"]), "check producer.appId"),
+            slug: string(at(app, ["slug"]), "check producer.slug"),
+          },
+    attempt:
+      run === null || startTime === null
+        ? "unknown"
+        : {
+            workflowId: string(
+              at(run, ["workflow", "id"]),
+              "check workflow.id"
+            ),
+            event: string(at(run, ["event"]), "check workflow.event"),
+            startedAt: startTime,
+          },
+  };
+}
+function currentAttempts(
+  checks: readonly ProducedCheck[]
+): readonly ProducedCheck[] {
+  const selected = new Map<
+    string,
+    { readonly startedAt: number; readonly checks: readonly ProducedCheck[] }
+  >();
+  const separate: ProducedCheck[] = [];
+  for (const check of checks) {
+    if (
+      check.kind !== "check-run" ||
+      check.producer === "unknown" ||
+      check.attempt === "unknown"
+    ) {
+      separate.push(check);
+      continue;
+    }
+    const key = JSON.stringify([
+      check.producer.appId,
+      check.check.name,
+      check.attempt.workflowId,
+      check.attempt.event,
+    ]);
+    const prior = selected.get(key);
+    if (prior === undefined || check.attempt.startedAt > prior.startedAt)
+      selected.set(key, {
+        startedAt: check.attempt.startedAt,
+        checks: [check],
+      });
+    else if (check.attempt.startedAt === prior.startedAt)
+      selected.set(key, {
+        startedAt: prior.startedAt,
+        checks: [...prior.checks, check],
+      });
+  }
+  return [...selected.values()]
+    .flatMap((bucket) => bucket.checks)
+    .concat(separate);
 }
 export function requiredCheckResult(
   requirement: Requirement,
@@ -655,7 +743,7 @@ export function requiredCheckResult(
 ): T.RequiredCheckResult {
   if (checks === "unknown")
     return { state: "unknown", producer: "unknown", links: [] };
-  const matching = checks.filter(
+  const matching = currentAttempts(checks).filter(
     ({ check, producer }) =>
       check.name === requirement.context &&
       (requirement.appId === "any" ||
@@ -663,15 +751,32 @@ export function requiredCheckResult(
   );
   if (matching.length === 0)
     return { state: "pending", producer: "unknown", links: [] };
-  const state = matching.some(({ check }) => check.kind === "failed")
-    ? "failed"
-    : matching.some(
-          ({ check }) =>
-            check.kind === "pending" || check.kind === "code-review-gate"
-        )
-      ? "pending"
-      : "passed";
-  const producer = matching[0].producer;
+  const ambiguous =
+    matching.length > 1 &&
+    matching.some(
+      (check) => check.kind === "check-run" && check.attempt === "unknown"
+    );
+  const state = ambiguous
+    ? "unknown"
+    : matching.some(({ check }) => check.kind === "failed")
+      ? "failed"
+      : matching.some(
+            ({ check }) =>
+              check.kind === "pending" || check.kind === "code-review-gate"
+          )
+        ? "pending"
+        : "passed";
+  const firstProducer = matching[0].producer;
+  const producer =
+    firstProducer !== "unknown" &&
+    matching.every(
+      (check) =>
+        check.producer !== "unknown" &&
+        check.producer.appId === firstProducer.appId &&
+        check.producer.slug === firstProducer.slug
+    )
+      ? firstProducer
+      : "unknown";
   return {
     state,
     producer,
@@ -696,26 +801,8 @@ async function readProducedChecks(
     if (commit.oid !== sha) missing("commit checks.oid", commit.oid);
     if (commit.statusCheckRollup === null) return checks;
     const contexts = at(commit, ["statusCheckRollup", "contexts"]);
-    for (const value of list(at(contexts, ["nodes"]), "commit check nodes")) {
-      const node = record(value, "commit check");
-      const check = mapRollupNode(node);
-      if (check === null) missing("commit check.__typename", node.__typename);
-      const app =
-        node.__typename === "CheckRun" ? at(node, ["checkSuite", "app"]) : null;
-      checks.push({
-        check,
-        producer:
-          app === null
-            ? "unknown"
-            : {
-                appId: positiveId(
-                  at(app, ["databaseId"]),
-                  "check producer.appId"
-                ),
-                slug: string(at(app, ["slug"]), "check producer.slug"),
-              },
-      });
-    }
+    for (const value of list(at(contexts, ["nodes"]), "commit check nodes"))
+      checks.push(parseProducedCheck(value));
     const page = record(at(contexts, ["pageInfo"]), "commit checks.pageInfo");
     if (typeof page.hasNextPage !== "boolean")
       missing("commit checks.hasNextPage", page.hasNextPage);

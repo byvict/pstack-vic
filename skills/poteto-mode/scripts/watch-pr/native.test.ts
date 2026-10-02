@@ -3,6 +3,8 @@ import {
   parseNativeLanding,
   parseRequirements,
   requiredCheckResult,
+  parseProducedCheck,
+  type ProducedCheck,
 } from "./github.ts";
 import {
   classifyPr,
@@ -140,14 +142,147 @@ describe("native API boundary", () => {
     const check = passingCheck("test");
     expect(
       requiredCheckResult({ context: "test", appId: 15368 }, [
-        { check, producer: { appId: 9, slug: "other" } },
+        {
+          kind: "check-run",
+          check,
+          producer: { appId: 9, slug: "other" },
+          attempt: "unknown",
+        },
       ])
     ).toEqual({ state: "pending", producer: "unknown", links: [] });
     expect(
       requiredCheckResult({ context: "test", appId: "any" }, [
-        { check, producer: "unknown" },
+        { kind: "status-context", check, producer: "unknown" },
       ])
     ).toEqual({ state: "passed", producer: "unknown", links: [] });
+  });
+});
+
+describe("required check reruns", () => {
+  const requirement = { context: "test", appId: 15368 } as const;
+  const run = (
+    state: "passed" | "failed",
+    startedAt: number,
+    workflowId = "workflow",
+    event = "pull_request",
+    appId = 15368
+  ): ProducedCheck => ({
+    kind: "check-run",
+    check: {
+      ...(state === "passed" ? passingCheck("test") : failedCheck("test")),
+      link: `run-${startedAt}`,
+    },
+    producer: { appId, slug: "app" },
+    attempt: { workflowId, event, startedAt },
+  });
+  it("replaces a stale failure with the latest success regardless of API order", () => {
+    for (const checks of [
+      [run("failed", 1), run("passed", 2)],
+      [run("passed", 2), run("failed", 1)],
+    ])
+      expect(requiredCheckResult(requirement, checks)).toEqual({
+        state: "passed",
+        producer: { appId: 15368, slug: "app" },
+        links: ["run-2"],
+      });
+  });
+  it("drops older tied runs once a newer timestamp is present", () => {
+    expect(
+      requiredCheckResult(requirement, [
+        run("failed", 1),
+        run("failed", 1),
+        run("passed", 2),
+      ])
+    ).toEqual({
+      state: "passed",
+      producer: { appId: 15368, slug: "app" },
+      links: ["run-2"],
+    });
+  });
+  it("keeps different current producers separate without attributing both to one app", () => {
+    expect(
+      requiredCheckResult({ context: "test", appId: "any" }, [
+        run("passed", 1),
+        run("failed", 2, "workflow", "pull_request", 9),
+      ])
+    ).toEqual({
+      state: "failed",
+      producer: "unknown",
+      links: ["run-1", "run-2"],
+    });
+  });
+  it("keeps a newer failure instead of an earlier success", () => {
+    expect(
+      requiredCheckResult(requirement, [run("passed", 1), run("failed", 2)])
+        .state
+    ).toBe("failed");
+  });
+  it("preserves workflows and events that happen to use the same name", () => {
+    expect(
+      requiredCheckResult(requirement, [
+        run("failed", 1),
+        run("passed", 2, "other"),
+      ]).state
+    ).toBe("failed");
+    expect(
+      requiredCheckResult(requirement, [
+        run("failed", 1),
+        run("passed", 2, "workflow", "push"),
+      ]).state
+    ).toBe("failed");
+  });
+  it("does not let another producer supersede the required app", () => {
+    expect(
+      requiredCheckResult(requirement, [
+        run("failed", 1),
+        run("passed", 2, "workflow", "pull_request", 9),
+      ]).state
+    ).toBe("failed");
+  });
+  it("retains unknown attempt identity without inventing equivalence", () => {
+    expect(
+      requiredCheckResult(requirement, [
+        { ...run("failed", 1), kind: "check-run", attempt: "unknown" },
+        run("passed", 2),
+      ]).state
+    ).toBe("unknown");
+  });
+  it("parses workflow identity and leaves missing metadata unknown", () => {
+    const raw = {
+      __typename: "CheckRun",
+      name: "test",
+      status: "COMPLETED",
+      conclusion: "SUCCESS",
+      startedAt: "2026-10-02T10:00:00Z",
+      checkSuite: {
+        app: { databaseId: 15368, slug: "github-actions" },
+        workflowRun: { event: "pull_request", workflow: { id: "workflow" } },
+      },
+    };
+    expect(parseProducedCheck(raw)).toMatchObject({
+      kind: "check-run",
+      attempt: {
+        workflowId: "workflow",
+        event: "pull_request",
+        startedAt: 1790935200000,
+      },
+    });
+    expect(parseProducedCheck({ ...raw, startedAt: null })).toMatchObject({
+      attempt: "unknown",
+    });
+    expect(
+      parseProducedCheck({
+        ...raw,
+        checkSuite: { ...raw.checkSuite, workflowRun: null },
+      })
+    ).toMatchObject({ attempt: "unknown" });
+    expect(
+      parseProducedCheck({
+        __typename: "StatusContext",
+        context: "test",
+        state: "SUCCESS",
+      })
+    ).toMatchObject({ kind: "status-context", producer: "unknown" });
   });
 });
 
