@@ -21,6 +21,11 @@
 //   setup-pstack.ts probe  --dir <run dir> [--timeout <seconds>]
 //   setup-pstack.ts attest --dir <run dir> --pair <family>@<effort> --observed <text>
 //   setup-pstack.ts write  --dir <run dir> [--home <dir>]
+//   setup-pstack.ts pick   --parent <p> --role "<pool role>" [--executor <provider>]... [--home <dir>]
+//
+// `pick` is the one subcommand a skill calls at dispatch time: it applies the
+// Cross-family selection rule of provider-dispatch.md to a pool row, so the
+// session whose work is under review does not choose its own reviewer.
 //
 // Node 24, type stripping, no dependencies: erasable TypeScript only.
 
@@ -30,13 +35,18 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
   agentName,
+  crossFamilyRowProblem,
   familyFor,
   familyNamed,
   loadMatrix,
+  nativeProviderOf,
   parseDescriptor,
+  pickCrossFamily,
   renderSheetDocument,
   roleDefault,
+  roleNamed,
   routeFor,
+  type CrossFamilyPick,
   type Family,
   type ModelMatrix,
   type Route,
@@ -387,7 +397,7 @@ export interface VerifiedFamily {
 }
 
 export interface Plan {
-  readonly schemaVersion: 5;
+  readonly schemaVersion: 6;
   readonly parent: string;
   readonly createdAt: string;
   readonly sheetPath: string;
@@ -403,6 +413,8 @@ export interface Plan {
   /** Families in the final map that this parent verified before; not probed again, whatever effort their lanes take. */
   readonly verified: readonly VerifiedFamily[];
   readonly migrations: readonly Migration[];
+  /** Rows that are valid but can leave a run without a lane; show each to the operator before the write. */
+  readonly warnings: readonly string[];
 }
 
 export interface PlanInput extends StateInput {
@@ -484,6 +496,19 @@ export function buildPlan(input: PlanInput): Plan {
     rows = rows.map((r) => (r.role === role ? { role, lanes: normalized } : r));
   }
 
+  // 4. A cross-family pool must be able to yield a lane under this parent.
+  const warnings: string[] = [];
+  for (const row of rows) {
+    if (roleNamed(matrix, row.role)?.selection !== "cross-family") continue;
+    const problem = crossFamilyRowProblem(matrix, parent, row.role, row.lanes);
+    if (problem !== null) fail(problem);
+    const native = nativeProviderOf(matrix, parent);
+    const others = [...new Set(row.lanes.map((lane) => parseDescriptor(lane)?.provider))].filter((p) => p !== native);
+    if (others.length === 1) {
+      warnings.push(`role ${JSON.stringify(row.role)} names one provider besides ${native} (${others[0]}): a run in which a ${others[0]} lane wrote has no eligible lane`);
+    }
+  }
+
   const sheet = renderSheetDocument(rows.map((r) => `${r.role}: ${r.lanes.join(", ")}`).join("\n"));
   const ledgerPath = ledgerPathFor(parent, home);
   const ledger = parseLedger(snapshotOf(ledgerPath, "probe ledger"), ledgerPath);
@@ -515,7 +540,7 @@ export function buildPlan(input: PlanInput): Plan {
   }
 
   return {
-    schemaVersion: 5,
+    schemaVersion: 6,
     parent,
     createdAt: new Date().toISOString(),
     sheetPath: state.sheetPath,
@@ -528,6 +553,43 @@ export function buildPlan(input: PlanInput): Plan {
     pairs,
     verified,
     migrations: state.migrations,
+    warnings,
+  };
+}
+
+// --- Pool pick ---------------------------------------------------------------
+
+export interface PickInput extends StateInput {
+  readonly role: string;
+  /** Providers of the write lanes whose output is part of the result, besides the parent's own. */
+  readonly executors?: readonly string[];
+}
+
+export interface PickResult extends CrossFamilyPick {
+  readonly parent: string;
+  readonly role: string;
+  /** Where the row came from: the parent's sheet, or the role-table default when the sheet has no such row. */
+  readonly source: "sheet" | "default";
+  readonly lanes: readonly string[];
+}
+
+/**
+ * Apply the cross-family selection rule to one list role of the parent's
+ * sheet. A hand-edited alias in the row is skipped, never dispatched.
+ */
+export function pickLane(input: PickInput): PickResult {
+  const matrix = input.matrix ?? loadMatrix();
+  const state = loadState({ parent: input.parent, home: input.home, matrix });
+  const role = roleNamed(matrix, input.role);
+  if (!role) fail(`unknown role ${JSON.stringify(input.role)}`);
+  const row = state.rows.find((r) => r.role === role.role);
+  const lanes = row?.lanes ?? roleDefault(matrix, role.role, state.parent);
+  return {
+    parent: state.parent,
+    role: role.role,
+    source: row ? "sheet" : "default",
+    lanes,
+    ...pickCrossFamily(matrix, state.parent, lanes, input.executors ?? []),
   };
 }
 
@@ -546,7 +608,7 @@ export function loadPlan(dir: string): Plan {
   const path = join(dir, PLAN_FILE);
   if (!existsSync(path)) fail(`no ${PLAN_FILE} in ${dir}; run plan first`);
   const raw = JSON.parse(readFileSync(path, "utf8")) as Plan;
-  if (raw.schemaVersion !== 5) {
+  if (raw.schemaVersion !== 6) {
     fail(`${path}: unsupported schemaVersion ${JSON.stringify(raw.schemaVersion)}; run plan again with this version of the script`);
   }
   return raw;
@@ -872,7 +934,7 @@ export function writeSheet(plan: Plan, dir: string, options: { readonly home?: s
 
 // --- Command line ---------------------------------------------------------------
 
-const USAGE = `Usage: setup-pstack <state|plan|probe|attest|write> [options]
+const USAGE = `Usage: setup-pstack <state|plan|probe|attest|write|pick> [options]
 
   state  --parent <${Object.keys(TARGETS).join("|")}> [--home <dir>]
          Read the parent's sheet, normalize rolling aliases, derive per-lane efforts grouped by family.
@@ -888,8 +950,12 @@ const USAGE = `Usage: setup-pstack <state|plan|probe|attest|write> [options]
   write  --dir <run dir> [--home <dir>]
          Verify the plan's probes, then write the sheet, the parent integration, and the probe
          ledger (byte-identical rerun writes nothing).
+  pick   --parent <p> --role "<pool role>" [--executor <provider>]... [--home <dir>]
+         From the role's row, list the lanes whose provider wrote none of the work, in the
+         operator's order. The parent's own provider always counts as a writer; name every
+         other provider that wrote with --executor. Exit 1 when no lane is eligible.
 
-Exit codes: 0 ok, 1 a probe failed or the write was refused, 64 usage.
+Exit codes: 0 ok, 1 a probe failed, the write was refused, or no lane is eligible, 64 usage.
 `;
 
 interface Io {
@@ -940,6 +1006,7 @@ export async function main(argv: readonly string[], io: Io = {
           effort: { type: "string", multiple: true },
           role: { type: "string", multiple: true },
           pair: { type: "string" },
+          executor: { type: "string", multiple: true },
           observed: { type: "string" },
           timeout: { type: "string" },
           help: { type: "boolean", short: "h", default: false },
@@ -1012,6 +1079,17 @@ export async function main(argv: readonly string[], io: Io = {
         const plan = loadPlan(dir);
         emit(writeSheet(plan, dir, { home }));
         return 0;
+      }
+      case "pick": {
+        const role = parsed.values.role as string[] | undefined;
+        if (role?.length !== 1) usage("--role is required once: the label of the pool role");
+        const executors = ((parsed.values.executor as string[] | undefined) ?? [])
+          .flatMap((value) => value.split(","))
+          .map((value) => value.trim())
+          .filter((value) => value.length > 0);
+        const result = pickLane({ parent: requireParent(), home, role: role[0], executors });
+        emit(result);
+        return result.chosen === null ? 1 : 0;
       }
       case undefined:
         usage("a subcommand is required");

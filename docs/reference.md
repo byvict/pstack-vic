@@ -24,7 +24,7 @@ No shell, `claude plugin marketplace add byvict/pstack-vic` e `claude plugin ins
 ### Codex
 
 ```shell
-codex plugin marketplace add byvict/pstack-vic --ref v0.5.1
+codex plugin marketplace add byvict/pstack-vic --ref v0.5.2
 codex plugin add pstack@pstack-vic
 ```
 
@@ -94,7 +94,7 @@ Cada passo confere o que já foi feito, então rodar o script duas vezes não es
 │   ├── poteto-mode/agents/           # openai.yaml: no Codex, poteto-mode só por invocação explícita
 │   ├── poteto-mode/references/       # provider-dispatch.md (rota e papéis), codex-tools.md (mapa de tools), bugbot-triage.md, upstream-substitutions.json (as trocas de harness dos seis playbooks do autopilot)
 │   ├── poteto-mode/scripts/          # runner externo (Node 24, com probe-lane.ts, a sonda de uma lane), watch-pr, orch, check-plan.mjs, worktree-audit.sh
-│   ├── setup-pstack/scripts/         # setup-pstack.ts: estado, plano, probe, atestado e escrita do sheet (Node 24); authorize.ts: a autorização permanente (autopilot e Shipping)
+│   ├── setup-pstack/scripts/         # setup-pstack.ts: estado, plano, probe, atestado e escrita do sheet, e a escolha de uma lane de um papel de pool (Node 24); authorize.ts: a autorização permanente (autopilot e Shipping)
 │   └── update-clis/                  # scripts/update-clis.ts (check, notes, install, probe) e references/cli-touchpoints.json
 ├── agents/                           # poteto-agent, comment-sicko e as lanes nativas pstack-<família>-<effort> geradas da matriz
 ├── assets/                           # logo
@@ -117,6 +117,7 @@ Nada é gerado nem bifurcado por pai. Duas referências fazem a tradução em te
 - **Invocação.** O Codex carrega `SKILL.md` nativamente; não há tool `Skill`. Peça a skill pelo nome.
 - **Rota de modelos.** Quem é pai escolhe a rota. No Claude Code, Fable e Opus rodam em agents nativos e Sol, Astra e Grok no runner externo. No Codex, Sol e Astra rodam em `spawn_agent` e Fable, Opus e Grok no runner. Um filho nunca escolhe provider nem troca de rota por conta própria; lane indisponível vira dropout nomeado, nunca substituição silenciosa.
 - **Papéis.** As skills citam papéis (`arena runners`, `bug-fix`, `how explainer`…), não descritores. O default de cada papel, por pai, está na seção *Role defaults* de `provider-dispatch.md` e é o que `/setup-pstack` escreve no sheet.
+- **Revisão cruzada.** Dois papéis são um pool: uma lista da qual roda uma lane só. O `trail reviewer pool` revisa a trilha de decisões de uma execução (skill `show-me-your-work`), e o `arena cross-judge pool` julga as candidatas do arena. A lane que roda é a primeira da lista cuja Família não escreveu o trabalho. Família é o fornecedor (Claude, Codex, Grok), a coluna Provider da matriz: trocar Sol por Astra, ou Opus por Fable, não muda a Família, e trocar de aplicativo também não. Quem escreveu é a sessão que fez o trabalho, sempre, mais toda lane de escrita cujo resultado entrou na entrega. A escolha sai do comando `setup-pstack.ts pick`, e não da sessão que está sendo revisada. Se a lane escolhida cai, roda a próxima da lista que também serve. Se nenhuma serve, a trilha fica sem revisão e a resposta diz isso, com o motivo de cada entrada. A regra está na seção *Cross-family selection* de `provider-dispatch.md`.
 - **Entrada.** `poteto-mode` não dispara sozinho em nenhum pai: `disable-model-invocation: true` no Claude Code, `allow_implicit_invocation: false` no Codex. Entre com `/pstack:poteto-mode` ou `pstack:poteto-mode` pelo nome.
 
 ## Dependências
@@ -340,11 +341,11 @@ Nomes curtos; no Claude Code cada uma aparece com o prefixo do plugin (`/pstack:
 | `technical-writing` | docs, RFCs, readmes, descrições de PR e commits num padrão em camadas |
 | `bro` | reafirmar a última mensagem em linguagem simples |
 | `figure-it-out` | desenhar um playbook rigoroso quando nenhum embutido serve |
-| `show-me-your-work` | trilha de decisões revisável em tsv |
+| `show-me-your-work` | trilha de decisões revisável em tsv; no fim, uma lane do papel `trail reviewer pool`, de uma Família que não escreveu o trabalho, revisa a trilha |
 | `blast-radius` | o que uma mudança pequena pode quebrar fora do diff, provado rodando código |
 | `recall` | reconstruir o contexto recente de um tema a partir do histórico e do registro compartilhado |
 | `update-clis` | atualizar `claude`, `codex` e `grok` só quando o plugin continua funcionando na versão nova: notas contra os pontos de contato, instalação, sonda real, volta e contraprova; o que não passa fica segurado numa issue do Linear |
-| `setup-pstack` | escolher modelo e effort por papel (a mesma família pode rodar em efforts diferentes em papéis diferentes); probe de cada par família+effort e escrita do sheet pelo `scripts/setup-pstack.ts` (rerun byte-idêntico, nada escrito se um probe falha); o passo 10 confere, pelo `scripts/authorize.ts`, a autorização permanente que o autopilot e o playbook Shipping exigem |
+| `setup-pstack` | escolher modelo e effort por papel (a mesma família pode rodar em efforts diferentes em papéis diferentes); probe de cada par família+effort e escrita do sheet pelo `scripts/setup-pstack.ts` (rerun byte-idêntico, nada escrito se um probe falha); o subcomando `pick` escolhe a lane de um papel de pool pela regra de revisão cruzada; o passo 10 confere, pelo `scripts/authorize.ts`, a autorização permanente que o autopilot e o playbook Shipping exigem |
 | `unslop` | limpar marcas de IA de qualquer prosa |
 | `no-comments` | tirar comentários antes da revisão via o subagent `comment-sicko` |
 | `create-verification-skill` | gerar uma skill de verificação local ao projeto com mapa de features |

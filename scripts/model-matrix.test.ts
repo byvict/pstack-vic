@@ -6,6 +6,7 @@ import {
   MATRIX_PATH,
   PLUGIN_ROOT,
   agentName,
+  crossFamilyRowProblem,
   cursorSlugPattern,
   declaredAgentNames,
   defaultDescriptor,
@@ -13,7 +14,9 @@ import {
   fromCursorSlug,
   loadMatrix,
   nativeParentOf,
+  nativeProviderOf,
   parseDescriptor,
+  pickCrossFamily,
   renderMatrixMarkdown,
   renderRoleDefaultsMarkdown,
   renderRoleSheet,
@@ -412,7 +415,7 @@ describe("roles", () => {
     }
   });
 
-  it("pins the 17 roles in matrix order", () => {
+  it("pins the 18 roles in matrix order", () => {
     assert.deepEqual(
       matrix.roles.map((r) => r.role),
       [
@@ -433,9 +436,10 @@ describe("roles", () => {
         "swarm workers",
         "architect runners",
         "interrogate reviewers",
+        "trail reviewer pool",
       ]
     );
-    assert.equal(matrix.roles.length, 17);
+    assert.equal(matrix.roles.length, 18);
     const mixedPanel = [
       "claude:fable@max",
       "codex:gpt-6-astra@max",
@@ -473,6 +477,43 @@ describe("roles", () => {
     assert.throws(() => roleDefault(matrix, "no such role", "claude"), /unknown role/);
   });
 
+  it("carry the trail reviewer pool as the one cross-family role, with the operator's three providers in order", () => {
+    // Victor's decision of 2026-10-02: the trail reviewer comes from an explicit list, in this order of preference.
+    assert.deepEqual(
+      matrix.roles.filter((r) => r.selection === "cross-family").map((r) => r.role),
+      ["trail reviewer pool"]
+    );
+    for (const parent of parents) {
+      assert.deepEqual(
+        roleDefault(matrix, "trail reviewer pool", parent),
+        ["claude:claude-opus-5-5@xhigh", "codex:gpt-6.1-sol@xhigh", "grok:grok-4.7@xhigh"],
+        parent
+      );
+    }
+  });
+
+  it("reject a cross-family role whose default holds an alias, names only the parent's provider, or carries an unknown selection", () => {
+    const pool = (value: unknown) =>
+      withRoles((rs) => {
+        const index = rs.findIndex((r) => r.role === "trail reviewer pool");
+        rs[index] = { ...rs[index], ...(value as Record<string, unknown>) };
+      });
+    assert.throws(
+      () => validateMatrix(pool({ default: ["opus@xhigh", "inherit-parent", "grok@xhigh"] })),
+      /role "trail reviewer pool" takes provider-qualified lanes only: inherit-parent runs on the parent model/
+    );
+    assert.throws(
+      () => validateMatrix(pool({ default: ["opus@xhigh", "fable@max"] })),
+      /role "trail reviewer pool" needs at least one lane from a provider other than claude, the parent's own; got claude:claude-opus-5-5@xhigh, claude:fable@max \(default for parent claude\)/
+    );
+    assert.throws(
+      () => validateMatrix(pool({ default: ["sol@xhigh", "astra@max"] })),
+      /provider other than codex, the parent's own/
+    );
+    assert.throws(() => validateMatrix(pool({ selection: "panel" })), /selection must be "cross-family" when present/);
+    assert.doesNotThrow(() => validateMatrix(pool({ default: ["opus@xhigh", "sol@xhigh"] })));
+  });
+
   it("render one sheet per parent in the line shape the sheet uses", () => {
     for (const parent of parents) {
       const lines = renderRoleSheet(matrix, parent).split("\n");
@@ -484,6 +525,89 @@ describe("roles", () => {
     }
     const table = renderRoleDefaultsMarkdown(matrix);
     for (const role of matrix.roles) assert.ok(table.includes(`| \`${role.role}\` |`), role.role);
+  });
+});
+
+describe("cross-family selection", () => {
+  const pool = ["claude:claude-opus-5-5@xhigh", "codex:gpt-6.1-sol@xhigh", "grok:grok-4.7@xhigh"];
+  const chosen = (parent: string, executors: string[], lanes: readonly string[] = pool) =>
+    pickCrossFamily(matrix, parent, lanes, executors).chosen?.descriptor ?? null;
+
+  it("names the provider that runs natively in each parent", () => {
+    assert.equal(nativeProviderOf(matrix, "claude"), "claude");
+    assert.equal(nativeProviderOf(matrix, "codex"), "codex");
+    assert.throws(() => nativeProviderOf(matrix, "cursor"), /unknown parent cursor/);
+  });
+
+  it("picks the first lane of another provider than the session's, in the operator's order", () => {
+    assert.equal(chosen("claude", []), "codex:gpt-6.1-sol@xhigh");
+    assert.equal(chosen("codex", []), "claude:claude-opus-5-5@xhigh");
+    assert.equal(chosen("claude", [], [...pool].reverse()), "grok:grok-4.7@xhigh");
+    const pick = pickCrossFamily(matrix, "claude", pool, []);
+    assert.deepEqual(pick.executors, ["claude"]);
+    assert.deepEqual(pick.eligible.map((l) => l.descriptor), ["codex:gpt-6.1-sol@xhigh", "grok:grok-4.7@xhigh"]);
+    assert.deepEqual(pick.chosen, {
+      descriptor: "codex:gpt-6.1-sol@xhigh",
+      provider: "codex",
+      model: "gpt-6.1-sol",
+      effort: "xhigh",
+      route: "runner",
+    });
+    assert.deepEqual(pick.skipped, [
+      { lane: "claude:claude-opus-5-5@xhigh", reason: "same family: claude wrote part of the work" },
+    ]);
+  });
+
+  it("drops every provider whose write lane is part of the result", () => {
+    assert.equal(chosen("codex", ["grok"]), "claude:claude-opus-5-5@xhigh");
+    assert.equal(chosen("claude", ["grok"]), "codex:gpt-6.1-sol@xhigh");
+    assert.equal(chosen("claude", ["codex"]), "grok:grok-4.7@xhigh");
+    assert.equal(chosen("codex", ["claude"]), "grok:grok-4.7@xhigh");
+    assert.equal(chosen("claude", ["claude", "grok", "grok"]), "codex:gpt-6.1-sol@xhigh");
+  });
+
+  it("yields no lane when the three providers wrote, and never a lane of an executor", () => {
+    const pick = pickCrossFamily(matrix, "claude", pool, ["codex", "grok"]);
+    assert.equal(pick.chosen, null);
+    assert.deepEqual(pick.eligible, []);
+    assert.deepEqual(pick.skipped.map((s) => s.lane), pool);
+    assert.deepEqual(pick.executors, ["claude", "codex", "grok"]);
+  });
+
+  it("compares providers, not families: another model of the session's provider is not cross-family", () => {
+    const sameProvider = ["codex:gpt-6.1-sol@xhigh", "codex:gpt-6-astra@max", "codex:gpt-6-sol@high"];
+    assert.equal(chosen("codex", [], sameProvider), null);
+    assert.equal(chosen("claude", [], ["claude:fable@max", "claude:claude-opus-5-5@xhigh"]), null);
+    assert.equal(chosen("claude", ["codex"], [...sameProvider, "claude:fable@max"]), null);
+  });
+
+  it("skips an alias, which runs on the parent model, and still picks the next lane", () => {
+    const pick = pickCrossFamily(matrix, "claude", ["inherit-parent", "auto", "grok:grok-4.7@xhigh"], []);
+    assert.equal(pick.chosen?.descriptor, "grok:grok-4.7@xhigh");
+    assert.deepEqual(pick.skipped, [
+      { lane: "inherit-parent", reason: "alias: runs on the parent model" },
+      { lane: "auto", reason: "alias: runs on the parent model" },
+    ]);
+    assert.equal(chosen("codex", [], ["auto"]), null);
+  });
+
+  it("keeps each lane's effort as written and refuses an unknown executor or an unselectable effort", () => {
+    assert.equal(chosen("claude", [], ["codex:gpt-6.1-sol@low", "grok:grok-4.7@xhigh"]), "codex:gpt-6.1-sol@low");
+    assert.throws(() => pickCrossFamily(matrix, "claude", pool, ["cursor"]), /unknown provider "cursor"/);
+    assert.throws(() => pickCrossFamily(matrix, "claude", ["grok:grok-4.7@max"], []), /does not select effort max/);
+  });
+
+  it("says why a row can never yield a lane under a parent", () => {
+    assert.equal(crossFamilyRowProblem(matrix, "claude", "trail reviewer pool", pool), null);
+    assert.equal(crossFamilyRowProblem(matrix, "codex", "trail reviewer pool", pool), null);
+    assert.match(
+      crossFamilyRowProblem(matrix, "codex", "trail reviewer pool", ["codex:gpt-6.1-sol@xhigh", "codex:gpt-6-astra@max"]) ?? "",
+      /needs at least one lane from a provider other than codex/
+    );
+    assert.match(
+      crossFamilyRowProblem(matrix, "claude", "trail reviewer pool", ["auto", "grok:grok-4.7@xhigh"]) ?? "",
+      /takes provider-qualified lanes only: auto runs on the parent model/
+    );
   });
 });
 

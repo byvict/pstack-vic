@@ -1437,3 +1437,43 @@ A etapa 4.1 do plano rodou o autopilot da 0.5.1 num programa de verdade, com doi
 - O `gh pr merge --squash` usa o padrão de squash do repositório, que aqui é `COMMIT_MESSAGES`. Sem `--body-file`, o commit na `main` fica só com o título, e o `opening-a-pr.md` diz que o corpo do squash é o corpo do PR.
 
 A prova rodou em bypass permissions, então não testou o classificador do auto mode. A trilha e a revisão estão em `~/Dev/Skills/pstack-vic-runs/2026-10-01-autopilot-prova/`.
+
+# 0.5.2 — O revisor da trilha vira papel do sheet (2026-10-02)
+
+A skill `show-me-your-work` manda revisar a trilha de decisões por um modelo de outra família antes de devolver o trabalho. Até a 0.5.1 isso era uma frase só, igual à da Cursor, sem papel nem lista por trás: a sessão revisada escolhia o próprio revisor. Na Cursor um aplicativo só serve todos os fornecedores, e a frase bastava. Aqui a escolha de modelo é o que o port trocou (matriz, sheet, runner), então a frase passa a apontar para um papel do sheet e para uma regra escrita uma vez. É troca de harness. O resto da seção continua o texto da Cursor em `12d587d`.
+
+## O que a versão faz
+
+- **Papel novo, `trail reviewer pool`.** É o 18º papel de `model-matrix.json` e a última linha do sheet. O default é a lista do Victor, na ordem dele, nos dois pais: `claude:claude-opus-5-5@xhigh`, `codex:gpt-6.1-sol@xhigh`, `grok:grok-4.7@xhigh`. O campo novo `selection: "cross-family"` marca o papel como pool: roda uma lane só, a primeira cuja Família não escreveu o trabalho.
+- **Uma regra, num lugar.** A seção *Cross-family selection* de `provider-dispatch.md` diz o que é revisão cruzada (o campo `provider` da matriz, que é a Família do `CONTEXT.md`; a coluna `family` da matriz e a rota não decidem), quem são os executores (a sessão que fez o trabalho, sempre, e toda lane `isolated-write` cujo resultado entrou na entrega), como se escolhe, o que acontece quando a lane cai e de onde vem o nome do revisor (o recibo).
+- **A escolha é de um script.** `setup-pstack.ts pick --parent <pai> --role "<papel>" [--executor <fornecedor>]...` lê a linha do sheet, ou o default quando a linha falta, descarta as entradas de fornecedor executor e os aliases, e imprime as que sobram na ordem do operador. O código de saída 1 diz que nenhuma serve. As funções `pickCrossFamily`, `crossFamilyRowProblem` e `nativeProviderOf` ficam em `scripts/model-matrix.ts`.
+- **O `plan` do `/setup-pstack` valida a linha.** Recusa alias e recusa lista sem nenhum fornecedor diferente do do pai, porque uma linha assim nunca dá revisor. A matriz recusa o mesmo no default. O plano ganha `warnings`, que avisa quando a linha tem um fornecedor só além do pai. O `plan.json` vai do schema 5 para o 6.
+- **`show-me-your-work`.** A frase "spawn a subagent on a different model family" vira "launch one reviewer lane from the `trail reviewer pool` role, on a provider that wrote none of the work". Entram um parágrafo sobre a escolha e outro sobre a trilha sem revisão. O nome em `reviewed by` vem do recibo. Um subagente não lança o revisor: devolve a trilha e o caminho do transcript, e a sessão de topo lança uma revisão por trilha.
+- **`arena`.** A Phase C escolhe o juiz pela mesma regra, com o pai e a candidata base como executores. A regra do arena continua sendo preferência: sem entrada elegível, escolhe de novo só com o pai, depois pega a primeira da linha, e a nota de síntese diz qual fornecedor o juiz divide.
+- **Documentos.** `CONTEXT.md` ganha o termo Executor e diz que a Família é a coluna Provider da matriz. `docs/reference.md` ganha o item *Revisão cruzada*.
+
+Os seis playbooks gerados não mudam. Eles citam a `show-me-your-work` pelo nome.
+
+## Decisões do Victor (2026-10-02)
+
+Victor aprovou em bloco as oito sugestões da investigação:
+
+1. Papel novo, em vez de reusar o `arena cross-judge pool`. São trabalhos diferentes, e no arena a regra é preferência.
+2. A referência é a união: a sessão mais as lanes que escreveram. Uma execução em que as três Famílias escreveram fica sem revisor.
+3. Sem revisor elegível, a trilha fica sem revisão e a resposta diz isso. Não existe revisão "parcial".
+4. Revisor indisponível: roda a próxima entrada elegível da lista, com o recibo da queda registrado. Nunca um modelo fora da lista nem o modelo do pai.
+5. A trilha de um Dono é revisada pela Raiz, porque só a sessão de topo escolhe rota.
+6. A regra fica em texto e num subcomando, para a sessão revisada não escolher o próprio revisor.
+7. O verificador do `orchestrate.md` ("on a different model family") tem a mesma escolha implícita e fica para outro PR.
+8. O revisor de outra empresa lê o transcript inteiro da execução. Victor deu o ok.
+
+O default do papel é a lista do Victor. Por isso `sol-6-1` e `grok-4-7` entram no mapa da primeira execução dos dois pais e são sondados uma vez numa instalação nova. O `grok-4.6` continua sendo o default dos outros papéis. Onze testes que usavam essas duas famílias como exemplo de "família fora do mapa" passam a usar `sol` no pai Claude.
+
+## Verificação
+
+- `npm test`: 329 testes, 0 falhas, nenhum pulado. A 0.5.1 tinha 309. Entram 10 em `scripts/model-matrix.test.ts` (2 do papel e 8 da regra de escolha) e 10 em `setup-pstack.test.ts` (4 do `plan`, 5 do `pickLane` e 1 do subcomando).
+- `npm run test:bun`: 52 testes, 0 falhas, typecheck limpo. `npm run matrix:check`, `npm run agents:check`, `npm run collision:check` e `git diff --check` limpos.
+- Leitura fora do repositório por uma lane `read-only`, com o runner de verdade e effort `low`, em 2026-10-02 (Claude Code 2.1.285, Codex 0.159.2, Grok 1.0.44):
+  - Codex, lançado pelo pai Claude, leu um arquivo da pasta de transcripts desta sessão em `~/.claude/projects/`.
+  - Grok, lançado pelo pai Claude, e Claude, lançado como o pai Codex lança, leram um arquivo neutro em `~/Dev/Skills/pstack-vic-runs/`. Os recibos confirmam `grok-4.7-build` e `claude-opus-5-5`.
+- Não verificado: o Grok lendo um transcript de verdade e o Claude lendo `~/.codex/sessions/`. O modo automático do Claude Code recusou os dois lançamentos por proteção de dados, e a sessão não contornou a recusa. A `show-me-your-work` trata uma recusa dessas como queda sem recibo.
