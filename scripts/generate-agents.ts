@@ -1,17 +1,25 @@
 #!/usr/bin/env node
 // Generate the Claude-native lane agents (agents/pstack-<stem>-<effort>.md)
-// from model-matrix.json.
+// and autopilot owner agents (agents/pstack-owner-<stem>-<effort>.md) from
+// model-matrix.json.
 //
 //   node scripts/generate-agents.ts          write every declared agent, delete orphans
 //   node scripts/generate-agents.ts --check  exit 1 if any agent is missing, orphan or stale
 //
-// The generator owns every agents/pstack-*.md file: one per (family with an
-// agentStem) x (selectable effort). Hand-written agents (poteto-agent.md,
-// comment-sicko.md) never match that prefix and are left alone. Codex needs no
-// file: its parent passes `model` and `reasoning_effort` to `spawn_agent`.
+// The generator owns every agents/pstack-*.md file: one lane and one owner per
+// (family with an agentStem) x (selectable effort). Hand-written agents
+// (poteto-agent.md, comment-sicko.md) never match that prefix and are left
+// alone. Codex needs no file: its parent passes `model` and `reasoning_effort`
+// to `spawn_agent`.
 //
-// The agent text is the open-pstack 1.4.1 lane template (MIT, see NOTICE.md),
-// so a regenerated file is byte-identical to the file open-pstack ships.
+// The lane text is the open-pstack 1.4.1 lane template (MIT, see NOTICE.md),
+// so a regenerated lane is byte-identical to the file open-pstack ships.
+//
+// An owner is poteto-agent on the model and effort of an authoring row. Claude
+// Code's Agent tool takes no effort and only a family alias as `model`, so the
+// agent definition is the one place that carries both (measured on 2.1.287).
+// Its body is the body of agents/poteto-agent.md, read at generation time, and
+// it keeps the Agent tool, which a lane does not.
 
 import { existsSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -19,6 +27,7 @@ import {
   PLUGIN_ROOT,
   agentName,
   loadMatrix,
+  ownerAgentName,
   type Family,
   type ModelMatrix,
 } from "./model-matrix.ts";
@@ -64,13 +73,44 @@ export function renderAgent(f: Family, effort: string): string {
   ].join("\n");
 }
 
-/** Every agent the matrix declares, name -> file text, in matrix order. */
-export function expectedAgents(matrix: ModelMatrix): Map<string, string> {
+/** Body of the hand-written poteto-agent, the text every owner agent carries. */
+export function potetoAgentBody(): string {
+  const text = readFileSync(join(AGENTS_DIR, "poteto-agent.md"), "utf8");
+  const end = text.indexOf("\n---\n", 4);
+  if (!text.startsWith("---\n") || end < 0) throw new Error("agents/poteto-agent.md has no frontmatter");
+  return text.slice(end + 5);
+}
+
+/** Text of one owner agent. Throws when the family has no Claude-native stem. */
+export function renderOwnerAgent(f: Family, effort: string, body: string): string {
+  const name = ownerAgentName(f, effort);
+  if (name === null) throw new Error(`${f.family} has no Claude-native agent stem`);
+  if (!f.efforts.includes(effort)) {
+    throw new Error(`${f.family} does not select effort ${effort}`);
+  }
+  return [
+    "---",
+    `name: ${name}`,
+    `description: Autopilot PR owner for an authoring row configured as ${f.provider}:${f.model}@${effort}. Only the root of a poteto-mode autopilot program spawns it.`,
+    `model: ${f.model}`,
+    `effort: ${effort}`,
+    "---",
+    body,
+  ].join("\n");
+}
+
+/** Every agent the matrix declares, name -> file text: the lanes, then the owners, each in matrix order. */
+export function expectedAgents(matrix: ModelMatrix, ownerBody: string = potetoAgentBody()): Map<string, string> {
   const out = new Map<string, string>();
-  for (const f of matrix.families) {
-    if (f.agentStem === null) continue;
+  const native = matrix.families.filter((f) => f.agentStem !== null);
+  for (const f of native) {
     for (const effort of f.efforts) {
       out.set(agentName(f, effort) as string, renderAgent(f, effort));
+    }
+  }
+  for (const f of native) {
+    for (const effort of f.efforts) {
+      out.set(ownerAgentName(f, effort) as string, renderOwnerAgent(f, effort, ownerBody));
     }
   }
   return out;

@@ -24,7 +24,7 @@ No shell, `claude plugin marketplace add byvict/pstack-vic` e `claude plugin ins
 ### Codex
 
 ```shell
-codex plugin marketplace add byvict/pstack-vic --ref v0.5.4
+codex plugin marketplace add byvict/pstack-vic --ref v0.5.5
 codex plugin add pstack@pstack-vic
 ```
 
@@ -96,7 +96,8 @@ Cada passo confere o que já foi feito, então rodar o script duas vezes não es
 │   ├── poteto-mode/scripts/          # runner externo (Node 24, com probe-lane.ts, a sonda de uma lane), watch-pr, orch, check-plan.mjs, worktree-audit.sh
 │   ├── setup-pstack/scripts/         # setup-pstack.ts: estado, plano, probe, atestado e escrita do sheet, e a escolha de uma lane de um papel de pool (Node 24); authorize.ts: a autorização permanente (autopilot e Shipping)
 │   └── update-clis/                  # scripts/update-clis.ts (check, notes, install, probe) e references/cli-touchpoints.json
-├── agents/                           # poteto-agent, comment-sicko e as lanes nativas pstack-<família>-<effort> geradas da matriz
+├── agents/                           # poteto-agent, comment-sicko e, gerados da matriz, as lanes nativas pstack-<família>-<effort> e os Donos pstack-owner-<família>-<effort>
+├── hooks/                            # hooks.json e agent-guard.mjs: a trava que recusa os agentes embutidos do Claude Code quando um agente do pstack os chama
 ├── assets/                           # logo
 ├── docs/reference.md                 # esta referência
 ├── docs/adr/                         # decisões registradas (ADRs); o 0005 aposenta o fluxo antigo
@@ -200,6 +201,8 @@ O Dono leva um PR do build ao merge. Cada Dono trabalha num worktree próprio, q
 - **Rebaseia na hora certa, no Autopilot-full.** Rebasear é reaplicar os commits da branch sobre a trunk atual, e a trunk é a `main`. O primeiro rebase vem antes do aviso de Code-ready. Nos consertos que a Raiz pede, a base não muda. Ele só rebaseia de novo no preparo do merge, num conflito com a trunk ou numa falha de CI causada por uma mudança na trunk. Para publicar um rebase, ele valida o URL de escrita, captura o head remoto antes da reescrita, exige igualdade com o head local e usa o lease explícito `--force-with-lease=refs/heads/<branch>:<SHA-capturado>`. Um fetch posterior não altera esse SHA. Uma branch compartilhada ele nunca força.
 - **Avisa a Raiz em dois momentos.** No Code-ready, o código a entregar está final, e o aviso leva o head, que é o último commit da branch. No Merge-ready, terminaram a prova dele, o CI (os testes automáticos do GitHub) e o babysit, que é acompanhar o PR até o CI ficar verde. Entre um aviso e outro, essas três coisas correm em paralelo com a verificação da Raiz. Ele também avisa o head de cada push posterior que muda o patch, que é o conteúdo da mudança.
 - **Acompanha o próprio PR sem `/loop`, no Claude Code.** O playbook do Babysit manda acompanhar o PR dentro de um `/loop`. No Claude Code 2.1.285, um subagente em segundo plano não tem as ferramentas que o `/loop` usa (`ScheduleWakeup` e `CronCreate`). Por isso o Dono roda o vigia do PR, `scripts/watch-pr/watch-pr`, que espera sozinho até o PR chegar a um resultado final, e o roda de novo depois de cada push e de cada resultado em que ele age.
+- **Segue o playbook do tipo da tarefa.** O pedido que a Raiz entrega ao Dono (o brief) tem os campos do brief do Orchestrate e diz qual playbook rege o build: Bug fix, Feature, Refactoring ou Perf issue. O Dono copia os passos desse playbook para a lista de tarefas dele. O playbook do autopilot cuida do resto do ciclo do PR.
+- **Despacha os próprios ajudantes pela planilha de modelos.** Para os ajudantes que ele cria, o Dono faz o papel de pai: lê `provider-dispatch.md` e manda cada papel configurado pela rota dele. Uma exploração dividida em partes, por exemplo, vai pela skill `swarm`, no modelo da linha `swarm workers`. No Claude Code, uma trava recusa os agentes embutidos `Explore`, `Plan` e `general-purpose` quando um agente do pstack os chama, porque eles rodam sem a skill e fora da planilha ([Subagents](#subagents)).
 - **Anota os subagentes que cria.** O arquivo `children.tsv` guarda o ID, o tempo esperado e o estado de cada um. O tempo esperado é, no mínimo, o da execução mais longa já vista daquele tipo.
 - **Mergeia, no Autopilot-full.** O merge é o único passo que o Dono não dá sozinho. Com o Veredito limpo da Raiz, ele rebaseia na trunk atual, avisa o head novo e espera o CI passar nesse head. Um head novo exige Veredito atual. A Raiz compara os bytes exatos do patch e audita base, dependências, configuração e runtime de cada lane; patch-id igual sozinho não preserva evidência. Depois dos checks atuais, o Dono segue Guarded operations para capturar o corpo real do PR em arquivo e submeter o head publicado com host, repositório, PR, `--match-head-commit` e `--body-file` explícitos. Espera o estado `MERGED` do próprio PR, confere o commit real e pega o próximo item independente da fila. Na comparação com o commit real, só a normalização de LF final é permitida; espaços e texto literal permanecem. O arquivo preserva o corpo no squash direto; a fila nativa usa a política de metadados do GitHub, então o Dono confere e relata qualquer diferença.
 - **Não mergeia nem mexe na pilha, no Autopilot-stack.** Ele empurra só a própria branch e avisa STACK-READY quando o loop de babysit dele fica verde. Com o Veredito limpo, a Raiz põe o PR na pilha. Só a Raiz rebaseia e ordena a pilha.
@@ -408,12 +411,18 @@ Vinte e três skills de um princípio cada. `poteto-mode` indexa todas inline e 
 
 ## Subagents
 
-- **`poteto-agent`**. É o Dono de cada PR em um programa de [autopilot](#autopilot).
-  No Claude Code, a Raiz o cria com `Agent`, `subagent_type: "poteto-agent"` e `isolation: "worktree"`.
-  No Codex, a Raiz usa `spawn_agent` com uma worktree própria.
+- **`poteto-agent`**. É o ajudante de quem trabalha em `poteto-mode`, para tudo que não é um papel configurado.
   Lê `poteto-mode` por completo antes de trabalhar.
+- **`pstack-owner-<família>-<effort>`**. É o Dono de cada PR em um programa de [autopilot](#autopilot): o `poteto-agent` no modelo e no effort da linha de autoria do PR.
+  A ferramenta `Agent` do Claude Code não recebe effort, então é a definição do agente que leva os dois.
+  A Raiz o cria com `Agent`, `subagent_type: "pstack-owner-opus-xhigh"` (para uma linha `claude:claude-opus-5-5@xhigh`) e `isolation: "worktree"`.
+  Diferente de uma lane, ele pode criar subagentes.
+  São gerados da matriz junto com as lanes.
+  No Codex não há arquivo: a Raiz usa `spawn_agent` com o modelo, o effort e uma worktree própria.
 - **`comment-sicko`** — revisor de comentários, só leitura, que `no-comments` dispara. Renomeado de `Comment Sicko` para valer como `subagent_type`.
 - **`pstack-<família>-<effort>`** — lanes nativas do Claude Code para cada família com `agentStem` na matriz (hoje `fable` e `opus`) em cada effort selecionável, geradas por `npm run agents:generate` e verificadas por `agents:check`. Não são fluxos de usuário; `provider-dispatch.md` as despacha a partir do papel configurado. No Codex não há arquivo: `spawn_agent` recebe `model` e `reasoning_effort`.
+
+**A trava dos agentes embutidos.** O plugin registra um hook do Claude Code, `hooks/agent-guard.mjs`, que roda antes de cada chamada da ferramenta `Agent`. Ele recusa `Explore`, `Plan` e `general-purpose` quando quem chama é um agente do pstack (um Dono ou um `poteto-agent`), e a recusa diz o caminho certo. Esses três agentes rodam sem a skill `poteto-mode`, e o `Explore` e o `Plan` nem carregam a planilha de modelos. A sessão principal não é afetada: você continua podendo usar qualquer agente. O hook não injeta nada no início da sessão, então `poteto-mode` continua entrando só por comando. No Codex o hook não existe.
 
 ## Verificação
 

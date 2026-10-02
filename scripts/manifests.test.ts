@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, lstatSync, readFileSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join, isAbsolute, resolve } from "node:path";
 import { PLUGIN_ROOT } from "./model-matrix.ts";
@@ -117,7 +117,9 @@ describe("plugin manifests", () => {
 // (`disable-model-invocation: true`, `mode: true`). The open-pstack SessionStart
 // hook turned it into a standing mandate for every non-trivial task, and a bug
 // fix in Fin Dash (2026-09-23) entered poteto-mode and dispatched a subagent
-// without being asked. Neither parent may enter it on its own.
+// without being asked. Neither parent may enter it on its own. The one hook the
+// plugin ships is the Agent guard (`scripts/agent-guard.test.ts`), which injects
+// no context and fires only on an Agent call.
 describe("poteto-mode entry", () => {
   const frontmatter = (rel: string) => {
     const match = readFileSync(join(PLUGIN_ROOT, rel), "utf8").match(/^---\n([\s\S]*?)\n---\n/);
@@ -125,8 +127,18 @@ describe("poteto-mode entry", () => {
     return match[1].split("\n");
   };
 
-  it("ships no hooks, so nothing injects a poteto-mode mandate at session start", () => {
-    assert.equal(existsSync(join(PLUGIN_ROOT, "hooks")), false);
+  it("ships the Agent guard as its only hook, so nothing injects a poteto-mode mandate at session start", () => {
+    assert.deepEqual(readJson("hooks/hooks.json"), {
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: "Agent",
+            hooks: [{ type: "command", command: 'node "${CLAUDE_PLUGIN_ROOT}/hooks/agent-guard.mjs"' }],
+          },
+        ],
+      },
+    });
+    assert.deepEqual(readdirSync(join(PLUGIN_ROOT, "hooks")).sort(), ["agent-guard.mjs", "hooks.json"]);
   });
 
   it("is user-invoked only in Claude Code", () => {
