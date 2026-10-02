@@ -1498,3 +1498,15 @@ Antes de mudanças que invalidam evidência, o responsável retira fila e auto-m
 A autorização mantém a versão 2 e exige exatamente um grant com o corpo atual, sem escrever settings. A redação nomeia a Raiz ou o Dono da branch e as duas formas literais de lease. O diagnóstico distingue ausência, texto diferente e multiplicidade. O operador revisa a entrada e executa `apply` com a mesma confirmação e backup. Nenhuma configuração real é aplicada pela release; o script de release e as regras de produção não mudam.
 
 As regressões executam comandos extraídos do Shipping em Git real descartável e usam fronteiras de transporte e forge explicitamente inertes. Cobrem objetos substituídos, leases, criação/no-op, refs literais, configuração de tags/submódulos/rebase, hooks reais, contribuição do filho, falhas de readback e corpo como dados. HOME temporário cobre grant e preservação de configurações. Parser, pares contados, proveniência, recusa atômica e todos os seis consumidores continuam testados. Essas provas locais não substituem GitHub real, classificador auto-mode, mídia, CI e verificação independente.
+
+# 0.5.4 — Observação da admissão e do candidato da fila (2026-10-02)
+
+O watcher existente diferencia ready-unadmitted, auto-merge-pending, queued, group-running, failed, removed e merged. A observação continua somente de leitura. JSON e saída legível mostram repositório, node e número do PR, URL, head da contribuição, base registrada no PR, SHA do ref atual da base, candidato informado pela entry, required checks, app produtor e links. Candidato e motivo ausentes ficam unknown.
+
+Requirements combinam a proteção clássica da base com os rulesets efetivos. Checks do head e do candidato são paginados e comparados por nome e app exigido. StatusContext não informa um app e mantém produtor unknown. Um check homônimo de outro app não satisfaz uma exigência vinculada ao produtor.
+
+A remoção mantém o beforeCommit como candidato removido. O polling só atribui a remoção ao head atual quando observou a saída de uma entry sem mudança da contribuição. Uma remoção histórica deixa esse vínculo unknown. Admissão e auto-merge continuam separados; o watcher espera merged real.
+
+As substituições safety existentes reforçam veredito e requirements atuais antes de admissão, diagnóstico antes de tentar novamente, congelamento do PR independente durante recomposição e retirada antes de rewrite. Pilhas continuam bottom-up com restack pelo limite antigo do pai. Os seis playbooks são regenerados pela tabela classificada. Os blocos Guarded operations da 0.5.3 permanecem iguais.
+
+Regressões focadas cobrem estados, incerteza, identidade, base atual, produtor obrigatório, recomposição e remoção histórica. A integração agrupada usa a fixture privada existente, com o root como único escritor. A release não altera regras de produção.

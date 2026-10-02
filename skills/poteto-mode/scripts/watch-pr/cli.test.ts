@@ -122,7 +122,9 @@ describe("rendering", () => {
       {
         kind: "merged",
         context,
+        landing: { kind: "merged", reason: "unknown" },
         facts: {
+          native: { kind: "unknown", reason: "test" },
           context,
           mergeable: "MERGEABLE",
           mergeStateStatus: "CLEAN",
@@ -203,8 +205,8 @@ describe("main", () => {
       harness.runtime
     );
     expect(code).toBe(4);
-    expect(harness.stdout).toHaveLength(1);
-    expect(JSON.parse(harness.stdout[0])).toMatchObject({
+    expect(harness.stdout).toHaveLength(2);
+    expect(JSON.parse(harness.stdout[1])).toMatchObject({
       kind: "BLOCKER",
       exitCode: 4,
       blocker: {

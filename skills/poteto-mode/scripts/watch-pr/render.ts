@@ -1,6 +1,61 @@
 import type * as T from "./types.ts";
 export const renderJson = (verdict: T.WatcherVerdict): string =>
   `${JSON.stringify(verdict)}\n`;
+export function renderLanding(
+  row: Pick<T.PrSnapshot, "context" | "facts" | "landing">
+): string {
+  const native = row.facts.native;
+  const lines = [
+    `admission=${row.landing.kind}`,
+    `reason=${row.landing.reason}`,
+  ];
+  if (native.kind === "unknown")
+    return `${lines.join("\n")}\nnative=unknown\ndetail=${native.reason}\n`;
+  if (row.landing.kind === "removed")
+    lines.push(`removalHeadBinding=${row.landing.headBinding}`);
+  if (native.lastQueueEvent?.kind === "removed")
+    lines.push(
+      `removedCandidateSha=${native.lastQueueEvent.removedCandidateSha}`
+    );
+  const candidate = native.candidate;
+  lines.push(
+    `repository=${native.repository}`,
+    `pr=${native.prNumber}`,
+    `prNodeId=${native.prNodeId}`,
+    `url=${native.prUrl}`,
+    `headSha=${native.headSha}`,
+    `baseRef=${native.baseRef}`,
+    `prBaseSha=${native.prBaseSha}`,
+    `currentBaseSha=${native.currentBaseSha}`,
+    `autoMerge=${native.autoMerge === null ? "absent" : "pending"}`,
+    `queueEntry=${native.queueEntry?.id ?? "absent"}`,
+    `queueState=${native.queueEntry?.state ?? "unknown"}`,
+    `candidateSha=${candidate === undefined || candidate === "unknown" ? "unknown" : candidate.sha}`,
+    `candidateUrl=${candidate === undefined || candidate === "unknown" ? "unknown" : candidate.url}`
+  );
+  if (native.requirements.kind === "unknown")
+    lines.push(
+      "requiredChecks=unknown",
+      `requirementsDetail=${native.requirements.reason}`
+    );
+  else {
+    lines.push(`requiredChecks=${native.requirements.checks.length}`);
+    for (const check of native.requirements.checks) {
+      lines.push(`required=${check.context} appId=${check.appId}`);
+      for (const target of ["head", "candidate"] as const) {
+        const result = check[target];
+        const producer =
+          result.producer === "unknown"
+            ? "unknown"
+            : `${result.producer.slug}/${result.producer.appId}`;
+        lines.push(
+          `${target} state=${result.state} producer=${producer} links=${result.links.join(",") || "unknown"}`
+        );
+      }
+    }
+  }
+  return `${lines.join("\n")}\n`;
+}
 function ciCell(row: T.PrSnapshot): string {
   if (row.kind !== "open") return "\u2014";
   const was = row.ci.hadPreviousPassingCi ? ", was ✅" : "";
@@ -50,7 +105,7 @@ export function renderStatusTable(rows: T.NonEmpty<T.PrSnapshot>): string {
       `| [#${row.context.number}](${url}) | ${ciCell(row)} | ${reviewCell(row)} | ${mergeCell(row)} |`
     );
   }
-  return `${lines.join("\n")}\n`;
+  return `${lines.join("\n")}\n${rows.map(renderLanding).join("\n")}`;
 }
 function threadLine(thread: T.ReviewThread): string {
   const comment = thread.firstComment;
@@ -71,6 +126,8 @@ type StatusQueryBlocker = {
 };
 function renderBlocker(blocker: T.MergeBlocker | StatusQueryBlocker): string {
   switch (blocker.kind) {
+    case "native-admission":
+      return `BLOCKER: native-admission\n${renderLanding(blocker.snapshot)}action=diagnose current requirements and queue removal before another admission`;
     case "merge-conflicts":
       return [
         "BLOCKER: merge-conflicts",
@@ -132,11 +189,15 @@ function renderBlocker(blocker: T.MergeBlocker | StatusQueryBlocker): string {
 }
 export function renderPretty(verdict: T.WatcherVerdict): string {
   switch (verdict.kind) {
+    case "LANDING":
+      return renderLanding(verdict.snapshot);
     case "QUEUE":
       return `QUEUE: captured ${verdict.queue.length} PR${verdict.queue.length === 1 ? "" : "s"} bottom-to-top: ${verdict.queue.map((pr) => `#${pr.number}`).join(",")}\n`;
     case "STATUS":
       return renderStatusTable(verdict.rows);
     case "WAITING":
+      if (verdict.reason.kind === "native-admission")
+        return `WAITING: frontier=#${verdict.frontier.number} admission=${verdict.reason.observation.kind} reason=${verdict.reason.observation.reason}\n`;
       return verdict.reason.kind === "pending-checks"
         ? `WAITING: frontier=#${verdict.frontier.number}; ${verdict.reason.pending.length} check${verdict.reason.pending.length === 1 ? "" : "s"} pending\n`
         : `WAITING: frontier=#${verdict.frontier.number} is blocker-free; waiting for merge queue (${verdict.reason.unmergedCount} PR${verdict.reason.unmergedCount === 1 ? "" : "s"} unmerged)\n`;
@@ -151,7 +212,11 @@ export function renderPretty(verdict: T.WatcherVerdict): string {
         verdict.scope.kind === "single" && verdict.scope.pr.kind === "ready-pr"
           ? `\nmergeStateStatus=${verdict.scope.pr.proof.ci.github.mergeStateStatus}\nreviewDecision=${verdict.scope.pr.proof.gate.reviewDecision}\nisDraft=${verdict.scope.pr.proof.gate.draft === "draft-allowed"}${verdict.scope.pr.proof.gate.draft === "draft-allowed" ? "\nnote=draft allowed (--allow-draft); leave draft \u2014 do not mark ready" : ""}`
           : "";
-      return `READY: no merge conflicts, no unresolved review threads, no failing or pending checks${detail}\n`;
+      const observations =
+        verdict.scope.kind === "single"
+          ? [verdict.scope.pr]
+          : verdict.scope.prs;
+      return `${observations.map(renderLanding).join("\n")}READY: no merge conflicts, no unresolved review threads, no failing or pending checks${detail}\n`;
     }
     case "COMPLETE":
       return `COMPLETE: queued stack merged (${verdict.queue.length} PR${verdict.queue.length === 1 ? "" : "s"})\n`;

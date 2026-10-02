@@ -67,6 +67,22 @@ export function fakeReader(
   };
   const defaults: PullRequestFacts = {
     context,
+    native: {
+      kind: "observed",
+      repository: `${context.owner}/${context.repo}`,
+      prNodeId: "PR_test",
+      prNumber: context.number,
+      prUrl: `https://github.com/${context.owner}/${context.repo}/pull/${context.number}`,
+      headSha: "head",
+      baseRef: "main",
+      prBaseSha: "base",
+      currentBaseSha: "base",
+      autoMerge: null,
+      queueEntry: null,
+      candidate: "unknown",
+      lastQueueEvent: null,
+      requirements: { kind: "known", checks: [] },
+    },
     mergeable: "MERGEABLE",
     mergeStateStatus: "CLEAN",
     reviewDecision: "APPROVED",

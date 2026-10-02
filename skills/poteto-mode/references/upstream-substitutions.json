@@ -464,7 +464,7 @@
         {
           "file": "skills/poteto-mode/playbooks/shipping.md",
           "from": "Only then run step 7.",
-          "to": "Compare the watcher's owner, repository and PR number to the record; after each wake execute the Guarded identity query, then compare head, base, queue and auto-merge from that complete response. A mismatch stops progression. Only then run step 7.",
+          "to": "Compare the watcher's owner, repository and PR number to the record; after each wake execute the Guarded identity query, then compare head, base, queue and auto-merge from that complete response. A mismatch stops progression. Keep admission observation read-only. Re-read current required checks and their producers on the contribution and reported candidate. Diagnose a failed or removed entry before a new expected-head admission. Keep an admitted independent head frozen during candidate recomposition. Only then run step 7.",
           "count": 1
         },
         {
@@ -570,13 +570,13 @@
         {
           "file": "skills/poteto-mode/playbooks/shipping.md",
           "from": "5. **Land one PR at a time.** If the bottom PR is mergeable now, squash it with `origin pr merge <pr> --squash` or `gh pr merge <pr> --squash`. If requirements are still running and the user asked for merge-when-ready, arm only that PR with `origin pr merge <pr> --squash --auto` or `gh pr merge <pr> --squash --auto`. Origin's `--auto` is Origin merge-when-ready. GitHub's `--auto` is GitHub auto-merge. Wait for that PR to merge before preparing the next one.",
-          "to": "5. **Land one PR at a time.** Require the current independent verdict and all current requirements to pass. For a merge-when-ready request, watch until current requirements pass, then re-read identity and base. Use the expected-head command in Guarded operations with the selected PR body file. Read back queue membership and auto-merge, and wait for actual `MERGED` before preparing the next PR. Operator-named items remain at merge-ready for the operator's click.",
+          "to": "5. **Land one PR at a time.** Require the current independent verdict and all current requirements to pass. For a merge-when-ready request, watch until current requirements pass, then re-read identity and base. Use the expected-head command in Guarded operations with the selected PR body file. Read back queue membership and auto-merge separately. A ready-unadmitted observation is not admission. Diagnose failed or removed entries before another admission. Freeze an admitted independent PR while GitHub recomposes its candidate after trunk advances. Withdraw both pending modes before any rewrite. For a manual stack, admit only the current bottom PR and wait for actual `MERGED` before preparing the next PR. Operator-named items remain at merge-ready for the operator's click.",
           "count": 1
         },
         {
           "file": "skills/poteto-mode/playbooks/shipping.md",
           "from": "6. **Do not read GitHub `autoMergeRequest` as stack readiness.** At most it says GitHub auto-merge was requested for one GitHub PR. It does not prove Origin merge-when-ready is armed, that a descendant is queued, that a patch verdict is current, or that the contiguous stack is safe. Confirm the active forge's state for the current bottom PR, and say that the state is unknown if the active forge cannot report it.",
-          "to": "6. **Read queue membership and auto-merge separately.** Use the Guarded operations query. `autoMergeRequest` means auto-merge was requested; `mergeQueueEntry` means the PR is admitted to the queue. Neither proves that its independent verdict is current or that a descendant is ready. Failed reads and missing fields leave state unknown and stop progression.",
+          "to": "6. **Read queue membership and auto-merge separately.** Use the Guarded operations query. `autoMergeRequest` means auto-merge was requested; `mergeQueueEntry` means the PR is admitted to the queue. Neither proves that its independent verdict is current or that a descendant is ready. Failed reads and missing fields leave state unknown and stop progression. The read-only watcher reports ready-unadmitted, auto-merge-pending, queued, group-running, failed, removed and merged observations. It records the repository, PR node and number, URL, contribution head, cached PR base, actual current base ref, candidate commit, required checks, producer and links. A missing candidate or API reason stays unknown in JSON and human output. The queue entry headCommit supplies the candidate. Do not infer it from a synthetic branch name. A removal event beforeCommit can identify the removed candidate rather than the PR head. Historical removal without an observed unchanged-head transition keeps its head binding unknown.",
           "count": 1
         },
         {
@@ -594,7 +594,7 @@
         {
           "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
           "from": "Rebase onto current trunk before the code-ready report and babysit.",
-          "to": "Withdraw affected queue and auto-merge requests with readback before rewriting or retargeting. Capture remote and local pre-rewrite heads, require equality, and preserve the captured lease. Fetch current trunk through Guarded operations, capture FETCH_HEAD and require the selected destination SHA. Rebase onto that exact SHA before the code-ready report and babysit.",
+          "to": "Withdraw affected queue and auto-merge requests with readback before rewriting or retargeting. Capture remote and local pre-rewrite heads, require equality, and preserve the captured lease. Fetch current trunk through Guarded operations, capture FETCH_HEAD and require the selected destination SHA. Rebase onto that exact SHA before the code-ready report and babysit. An admitted independent PR remains frozen while GitHub recomposes the candidate after trunk advances. Observe current requirements and the real merged state before changing topology. Manual stacks admit bottom-up and restack only the child contribution through the recorded old-parent boundary.",
           "count": 1
         },
         {
