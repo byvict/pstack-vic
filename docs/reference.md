@@ -24,7 +24,7 @@ No shell, `claude plugin marketplace add byvict/pstack-vic` e `claude plugin ins
 ### Codex
 
 ```shell
-codex plugin marketplace add byvict/pstack-vic --ref v0.5.2
+codex plugin marketplace add byvict/pstack-vic --ref v0.5.3
 codex plugin add pstack@pstack-vic
 ```
 
@@ -329,11 +329,11 @@ Continuam bloqueados:
 
 Fora de um terminal, o `apply` recusa, porque a autorização é um ato seu e não do agente. Ele mantém as regras de fábrica (`"$defaults"`) e todas as outras configurações, e copia o arquivo anterior para `settings.json.before-pstack-authorization`. Para retirar a autorização, apague a entrada.
 
-A entrada traz a versão no nome (`pstack standing authorization v2`). O `check` exige exatamente uma entrada com formato de grant e o corpo atual exato, sem alterar configurações. Ele distingue ausência, texto antigo e múltiplos grants, inclusive uma entrada atual ao lado de outra antiga. Uma v1 ou uma v2 antiga, inclusive a da 0.5.1, sai com 1 e mostra a entrada atual e o comando do operador. A correção de segurança da 0.5.2 conserva a versão 2. Revise a entrada e rode o `apply` de novo; ele a troca no lugar, com a mesma confirmação digitada e backup. Nenhum playbook roda o `check`. O passo 10 do `/setup-pstack` o roda. Rode-o também antes do "go" de um programa de autopilot, quando a Raiz declara o protocolo ([Como um programa começa](#como-um-programa-começa), passo 5).
+A entrada traz a versão no nome (`pstack standing authorization v2`). O `check` exige exatamente uma entrada com formato de grant e o corpo atual exato, sem alterar configurações. Ele distingue ausência, texto antigo e múltiplos grants, inclusive uma entrada atual ao lado de outra antiga. Uma v1 ou uma v2 antiga, inclusive a da 0.5.1, sai com 1 e mostra a entrada atual e o comando do operador. A correção de segurança da 0.5.3 conserva a versão 2. Revise a entrada e rode o `apply` de novo; ele a troca no lugar, com a mesma confirmação digitada e backup. Nenhum playbook roda o `check`. O passo 10 do `/setup-pstack` o roda. Rode-o também antes do "go" de um programa de autopilot, quando a Raiz declara o protocolo ([Como um programa começa](#como-um-programa-começa), passo 5).
 
 ### De onde vem o texto dos playbooks
 
-Seis playbooks são o texto da Cursor mais uma tabela de trocas. São eles `autopilot-full`, `autopilot-stack`, `babysit`, `opening-a-pr`, `shipping` e `multi-phase-plan`. As linhas `platform` adaptam o harness. As linhas `safety` protegem identidade, publicação, retirada, restack e reutilização de evidência conforme a exceção da 0.5.2 no ADR 0005. Todas exigem motivo; `safety` também exige fonte. A tabela está em [`upstream-substitutions.json`](../skills/poteto-mode/references/upstream-substitutions.json), com o tipo, o motivo e a fonte exigida de cada linha. Ninguém edita esses seis arquivos à mão. Para mudar uma frase, mude uma troca na tabela e rode `node scripts/upstream-parity.ts --write`, que gera os seis de novo. O `npm test` roda `node scripts/upstream-parity.ts check`. Esse comando refaz os seis a partir do commit da Cursor anotado em [`UPSTREAM.md`](../UPSTREAM.md) e compara com o que está no repositório. Ele falha quando um arquivo tem uma frase que não é da Cursor nem da tabela. Também falha quando uma troca da tabela não encontra mais o texto dela na Cursor.
+Seis playbooks são o texto da Cursor mais uma tabela de trocas. São eles `autopilot-full`, `autopilot-stack`, `babysit`, `opening-a-pr`, `shipping` e `multi-phase-plan`. As linhas `platform` adaptam o harness. As linhas `safety` protegem identidade, publicação, retirada, restack e reutilização de evidência conforme a exceção aprovada no ADR 0005. Todas exigem motivo; `safety` também exige fonte. A tabela está em [`upstream-substitutions.json`](../skills/poteto-mode/references/upstream-substitutions.json), com o tipo, o motivo e a fonte exigida de cada linha. Ninguém edita esses seis arquivos à mão. Para mudar uma frase, mude uma troca na tabela e rode `node scripts/upstream-parity.ts --write`, que gera os seis de novo. O `npm test` roda `node scripts/upstream-parity.ts check`. Esse comando refaz os seis a partir do commit da Cursor anotado em [`UPSTREAM.md`](../UPSTREAM.md) e compara com o que está no repositório. Ele falha quando um arquivo tem uma frase que não é da Cursor nem da tabela. Também falha quando uma troca da tabela não encontra mais o texto dela na Cursor.
 
 ## Skills
 

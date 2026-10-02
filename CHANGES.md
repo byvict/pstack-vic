@@ -1481,7 +1481,7 @@ O default do papel é a lista do Victor. Por isso `sol-6-1` e `grok-4-7` entram 
 - A revisão real da trilha desta sessão rodou no pai Claude. O `pick` escolheu `codex:gpt-6.1-sol@xhigh`, porque a sessão foi o único executor. A lane rodou pelo runner em `read-only`, leu a trilha e o transcript, terminou em 278 segundos com recibo `complete` e devolveu cinco apontamentos. O Codex não informa o modelo servido, então o recibo traz `pinned-argv`: o modelo foi pedido, não confirmado. A trilha, o recibo e a resposta estão em `~/Dev/Skills/pstack-vic-runs/2026-10-02-trail-reviewer-pool/`.
 - Um dos apontamentos vale para quem lê esta entrada: a regra de queda do pool vale também para o juiz do arena. Antes, nenhum outro fornecedor rodava depois de uma queda. Agora, se o juiz escolhido cai, roda a próxima entrada elegível do `arena cross-judge pool`. Os caminhos de reserva do arena são texto da skill e não têm teste; só a escolha bem-sucedida tem.
 
-# 0.5.2 — Operações de PR ligadas à identidade verificada (2026-10-02)
+# 0.5.3 — Operações de PR ligadas à identidade verificada (2026-10-02)
 
 A exceção aprovada no [ADR 0005](docs/adr/0005-autopilot-substitui-converge.md#exceção-aprovada-na-052) acrescenta segurança ao protocolo gerado do autopilot. A tabela exige `kind` em toda linha: nove linhas `platform` preservam seus 31 pares, e seis linhas `safety`, T21–T26, exigem motivo e fonte. Contagem, sobreposição, troca morta, aplicação simultânea no upstream original e recusa de escrita parcial continuam valendo.
 
