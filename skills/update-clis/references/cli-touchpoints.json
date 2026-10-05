@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "notes": [
     "Every place the plugin depends on the behavior of the claude, codex or grok CLI. /update-clis reads each release note against this list.",
-    "kind lane: what the external runner uses of the CLI. kind harness: what the plugin uses of Claude Code or Codex as the parent; a harness change never holds an update, it is reported.",
+    "kind lane: what the external runner uses of the CLI. kind harness: what the plugin uses of Claude Code, Codex or Grok Build as the parent; a harness change never holds an update, it is reported.",
     "coveredBy: the probe lanes of the same CLI that exercise the touchpoint (see PROBE_LANES in scripts/update-clis.ts). An empty list means no probe covers it: a contract change there holds the update.",
     "measuredOn: the CLI version the behavior was measured on. pointers: file (from the plugin root) and an anchor text inside it; update-clis.test.ts fails when one goes missing."
   ],
@@ -353,6 +353,48 @@
       "pointers": [{ "file": "skills/poteto-mode/references/provider-dispatch.md", "anchor": "Draining is the parent's job in every harness mode" }],
       "coveredBy": [],
       "measuredOn": "2.1.281"
+    },
+    {
+      "id": "grok.parent-tools",
+      "cli": "grok",
+      "kind": "harness",
+      "contract": "Grok root on T3 ACP stdio: spawn_subagent background/cwd/isolation/resume_from; run_terminal_command block_until_ms=0; get_command_or_subagent_output task_ids/timeout_ms; kill_command_or_subagent task_id; monitor emits root wake events.",
+      "pointers": [
+        {
+          "file": "skills/poteto-mode/references/grok-tools.md",
+          "anchor": "block_until_ms: 0"
+        }
+      ],
+      "coveredBy": [],
+      "measuredOn": "1.0.46"
+    },
+    {
+      "id": "grok.native-definitions",
+      "cli": "grok",
+      "kind": "harness",
+      "contract": "Native Grok agents bind the exact model and effort from agent frontmatter. Plugin agent types are namespaced. Agent/Task deny recursive spawning on ordinary lanes. Owners need effective subagents.max_depth >= 2 and an observed owner → helper setup probe.",
+      "pointers": [
+        {
+          "file": "scripts/generate-agents.ts",
+          "anchor": "disallowedTools: Agent, Task"
+        }
+      ],
+      "coveredBy": [],
+      "measuredOn": "1.0.46"
+    },
+    {
+      "id": "grok.goal",
+      "cli": "grok",
+      "kind": "harness",
+      "contract": "The ACP initialize response advertises /goal; the active session supplies update_goal. A goal belongs to that root session. The detached scheduler does not perform root audits.",
+      "pointers": [
+        {
+          "file": "skills/poteto-mode/references/grok-tools.md",
+          "anchor": "Grok CLI 1.0.46 advertises"
+        }
+      ],
+      "coveredBy": [],
+      "measuredOn": "1.0.46"
     }
   ]
 }

@@ -251,10 +251,22 @@ describe("loadState", () => {
 });
 
 describe("buildPlan", () => {
+  it("plans a Grok root with pinned native definitions and external Claude and Codex lanes", () => {
+    const plan = buildPlan({ parent: "grok", home, matrix });
+    assert.equal(plan.sheetPath, join(home, ".grok", "pstack-models.md"));
+    assert.equal(plan.integrationPath, join(home, ".grok", "AGENTS.md"));
+    assert.deepEqual(lanesOf(plan, "feature, refactoring"), ["grok:grok-4.7@xhigh"]);
+    assert.deepEqual(lanesOf(plan, "how explainer"), ["grok:grok-4.7@xhigh"]);
+    assert.deepEqual(plan.pairs.filter((p) => p.provider === "grok").map((p) => p.native), [
+      { primitive: "spawn_subagent", agent: "pstack-grok-xhigh", ownerAgent: "pstack-owner-grok-xhigh" },
+      { primitive: "spawn_subagent", agent: "pstack-grok-4-7-xhigh", ownerAgent: "pstack-owner-grok-4-7-xhigh" },
+    ]);
+    assert.ok(plan.pairs.filter((p) => p.provider !== "grok").every((p) => p.route === "runner" && p.native === null));
+  });
   it("on a first run takes the parent's role defaults, the matrix default efforts, and one probe per family in the map", () => {
     const plan = buildPlan({ parent: "claude", home, matrix });
     assert.equal(plan.sheet, firstRunSheet("claude"));
-    assert.equal(plan.schemaVersion, 6);
+    assert.equal(plan.schemaVersion, 7);
     assert.equal(plan.ledgerPath, join(home, ".claude", "pstack-probes.json"));
     assert.deepEqual(plan.verified, []);
     assert.deepEqual(plan.efforts, {
@@ -579,6 +591,13 @@ describe("buildPlan", () => {
 });
 
 describe("pickLane", () => {
+  it("excludes a Grok root and its implementation providers from the reviewer pool", () => {
+    const result = pickLane({ parent: "grok", home, matrix, role: "trail reviewer pool", executors: ["claude"] });
+    assert.deepEqual(result.executors, ["grok", "claude"]);
+    assert.equal(result.chosen?.descriptor, "codex:gpt-6.1-sol@xhigh");
+    assert.equal(result.chosen?.route, "runner");
+    assert.deepEqual(result.eligible.map((lane) => lane.provider), ["codex"]);
+  });
   const pick = (parent: string, executors: string[] = []) => pickLane({ parent, home, matrix, role: "trail reviewer pool", executors });
 
   it("without the row in the sheet uses the role-table default and says so", () => {
@@ -718,8 +737,10 @@ async function planAndProbe(parent: string, input: { efforts?: Record<string, st
   const summary = await runProbes(plan, { dir: runDir, env: fakeEnv() });
   assert.equal(summary.externalOk, true, JSON.stringify(summary, null, 2));
   for (const pair of plan.pairs) {
-    if (pair.native) attestNative(plan, runDir, pair.pair, `The agent replied: ${pair.marker}`);
+    if (pair.native) attestNative(plan, runDir, pair.pair, `The agent replied: ${pair.marker}`,
+      pair.native.primitive === "spawn_subagent" ? { ownerId: `owner-${pair.pair}`, childId: `helper-${pair.pair}` } : undefined);
   }
+  if (plan.ownerProbe) attestNative(plan, runDir, "owner-nesting", plan.ownerProbe.marker, { ownerId: "owner", childId: "helper" });
   return plan;
 }
 
@@ -785,7 +806,7 @@ describe("runProbes", () => {
     const plan = buildPlan({ parent: "claude", home, matrix, efforts: { grok: "high" } });
     savePlan(runDir, plan);
     const summary = await runProbes(plan, { dir: runDir, env: fakeEnv({ FAKE_GROK_UNAUTH: "1" }) });
-    assert.deepEqual(summary, { external: [], native: [], externalOk: true, ok: true });
+    assert.deepEqual(summary, { external: [], native: [], owner: null, externalOk: true, ok: true });
     assert.deepEqual(readdirSync(runDir), ["plan.json"]);
   });
 
@@ -813,6 +834,28 @@ describe("runProbes", () => {
 });
 
 describe("attestNative", () => {
+  it("refuses a Grok write until owner → helper evidence exists and rejects a single handle", async () => {
+    const plan = buildPlan({ parent: "grok", home, matrix });
+    const summary = await runProbes(plan, { dir: runDir, env: fakeEnv() });
+    assert.ok(summary.native.every((p) => p.prompt.includes("Spawn exactly one")));
+    for (const pair of plan.pairs.filter((p) => p.native !== null)) {
+      assert.throws(() => attestNative(plan, runDir, pair.pair, pair.marker), /owner → helper/);
+      assert.throws(() => attestNative(plan, runDir, pair.pair, pair.marker, { ownerId: "same", childId: "same" }), /distinct/);
+      const path = attestNative(plan, runDir, pair.pair, pair.marker, { ownerId: "owner", childId: "helper" });
+      const evidence = JSON.parse(readFileSync(path, "utf8"));
+      delete evidence.chain;
+      writeFileSync(path, JSON.stringify(evidence));
+    }
+    assert.throws(() => writeSheet(plan, runDir, { home }), /owner → helper/);
+    assert.equal(existsSync(plan.sheetPath), false);
+    for (const pair of plan.pairs.filter((p) => p.native !== null)) {
+      attestNative(plan, runDir, pair.pair, pair.marker, { ownerId: "owner", childId: "helper" });
+    }
+    assert.ok(plan.ownerProbe);
+    assert.throws(() => writeSheet(plan, runDir, { home }), /current root capability not attested/);
+    attestNative(plan, runDir, "owner-nesting", plan.ownerProbe.marker, { ownerId: "owner", childId: "helper" });
+    assert.equal(writeSheet(plan, runDir, { home }).sheet, "created");
+  });
   it("records a native probe whose observed text carries the marker and refuses otherwise", () => {
     const plan = buildPlan({ parent: "claude", home, matrix });
     savePlan(runDir, plan);
@@ -864,6 +907,27 @@ describe("attestNative", () => {
 });
 
 describe("writeSheet", () => {
+  it("writes a Grok sheet only after its native and external probes, preserving global rules on reruns", async () => {
+    const plan = await planAndProbe("grok");
+    const integration = integrationPathFor("grok", home);
+    mkdirSync(dirname(integration), { recursive: true });
+    writeFileSync(integration, "Keep these global Grok rules.\n");
+    const result = writeSheet(plan, runDir, { home });
+    assert.equal(result.sheet, "created");
+    assert.equal(readFileSync(integration, "utf8"), `Keep these global Grok rules.\n${CODEX_BLOCK_BEGIN}\n${plan.sheet}${CODEX_BLOCK_END}\n`);
+    assert.equal(existsSync(sheetPathFor("claude", home)), false);
+    assert.equal(existsSync(ledgerPathFor("codex", home)), false);
+    const again = buildPlan({ parent: "grok", home, matrix });
+    assert.equal(again.pairs.length, 0);
+    assert.ok(again.ownerProbe);
+    assert.throws(() => writeSheet(again, runDir, { home }), /fresh capability marker/);
+    assert.throws(() => attestNative(again, runDir, "owner-nesting", again.ownerProbe!.marker), /owner → helper/);
+    attestNative(again, runDir, "owner-nesting", again.ownerProbe.marker, { ownerId: "new-owner", childId: "new-helper" });
+    const rerun = writeSheet(again, runDir, { home });
+    assert.equal(rerun.sheet, "unchanged");
+    assert.equal(rerun.integration, "unchanged");
+    assert.equal(rerun.ledger, "unchanged");
+  });
   it("refuses to write while any pair lacks a passing probe and creates nothing", async () => {
     const plan = buildPlan({ parent: "claude", home, matrix });
     savePlan(runDir, plan);
@@ -1071,7 +1135,7 @@ describe("command line", () => {
     const saved = JSON.parse(readFileSync(join(runDir, "plan.json"), "utf8"));
     assert.deepEqual(printed, saved);
     assert.equal(saved.parent, "codex");
-    assert.equal(saved.schemaVersion, 6);
+    assert.equal(saved.schemaVersion, 7);
     assert.deepEqual(saved.efforts.grok, ["high"]);
     assert.deepEqual(saved.rows.find((r: { role: string }) => r.role === "swarm workers").lanes, ["auto"]);
     assert.deepEqual(saved.rows.find((r: { role: string }) => r.role === "why synthesizer").lanes, ["claude:claude-opus-5-5@xhigh"]);

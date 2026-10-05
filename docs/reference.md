@@ -24,7 +24,7 @@ No shell, `claude plugin marketplace add byvict/pstack-vic` e `claude plugin ins
 ### Codex
 
 ```shell
-codex plugin marketplace add byvict/pstack-vic --ref v0.5.6
+codex plugin marketplace add byvict/pstack-vic --ref v0.5.7
 codex plugin add pstack@pstack-vic
 ```
 
@@ -113,13 +113,21 @@ Cada passo confere o que já foi feito, então rodar o script duas vezes não es
 
 ## Rodar no Codex
 
-Nada é gerado nem bifurcado por pai. Duas referências fazem a tradução em tempo de execução: [`codex-tools.md`](../skills/poteto-mode/references/codex-tools.md) mapeia tools e built-ins do Claude Code (`Agent` → `spawn_agent`, `AskUserQuestion`, `run`, `verify`, `loop`, `skill-creator`) e [`provider-dispatch.md`](../skills/poteto-mode/references/provider-dispatch.md) mapeia famílias de modelo para a rota certa em cada pai. As skills que citam um primitivo do Claude Code carregam uma nota de plataforma de uma linha apontando para o mapa.
+Nada é gerado nem bifurcado por pai. As referências fazem a tradução em tempo de execução: [`codex-tools.md`](../skills/poteto-mode/references/codex-tools.md) mapeia tools e built-ins do Claude Code (`Agent` → `spawn_agent`, `AskUserQuestion`, `run`, `verify`, `loop`, `skill-creator`) e [`provider-dispatch.md`](../skills/poteto-mode/references/provider-dispatch.md) mapeia famílias de modelo para a rota certa em cada pai. As skills que citam um primitivo do Claude Code carregam uma nota de plataforma de uma linha apontando para o mapa.
 
 - **Invocação.** O Codex carrega `SKILL.md` nativamente; não há tool `Skill`. Peça a skill pelo nome.
 - **Rota de modelos.** Quem é pai escolhe a rota. No Claude Code, Fable e Opus rodam em agents nativos e Sol, Astra e Grok no runner externo. No Codex, Sol e Astra rodam em `spawn_agent` e Fable, Opus e Grok no runner. Um filho nunca escolhe provider nem troca de rota por conta própria; lane indisponível vira dropout nomeado, nunca substituição silenciosa.
 - **Papéis.** As skills citam papéis (`arena runners`, `bug-fix`, `how explainer`…), não descritores. O default de cada papel, por pai, está na seção *Role defaults* de `provider-dispatch.md` e é o que `/setup-pstack` escreve no sheet.
 - **Revisão cruzada.** Dois papéis são um pool: uma lista da qual roda uma lane só. O `trail reviewer pool` revisa a trilha de decisões de uma execução (skill `show-me-your-work`), e o `arena cross-judge pool` julga as candidatas do arena. A lane que roda é a primeira da lista cuja Família não escreveu o trabalho. Família é o fornecedor (Claude, Codex, Grok), a coluna Provider da matriz: trocar Sol por Astra, ou Opus por Fable, não muda a Família, e trocar de aplicativo também não. Quem escreveu é a sessão que fez o trabalho, sempre, mais toda lane de escrita cujo resultado entrou na entrega. A escolha sai do comando `setup-pstack.ts pick`, e não da sessão que está sendo revisada. Se a lane escolhida cai, roda a próxima da lista que também serve. Se nenhuma serve, a trilha fica sem revisão e a resposta diz isso, com o motivo de cada entrada. A regra está na seção *Cross-family selection* de `provider-dispatch.md`.
 - **Entrada.** `poteto-mode` não dispara sozinho em nenhum pai: `disable-model-invocation: true` no Claude Code, `allow_implicit_invocation: false` no Codex. Entre com `/pstack:poteto-mode` ou `pstack:poteto-mode` pelo nome.
+
+## Grok como raiz no T3 Code
+
+Grok Build é o terceiro pai. O [mapa de ferramentas Grok](../skills/poteto-mode/references/grok-tools.md) cobre filhos nativos, owners, esperas, cancelamento, permissões e a retomada do autopilot. Claude e Codex vão pelo runner com `--parent grok`. O setup guarda sheet e probes em `~/.grok`, com um bloco em `~/.grok/AGENTS.md`. Os agents gerados fixam modelo e esforço; o frontmatter das skills não faz essa seleção.
+
+O fluxo raiz → owner → helper exige `[subagents] max_depth = 2` ou maior no `~/.grok/config.toml` e uma sessão reiniciada. O setup exige os IDs dos dois níveis e o marcador observado antes de gravar a configuração.
+
+O Grok CLI 1.0.46 anuncia `/goal` no protocolo que o T3 usa. O autopilot arma esse objetivo na própria sessão raiz e usa um monitor para emitir o tick de auditoria a cada 30 minutos. O scheduler executa filhos destacados e não substitui a auditoria da raiz. Uma sessão encerrada precisa ser retomada pelo operador, com o objetivo e os handles reconciliados.
 
 ## Dependências
 
@@ -138,7 +146,7 @@ Nada é declarado em manifest. O que as skills usam:
 
 O runner chama três CLIs: `claude` (npm, Node 24.21.0), `codex` (npm, Node 24.19.0, pelo link do Homebrew) e `grok` (`~/.grok/downloads`). Nenhuma delas se atualiza sozinha: o `grok` tem `[cli] auto_update = false` em `~/.grok/config.toml` e o `claude` do npm tem `"env": {"DISABLE_AUTOUPDATER": "1"}` em `~/.claude/settings.json`. O `codex` só avisa no TUI. A skill `update-clis` é o único caminho de atualização. Medido em 2026-10-02: mesmo assim o binário do `grok` passou de 1.0.41 para 1.0.44 (2026-09-29 21:24) e para 1.0.46 (2026-10-02 16:14) fora da skill, cuja última execução foi em 2026-09-28, com `auto_update = false` mantido e `grok update --check` respondendo `autoUpdate: false`; as duas horas coincidem com reinícios do T3 Code, e o mecanismo não foi identificado. Até isso fechar, rode `npm run update-clis -- check` antes de confiar no `measuredOn` dos pontos de contato.
 
-Para cada CLI, na ordem codex → grok → claude, a skill lê as notas de versão contra `skills/update-clis/references/cli-touchpoints.json`, instala a versão nova e roda a sonda. A sonda roda as lanes `read` e `write` de cada par família@esforço que as duas fichas mandam para aquela CLI pelo runner. Roda também `seatbelt` (grok e claude dentro do `codex sandbox`), `sandbox` (o codex, sem modelo) e `manifest` (o claude, com `claude plugin validate`, sem modelo). Uma lane que falha faz a CLI voltar para a versão anterior e rodar a mesma sonda de novo: se a anterior passa, a versão nova fica segurada numa issue `CLI <nome> <versão> segurada`; se a anterior também falha, o problema é do ambiente e ninguém é segurado. Uma mudança de contrato num ponto sem cobertura segura a versão sem instalar. Os binários que os apps desktop trazem ficam de fora e só aparecem no relatório.
+Para cada CLI, na ordem codex → grok → claude, a skill lê as notas de versão contra `skills/update-clis/references/cli-touchpoints.json`, instala a versão nova e roda a sonda. A sonda roda as lanes `read` e `write` de cada par família@esforço que as fichas dos três pais mandam para aquela CLI pelo runner. Roda também `seatbelt` (grok e claude dentro do `codex sandbox`), `sandbox` (o codex, sem modelo) e `manifest` (o claude, com `claude plugin validate`, sem modelo). Uma lane que falha faz a CLI voltar para a versão anterior e rodar a mesma sonda de novo: se a anterior passa, a versão nova fica segurada numa issue `CLI <nome> <versão> segurada`; se a anterior também falha, o problema é do ambiente e ninguém é segurado. Uma mudança de contrato num ponto sem cobertura segura a versão sem instalar. Os binários que os apps desktop trazem ficam de fora e só aparecem no relatório.
 
 ```shell
 npm run update-clis -- check

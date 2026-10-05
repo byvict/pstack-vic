@@ -315,8 +315,21 @@ describe("a Codex parent", () => {
 });
 
 describe("usage", () => {
+  it("checks a Grok session's observed mode without changing its configuration", async () => {
+    const file = put(settingsPathFor("grok", home), '[ui]\npermission_mode = "always-approve"\n');
+    const before = readFileSync(file, "utf8");
+    for (const mode of ["always-approve", "bypassPermissions", "auto", "ask", undefined]) {
+      const result = await run(["check", "--parent", "grok", ...(mode === undefined ? [] : ["--permission-mode", mode])]);
+      assert.equal(result.code, mode === "always-approve" || mode === "bypassPermissions" ? 0 : 1);
+      assert.equal(JSON.parse(result.stdout).parent, "grok");
+      assert.equal(readFileSync(file, "utf8"), before);
+      assert.equal(existsSync(backupPathFor("grok", home)), false);
+    }
+    assert.equal((await run(["apply", "--parent", "grok"], "yes")).code, 64);
+    assert.equal((await run(["check", "--parent", "codex", "--permission-mode", "always-approve"])).code, 64);
+  });
   it("refuses an unknown parent and a missing subcommand", async () => {
-    assert.equal((await run(["check", "--parent", "grok"])).code, 64);
+    assert.equal((await run(["check", "--parent", "gemini"])).code, 64);
     assert.equal((await run(["check"])).code, 64);
     assert.equal((await run(["--parent", "claude"])).code, 64);
   });

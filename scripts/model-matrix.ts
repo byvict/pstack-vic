@@ -227,9 +227,10 @@ export function validateMatrix(raw: unknown): ModelMatrix {
     if (agentStem !== null && !NAME_RE.test(agentStem)) {
       fail(`${family}: agentStem must match ${NAME_RE}`);
     }
-    const isClaude = providers[entry.provider].nativeIn === "claude";
-    if (isClaude !== (agentStem !== null)) {
-      fail(`${family}: agentStem must be present iff the provider is native in Claude Code`);
+    const nativeIn = providers[entry.provider].nativeIn;
+    const needsDefinition = nativeIn !== null && parents[nativeIn].nativePrimitive !== "spawn_agent";
+    if (needsDefinition !== (agentStem !== null)) {
+      fail(`${family}: agentStem must be present iff the native primitive uses an agent definition`);
     }
     const cursorSlug = nullableString(entry.cursorSlug, `${family}.cursorSlug`);
     if (cursorSlug !== null && !cursorSlug.includes("{effort}")) {
@@ -437,13 +438,13 @@ export function nativeParentOf(matrix: ModelMatrix, f: Family): string | null {
   return matrix.providers[f.provider].nativeIn;
 }
 
-/** Claude-native agent name for a family and effort, or null when the family has no stem. */
+/** Native agent definition name for a family and effort, or null when it has no stem. */
 export function agentName(f: Family, effort: string): string | null {
   if (f.agentStem === null) return null;
   return `pstack-${f.agentStem}-${effort}`;
 }
 
-/** Every Claude-native agent name the matrix declares. */
+/** Every native lane definition name the matrix declares. */
 export function declaredAgentNames(matrix: ModelMatrix): string[] {
   const names: string[] = [];
   for (const f of matrix.families) {
@@ -456,7 +457,7 @@ export function declaredAgentNames(matrix: ModelMatrix): string[] {
 }
 
 /**
- * Claude-native autopilot owner agent for a family and effort, or null when
+ * Native autopilot owner definition for a family and effort, or null when
  * the family has no stem. An owner is poteto-agent pinned to the model and
  * effort of its authoring row; unlike a lane it keeps the Agent tool.
  */
@@ -465,7 +466,7 @@ export function ownerAgentName(f: Family, effort: string): string | null {
   return `pstack-owner-${f.agentStem}-${effort}`;
 }
 
-/** Every Claude-native owner agent name the matrix declares. */
+/** Every native owner definition name the matrix declares. */
 export function declaredOwnerNames(matrix: ModelMatrix): string[] {
   const names: string[] = [];
   for (const f of matrix.families) {
@@ -653,7 +654,7 @@ export function renderMatrixMarkdown(matrix: ModelMatrix): string {
   lines.push(MATRIX_BEGIN);
   lines.push("");
   lines.push(
-    "| Family | Provider | Model | Default effort | Selectable efforts | Native in | Claude-native agent stem | Replaces (Cursor 0.15.2) |"
+    "| Family | Provider | Model | Default effort | Selectable efforts | Native in | Native agent stem | Replaces (Cursor 0.15.2) |"
   );
   lines.push("|---|---|---|---|---|---|---|---|");
   for (const f of matrix.families) {
@@ -663,7 +664,7 @@ export function renderMatrixMarkdown(matrix: ModelMatrix): string {
   }
   lines.push("");
   lines.push(
-    `The allowed effort universe is exactly ${matrix.efforts.map((e) => `\`${e}\``).join(", ")}. First-run requested efforts are the Default effort cell of each row. A Claude-native agent stem of \`-\` means the family has no Claude-native agent. Otherwise the shipped agent name is \`pstack-<stem>-<effort>\`. Aliases ${matrix.aliases.map((a) => `\`${a}\``).join(" and ")} are not families and carry no effort.`
+    `The allowed effort universe is exactly ${matrix.efforts.map((e) => `\`${e}\``).join(", ")}. First-run requested efforts are the Default effort cell of each row. A native agent stem of \`-\` means the family has no agent definition. Otherwise the shipped agent name is \`pstack-<stem>-<effort>\`. Aliases ${matrix.aliases.map((a) => `\`${a}\``).join(" and ")} are not families and carry no effort.`
   );
   lines.push("");
   lines.push("### Route table");
@@ -706,7 +707,7 @@ export function renderRoleDefaultsMarkdown(matrix: ModelMatrix): string {
   }
   lines.push("");
   lines.push(
-    "A list is a panel: one lane per entry, in this order. A row whose label ends in `pool` is the exception: one lane runs, picked by the Cross-family selection rule below. A role whose two columns differ takes a family native to each parent: the frontier family for the frontier solo roles, the code family for the four authoring rows. Aliases run on the parent model through its native subagent primitive."
+    "A list is a panel: one lane per entry, in this order. A row whose label ends in `pool` is the exception: one lane runs, picked by the Cross-family selection rule below. A role whose parent columns differ takes a family native to each parent: the frontier family for the frontier solo roles, the code family for the four authoring rows. Aliases run on the parent model through its native subagent primitive."
   );
   lines.push("");
   lines.push(ROLES_END);

@@ -15,7 +15,7 @@
 // function of (matrix, loaded sheet, requested efforts, role changes), and
 // `write` compares before touching anything.
 //
-//   setup-pstack.ts state  --parent <claude|codex> [--home <dir>]
+//   setup-pstack.ts state  --parent <claude|codex|grok> [--home <dir>]
 //   setup-pstack.ts plan   --parent <p> [--home <dir>] [--dir <run dir>]
 //                          [--effort <family>=<effort>]... [--role "<label>=<lane>, <lane>"]...
 //   setup-pstack.ts probe  --dir <run dir> [--timeout <seconds>]
@@ -40,6 +40,7 @@ import {
   familyNamed,
   loadMatrix,
   nativeProviderOf,
+  ownerAgentName,
   parseDescriptor,
   pickCrossFamily,
   renderSheetDocument,
@@ -65,6 +66,7 @@ function fail(message: string): never {
 const TARGETS: Readonly<Record<string, { readonly dir: string; readonly integration: string }>> = {
   claude: { dir: ".claude", integration: "CLAUDE.md" },
   codex: { dir: ".codex", integration: "AGENTS.md" },
+  grok: { dir: ".grok", integration: "AGENTS.md" },
 };
 
 export const SHEET_FILE = "pstack-models.md";
@@ -374,6 +376,14 @@ export interface NativeSpawnProbe {
   readonly reasoning_effort: string;
 }
 
+export interface NativeGrokProbe {
+  readonly primitive: "spawn_subagent";
+  readonly agent: string;
+  readonly ownerAgent: string;
+}
+
+export type NativeProbe = NativeAgentProbe | NativeSpawnProbe | NativeGrokProbe;
+
 export interface ProbePair {
   readonly family: string;
   readonly effort: string;
@@ -384,7 +394,7 @@ export interface ProbePair {
   readonly descriptor: string;
   readonly route: Route;
   /** How the parent probes this pair natively, or null when it goes through the runner. */
-  readonly native: NativeAgentProbe | NativeSpawnProbe | null;
+  readonly native: NativeProbe | null;
   /** The unique token the probe must echo back. */
   readonly marker: string;
 }
@@ -396,8 +406,16 @@ export interface VerifiedFamily {
   readonly verifiedAt: string;
 }
 
+export interface OwnerProbe {
+  readonly primitive: "spawn_subagent";
+  readonly agent: "poteto-agent";
+  readonly marker: string;
+}
+
+export const OWNER_PROBE_ID = "owner-nesting";
+
 export interface Plan {
-  readonly schemaVersion: 6;
+  readonly schemaVersion: 7;
   readonly parent: string;
   readonly createdAt: string;
   readonly sheetPath: string;
@@ -410,6 +428,8 @@ export interface Plan {
   readonly sheet: string;
   /** One probe per family in the final map that this parent's ledger lacks, at the family's lowest effort in use, families in matrix order. */
   readonly pairs: readonly ProbePair[];
+  /** Fresh Grok lifecycle capability, independent of the family ledger. */
+  readonly ownerProbe: OwnerProbe | null;
   /** Families in the final map that this parent verified before; not probed again, whatever effort their lanes take. */
   readonly verified: readonly VerifiedFamily[];
   readonly migrations: readonly Migration[];
@@ -427,10 +447,13 @@ export interface PlanInput extends StateInput {
 function nativeProbeFor(matrix: ModelMatrix, parent: string, family: Family, effort: string): ProbePair["native"] {
   if (routeFor(matrix, parent, family.provider) !== "native") return null;
   const primitive = matrix.parents[parent].nativePrimitive;
-  if (primitive === "Agent") {
+  if (primitive === "Agent" || primitive === "spawn_subagent") {
     const agent = agentName(family, effort);
     if (agent === null) fail(`${family.family} is native in ${parent} but has no agent stem`);
-    return { primitive: "Agent", agent };
+    if (primitive === "Agent") return { primitive, agent };
+    const ownerAgent = ownerAgentName(family, effort);
+    if (ownerAgent === null) fail(`${family.family} has no native owner agent`);
+    return { primitive, agent, ownerAgent };
   }
   if (primitive === "spawn_agent") {
     return { primitive: "spawn_agent", model: family.model, reasoning_effort: effort };
@@ -540,7 +563,7 @@ export function buildPlan(input: PlanInput): Plan {
   }
 
   return {
-    schemaVersion: 6,
+    schemaVersion: 7,
     parent,
     createdAt: new Date().toISOString(),
     sheetPath: state.sheetPath,
@@ -551,6 +574,10 @@ export function buildPlan(input: PlanInput): Plan {
     rows,
     sheet,
     pairs,
+    ownerProbe: parent === "grok" ? {
+      primitive: "spawn_subagent", agent: "poteto-agent",
+      marker: `PSTACK-OWNER-${randomBytes(8).toString("hex")}`,
+    } : null,
     verified,
     migrations: state.migrations,
     warnings,
@@ -608,7 +635,7 @@ export function loadPlan(dir: string): Plan {
   const path = join(dir, PLAN_FILE);
   if (!existsSync(path)) fail(`no ${PLAN_FILE} in ${dir}; run plan first`);
   const raw = JSON.parse(readFileSync(path, "utf8")) as Plan;
-  if (raw.schemaVersion !== 6) {
+  if (raw.schemaVersion !== 7) {
     fail(`${path}: unsupported schemaVersion ${JSON.stringify(raw.schemaVersion)}; run plan again with this version of the script`);
   }
   return raw;
@@ -631,7 +658,7 @@ export interface NativeProbeStatus {
   readonly family: string;
   readonly pair: string;
   readonly descriptor: string;
-  readonly native: NativeAgentProbe | NativeSpawnProbe;
+  readonly native: NativeProbe;
   readonly marker: string;
   readonly prompt: string;
   readonly evidencePath: string;
@@ -641,6 +668,7 @@ export interface NativeProbeStatus {
 export interface ProbeSummary {
   readonly external: readonly ExternalProbeResult[];
   readonly native: readonly NativeProbeStatus[];
+  readonly owner: (OwnerProbe & { readonly prompt: string; readonly evidencePath: string; readonly attested: boolean }) | null;
   /** Every runner pair passed. */
   readonly externalOk: boolean;
   /** Every runner pair passed and every native pair is attested. */
@@ -700,7 +728,7 @@ function nativeStatus(
   plan: Plan,
   dir: string,
   pair: ProbePair,
-  native: NativeAgentProbe | NativeSpawnProbe
+  native: NativeProbe
 ): NativeProbeStatus {
   const evidencePath = nativeEvidencePath(dir, pair.pair);
   return {
@@ -709,7 +737,9 @@ function nativeStatus(
     descriptor: pair.descriptor,
     native,
     marker: pair.marker,
-    prompt: probePrompt(pair.marker).trimEnd(),
+    prompt: native.primitive === "spawn_subagent"
+      ? `This is a read-only setup capability probe, not an autopilot program. Spawn exactly one ${native.agent} helper with the following prompt, drain it, then return its exact reply and child ID. Do not implement, run other workflows, or spawn other children.\n\n${probePrompt([pair.marker, plan.ownerProbe?.marker].filter(Boolean).join(" ")).trimEnd()}`
+      : probePrompt(pair.marker).trimEnd(),
     evidencePath,
     attested: verifyNative(plan, dir, pair) === null,
   };
@@ -732,31 +762,64 @@ export async function runProbes(plan: Plan, options: ProbeOptions): Promise<Prob
   }
   const external = await Promise.all(runnerPairs.map((pair) => runLane(pair, plan, options)));
   const native = plan.pairs.flatMap((p) => (p.native === null ? [] : [nativeStatus(plan, options.dir, p, p.native)]));
+  const owner = plan.ownerProbe === null ? null : {
+    ...plan.ownerProbe,
+    prompt: `Execute only this read-only setup capability probe. Spawn exactly one poteto-agent helper with this prompt: ${probePrompt(plan.ownerProbe.marker).trimEnd()} Drain it and return its exact reply and child ID. Invoke no other workflows and change no files.`,
+    evidencePath: nativeEvidencePath(options.dir, OWNER_PROBE_ID),
+    attested: verifyOwner(plan, options.dir) === null,
+  };
   const externalOk = external.every((r) => r.status === "passed");
-  return { external, native, externalOk, ok: externalOk && native.every((n) => n.attested) };
+  return { external, native, owner, externalOk, ok: externalOk && native.every((n) => n.attested) && (owner === null || owner.attested) };
 }
 
 interface NativeEvidence {
   readonly pair: string;
   readonly family: string;
   readonly descriptor: string;
-  readonly native: NativeAgentProbe | NativeSpawnProbe;
+  readonly native: NativeProbe;
   readonly marker: string;
   readonly observed: string;
+  readonly chain?: NativeChain;
   readonly attestedAt: string;
 }
 
-/**
- * Record the outcome of a native one-turn probe the skill ran through the
- * parent's primitive. The observed reply must carry the pair's marker.
- */
-export function attestNative(plan: Plan, dir: string, pairId: string, observed: string): string {
+export interface NativeChain {
+  readonly ownerId: string;
+  readonly childId: string;
+}
+
+function nativeChainProblem(chain: NativeChain | undefined): string | null {
+  if (typeof chain?.ownerId !== "string" || !chain.ownerId.trim() ||
+      typeof chain.childId !== "string" || !chain.childId.trim() || chain.ownerId === chain.childId) {
+    return "Grok requires observed, distinct --owner-id and --child-id from an owner → helper probe; set [subagents] max_depth = 2 and restart the root before probing";
+  }
+  return null;
+}
+
+/** Record a native family or owner capability probe observed by this parent. */
+export function attestNative(plan: Plan, dir: string, pairId: string, observed: string, chain?: NativeChain): string {
+  if (pairId === OWNER_PROBE_ID) {
+    if (plan.ownerProbe === null) fail("owner-nesting is only required on Grok");
+    const problem = nativeChainProblem(chain);
+    if (problem !== null) fail(problem);
+    if (!observed.includes(plan.ownerProbe.marker)) fail("owner reply lacks this plan's fresh capability marker");
+    mkdirSync(dir, { recursive: true });
+    const path = nativeEvidencePath(dir, OWNER_PROBE_ID);
+    writeFileSync(path, `${JSON.stringify({ marker: plan.ownerProbe.marker, observed, chain, attestedAt: new Date().toISOString() }, null, 2)}\n`, { mode: 0o600 });
+    return path;
+  }
   const ids = plan.pairs.map((p) => p.pair).join(", ");
   const pair = plan.pairs.find((p) => p.pair === pairId);
   if (!pair) fail(`${pairId} is not a pair of this plan; pairs: ${ids}`);
   if (pair.native === null) fail(`${pairId} is not a native pair of this plan; it runs through the runner`);
   if (!observed.includes(pair.marker)) {
     fail(`observed reply for ${pairId} lacks the marker ${pair.marker}; the native probe did not pass`);
+  }
+  if (pair.native.primitive === "spawn_subagent") {
+    const problem = nativeChainProblem(chain);
+    if (problem !== null) fail(problem);
+  } else if (chain !== undefined) {
+    fail("owner/child IDs are only accepted for Grok native probes");
   }
   mkdirSync(dir, { recursive: true });
   const path = nativeEvidencePath(dir, pair.pair);
@@ -767,6 +830,7 @@ export function attestNative(plan: Plan, dir: string, pairId: string, observed: 
     native: pair.native,
     marker: pair.marker,
     observed: observed.slice(0, 4_000),
+    ...(chain === undefined ? {} : { chain }),
     attestedAt: new Date().toISOString(),
   };
   writeFileSync(path, `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 });
@@ -789,12 +853,32 @@ function verifyNative(plan: Plan, dir: string, pair: ProbePair): string | null {
   if (typeof evidence.observed !== "string" || !evidence.observed.includes(pair.marker)) {
     return `${label}: native evidence lacks the marker`;
   }
+  if (pair.native?.primitive === "spawn_subagent") {
+    const problem = nativeChainProblem(evidence.chain);
+    if (problem !== null) return `${label}: ${problem}`;
+  }
   return null;
+}
+
+function verifyOwner(plan: Plan, dir: string): string | null {
+  if (plan.parent !== "grok") return null;
+  if (!plan.ownerProbe?.marker) return "owner-nesting: missing capability probe; run plan again";
+  const path = nativeEvidencePath(dir, OWNER_PROBE_ID);
+  if (!existsSync(path)) return "owner-nesting: current root capability not attested";
+  let evidence: { marker?: string; observed?: string; chain?: NativeChain };
+  try { evidence = JSON.parse(readFileSync(path, "utf8")); }
+  catch { return "owner-nesting: evidence is not JSON"; }
+  if (evidence?.marker !== plan.ownerProbe.marker || typeof evidence.observed !== "string" || !evidence.observed.includes(plan.ownerProbe.marker)) {
+    return "owner-nesting: evidence lacks this plan's fresh capability marker";
+  }
+  return nativeChainProblem(evidence.chain);
 }
 
 /** Every probe the plan requires (the families new to this parent) must have passed under `dir` before anything is written. */
 export function verifyProbes(plan: Plan, dir: string): { readonly ok: boolean; readonly problems: readonly string[] } {
   const problems: string[] = [];
+  const ownerProblem = verifyOwner(plan, dir);
+  if (ownerProblem !== null) problems.push(ownerProblem);
   for (const pair of plan.pairs) {
     if (pair.route === "runner") {
       const paths = probePaths(dir, pair.pair);
@@ -819,7 +903,7 @@ export function renderIntegration(parent: string, current: string | null, sheet:
     if (count === 1) return text;
     return `${text}${text.length === 0 || text.endsWith("\n") ? "" : "\n"}${CLAUDE_INCLUDE_LINE}\n`;
   }
-  if (parent === "codex") {
+  if (parent === "codex" || parent === "grok") {
     const text = current ?? "";
     const block = `${CODEX_BLOCK_BEGIN}\n${sheet}${CODEX_BLOCK_END}\n`;
     const begins = text.split(CODEX_BLOCK_BEGIN).length - 1;
@@ -947,6 +1031,8 @@ const USAGE = `Usage: setup-pstack <state|plan|probe|attest|write|pick> [options
          list native probes to attest. A plan whose families are all verified has none.
   attest --dir <run dir> --pair <family>@<effort> --observed <reply text>
          Record a native one-turn probe whose reply carries the pair's marker.
+         Grok also requires --owner-id <id> --child-id <id> from its nested probe.
+         --pair owner-nesting attests the fresh Grok capability, even with no new families.
   write  --dir <run dir> [--home <dir>]
          Verify the plan's probes, then write the sheet, the parent integration, and the probe
          ledger (byte-identical rerun writes nothing).
@@ -1008,6 +1094,8 @@ export async function main(argv: readonly string[], io: Io = {
           pair: { type: "string" },
           executor: { type: "string", multiple: true },
           observed: { type: "string" },
+          "owner-id": { type: "string" },
+          "child-id": { type: "string" },
           timeout: { type: "string" },
           help: { type: "boolean", short: "h", default: false },
         },
@@ -1070,7 +1158,11 @@ export async function main(argv: readonly string[], io: Io = {
         if (typeof pair !== "string") usage("--pair is required");
         if (typeof observed !== "string") usage("--observed is required");
         const plan = loadPlan(dir);
-        const path = attestNative(plan, dir, pair, observed);
+        const ownerId = parsed.values["owner-id"];
+        const childId = parsed.values["child-id"];
+        if ((ownerId === undefined) !== (childId === undefined)) usage("--owner-id and --child-id must be supplied together");
+        const chain = typeof ownerId === "string" && typeof childId === "string" ? { ownerId, childId } : undefined;
+        const path = attestNative(plan, dir, pair, observed, chain);
         emit({ pair, evidencePath: path, remaining: verifyProbes(plan, dir).problems });
         return 0;
       }

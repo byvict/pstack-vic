@@ -1,5 +1,7 @@
 # Provider dispatch
 
+On a Grok Build root, read [grok-tools.md](grok-tools.md) before dispatching roles or following Claude tool names. This includes T3 Code sessions on that provider.
+
 pstack model choices are provider-qualified descriptors:
 
 ```text
@@ -12,17 +14,17 @@ The matrix lives in [`model-matrix.json`](../../../model-matrix.json) at the plu
 
 <!-- model-matrix:begin -->
 
-| Family | Provider | Model | Default effort | Selectable efforts | Native in | Claude-native agent stem | Replaces (Cursor 0.15.2) |
+| Family | Provider | Model | Default effort | Selectable efforts | Native in | Native agent stem | Replaces (Cursor 0.15.2) |
 |---|---|---|---|---|---|---|---|
 | fable | claude | `fable` | max | low medium high xhigh max | claude | `fable` | `claude-fable-5-1-thinking-{effort}` |
 | opus | claude | `claude-opus-5-5` | xhigh | low medium high xhigh max | claude | `opus` | `claude-opus-5-thinking-{effort}` |
 | sol | codex | `gpt-6-sol` | max | low medium high xhigh max | codex | - | `gpt-5.6-sol-{effort}` |
 | sol-6-1 | codex | `gpt-6.1-sol` | max | low medium high xhigh max | codex | - | - |
 | astra | codex | `gpt-6-astra` | max | low medium high xhigh max | codex | - | - |
-| grok | grok | `grok-4.6` | xhigh | low medium high xhigh max | - | - | `grok-4.6-fast-{effort}` |
-| grok-4-7 | grok | `grok-4.7` | xhigh | low medium high xhigh | - | - | - |
+| grok | grok | `grok-4.6` | xhigh | low medium high xhigh max | grok | `grok` | `grok-4.6-fast-{effort}` |
+| grok-4-7 | grok | `grok-4.7` | xhigh | low medium high xhigh | grok | `grok-4-7` | - |
 
-The allowed effort universe is exactly `low`, `medium`, `high`, `xhigh`, `max`. First-run requested efforts are the Default effort cell of each row. A Claude-native agent stem of `-` means the family has no Claude-native agent. Otherwise the shipped agent name is `pstack-<stem>-<effort>`. Aliases `inherit-parent` and `auto` are not families and carry no effort.
+The allowed effort universe is exactly `low`, `medium`, `high`, `xhigh`, `max`. First-run requested efforts are the Default effort cell of each row. A native agent stem of `-` means the family has no agent definition. Otherwise the shipped agent name is `pstack-<stem>-<effort>`. Aliases `inherit-parent` and `auto` are not families and carry no effort.
 
 ### Route table
 
@@ -30,6 +32,7 @@ The allowed effort universe is exactly `low`, `medium`, `high`, `xhigh`, `max`. 
 |---|---|---|---|
 | Claude Code | native `Agent` | external runner | external runner |
 | Codex | external runner | native `spawn_agent` | external runner |
+| Grok Build | external runner | external runner | native `spawn_subagent` |
 
 <!-- model-matrix:end -->
 
@@ -41,32 +44,32 @@ Grok Build CLI 1.0.5 reports the served model as `grok-4.6-build` in the result 
 
 ## Role defaults
 
-Skills name roles by the labels below, the same labels `/setup-pstack` writes to the model sheet (`~/.claude/pstack-models.md` on Claude Code, `~/.codex/pstack-models.md` on Codex). A sheet line overrides the default of its role. Without a sheet, a role takes its cell for the current parent. The block is rendered from `model-matrix.json`; edit the JSON, not the table.
+Skills name roles by the labels below, the same labels `/setup-pstack` writes to the model sheet (`~/.claude/pstack-models.md` on Claude Code, `~/.codex/pstack-models.md` on Codex, `~/.grok/pstack-models.md` on Grok). A sheet line overrides the default of its role. Without a sheet, a role takes its cell for the current parent. The block is rendered from `model-matrix.json`; edit the JSON, not the table.
 
 <!-- role-defaults:begin -->
 
-| Role | What the lane does | Claude Code parent | Codex parent |
-|---|---|---|---|
-| `feature, refactoring` | Writes the code of a feature or a behavior-preserving refactor in its own worktree; the parent reviews the diff. | `claude:claude-opus-5-5@xhigh` | `codex:gpt-6-sol@xhigh` |
-| `bug-fix` | Reproduces a reported defect, finds the root cause, and writes the fix with runtime evidence. | `claude:claude-opus-5-5@xhigh` | `codex:gpt-6-sol@xhigh` |
-| `perf-issue` | Traces a measured slowness against a baseline and implements the improvement. | `claude:claude-opus-5-5@xhigh` | `codex:gpt-6-sol@xhigh` |
-| `hillclimb` | Iterates hypotheses on one metric with before/after measurements, one commit per accepted win. | `claude:claude-opus-5-5@xhigh` | `codex:gpt-6-sol@xhigh` |
-| `judgment and prose` | Writes and judges prose: docs, PR descriptions, summaries, explanations, syntheses. | `claude:fable@max` | `codex:gpt-6-astra@max` |
-| `hardest tasks` | Implements the hardest changes: cross-cutting design, subtle concurrency or algorithms, vague intent, or a precise multi-step sequence. | `claude:fable@max` | `codex:gpt-6-astra@max` |
-| `how explorer` | Reads a subsystem in read-only mode and reports how it works, with file and line evidence. | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
-| `how explainer` | Turns the explorers' findings into the explanation the how skill delivers. | `claude:fable@max` | `codex:gpt-6-astra@max` |
-| `why investigators` | Investigate why something was built this way across git history, tickets, and the parent's MCP sources; needs the parent's MCPs, so it stays on an alias. | `inherit-parent` | `inherit-parent` |
-| `why synthesizer` | Merges the why investigators' findings into one answer; same MCP constraint, stays on an alias. | `inherit-parent` | `inherit-parent` |
-| `reflect tooling` | Reads transcripts and skills to find lessons after a long task with the parent's tools; stays on an alias for the MCP reason. | `inherit-parent` | `inherit-parent` |
-| `reflect judgment, divergent, synthesizer` | Judges, dissents on, and synthesizes the lessons the reflect skill captures; stays on an alias for the MCP reason. | `inherit-parent` | `inherit-parent` |
-| `arena runners` | Each lane attempts the same task in parallel; the arena picks a base and grafts the strongest parts of the others. One lane per entry. | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` |
-| `arena cross-judge pool` | Judges the arena candidates; the arena picks a provider different from the parent and the base candidate when possible. | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` |
-| `swarm workers` | Default worker for every swarm lane: coverage matrices, races, gauntlets, exploration partitions. | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
-| `architect runners` | Each lane proposes a design (types, module shape) for the same problem before implementation. One lane per entry. | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` |
-| `interrogate reviewers` | Each lane reviews the diff adversarially from its own angle; a different provider per lane widens the blind spots covered. | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` |
-| `trail reviewer pool` | Reviews the decision trail of a finished run; one lane runs, the first entry whose provider wrote none of the work. | `claude:claude-opus-5-5@xhigh`, `codex:gpt-6.1-sol@xhigh`, `grok:grok-4.7@xhigh` | `claude:claude-opus-5-5@xhigh`, `codex:gpt-6.1-sol@xhigh`, `grok:grok-4.7@xhigh` |
+| Role | What the lane does | Claude Code parent | Codex parent | Grok Build parent |
+|---|---|---|---|---|
+| `feature, refactoring` | Writes the code of a feature or a behavior-preserving refactor in its own worktree; the parent reviews the diff. | `claude:claude-opus-5-5@xhigh` | `codex:gpt-6-sol@xhigh` | `grok:grok-4.7@xhigh` |
+| `bug-fix` | Reproduces a reported defect, finds the root cause, and writes the fix with runtime evidence. | `claude:claude-opus-5-5@xhigh` | `codex:gpt-6-sol@xhigh` | `grok:grok-4.7@xhigh` |
+| `perf-issue` | Traces a measured slowness against a baseline and implements the improvement. | `claude:claude-opus-5-5@xhigh` | `codex:gpt-6-sol@xhigh` | `grok:grok-4.7@xhigh` |
+| `hillclimb` | Iterates hypotheses on one metric with before/after measurements, one commit per accepted win. | `claude:claude-opus-5-5@xhigh` | `codex:gpt-6-sol@xhigh` | `grok:grok-4.7@xhigh` |
+| `judgment and prose` | Writes and judges prose: docs, PR descriptions, summaries, explanations, syntheses. | `claude:fable@max` | `codex:gpt-6-astra@max` | `grok:grok-4.7@xhigh` |
+| `hardest tasks` | Implements the hardest changes: cross-cutting design, subtle concurrency or algorithms, vague intent, or a precise multi-step sequence. | `claude:fable@max` | `codex:gpt-6-astra@max` | `grok:grok-4.7@xhigh` |
+| `how explorer` | Reads a subsystem in read-only mode and reports how it works, with file and line evidence. | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
+| `how explainer` | Turns the explorers' findings into the explanation the how skill delivers. | `claude:fable@max` | `codex:gpt-6-astra@max` | `grok:grok-4.7@xhigh` |
+| `why investigators` | Investigate why something was built this way across git history, tickets, and the parent's MCP sources; needs the parent's MCPs, so it stays on an alias. | `inherit-parent` | `inherit-parent` | `inherit-parent` |
+| `why synthesizer` | Merges the why investigators' findings into one answer; same MCP constraint, stays on an alias. | `inherit-parent` | `inherit-parent` | `inherit-parent` |
+| `reflect tooling` | Reads transcripts and skills to find lessons after a long task with the parent's tools; stays on an alias for the MCP reason. | `inherit-parent` | `inherit-parent` | `inherit-parent` |
+| `reflect judgment, divergent, synthesizer` | Judges, dissents on, and synthesizes the lessons the reflect skill captures; stays on an alias for the MCP reason. | `inherit-parent` | `inherit-parent` | `inherit-parent` |
+| `arena runners` | Each lane attempts the same task in parallel; the arena picks a base and grafts the strongest parts of the others. One lane per entry. | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` |
+| `arena cross-judge pool` | Judges the arena candidates; the arena picks a provider different from the parent and the base candidate when possible. | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` |
+| `swarm workers` | Default worker for every swarm lane: coverage matrices, races, gauntlets, exploration partitions. | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
+| `architect runners` | Each lane proposes a design (types, module shape) for the same problem before implementation. One lane per entry. | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` |
+| `interrogate reviewers` | Each lane reviews the diff adversarially from its own angle; a different provider per lane widens the blind spots covered. | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` |
+| `trail reviewer pool` | Reviews the decision trail of a finished run; one lane runs, the first entry whose provider wrote none of the work. | `claude:claude-opus-5-5@xhigh`, `codex:gpt-6.1-sol@xhigh`, `grok:grok-4.7@xhigh` | `claude:claude-opus-5-5@xhigh`, `codex:gpt-6.1-sol@xhigh`, `grok:grok-4.7@xhigh` | `claude:claude-opus-5-5@xhigh`, `codex:gpt-6.1-sol@xhigh`, `grok:grok-4.7@xhigh` |
 
-A list is a panel: one lane per entry, in this order. A row whose label ends in `pool` is the exception: one lane runs, picked by the Cross-family selection rule below. A role whose two columns differ takes a family native to each parent: the frontier family for the frontier solo roles, the code family for the four authoring rows. Aliases run on the parent model through its native subagent primitive.
+A list is a panel: one lane per entry, in this order. A row whose label ends in `pool` is the exception: one lane runs, picked by the Cross-family selection rule below. A role whose parent columns differ takes a family native to each parent: the frontier family for the frontier solo roles, the code family for the four authoring rows. Aliases run on the parent model through its native subagent primitive.
 
 <!-- role-defaults:end -->
 
@@ -78,7 +81,7 @@ Normalize configured descriptors before matching them to the matrix or choosing 
 
 This read-time rule makes an older installed sheet use the configured families immediately without writing user files. Once per parent run, report that the persisted sheet is stale and that `/setup-pstack` will rewrite it after its normal probes and confirmation. Unknown versioned Claude models remain invalid. The external runner accepts only model IDs registered in the matrix.
 
-The legacy Cursor selector `grok-4.6-fast-{effort}` maps to CLI model `grok-4.6`. The CLI's separate `grok-4.7-build-fast` model is not registered in this matrix. The portable Grok route pins the selected CLI model. `grok-4.6` remains the first-run default of every role but `trail reviewer pool`, whose default names `grok-4.7`. `grok-4.7` is available to the other roles as the `grok-4-7` family without changing them. Both default to `xhigh`; Grok 4.7 supports `low`, `medium`, `high`, and `xhigh`. T3 Code's model picker entry "Grok Build" is not a CLI model id: T3 defines it as "use whatever model the Grok session currently runs on", and `grok --model grok-build` fails with `unknown model id` (measured 2026-10-02, Grok CLI 1.0.46). A T3 thread on "Grok Build" runs the CLI's configured default (`grok-4.7` at `xhigh` on this machine) and reports `grok-4.7-build`, the same served model as a `grok:grok-4.7` lane.
+The legacy Cursor selector `grok-4.6-fast-{effort}` maps to CLI model `grok-4.6`. The CLI's separate `grok-4.7-build-fast` model is not registered in this matrix. The portable Grok route pins the selected CLI model. Claude and Codex parents retain their Grok 4.6 role defaults; the Grok parent uses 4.7 for its authoring and frontier solo roles. The shared `trail reviewer pool` also names 4.7. Both families default to `xhigh`; Grok 4.7 supports `low`, `medium`, `high`, and `xhigh`. T3 Code's model picker entry "Grok Build" is not a CLI model id: T3 defines it as "use whatever model the Grok session currently runs on", and `grok --model grok-build` fails with `unknown model id` (measured 2026-10-02, Grok CLI 1.0.46). A T3 thread on "Grok Build" runs the CLI's configured default (`grok-4.7` at `xhigh` on this machine) and reports `grok-4.7-build`, the same served model as a `grok:grok-4.7` lane.
 
 ## The parent owns the route
 
@@ -107,7 +110,7 @@ The top-level session picks the lane with the `pick` subcommand of `skills/setup
 
 ```text
 node <plugin>/skills/setup-pstack/scripts/setup-pstack.ts pick \
-  --parent <claude|codex> \
+  --parent <claude|codex|grok> \
   --role "<pool role>" \
   [--executor <provider>]...
 ```
@@ -127,6 +130,7 @@ A subagent does not launch a pool lane. It returns what the lane needs with its 
 Native dispatch avoids a second CLI startup and its base context.
 
 - Claude Code: match the descriptor's `(provider, model)` to one model-matrix row, then dispatch it through `pstack-<stem>-<effort>` using that row's Claude-native agent stem and the descriptor's effort. Those definitions select the registered model, requested effort, and `background: true`. Pass the complete task, grounding paths, access mode, and unique output location in the `Agent` prompt. Retain the task handle and drain it only after fan-out.
+- Grok Build: match the descriptor to `pstack-<stem>-<effort>` and call `spawn_subagent` with the exact advertised plugin agent name, `background: true`, the complete task, access mode and unique output location. The agent definition carries the model and effort. Use a dedicated worktree for a writer. Drain the returned ID through `get_command_or_subagent_output`. See [grok-tools.md](grok-tools.md) for owners and aliases.
 - Codex: call `spawn_agent` with the descriptor's model and `reasoning_effort`, the complete task, grounding paths, access mode, and unique output location. Use an isolated worktree for a writer. Codex subagents already run concurrently.
 
 Do not send a same-provider descriptor to the external runner. It rejects that call because the native route is cheaper and already available.
@@ -137,7 +141,7 @@ The launcher lives at `skills/poteto-mode/scripts/runner/pstack-runner` under th
 
 ```text
 pstack-runner \
-  --parent <claude|codex> \
+  --parent <claude|codex|grok> \
   --provider <claude|codex|grok> \
   --model <real CLI model> \
   --effort <low|medium|high|xhigh|max> \
@@ -160,9 +164,10 @@ The parent tool sandbox still governs whether a subscribed child CLI can reach i
 The parent invocation must itself be resumable background work:
 
 - Claude Code: call the launcher through a Bash tool invocation with `run_in_background: true` and retain its task ID. A foreground Bash tool call has an automatic ten-minute ceiling even when the runner's own timeout is longer. Shelling out with `&` and losing the task handle is not equivalent.
+- Grok Build: use the shell tool with `block_until_ms: 0`, retain the task ID, and wait through `get_command_or_subagent_output`.
 - Codex: run the launcher in a persistent exec session that returns a session ID, then wait or poll that handle. Do not hold one foreground tool call open for the model's full runtime.
 
-Start the background process, continue launching the other lanes, then drain their handles. Native and external lanes belong in the same fan-out phase. Draining is the parent's job in every harness mode: in an interactive session a finished background task wakes the parent, but a non-interactive parent (`claude -p`, `codex exec`) is never woken, and a turn that ends "waiting for the lanes" ends the session and cancels every running lane (receipts come back `cancelled`, measured 2026-09-18). There, block on each handle (`TaskOutput` with `block`, `wait_agent`, the exec session wait) until every lane has its receipt or result before judging.
+Start the background process, continue launching the other lanes, then drain their handles. Native and external lanes belong in the same fan-out phase. Draining is the parent's job in every harness mode: in an interactive session a finished background task wakes the parent, but a non-interactive parent (`claude -p`, `codex exec`, a Grok headless prompt) is never woken, and a turn that ends "waiting for the lanes" ends the session and cancels every running lane (receipts come back `cancelled`, measured 2026-09-18). There, block on each handle (`TaskOutput` with `block`, `wait_agent`, the exec session wait, Grok's output tool) until every lane has its receipt or result before judging.
 
 The runner and its preflight have no implicit timeout. Do not invent a duration from role, mode, or a convenient round number; real implementation lanes can run for 90 minutes or much longer. Pass `--timeout` only when the user, an external service deadline, or a measured task contract supplies a real bound. That value starts at wrapper entry, before module loading and argument parsing, and remains one absolute deadline across setup, preflight, model execution, and output capture. It is never a fresh allowance per child, and long waits are armed in runtime-safe chunks without shortening the supplied deadline. Otherwise supervise liveness through the retained background task/session handle and cancel manually only on evidence that the run is dead. In an autopilot program the owner's `children.tsv` expected runtime (at least the longest past run of that kind; for a runner lane with no past run, the receipts of earlier programs or the standing orders) is the measured task contract: a lane past it with no side effect is stuck per the playbook, and the cancel goes through the retained handle. Cancel through that retained handle so the runner receives SIGINT or SIGTERM, sends it to an active child when one remains, stops waiting on inherited output pipes, removes the empty output reservation, and writes a `cancelled` receipt. Preserve that receipt; a retry is a new attempt with new unique output and receipt paths. Unchanged running state is not a dropout, and Claude's ten-minute foreground ceiling is never a reason to terminate a healthy lane.
 

@@ -1,6 +1,6 @@
 ---
 name: setup-pstack
-description: Configure pstack's provider-qualified models, per-lane requested effort, and parent-owned routes per role. Probes a family on native Claude and Codex lanes or external CLI lanes only the first time the parent uses it (a new provider or model) before writing the override sheet; effort and role changes write without probes. Use for /setup-pstack, "configure pstack models", or changing pstack's model choices.
+description: Configure pstack's provider-qualified models, per-lane requested effort, and parent-owned routes per role. Probe each new family before writing the sheet; Grok also requires a fresh owner → helper capability check on every setup. Use for /setup-pstack, "configure pstack models", or changing pstack's model choices.
 ---
 
 # Setup pstack
@@ -23,13 +23,19 @@ Codex writes `~/.codex/pstack-models.md`. Codex has no `@` include, so the scrip
 <!-- pstack:models:end -->
 ```
 
+Grok writes `~/.grok/pstack-models.md` and mirrors the same bounded block in `~/.grok/AGENTS.md`. Read [grok-tools.md](../poteto-mode/references/grok-tools.md) for its native tools, aliases and session approval mode. The Grok sheet governs a Grok root even when compatibility loads a Claude sheet.
+
+Before probing Grok, verify that its root loaded `[subagents] max_depth = 2` or higher from `config.toml`. The default depth of one prevents an autopilot owner from creating a helper. If necessary, set this key while preserving the other settings and restart the Grok session. A config read is supporting evidence; the owner → helper probe in step 6 is the capability gate. Do not claim that the current root picked up a config change without restarting it.
+
 Next to each parent's sheet, `pstack-probes.json` is the probe ledger: one entry per family (`<provider>:<model>`) this parent has verified, with the descriptor probed, when, and the evidence (the run directory, or `operator` for a family the operator vouched for). Effort is not part of the key. A family in the ledger is never probed again, whatever effort a lane gives it. A new provider or a new model (a family added to the matrix, or a family whose model changed) is missing from the ledger and gets one probe. `write` adds each family it probed. To force a family to be probed again, delete its entry. A ledger that does not parse, or a directory at its path, stops `plan` as inconsistent state.
+
+The Grok `ownerProbe` is separate from that ledger. Every new plan gets a fresh marker and requires a live owner → helper proof from this root, even when `pairs` is empty. An older plan's evidence cannot satisfy the fresh marker. This capability proves session nesting; it does not change or invalidate cached model-family results.
 
 ## Steps
 
 ### 1. Establish the parent
 
-Use the harness and tool surface running this skill: Claude Code (`--parent claude`) or Codex (`--parent codex`). Environment markers may corroborate that top-level answer, but do not launch a child and ask it to detect where it came from. Record the parent because the same descriptor takes a different route in each harness.
+Use the harness and tool surface running this skill: Claude Code (`--parent claude`) Codex (`--parent codex`), or Grok Build (`--parent grok`), including T3 Code on that provider. Environment markers may corroborate that top-level answer, but do not launch a child and ask it to detect where it came from. Record the parent because the same descriptor takes a different route in each harness.
 
 ### 2. Load current state
 
@@ -75,7 +81,7 @@ The output carries `dir` (a fresh run directory holding `plan.json`; pass `--dir
 
 ### 6. Probe new families
 
-Skip this step when the plan's `pairs` is empty: every family of the map is already verified on this parent. Otherwise:
+Skip this step only when both `pairs` is empty and `ownerProbe` is null. Otherwise:
 
 ```shell
 node scripts/setup-pstack.ts probe --dir <dir> [--timeout <seconds>]
@@ -83,13 +89,15 @@ node scripts/setup-pstack.ts probe --dir <dir> [--timeout <seconds>]
 
 External pairs (route `runner`) of the plan run at once through the external runner in `read-only` mode, each with its own prompt, output, and receipt named after the pair under the run directory, after the CLI proves credentials (`claude auth status --json`, `codex login status`, or `grok models` listing the requested model). A pair passes only when its receipt is `complete` for exactly the requested provider, model, and effort, the model is verified (provider report) or pinned by argv (Codex), and the output carries the pair's unique marker. Exit code 1 means at least one external pair failed: report the failing pair, provider, and `detail`, stop, and write nothing. There is no implicit timeout; pass `--timeout` only when the operator gives a real deadline.
 
-Native pairs (route `native`) are listed under `native` with the `pair` id and the `prompt` to send. Run each one yourself through the parent's primitive: on Claude Code, one turn of the mapped `pstack-<stem>-<effort>` agent (`Agent` with that `subagent_type`); on Codex, one `spawn_agent` turn with the listed `model` and `reasoning_effort`. When the Codex parent has no `multi_agent` (so `spawn_agent` is unavailable), run the same prompt as one turn of the parent's own CLI instead: `codex exec --model <model> --config 'model_reasoning_effort="<effort>"' --sandbox read-only --skip-git-repo-check --ephemeral`; the Codex CLI is the parent's native process, not the external launcher. Then record the exact reply:
+Native pairs (route `native`) are listed under `native` with the `pair` id and the `prompt` to send. Run each one yourself through the parent's primitive: on Claude Code, one turn of the mapped `pstack-<stem>-<effort>` agent (`Agent` with that `subagent_type`); on Codex, one `spawn_agent` turn with the listed `model` and `reasoning_effort`. On Grok, spawn the listed `ownerAgent` using its exact advertised plugin name, such as `pstack:pstack-owner-grok-4-7-xhigh`. Its probe prompt requires it to spawn the listed ordinary `agent`, drain that helper and relay the marker and helper ID. Retain the owner's ID too. The definitions supply model and effort for both levels; retrieve results through `get_command_or_subagent_output`. A direct root → helper reply does not pass the Grok probe. When the Codex parent has no `multi_agent` (so `spawn_agent` is unavailable), run the same prompt as one turn of the parent's own CLI instead: `codex exec --model <model> --config 'model_reasoning_effort="<effort>"' --sandbox read-only --skip-git-repo-check --ephemeral`; the Codex CLI is the parent's native process, not the external launcher. Then record the exact reply:
 
 ```shell
 node scripts/setup-pstack.ts attest --dir <dir> --pair <family>@<effort> --observed "<exact reply text>"
 ```
 
-`attest` refuses a reply that lacks the marker. Never call the external launcher for the parent's own provider, and never attest a reply you did not observe. A login-status command alone proves credentials, not that the requested model runs. The probe proves the family and its route on this parent; the other efforts of a verified family are trusted to the matrix's Selectable efforts and are not probed. Receipts and native transcripts do not prove a provider's hidden applied reasoning depth.
+For Grok, add `--owner-id <observed owner ID> --child-id <observed helper ID>`. Check both transcript entries before attesting. `attest` refuses a reply that lacks the marker or Grok evidence without two distinct handles. Never call the external launcher for the parent's own provider, and never attest a reply you did not observe. A login-status command alone proves credentials, not that the requested model runs. The probe proves the family and its route on this parent; the other efforts of a verified family are trusted to the matrix's Selectable efforts and are not probed. Receipts and native transcripts do not prove a provider's hidden applied reasoning depth.
+
+On Grok, also attest `--pair owner-nesting` with the fresh `owner.marker`, exact observed reply and the two IDs. A native family probe's prompt includes both markers, so that same owner → helper call can satisfy both attestations. If there are no new native families, dispatch the listed `owner.agent` (`pstack:poteto-agent`) with `owner.prompt`, let it spawn exactly one inherited helper and drain it. Neither level starts another workflow. Never reuse an earlier root's handles or attest a capability from a config read alone.
 
 ### 7. Confirm and commit
 
@@ -101,17 +109,17 @@ Ask for confirmation. After the operator confirms:
 node scripts/setup-pstack.ts write --dir <dir>
 ```
 
-`write` verifies every probe the plan requires against the run directory first and refuses (exit 1, nothing touched) while any is missing or failed; a plan without `pairs` has nothing to verify. It then snapshots the sheet, the parent integration, and the ledger, renders the integration and the ledger (plus one entry per family this plan probed), compares, writes only what changed, reads each back, and restores every snapshot if a write or read-back fails. The result names each target as `created`, `updated`, or `unchanged`. An unchanged rerun is byte-identical and reports all three as `unchanged`.
+`write` verifies every required family probe and the fresh Grok owner capability against the run directory first and refuses (exit 1, nothing touched) while any is missing or failed. It then snapshots the sheet, the parent integration, and the ledger, renders the integration and the ledger (plus one entry per family this plan probed), compares, writes only what changed, reads each back, and restores every snapshot if a write or read-back fails. The result names each target as `created`, `updated`, or `unchanged`. An unchanged rerun is byte-identical and reports all three as `unchanged`.
 
 ### 8. How the integration is wired
 
-On Claude Code, the integration is the single `@~/.claude/pstack-models.md` line in `~/.claude/CLAUDE.md`: appended once on first run, left alone when present, inconsistent when duplicated. On Codex, it is the exact sheet bytes between one `<!-- pstack:models:begin -->` and `<!-- pstack:models:end -->` pair in `~/.codex/AGENTS.md`: one block appended at the end on first run, the whole block replaced on a rerun. Missing, duplicated, or reversed markers, or a directory where a file should be, stop the write as inconsistent state instead of guessing a boundary.
+On Claude Code, the integration is the single `@~/.claude/pstack-models.md` line in `~/.claude/CLAUDE.md`: appended once on first run, left alone when present, inconsistent when duplicated. On Codex and Grok, it is the exact sheet bytes between one `<!-- pstack:models:begin -->` and `<!-- pstack:models:end -->` pair in the respective `~/.codex/AGENTS.md` or `~/.grok/AGENTS.md`: one block appended at the end on first run, the whole block replaced on a rerun. Missing, duplicated, or reversed markers, or a directory where a file should be, stop the write as inconsistent state instead of guessing a boundary.
 
 Do not copy the model sheet or the ledger between harnesses; route availability can differ even on the same host, so each parent keeps its own ledger and probes a family the first time it uses it.
 
 ### 9. Behavioral smoke
 
-Run the smoke only when step 6 probed at least one family. Skip it when the plan had no `pairs`: an effort change or a role move between verified families needs no smoke. Otherwise, before declaring setup complete, run one small read-only mixed panel from this parent: one lane per newly probed family, distinct output/receipt paths, and an independent cross-judge. Launch Claude-native agents and every external process in the background with retained handles, then drain them. Verify the native transcript entries and every external receipt. A structural config check or unit test is not a substitute.
+Run the smoke only when step 6 probed at least one family. Skip it when the plan had no `pairs`: an effort change or a role move between verified families needs no smoke. Otherwise, before declaring setup complete, run one small read-only mixed panel from this parent: one lane per newly probed family, distinct output/receipt paths, and an independent cross-judge. Launch native agents and every external process in the background with retained handles, then drain them. Verify the native transcript entries and every external receipt. A structural config check or unit test is not a substitute.
 
 Report the sheet path, the ledger path, the parent route table, the families probed and the families already verified, smoke results when a smoke ran, and external elapsed/token/cost receipts. Re-running this skill updates the same sheet and probes only the families missing from this parent's ledger. Do not claim the provider exposed hidden applied-effort observability.
 
@@ -140,6 +148,8 @@ Say what stays blocked:
 Then give the operator the `grant` command to run on a terminal. `apply` shows the entry, asks for a typed yes, keeps every other setting, and copies the old file to `settings.json.before-pstack-authorization`.
 
 The authorization is the operator's act. Never run `apply` yourself, never write the entry into a settings file, and never supply the answer. The script refuses without a terminal for that reason. Claude Code reads `autoMode` from the user's settings and from no repository or plugin, so the plugin cannot ship the entry. When the operator says that `apply` ran, run `check` again and report the result.
+
+On Grok, include `--permission-mode <observed effective session mode>` in the check. Follow [grok-tools.md](../poteto-mode/references/grok-tools.md) to obtain that mode. A config file alone does not prove the mode of a T3 session, and the script writes no Grok approval setting.
 
 On exit 1 on Codex, show the `reason`. Codex has no such list. Codex asks for no approval when `approval_policy` is `"never"` at the top level of `~/.codex/config.toml`. The operator sets that value, or accepts that Codex stops to ask.
 
@@ -195,6 +205,33 @@ judgment and prose: codex:gpt-6-astra@max
 hardest tasks: codex:gpt-6-astra@max
 how explorer: grok:grok-4.6@xhigh
 how explainer: codex:gpt-6-astra@max
+why investigators: inherit-parent
+why synthesizer: inherit-parent
+reflect tooling: inherit-parent
+reflect judgment, divergent, synthesizer: inherit-parent
+arena runners: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:claude-opus-5-5@xhigh
+arena cross-judge pool: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:claude-opus-5-5@xhigh
+swarm workers: grok:grok-4.6@xhigh
+architect runners: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:claude-opus-5-5@xhigh
+interrogate reviewers: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:claude-opus-5-5@xhigh
+trail reviewer pool: claude:claude-opus-5-5@xhigh, codex:gpt-6.1-sol@xhigh, grok:grok-4.7@xhigh
+```
+
+Grok Build parent:
+
+```markdown
+# pstack model configuration
+
+Provider-qualified per-role choices. Read the installed pstack provider-dispatch reference before dispatching a configured role. Every documented role remains present. `inherit-parent` and `auto` use the parent model natively and still count as one panel lane.
+
+feature, refactoring: grok:grok-4.7@xhigh
+bug-fix: grok:grok-4.7@xhigh
+perf-issue: grok:grok-4.7@xhigh
+hillclimb: grok:grok-4.7@xhigh
+judgment and prose: grok:grok-4.7@xhigh
+hardest tasks: grok:grok-4.7@xhigh
+how explorer: grok:grok-4.6@xhigh
+how explainer: grok:grok-4.7@xhigh
 why investigators: inherit-parent
 why synthesizer: inherit-parent
 reflect tooling: inherit-parent

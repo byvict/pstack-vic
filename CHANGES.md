@@ -1580,3 +1580,15 @@ Nenhuma troca de modelo: "Grok Build" não existe como família, e as lanes `gro
 ## Verificação
 
 - `npm test`, `npm run matrix:check`, `npm run agents:check`, `npm run collision:check` e `git diff --check`: ver o PR.
+
+# 0.5.7 — Grok Build como raiz do pstack no T3 Code (2026-10-05)
+
+Grok deixa de ser só uma lane externa. Uma sessão Grok Build, inclusive no T3 Code, usa Grok nativo e inicia Claude/Codex diretamente pelo runner com `--parent grok`.
+
+- A matriz tem o terceiro pai, suas rotas e defaults. Os agents gerados de Grok 4.6 e 4.7 fixam modelo e esforço; os owners preservam spawning e as lanes comuns o recusam.
+- `setup-pstack` guarda sheet, integração e ledger em `~/.grok`. O plano passa para schema 7. Além das famílias novas, cada plano Grok exige uma prova fresca de owner → helper, com marcador e IDs distintos, mesmo quando todas as famílias estão no ledger.
+- A árvore exige `[subagents] max_depth = 2` ou maior antes de iniciar a raiz. O mapa `grok-tools.md` cobre as ferramentas reais da CLI 1.0.46, worktrees, `resume_from`, aprovação efetiva, objetivo nativo `/goal` e auditoria pela própria raiz. O ticker de 30 minutos roda sob `monitor` e termina por cancelamento.
+- A autorização Grok usa o modo efetivo observado na sessão. O setup não deduz a permissão do rótulo do T3 nem grava um modo de aprovação no config.
+- As fixtures de processo publicam PIDs por rename atômico. O CI Linux encontrou uma corrida em que o arquivo já existia, mas ainda estava vazio, e o teste acompanhava o PID 0.
+
+Verificado com 473 testes Node, 74 testes Bun, typecheck, matriz, agents, manifests e colisões. Na CLI 1.0.46, pelo ACP usado pelo T3: lane nativa com modelo/esforço distintos da raiz, painel Grok + Claude + Codex e juiz independente, owner → helper em worktree, retomada do owner, monitor/cancelamento e `/goal` concluído. Evidências locais em `~/Dev/Skills/pstack-vic-runs/2026-10-05-grok-parent/`. A UI do T3 e um ciclo completo de PR/merge não fazem parte dessas sondas.
