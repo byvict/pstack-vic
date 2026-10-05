@@ -55,6 +55,19 @@ function argv(extra: readonly string[] = []): string[] {
 }
 
 describe("runner CLI parsing", () => {
+  it("accepts external lanes from a Grok root and refuses Grok's native lane", async () => {
+    const codex = parseArgs(argv(["--parent", "grok", "--model", "gpt-6.1-sol"]));
+    assert.equal(codex?.parent, "grok");
+    assert.equal(codex?.provider, "codex");
+    const claude = parseArgs(argv(["--parent", "grok", "--provider", "claude", "--model", "fable"]));
+    assert.equal(claude?.provider, "claude");
+    let stderr = "";
+    const code = await main(argv(["--parent", "grok", "--provider", "grok", "--model", "grok-4.7", "--effort", "xhigh"]), Date.now(), {
+      stdout: () => {}, stderr: (text) => { stderr += text; },
+    });
+    assert.equal(code, 64);
+    assert.match(stderr, /native|same.provider/);
+  });
   it("does not invent a timeout", () => {
     assert.equal(parseArgs(argv())?.timeoutMs, null);
   });
@@ -73,8 +86,8 @@ describe("runner CLI parsing", () => {
       /provider must be one of: claude, codex, grok$/
     );
     assert.throws(
-      () => parseArgs(argv(["--parent", "grok"])),
-      /parent must be one of: claude, codex/
+      () => parseArgs(argv(["--parent", "gemini"])),
+      /parent must be one of: claude, codex, grok/
     );
     assert.throws(
       () => parseArgs(argv(["--effort", "ultra"])),

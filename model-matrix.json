@@ -13,16 +13,18 @@
   "aliases": ["inherit-parent", "auto"],
   "parents": {
     "claude": { "name": "Claude Code", "nativePrimitive": "Agent" },
-    "codex": { "name": "Codex", "nativePrimitive": "spawn_agent" }
+    "codex": { "name": "Codex", "nativePrimitive": "spawn_agent" },
+    "grok": { "name": "Grok Build", "nativePrimitive": "spawn_subagent" }
   },
   "providers": {
     "claude": { "cli": "claude", "nativeIn": "claude" },
     "codex": { "cli": "codex", "nativeIn": "codex" },
-    "grok": { "cli": "grok", "nativeIn": null }
+    "grok": { "cli": "grok", "nativeIn": "grok" }
   },
   "routes": {
     "claude": { "claude": "native", "codex": "runner", "grok": "runner" },
-    "codex": { "claude": "runner", "codex": "native", "grok": "runner" }
+    "codex": { "claude": "runner", "codex": "native", "grok": "runner" },
+    "grok": { "claude": "runner", "codex": "runner", "grok": "native" }
   },
   "families": [
     { "family": "fable", "provider": "claude", "model": "fable", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "max", "agentStem": "fable", "cursorSlug": "claude-fable-5-1-thinking-{effort}", "reportedModel": "^claude-fable-[0-9]+(-[0-9]+)*$" },
@@ -30,18 +32,18 @@
     { "family": "sol", "provider": "codex", "model": "gpt-6-sol", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "max", "agentStem": null, "cursorSlug": "gpt-5.6-sol-{effort}", "reportedModel": null },
     { "family": "sol-6-1", "provider": "codex", "model": "gpt-6.1-sol", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "max", "agentStem": null, "cursorSlug": null, "reportedModel": null },
     { "family": "astra", "provider": "codex", "model": "gpt-6-astra", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "max", "agentStem": null, "cursorSlug": null, "reportedModel": null },
-    { "family": "grok", "provider": "grok", "model": "grok-4.6", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "xhigh", "agentStem": null, "cursorSlug": "grok-4.6-fast-{effort}", "reportedModel": "^grok-4\\.6(-[a-z0-9]+)*$" },
-    { "family": "grok-4-7", "provider": "grok", "model": "grok-4.7", "efforts": ["low", "medium", "high", "xhigh"], "defaultEffort": "xhigh", "agentStem": null, "cursorSlug": null, "reportedModel": "^grok-4\\.7(-build)?$" }
+    { "family": "grok", "provider": "grok", "model": "grok-4.6", "efforts": ["low", "medium", "high", "xhigh", "max"], "defaultEffort": "xhigh", "agentStem": "grok", "cursorSlug": "grok-4.6-fast-{effort}", "reportedModel": "^grok-4\\.6(-[a-z0-9]+)*$" },
+    { "family": "grok-4-7", "provider": "grok", "model": "grok-4.7", "efforts": ["low", "medium", "high", "xhigh"], "defaultEffort": "xhigh", "agentStem": "grok-4-7", "cursorSlug": null, "reportedModel": "^grok-4\\.7(-build)?$" }
   ],
   "roles": [
-    { "role": "feature, refactoring", "description": "Writes the code of a feature or a behavior-preserving refactor in its own worktree; the parent reviews the diff.", "default": { "claude": "opus@xhigh", "codex": "sol@xhigh" } },
-    { "role": "bug-fix", "description": "Reproduces a reported defect, finds the root cause, and writes the fix with runtime evidence.", "default": { "claude": "opus@xhigh", "codex": "sol@xhigh" } },
-    { "role": "perf-issue", "description": "Traces a measured slowness against a baseline and implements the improvement.", "default": { "claude": "opus@xhigh", "codex": "sol@xhigh" } },
-    { "role": "hillclimb", "description": "Iterates hypotheses on one metric with before/after measurements, one commit per accepted win.", "default": { "claude": "opus@xhigh", "codex": "sol@xhigh" } },
-    { "role": "judgment and prose", "description": "Writes and judges prose: docs, PR descriptions, summaries, explanations, syntheses.", "default": { "claude": "fable@max", "codex": "astra@max" } },
-    { "role": "hardest tasks", "description": "Implements the hardest changes: cross-cutting design, subtle concurrency or algorithms, vague intent, or a precise multi-step sequence.", "default": { "claude": "fable@max", "codex": "astra@max" } },
+    { "role": "feature, refactoring", "description": "Writes the code of a feature or a behavior-preserving refactor in its own worktree; the parent reviews the diff.", "default": { "claude": "opus@xhigh", "codex": "sol@xhigh", "grok": "grok-4-7@xhigh" } },
+    { "role": "bug-fix", "description": "Reproduces a reported defect, finds the root cause, and writes the fix with runtime evidence.", "default": { "claude": "opus@xhigh", "codex": "sol@xhigh", "grok": "grok-4-7@xhigh" } },
+    { "role": "perf-issue", "description": "Traces a measured slowness against a baseline and implements the improvement.", "default": { "claude": "opus@xhigh", "codex": "sol@xhigh", "grok": "grok-4-7@xhigh" } },
+    { "role": "hillclimb", "description": "Iterates hypotheses on one metric with before/after measurements, one commit per accepted win.", "default": { "claude": "opus@xhigh", "codex": "sol@xhigh", "grok": "grok-4-7@xhigh" } },
+    { "role": "judgment and prose", "description": "Writes and judges prose: docs, PR descriptions, summaries, explanations, syntheses.", "default": { "claude": "fable@max", "codex": "astra@max", "grok": "grok-4-7@xhigh" } },
+    { "role": "hardest tasks", "description": "Implements the hardest changes: cross-cutting design, subtle concurrency or algorithms, vague intent, or a precise multi-step sequence.", "default": { "claude": "fable@max", "codex": "astra@max", "grok": "grok-4-7@xhigh" } },
     { "role": "how explorer", "description": "Reads a subsystem in read-only mode and reports how it works, with file and line evidence.", "default": "grok@xhigh" },
-    { "role": "how explainer", "description": "Turns the explorers' findings into the explanation the how skill delivers.", "default": { "claude": "fable@max", "codex": "astra@max" } },
+    { "role": "how explainer", "description": "Turns the explorers' findings into the explanation the how skill delivers.", "default": { "claude": "fable@max", "codex": "astra@max", "grok": "grok-4-7@xhigh" } },
     { "role": "why investigators", "description": "Investigate why something was built this way across git history, tickets, and the parent's MCP sources; needs the parent's MCPs, so it stays on an alias.", "default": "inherit-parent" },
     { "role": "why synthesizer", "description": "Merges the why investigators' findings into one answer; same MCP constraint, stays on an alias.", "default": "inherit-parent" },
     { "role": "reflect tooling", "description": "Reads transcripts and skills to find lessons after a long task with the parent's tools; stays on an alias for the MCP reason.", "default": "inherit-parent" },

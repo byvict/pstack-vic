@@ -120,8 +120,8 @@ describe("model-matrix.json", () => {
       const native = nativeParentOf(matrix, f);
       assert.equal(
         f.agentStem !== null,
-        native === "claude",
-        `${f.family}: agent stem iff native in Claude Code`
+        native !== null && matrix.parents[native].nativePrimitive !== "spawn_agent",
+        `${f.family}: agent stem iff its native primitive uses a definition`
       );
     }
   });
@@ -238,7 +238,7 @@ describe("model-matrix.json", () => {
     );
   });
 
-  it("rejects a Claude family without an agent stem and a non-Claude family with one", () => {
+  it("rejects a definition-based family without a stem and a Codex family with one", () => {
     assert.throws(
       () =>
         validateMatrix(
@@ -253,8 +253,8 @@ describe("model-matrix.json", () => {
       () =>
         validateMatrix(
           withFamilies((fs) => {
-            const grok = fs.find((f) => f.provider === "grok") as Record<string, unknown>;
-            grok.agentStem = "grok";
+            const codex = fs.find((f) => f.provider === "codex") as Record<string, unknown>;
+            codex.agentStem = "codex";
           })
         ),
       /agentStem must be present iff/
@@ -271,7 +271,7 @@ describe("model-matrix.json", () => {
       model,
       efforts: ["low", "high"],
       defaultEffort: "high",
-      agentStem: null,
+      agentStem: "test-family",
       cursorSlug: null,
       reportedModel: `^${model}$`,
     };
@@ -284,8 +284,8 @@ describe("model-matrix.json", () => {
     assert.equal(defaultDescriptor(row), `grok:${model}@high`);
     assert.deepEqual(resolveDescriptor(extended, `grok:${model}@low`).family, row);
     assert.throws(() => resolveDescriptor(extended, `grok:${model}@max`), /does not select effort max/);
-    assert.ok(renderMatrixMarkdown(extended).includes(`| test-family | grok | \`${model}\` | high | low high | - | - | - |`));
-    assert.deepEqual(declaredAgentNames(extended), declaredAgentNames(matrix));
+    assert.ok(renderMatrixMarkdown(extended).includes(`| test-family | grok | \`${model}\` | high | low high | grok | \`test-family\` | - |`));
+    assert.deepEqual(declaredAgentNames(extended), [...declaredAgentNames(matrix), "pstack-test-family-low", "pstack-test-family-high"]);
     // The route table does not change when a family is added: routes are per provider.
     assert.deepEqual(extended.routes, matrix.routes);
   });

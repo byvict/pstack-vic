@@ -1,12 +1,12 @@
 # pstack-vic
 
-Port autoral do [pstack](https://github.com/cursor/plugins/tree/main/pstack) de Lauren Tan ([@poteto](https://x.com/poteto)) para Claude Code e Codex.
+Port autoral do [pstack](https://github.com/cursor/plugins/tree/main/pstack) de Lauren Tan ([@poteto](https://x.com/poteto)) para Claude Code, Codex e Grok Build.
 
 > if you want to go fast, go deep first.
 
 pstack dá ao agente regras de engenharia, playbooks por tipo de tarefa, skills focadas e ferramentas locais pequenas. O ponto de entrada é `/poteto-mode`: ele lê a tarefa, escolhe um playbook e chama as outras skills conforme os passos pedem. O resultado é menos código, verificado no artefato real, com trilha que dá para inspecionar.
 
-Este port mantém a prosa da Cursor onde ela não depende da Cursor e substitui só o que depende: tools, transcripts, subagents, cloud agents e seleção de modelo. Uma única árvore de skills serve os dois pais. Os modelos de cada papel são dado (`model-matrix.json`), e `/setup-pstack` escreve o sheet que sobrescreve os defaults.
+Este port mantém a prosa da Cursor onde ela não depende da Cursor e substitui só o que depende: tools, transcripts, subagents, cloud agents e seleção de modelo. Uma única árvore de skills serve os três pais. Os modelos de cada papel são dado (`model-matrix.json`), e `/setup-pstack` escreve o sheet que sobrescreve os defaults.
 
 ## Começar
 
@@ -18,9 +18,11 @@ Este port mantém a prosa da Cursor onde ela não depende da Cursor e substitui 
    ```
 
    ```shell
-   codex plugin marketplace add byvict/pstack-vic --ref v0.5.6
+   codex plugin marketplace add byvict/pstack-vic --ref v0.5.7
    codex plugin add pstack@pstack-vic
    ```
+
+   No Grok Build, o plugin instalado no Claude Code também é descoberto pela compatibilidade do CLI. Uma sessão Grok no T3 Code usa as rotas do pai Grok. Configure `[subagents] max_depth = 2` no `~/.grok/config.toml` e reinicie a sessão para permitir owner → helper. A [adaptação](skills/poteto-mode/references/grok-tools.md) explica ferramentas, permissões e retomada do autopilot.
 
 2. Rode `/setup-pstack` uma vez em cada pai para escolher os modelos por papel. No fim, ele confere a [autorização permanente](docs/reference.md#autorização-permanente), que o autopilot e o playbook Shipping exigem para mergear sem aprovação humana. No Claude Code, ele entrega o comando que você roda uma vez para concedê-la.
 3. Use `/poteto-mode` sempre que a tarefa pedir rigor. O modo só entra por esse comando; o agente não o liga sozinho.

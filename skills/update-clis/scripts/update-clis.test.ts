@@ -430,7 +430,7 @@ const promptIndex = args.indexOf("--prompt-file");
 const prompt = promptIndex >= 0 ? readFileSync(args[promptIndex + 1], "utf8") : readFileSync(0, "utf8");
 const marker = (prompt.match(/PSTACK-[A-Za-z0-9-]+/) ?? ["missing"])[0];
 if (/probe\\.txt/.test(prompt) && process.env.FAKE_SKIP_FILE !== "1") writeFileSync("probe.txt", marker + "\\n");
-const reported = model.startsWith("grok-") ? model + "-build" : model;
+const reported = model === "fable" ? "claude-fable-9-9" : model.startsWith("grok-") ? model + "-build" : model;
 if (CLI === "claude") {
   out(JSON.stringify({ result: marker, session_id: "c1", usage: { input_tokens: 1, output_tokens: 1 }, total_cost_usd: 0, modelUsage: { [reported]: {} } }));
 } else if (CLI === "codex") {
@@ -964,11 +964,11 @@ const laneRows = (summary: any): string[][] =>
   summary.lanes.map((lane: { lane: string; pair: string | null; status: string }) => [lane.lane, lane.pair ?? "-", lane.status]);
 
 describe("probe pairs", () => {
-  it("takes codex from the Claude sheet, claude from the Codex sheet, grok from both, each pair once", () => {
+  it("takes external pairs from every parent sheet or its defaults, each pair once", () => {
     const machine = fakeMachine();
     withSheets(machine, { claude: CLAUDE_SHEET, codex: CODEX_SHEET });
-    assert.deepEqual(probePairs("codex", machine.home).map((p) => p.pair), ["sol@xhigh"]);
-    assert.deepEqual(probePairs("claude", machine.home).map((p) => p.pair), ["opus@xhigh"]);
+    assert.deepEqual(probePairs("codex", machine.home).map((p) => p.pair), ["sol@xhigh", "sol-6-1@xhigh", "astra@max"]);
+    assert.deepEqual(probePairs("claude", machine.home).map((p) => p.pair), ["fable@max", "opus@xhigh"]);
     assert.deepEqual(probePairs("grok", machine.home).map((p) => p.pair), ["grok@high", "grok-4-7@xhigh"]);
   });
 
@@ -1021,9 +1021,13 @@ describe("probe", () => {
     assert.deepEqual(laneRows(value), [
       ["read", "sol@xhigh", "passed"],
       ["write", "sol@xhigh", "passed"],
+      ["read", "sol-6-1@xhigh", "passed"],
+      ["write", "sol-6-1@xhigh", "passed"],
+      ["read", "astra@max", "passed"],
+      ["write", "astra@max", "passed"],
       ["sandbox", "-", "passed"],
     ]);
-    assert.match(value.lanes[2].detail, /CODEX_SANDBOX=seatbelt, lane write accepted, ~\/\.grok write accepted, write outside the workspace denied/);
+    assert.match(value.lanes.find((lane: { lane: string }) => lane.lane === "sandbox").detail, /CODEX_SANDBOX=seatbelt, lane write accepted, ~\/\.grok write accepted, write outside the workspace denied/);
   });
 
   it("fails the sandbox lane when a write outside the workspace goes through or CODEX_SANDBOX is missing", async () => {
@@ -1032,10 +1036,10 @@ describe("probe", () => {
     const open = await probeRun(machine, "codex", { FAKE_SANDBOX_OPEN: "1" });
     assert.equal(open.code, 1);
     assert.equal(open.value.ok, false);
-    assert.match(open.value.lanes[2].detail, /write outside the workspace went through/);
+    assert.match(open.value.lanes.find((lane: { lane: string }) => lane.lane === "sandbox").detail, /write outside the workspace went through/);
     await json(["finish", "--dir", open.dir, "--home", machine.home], machine.env);
     const unmarked = await probeRun(machine, "codex", { FAKE_SANDBOX_NO_MARKER: "1" });
-    assert.match(unmarked.value.lanes[2].detail, /CODEX_SANDBOX was not exported/);
+    assert.match(unmarked.value.lanes.find((lane: { lane: string }) => lane.lane === "sandbox").detail, /CODEX_SANDBOX was not exported/);
   });
 
   it("runs the claude pairs as a Codex parent would, without the Claude Code identity, then the manifest lane", async () => {
@@ -1045,6 +1049,9 @@ describe("probe", () => {
     const { code, value } = await probeRun(machine, "claude", { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "s", CLAUDE_CODE_OAUTH_TOKEN: "fake-token", FAKE_ENV_DUMP: dump });
     assert.equal(code, 0, JSON.stringify(value, null, 2));
     assert.deepEqual(laneRows(value), [
+      ["read", "fable@max", "passed"],
+      ["write", "fable@max", "passed"],
+      ["seatbelt", "fable@max", "passed"],
       ["read", "opus@xhigh", "passed"],
       ["write", "opus@xhigh", "passed"],
       ["seatbelt", "opus@xhigh", "passed"],
@@ -1075,6 +1082,10 @@ describe("probe", () => {
     assert.deepEqual(laneRows(value), [
       ["read", "sol@xhigh", "passed"],
       ["write", "sol@xhigh", "failed"],
+      ["read", "sol-6-1@xhigh", "passed"],
+      ["write", "sol-6-1@xhigh", "failed"],
+      ["read", "astra@max", "passed"],
+      ["write", "astra@max", "failed"],
       ["sandbox", "-", "passed"],
     ]);
     assert.match(value.lanes[1].detail, /probe\.txt is missing/);

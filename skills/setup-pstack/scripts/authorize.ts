@@ -37,6 +37,7 @@ const BUILT_IN_RULES = "$defaults";
 const TARGETS: Readonly<Record<string, readonly string[]>> = {
   claude: [".claude", "settings.json"],
   codex: [".codex", "config.toml"],
+  grok: [".grok", "config.toml"],
 };
 
 export function settingsPathFor(parent: string, home: string = homedir()): string {
@@ -115,8 +116,17 @@ function codexApprovalPolicy(text: string | null): string | null {
   return null;
 }
 
-export function checkAuthorization(parent: string, home: string = homedir()): Check {
+export function checkAuthorization(parent: string, home: string = homedir(), permissionMode?: string): Check {
   const file = settingsPathFor(parent, home);
+  if (parent === "grok") {
+    const authorized = permissionMode === "always-approve" || permissionMode === "bypassPermissions";
+    return {
+      parent, authorized, file,
+      reason: authorized
+        ? `The observed session permission mode is ${permissionMode}; deny rules, hooks and the operator's scope still apply`
+        : "Grok needs the observed effective session mode via --permission-mode always-approve or bypassPermissions; config alone does not prove the mode of a T3 session",
+    };
+  }
   const text = readIfExists(file);
   if (parent === "codex") {
     const policy = codexApprovalPolicy(text);
@@ -196,6 +206,7 @@ async function apply(home: string, io: Io): Promise<number> {
 const USAGE = `Usage: authorize <check|apply> [options]
 
   check  --parent <${Object.keys(TARGETS).join("|")}> [--home <dir>]
+         Grok also needs --permission-mode <observed effective session mode>.
          Exit 0 when the parent may run the autopilot and the Shipping playbook without a stop for approval, 1 when it may not.
   apply  --parent claude [--home <dir>]
          Add the standing authorization to autoMode.allow of ~/.claude/settings.json.
@@ -228,6 +239,7 @@ export async function main(argv: readonly string[], io: Io = {
         options: {
           parent: { type: "string" },
           home: { type: "string" },
+          "permission-mode": { type: "string" },
           help: { type: "boolean", short: "h", default: false },
         },
       });
@@ -246,12 +258,16 @@ export async function main(argv: readonly string[], io: Io = {
       usage(command === undefined ? "a subcommand is required" : `unknown subcommand ${JSON.stringify(command)}`);
     }
     if (typeof parent !== "string") usage("--parent is required");
+    const permissionMode = parsed.values["permission-mode"];
+    if (permissionMode !== undefined && (parent !== "grok" || command !== "check")) {
+      usage("--permission-mode is only for check --parent grok");
+    }
     if (command === "check") {
-      const check = checkAuthorization(parent, home);
+      const check = checkAuthorization(parent, home, typeof permissionMode === "string" ? permissionMode : undefined);
       io.stdout(JSON.stringify(check, null, 2) + "\n");
       return check.authorized ? 0 : 1;
     }
-    if (parent !== "claude") usage("apply is for a Claude Code parent; Codex has no authorization list, set approval_policy in ~/.codex/config.toml");
+    if (parent !== "claude") usage("apply is for a Claude Code parent; Codex and Grok use their session approval policies");
     return await apply(home, io);
   } catch (error) {
     if (error instanceof CliUsageError) {

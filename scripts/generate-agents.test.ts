@@ -69,7 +69,7 @@ function withClaudeFamily(): ModelMatrix {
 }
 
 describe("generate-agents", () => {
-  it("renders one lane per Claude-native family and selectable effort, in matrix order, then the owners", () => {
+  it("renders one lane per definition-based native family and selectable effort, in matrix order, then the owners", () => {
     const expected = expectedAgents(matrix);
     assert.deepEqual([...expected.keys()], declaredNames(matrix));
     assert.ok(expected.size >= 1, "the matrix declares at least one Claude-native agent");
@@ -81,7 +81,7 @@ describe("generate-agents", () => {
         const { fields, body } = parseFrontmatter(expected.get(name) as string);
         assert.deepEqual(fields, {
           name,
-          description: `Native Claude lane for pstack roles configured as ${f.provider}:${f.model}@${effort}.`,
+          description: `Native ${f.provider === "grok" ? "Grok" : "Claude"} lane for pstack roles configured as ${f.provider}:${f.model}@${effort}.`,
           model: f.model,
           effort,
           background: "true",
@@ -97,7 +97,7 @@ describe("generate-agents", () => {
   // Claude Code's Agent tool takes no effort, so an autopilot owner gets the
   // effort of its authoring row from its agent definition. An owner spawns
   // helpers, so it must keep the Agent tool that a lane gives up.
-  it("renders one owner per Claude-native family and selectable effort: poteto-agent on that model and effort", () => {
+  it("renders one owner per definition-based native family and selectable effort: poteto-agent on that model and effort", () => {
     const expected = expectedAgents(matrix);
     const potetoAgent = parseFrontmatter(readFileSync(join(AGENTS_DIR, "poteto-agent.md"), "utf8"));
     for (const f of matrix.families) {
@@ -107,7 +107,7 @@ describe("generate-agents", () => {
         const { fields, body } = parseFrontmatter(expected.get(name) as string);
         assert.deepEqual(fields, {
           name,
-          description: `Autopilot PR owner for an authoring row configured as ${f.provider}:${f.model}@${effort}. Only the root of a poteto-mode autopilot program spawns it.`,
+          description: `Autopilot PR owner for an authoring row configured as ${f.provider}:${f.model}@${effort}. ${f.provider === "grok" ? "The root spawns it for autopilot or a setup capability probe." : "Only the root of a poteto-mode autopilot program spawns it."}`,
           model: f.model,
           effort,
         });
@@ -117,11 +117,11 @@ describe("generate-agents", () => {
   });
 
   it("refuses to render a family without a stem or an effort it does not select", () => {
-    const grok = matrix.families.find((f) => f.family === "grok") as Family;
+    const codex = matrix.families.find((f) => f.family === "sol") as Family;
     const fable = matrix.families.find((f) => f.family === "fable") as Family;
-    assert.throws(() => renderAgent(grok, "max"), /no Claude-native agent stem/);
+    assert.throws(() => renderAgent(codex, "max"), /no definition-based native agent stem/);
     assert.throws(() => renderAgent(fable, "ultra"), /does not select effort ultra/);
-    assert.throws(() => renderOwnerAgent(grok, "max", potetoAgentBody()), /no Claude-native agent stem/);
+    assert.throws(() => renderOwnerAgent(codex, "max", potetoAgentBody()), /no definition-based native agent stem/);
     assert.throws(() => renderOwnerAgent(fable, "ultra", potetoAgentBody()), /does not select effort ultra/);
   });
 

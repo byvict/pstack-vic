@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Generate the Claude-native lane agents (agents/pstack-<stem>-<effort>.md)
+// Generate the definition-based native lane agents (agents/pstack-<stem>-<effort>.md)
 // and autopilot owner agents (agents/pstack-owner-<stem>-<effort>.md) from
 // model-matrix.json.
 //
@@ -15,11 +15,9 @@
 // The lane text is the open-pstack 1.4.1 lane template (MIT, see NOTICE.md),
 // so a regenerated lane is byte-identical to the file open-pstack ships.
 //
-// An owner is poteto-agent on the model and effort of an authoring row. Claude
-// Code's Agent tool takes no effort and only a family alias as `model`, so the
-// agent definition is the one place that carries both (measured on 2.1.287).
-// Its body is the body of agents/poteto-agent.md, read at generation time, and
-// it keeps the Agent tool, which a lane does not.
+// An owner is poteto-agent on the model and effort of an authoring row. Its
+// definition carries both, while its body comes from agents/poteto-agent.md.
+// It retains spawning tools; Grok also needs a configured nesting depth.
 
 import { existsSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -49,17 +47,17 @@ function laneTitle(f: Family): string {
   return stem.charAt(0).toUpperCase() + stem.slice(1);
 }
 
-/** Text of one lane agent. Throws when the family has no Claude-native stem. */
+/** Text of one lane agent. Throws when the family has no definition-based native stem. */
 export function renderAgent(f: Family, effort: string): string {
   const name = agentName(f, effort);
-  if (name === null) throw new Error(`${f.family} has no Claude-native agent stem`);
+  if (name === null) throw new Error(`${f.family} has no definition-based native agent stem`);
   if (!f.efforts.includes(effort)) {
     throw new Error(`${f.family} does not select effort ${effort}`);
   }
   return [
     "---",
     `name: ${name}`,
-    `description: Native Claude lane for pstack roles configured as ${f.provider}:${f.model}@${effort}.`,
+    `description: Native ${f.provider === "grok" ? "Grok" : "Claude"} lane for pstack roles configured as ${f.provider}:${f.model}@${effort}.`,
     `model: ${f.model}`,
     `effort: ${effort}`,
     "background: true",
@@ -81,17 +79,17 @@ export function potetoAgentBody(): string {
   return text.slice(end + 5);
 }
 
-/** Text of one owner agent. Throws when the family has no Claude-native stem. */
+/** Text of one owner agent. Throws when the family has no definition-based native stem. */
 export function renderOwnerAgent(f: Family, effort: string, body: string): string {
   const name = ownerAgentName(f, effort);
-  if (name === null) throw new Error(`${f.family} has no Claude-native agent stem`);
+  if (name === null) throw new Error(`${f.family} has no definition-based native agent stem`);
   if (!f.efforts.includes(effort)) {
     throw new Error(`${f.family} does not select effort ${effort}`);
   }
   return [
     "---",
     `name: ${name}`,
-    `description: Autopilot PR owner for an authoring row configured as ${f.provider}:${f.model}@${effort}. Only the root of a poteto-mode autopilot program spawns it.`,
+    `description: Autopilot PR owner for an authoring row configured as ${f.provider}:${f.model}@${effort}. ${f.provider === "grok" ? "The root spawns it for autopilot or a setup capability probe." : "Only the root of a poteto-mode autopilot program spawns it."}`,
     `model: ${f.model}`,
     `effort: ${effort}`,
     "---",

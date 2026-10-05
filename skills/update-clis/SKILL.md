@@ -29,7 +29,7 @@ First, list the open issues: `list_issues` with `project` set to the id above, `
 ## Run
 
 1. `start`. The output gives `dir`, the run directory under `~/Library/Caches/pstack-vic/update-clis/`. Exit 3 means that another execution holds the lock: report "já em execução" and stop. From here on, the run always ends with step 4, whatever happens.
-2. `check`, or `check --cli <cli>` when the operator named one CLI ("atualiza o grok"). For each CLI, the output gives `status` (`current`, `update-available`, `unverified`, `not-installed`), `resolved` (the path, version, and installer that both parents use), `latest` and `channel`, `duplicates`, `inUse`, `apps`, and `error`.
+2. `check`, or `check --cli <cli>` when the operator named one CLI ("atualiza o grok"). For each CLI, the output gives `status` (`current`, `update-available`, `unverified`, `not-installed`), `resolved` (the path, version, and installer that all parents use), `latest` and `channel`, `duplicates`, `inUse`, `apps`, and `error`.
 3. Handle each CLI in the order **codex → grok → claude**. Follow "One CLI" below and record one outcome per CLI. Codex goes first because the grok and claude `seatbelt` lanes run under `codex sandbox`.
 4. `finish --dir <dir>`. Add `--keep-copies` when a grok rollback failed, because the copy is then the way back.
 5. Report, as described at the end.
