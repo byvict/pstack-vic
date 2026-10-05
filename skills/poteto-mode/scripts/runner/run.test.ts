@@ -24,11 +24,16 @@ let bin = "";
 let restoreProcessEnv: () => void = () => {};
 
 const fake = `#!/usr/bin/env node
-import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, renameSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { spawn } from "node:child_process";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const out = (text) => writeSync(1, text + "\\n");
 const err = (text) => writeSync(2, text + "\\n");
+function publishPid(path, pid) {
+  const temporary = path + "." + process.pid + ".tmp";
+  writeFileSync(temporary, String(pid));
+  renameSync(temporary, path);
+}
 const args = process.argv.slice(2);
 const name = process.argv[1].split("/").at(-1);
 const isPreflight =
@@ -39,7 +44,7 @@ const stage = isPreflight ? "preflight" : "model";
 const startedPath = isPreflight
   ? process.env.FAKE_PREFLIGHT_STARTED_PATH
   : process.env.FAKE_MODEL_STARTED_PATH;
-if (startedPath) writeFileSync(startedPath, String(process.pid));
+if (startedPath) publishPid(startedPath, process.pid);
 const cancelStage = process.env.FAKE_CANCEL_STAGE ??
   (process.env.FAKE_CANCEL === "1" ? "model" : "");
 if (cancelStage === stage) {
@@ -49,7 +54,7 @@ if (cancelStage === stage) {
   };
   process.on("SIGINT", () => stop("SIGINT"));
   process.on("SIGTERM", () => stop("SIGTERM"));
-  writeFileSync(process.env.FAKE_STARTED_PATH, String(process.pid));
+  publishPid(process.env.FAKE_STARTED_PATH, process.pid);
   await sleep(5_000);
 }
 const delay = Number(
@@ -78,7 +83,7 @@ if (name === "grok" && args[0] === "models") {
   }
   const transientMarker = process.env.FAKE_GROK_TRANSIENT_UNAUTH_PATH;
   if (transientMarker && !existsSync(transientMarker)) {
-    writeFileSync(transientMarker, String(process.pid));
+    publishPid(transientMarker, process.pid);
     out("Available models:\\n  * grok-4.6 (default)");
     err("You are not authenticated.");
     process.exit(0);
@@ -121,7 +126,7 @@ if (stage === "model" && process.env.FAKE_DESCENDANT_HOLDS_PIPES_MS) {
     detached: true,
   });
   if (process.env.FAKE_DESCENDANT_PID_PATH) {
-    writeFileSync(process.env.FAKE_DESCENDANT_PID_PATH, String(descendant.pid));
+    publishPid(process.env.FAKE_DESCENDANT_PID_PATH, descendant.pid);
   }
   descendant.unref();
 }
@@ -140,7 +145,7 @@ if (name === "claude") {
   out(JSON.stringify({type:"result",subtype:"success",is_error:false,result:"GROK_OK",session_id:"g1",usage:{input_tokens:30,output_tokens:4,total_tokens:34},total_cost_usd:0.02,modelUsage:{[model]:{}}}));
 }
 if (process.env.FAKE_MODEL_EXITING_PATH) {
-  writeFileSync(process.env.FAKE_MODEL_EXITING_PATH, String(process.pid));
+  publishPid(process.env.FAKE_MODEL_EXITING_PATH, process.pid);
 }
 `;
 
