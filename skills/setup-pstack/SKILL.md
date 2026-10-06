@@ -1,11 +1,11 @@
 ---
 name: setup-pstack
-description: Configure pstack's provider-qualified models, per-lane requested effort, and parent-owned routes per role. Probe each new family before writing the sheet; Grok also requires a fresh owner → helper capability check on every setup. Use for /setup-pstack, "configure pstack models", or changing pstack's model choices.
+description: Configure pstack's provider-qualified models, per-lane requested effort, parent-owned routes and optional native swarm fallback. Probe each new family before writing the sheet; Grok also requires a fresh owner → helper capability check on every setup. Use for /setup-pstack, "configure pstack models", or changing pstack's model choices or swarm fallback.
 ---
 
 # Setup pstack
 
-Configure one portable model sheet for the current parent harness. Read [`provider-dispatch.md`](../poteto-mode/references/provider-dispatch.md) before probing or writing anything. Its model matrix, descriptor grammar, route table, and role defaults are the contract. Each lane carries its own effort, so two roles may run the same family at different efforts. Do not add a second configuration file, a runtime resolver, or a weaker-model fallback. The `pick` subcommand is none of these: it applies the Cross-family selection rule of `provider-dispatch.md` to a row the operator wrote, and never leaves that row.
+Configure one portable model sheet for the current parent harness. Read [`provider-dispatch.md`](../poteto-mode/references/provider-dispatch.md) before probing or writing anything. Its model matrix, descriptor grammar, route table, and role defaults are the contract. Each lane carries its own effort, so two roles may run the same family at different efforts. Keep all choices in this sheet. The optional `swarm fallback` setting follows the [native fallback policy](../swarm/references/native-fallback.md); no other implicit model substitution is configured here. The `pick` subcommand applies the Cross-family selection rule of `provider-dispatch.md` to a row the operator wrote, and never leaves that row.
 
 The deterministic half of this skill is `scripts/setup-pstack.ts`, next to this file (Node 24, no dependencies; run it as `node <this skill's directory>/scripts/setup-pstack.ts <subcommand>`). It reads the matrix, reads and normalizes the current sheet, renders the new one, runs the external probes through the runner, refuses to write while any required probe is missing, and writes with snapshot, read-back, and restore. You own the conversation (parent, efforts, role changes, confirmation) and the native one-turn probes. Every subcommand prints JSON; `--help` prints the usage. Never edit the sheet or the integration files by hand, and never paste a rendered sheet as the result. A sixth subcommand, `pick`, is not a setup step: a skill calls it at dispatch time to take one lane from a pool row. A second script, `scripts/authorize.ts`, checks the operator's standing authorization (step 10).
 
@@ -55,6 +55,8 @@ The script stops on inconsistent state: an unknown or duplicate role row, a bare
 
 ### 3. Show the map as a table, then ask only for the roles that change
 
+`swarm fallback` is an optional setting, not a role or panel. Show it separately below the role map, with its current descriptor or "disabled" when absent. Preserve its value unless the operator asks to change it. When enabling it without a supplied descriptor, offer registered models from this parent's native provider and collect an explicit supported effort; aliases and lists are invalid. Explain that saving it authorizes one eligible substitute per worker under the [native fallback policy](../swarm/references/native-fallback.md), without another confirmation at execution time. It does not authorize substitution in model comparisons or cross-family review. Disabling removes the row; first-run setup leaves it absent unless requested.
+
 Show the whole map as one markdown table, one row per role in matrix order, with three columns: the role, what the lane does (the role's `description` from `model-matrix.json`, the "What the lane does" column of the role table in `provider-dispatch.md`), and the current lanes (the loaded rows on a rerun, the first-run map below on a first run; a migrated descriptor shows normalized, with the original from step 2 noted under the table). Below the table, one line with the `outside-map` families and one line with the families available on this parent and their route (native or external runner). Never offer a reset of a customized sheet to the first-run assignments.
 
 Then one `AskUserQuestion` with a single question: keep the map as shown, or change roles. Options are "Keep everything" first (the default, and the recommended answer on a rerun), then "Change roles", with "Other" for the operator to type the changes directly, one per line as `<role>: <lane>[, <lane>]`, or a family-wide move such as "all grok to xhigh". A typed line that names a role and its lanes is a complete answer for that role; do not ask about it again.
@@ -74,14 +76,19 @@ Each lane keeps the effort written in its descriptor, so `bug-fix: codex:gpt-6-s
 
 Every answer that differs from the current lanes becomes one `--role "<label>=<lane>[, <lane>]"` for step 5. Answers equal to the current lanes produce no flag. When the operator wants to move a whole family to one effort ("all grok to xhigh"), use `--effort <family>=<effort>` once instead of repeating the same answer across roles; it rewrites every lane of that family and the per-role answers apply after it, so a family-wide rewrite plus a named exception fits in one plan.
 
+For the fallback setting, use `--swarm-fallback <native-descriptor>` to enable or replace it and `--swarm-fallback off` to remove it. Omit the flag to preserve it. A family-wide effort change includes an existing fallback; an explicit fallback descriptor applies after that change. The row uses the same `swarm fallback: <descriptor>` syntax in the sheet and its integration block. Do not pass it through `--role`.
+
 ### 5. Plan
 
 ```shell
 node scripts/setup-pstack.ts plan --parent <parent> \
-  [--effort <family>=<effort>]... [--role "<label>=<lane>[, <lane>]"]...
+  [--effort <family>=<effort>]... [--role "<label>=<lane>[, <lane>]"]... \
+  [--swarm-fallback <native-descriptor|off>]
 ```
 
 The plan is the in-memory render: it starts from the loaded rows (or the first-run map), materializes any missing documented role from the defaults, rewrites every lane of a family named in `--effort` to that effort, then applies the named role changes lane by lane. It refuses an unqualified slug, an unknown role or family, an effort outside the family's row, and a family-wide `--effort` for a family outside the map. It also refuses a `trail reviewer pool` row that holds an alias or names no provider other than this parent's own, because such a row can never yield a reviewer. A family-wide `--effort` updates every lane of that family and moves no role.
+
+The optional fallback is validated on both load and plan: exactly one registered descriptor, with an explicit effort and the parent's native provider. It participates in migrations, family effort accounting, new-family probes and sheet/integration consistency checks. An absent fallback is never filled from role defaults. The normal probe requirement also applies when the fallback is the only use of a new family.
 
 The output carries `dir` (a fresh run directory holding `plan.json`; pass `--dir` to choose it), the distinct `efforts` per family in the final map, the `rows`, the `sheet` bytes, the `migrations`, `verified` (the families of the map already in this parent's ledger, which are not probed), and `pairs`: one probe per family of the map missing from the ledger, at the family's lowest effort in use (`sol@high` when `sol` runs at `high` and `xhigh`), with its route for this parent and, for native pairs, how to probe it. A plan that only changes efforts or moves roles between verified families has no `pairs`. `warnings` lists the rows that are valid but can leave a run without a lane, such as a `trail reviewer pool` with one provider besides the parent's. Show each warning to the operator in step 7.
 
@@ -109,7 +116,7 @@ On Grok, also attest `--pair owner-nesting` with the fresh `owner.marker`, exact
 
 Show any model migrations as original and normalized descriptors. Show the route table for this parent and every rendered row from `plan.json`. Say which families were probed in step 6 and which were already verified (`verified`). Say when `inherit-parent` or `auto` reduces a panel's provider diversity. For Why and Reflect, show how the configured descriptor follows the central MCP-dependent task rule, including any unavailable source access. For panel roles, one lane runs per entry and the list length is the fan-out count. `arena cross-judge pool` is a list from which Arena chooses a provider different from the parent and base candidate when possible. `trail reviewer pool` is a list from which one lane reviews a run's decision trail: the first entry from a provider that wrote none of the work, and no lane at all when every entry is from a provider that wrote. Show every `warnings` line of the plan. `swarm workers` is the default for every worker unless a race explicitly assigns another descriptor.
 
-Ask for confirmation. After the operator confirms:
+Show the fallback as enabled with its descriptor, preserved, or disabled, including the substitution authorization when enabling it. Ask for confirmation unless the operator already authorized these exact changes. After authorization:
 
 ```shell
 node scripts/setup-pstack.ts write --dir <dir>

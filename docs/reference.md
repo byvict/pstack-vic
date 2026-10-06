@@ -24,7 +24,7 @@ No shell, `claude plugin marketplace add byvict/pstack-vic` e `claude plugin ins
 ### Codex
 
 ```shell
-codex plugin marketplace add byvict/pstack-vic --ref v0.5.18
+codex plugin marketplace add byvict/pstack-vic --ref v0.5.19
 codex plugin add pstack@pstack-vic
 ```
 
@@ -245,6 +245,8 @@ A Raiz é dona dos Vereditos, nunca dos PRs. Ela verifica cada Rodada. Uma Rodad
 - Rodam o mesmo cenário na trunk, para comparar. É a lane de regressão.
 
 Ao configurar Grok 4.7 como worker de swarm no Codex ou no Claude Code, a Raiz preserva o modelo e o esforço e seleciona a rota conforme a tarefa, seguindo a [regra de seleção de transporte](../skills/poteto-mode/references/provider-dispatch.md#explicit-grok-acp-tasks). Quando a tarefa exige recursos bloqueados pela rota CLI, a Raiz usa a rota ACP com acesso completo, conforme a autorização e os requisitos de confinamento existentes. O usuário não precisa pedir ACP nem escolher o transporte. O pai Grok continua em `spawn_subagent` nativo.
+
+O Enxame aceita um substituto nativo opcional na mesma folha de modelos, pela linha `swarm fallback: <provedor>:<modelo>@<esforço>`. Configure pelo `/setup-pstack`, que usa `plan --swarm-fallback <descritor>` para ativar e `plan --swarm-fallback off` para remover. Sem a linha, o comportamento atual permanece. O setup exige um único modelo do provedor nativo e verifica uma família nova antes de gravar. Salvar a opção autoriza uma substituição por lane quando uma capacidade obrigatória está indisponível ou uma falha de execução é comprovada. Resultado com defeito, teste reprovado e pedido de parada não disparam a troca. Comparações de modelos e revisões que exigem outra Família mantêm a lacuna. A [política de fallback](../skills/swarm/references/native-fallback.md) define isolamento, limites e o registro do modelo que executou cada parte.
 
 Uma lane externa não tem os drivers embutidos `run` nem `verify`; para verificar o app, recebe o driver do projeto quando aplicável e uma rota com as ferramentas necessárias. Os bloqueios de PTY, Chromium e commit em worktree linkado no macOS foram medidos nos sandboxes Grok `read-only` e `workspace`, em 2026-10-02 na 1.0.46. A referência de despacho delimita esses perfis e as rotas disponíveis.
 

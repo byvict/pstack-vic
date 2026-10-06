@@ -18,6 +18,7 @@
 //   setup-pstack.ts state  --parent <claude|codex|grok> [--home <dir>]
 //   setup-pstack.ts plan   --parent <p> [--home <dir>] [--dir <run dir>]
 //                          [--effort <family>=<effort>]... [--role "<label>=<lane>, <lane>"]...
+//                          [--swarm-fallback <native-descriptor|off>]
 //   setup-pstack.ts probe  --dir <run dir> [--timeout <seconds>]
 //   setup-pstack.ts attest --dir <run dir> --pair <family>@<effort> --observed <text>
 //   setup-pstack.ts write  --dir <run dir> [--home <dir>]
@@ -562,6 +563,7 @@ export interface SheetRow {
   readonly lanes: readonly string[];
 }
 
+const SWARM_FALLBACK = "swarm fallback";
 const ROW_RE = /^([a-z][a-z0-9 ,-]*): (.+)$/;
 const RETIRED_CONVERGE_ROLES = new Set([
   "pr reviewer",
@@ -577,17 +579,20 @@ const RETIRED_CONVERGE_ROLES = new Set([
 ]);
 
 /**
- * The role rows of a sheet: `label: lane[, lane]`. Title, blank lines, and
+ * The role rows and optional swarm fallback: `label: lane[, lane]`. Title, blank lines, and
  * prose are skipped. Lanes are returned as written (see normalizeLane).
  */
 export function parseSheet(text: string, matrix: ModelMatrix): SheetRow[] {
-  const known = new Set(matrix.roles.map((r) => r.role));
+  const known = new Set([...matrix.roles.map((r) => r.role), SWARM_FALLBACK]);
   const rows: SheetRow[] = [];
   const seen = new Set<string>();
   for (const raw of text.split("\n")) {
     const line = raw.trimEnd();
     if (line.length === 0 || line.startsWith("#")) continue;
     const match = ROW_RE.exec(line);
+    if (!match && line.startsWith(`${SWARM_FALLBACK}:`)) {
+      fail(`${SWARM_FALLBACK} needs exactly one provider-qualified descriptor; remove the row to disable it`);
+    }
     if (!match) continue;
     const [, role, value] = match;
     if (!known.has(role)) {
@@ -597,6 +602,9 @@ export function parseSheet(text: string, matrix: ModelMatrix): SheetRow[] {
     if (seen.has(role)) fail(`duplicate role ${JSON.stringify(role)} in sheet`);
     seen.add(role);
     const lanes = value.split(",").map((v) => v.trim()).filter((v) => v.length > 0);
+    if (role === SWARM_FALLBACK && (lanes.length !== 1 || value.includes(","))) {
+      fail(`${SWARM_FALLBACK} needs exactly one provider-qualified descriptor`);
+    }
     if (lanes.length === 0) fail(`role ${JSON.stringify(role)} has no lanes`);
     rows.push({ role, lanes });
   }
@@ -655,6 +663,20 @@ export function normalizeLane(text: string, matrix: ModelMatrix): NormalizedLane
 function laneFamily(lane: string, matrix: ModelMatrix): Family | null {
   const descriptor = parseDescriptor(lane);
   return descriptor ? familyFor(matrix, descriptor) : null;
+}
+
+function validateSwarmFallback(rows: readonly SheetRow[], matrix: ModelMatrix, parent: string): void {
+  const row = rows.find((r) => r.role === SWARM_FALLBACK);
+  if (row === undefined) return;
+  const [lane] = row.lanes;
+  const descriptor = lane === undefined ? null : parseDescriptor(lane);
+  if (row.lanes.length !== 1 || descriptor === null) {
+    fail(`${SWARM_FALLBACK} needs exactly one provider-qualified descriptor; aliases are not allowed`);
+  }
+  const native = nativeProviderOf(matrix, parent);
+  if (descriptor.provider !== native) {
+    fail(`${SWARM_FALLBACK} must use ${native}, the native provider of ${parent}; got ${descriptor.provider}`);
+  }
 }
 
 // --- State -----------------------------------------------------------------
@@ -851,6 +873,7 @@ export function loadState(input: StateInput): State {
     return { ...located, rows: [], migrations: [], efforts };
   }
   const { rows, migrations } = normalizeRows(parseFrom(loaded.text, describeSource(loaded.source, where), matrix), matrix);
+  validateSwarmFallback(rows, matrix, parent);
   return { ...located, rows, migrations, efforts: familyEfforts(rows, matrix) };
 }
 
@@ -987,6 +1010,8 @@ export interface PlanInput extends StateInput {
   readonly efforts?: Readonly<Record<string, string>>;
   /** Named role changes (role label → lanes as written by the operator). Applied after the bulk rewrite. */
   readonly roles?: Readonly<Record<string, readonly string[]>>;
+  /** Omitted preserves the optional row; null removes it; a descriptor enables it. */
+  readonly swarmFallback?: string | null;
 }
 
 function nativeProbeFor(matrix: ModelMatrix, parent: string, family: Family, effort: string): ProbePair["native"] {
@@ -1027,6 +1052,8 @@ export function buildPlan(input: PlanInput): Plan {
     role: r.role,
     lanes: [...(loaded.get(r.role) ?? roleDefault(matrix, r.role, parent))],
   }));
+  const fallback = state.rows.find((r) => r.role === SWARM_FALLBACK);
+  if (fallback !== undefined) rows.push(fallback);
 
   // 2. --effort rewrites every lane of that family in the base rows. A family
   //    with no lane here is outside-map even if a later --role would add one.
@@ -1064,6 +1091,16 @@ export function buildPlan(input: PlanInput): Plan {
     });
     rows = rows.map((r) => (r.role === role ? { role, lanes: normalized } : r));
   }
+
+  if (input.swarmFallback !== undefined) {
+    rows = rows.filter((r) => r.role !== SWARM_FALLBACK);
+    if (input.swarmFallback !== null) {
+      const result = normalizeLane(input.swarmFallback, matrix);
+      if (result.migratedFrom !== null) fail(`${JSON.stringify(input.swarmFallback)}: write the configured model, not a legacy descriptor`);
+      rows.push({ role: SWARM_FALLBACK, lanes: [result.lane] });
+    }
+  }
+  validateSwarmFallback(rows, matrix, parent);
 
   // 4. A cross-family pool must be able to yield a lane under this parent.
   const warnings: string[] = [];
@@ -1552,8 +1589,11 @@ const USAGE = `Usage: setup-pstack <state|plan|probe|attest|write|pick> [options
          Read the parent's sheet, normalize rolling aliases, derive per-lane efforts grouped by family.
   plan   --parent <p> [--home <dir>] [--dir <run dir>]
          [--effort <family>=<effort>]... [--role "<label>=<lane>[, <lane>]"]...
+         [--swarm-fallback <native-descriptor|off>]
          Render the new sheet in memory and save plan.json (creates a run dir when --dir is omitted).
          --effort rewrites every lane of that family; --role overlays after, each lane keeping its effort.
+         --swarm-fallback enables one native-provider substitute, or removes it with off.
+         Omission preserves the setting; first-run sheets have no fallback. It is not a panel role.
   probe  --dir <run dir> [--timeout <seconds>]
          Run the plan's external probes (families new to this parent) through the runner;
          list native probes to attest. A plan whose families are all verified has none.
@@ -1626,6 +1666,7 @@ export async function main(argv: readonly string[], io: Io = {
           dir: { type: "string" },
           effort: { type: "string", multiple: true },
           role: { type: "string", multiple: true },
+          "swarm-fallback": { type: "string" },
           pair: { type: "string" },
           executor: { type: "string", multiple: true },
           observed: { type: "string" },
@@ -1644,6 +1685,9 @@ export async function main(argv: readonly string[], io: Io = {
     }
     const [command, ...rest] = parsed.positionals;
     if (rest.length > 0) usage(`unexpected arguments: ${rest.join(" ")}`);
+    const swarmFallback = parsed.values["swarm-fallback"];
+    if (swarmFallback !== undefined && command !== "plan") usage("--swarm-fallback is only valid with plan");
+    if (swarmFallback !== undefined && typeof swarmFallback !== "string") usage("--swarm-fallback expects a native descriptor or off");
     const home = typeof parsed.values.home === "string" ? parsed.values.home : homedir();
     const env = io.env ?? {};
     const requireParent = (): string => {
@@ -1670,6 +1714,7 @@ export async function main(argv: readonly string[], io: Io = {
           env,
           efforts: parseAssignments(parsed.values.effort as string[] | undefined, "--effort"),
           roles: parseRoleChanges(parsed.values.role as string[] | undefined),
+          swarmFallback: swarmFallback === "off" ? null : swarmFallback,
         });
         const dir = typeof parsed.values.dir === "string" ? parsed.values.dir : mkdtempSync(join(tmpdir(), "pstack-setup-"));
         savePlan(dir, plan);
