@@ -464,8 +464,7 @@ function lineOf(text: string, offset: number): number {
   return text.slice(0, offset).split("\n").length;
 }
 
-/** The body as marked's lexer sees it, every `\r\n` and `\r` a `\n`, and the raw offset of each of its offsets. */
-function lexerBreaks(raw: string, body: number): { readonly text: string; readonly rawOffset: (at: number) => number } {
+function normalizeBreaks(raw: string, body: number): { readonly text: string; readonly rawOffset: (at: number) => number } {
   const pairs: number[] = [];
   const text = raw.slice(0, body) + raw.slice(body).replace(/\r\n?/g, (pair, at: number) => {
     if (pair.length === 2) pairs.push(body + at - pairs.length);
@@ -474,16 +473,15 @@ function lexerBreaks(raw: string, body: number): { readonly text: string; readon
   return { text, rawOffset: (at) => at + pairs.filter((pair) => pair < at).length };
 }
 
-/** The length of a byte order mark, and where Claude Code's lexer starts: after the front matter, or at 0. */
-function bodyOffsets(raw: string): { readonly bom: number; readonly body: number } {
+function bodyStart(raw: string): { readonly lexed: number; readonly top: number } {
   const bom = raw.charCodeAt(0) === 0xfeff ? 1 : 0;
   const frontMatter = raw.indexOf("---", bom + 3) < 0 ? null : FRONT_MATTER_RE.exec(raw.slice(bom));
-  return { bom, body: frontMatter === null ? 0 : bom + frontMatter[0].length };
+  return frontMatter === null ? { lexed: 0, top: bom } : { lexed: bom + frontMatter[0].length, top: bom + frontMatter[0].length };
 }
 
 function scanSheetImports(raw: string): ImportScan {
-  const { body } = bodyOffsets(raw);
-  const { text, rawOffset } = lexerBreaks(raw, body);
+  const body = bodyStart(raw).lexed;
+  const { text, rawOffset } = normalizeBreaks(raw, body);
   const mentions: number[] = [];
   for (let at = text.indexOf("@", body); at >= 0; at = text.indexOf("@", at + 1)) {
     if (pathRun(text, at + 1).includes(SHEET_FILE)) mentions.push(at);
@@ -523,8 +521,7 @@ function placeImport(where: Location, text: string): { readonly current: SheetIm
   const current = scan.imports[0] ?? null;
   const include = includeLineFor(where);
   const separator = text.length === 0 || text.endsWith("\n") ? "" : "\n";
-  const { bom, body } = bodyOffsets(text);
-  const top = Math.max(bom, body);
+  const { top } = bodyStart(text);
   const layouts = current === null
     ? [`${text}${separator}${include}\n`, `${text}${separator}\n${include}\n`, `${text.slice(0, top)}${include}\n\n${text.slice(top)}`]
     : [`${text.slice(0, current.start)}${include}${text.slice(current.end)}`];

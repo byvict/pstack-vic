@@ -1473,7 +1473,7 @@ describe("a CLAUDE.md with carriage returns, which Claude Code's lexer reads as 
     assert.equal(readFileSync(integration, "utf8"), after);
   }
 
-  it("appends the import to a CRLF file that has none, as main did", async () => {
+  it("appends the import with an LF line end to a CRLF file that has none", async () => {
     const before = "Prefer small commits.\r\nAnswer in plain language.\r\nRun the tests before declaring done.\r\n";
     await written(before, { kind: "first-run" }, `${before}@~/.claude/pstack-models.md\n`);
   });
