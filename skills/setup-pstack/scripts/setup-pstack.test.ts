@@ -1259,6 +1259,72 @@ describe("writeSheet in a redirected config home", () => {
 });
 
 describe("the Claude sheet import", () => {
+  for (const [lineEnd, label] of [["\n", "LF"], ["\r\n", "CRLF"]]) {
+    for (const prefix of ["", "- models: ", "> "]) {
+      it(`carries and replaces a plain import with a literal @ in its directory, ${label} and ${JSON.stringify(prefix)}`, async () => {
+        const cfg = join(home, "cfg");
+        const env = { CLAUDE_CONFIG_DIR: cfg };
+        const imported = put(join(cfg, "at@literal", "pstack-models.md"), sheetWithHighHillclimb());
+        const other = put(join(cfg, "other.md"), "Other instructions.\n");
+        const before = `# mine${lineEnd}${prefix}@./at@literal/pstack-models.md${lineEnd}${lineEnd}@./other.md${lineEnd}`;
+        const integration = put(join(cfg, "CLAUDE.md"), before);
+        const state = loadState({ parent: "claude", home, env, matrix });
+        assert.deepEqual(state.source, { kind: "import", path: imported });
+        assert.deepEqual(state.rows.find((row) => row.role === "hillclimb")?.lanes, ["claude:claude-opus-5-5@high"]);
+
+        const plan = await planAndProbe("claude", { env });
+        writeSheet(plan, runDir, { home, env });
+        assert.equal(readFileSync(integration, "utf8"), `# mine${lineEnd}${prefix}@./pstack-models.md${lineEnd}${lineEnd}@./other.md${lineEnd}`);
+        assert.equal(readFileSync(join(cfg, "pstack-models.md"), "utf8"), sheetWithHighHillclimb());
+        assert.equal(readFileSync(imported, "utf8"), sheetWithHighHillclimb());
+        assert.equal(readFileSync(other, "utf8"), "Other instructions.\n");
+      });
+    }
+
+    it(`excludes the distinct @pstack-models.md basename and preserves its import with ${label}`, async () => {
+      const cfg = join(home, "cfg");
+      const env = { CLAUDE_CONFIG_DIR: cfg };
+      const unrelated = put(join(cfg, "@pstack-models.md"), sheetWithHighHillclimb());
+      const before = `@./@pstack-models.md${lineEnd}`;
+      const integration = put(join(cfg, "CLAUDE.md"), before);
+      const state = loadState({ parent: "claude", home, env, matrix });
+      assert.deepEqual(state.source, { kind: "first-run" });
+      assert.equal(state.missingImport, null);
+      assert.deepEqual(state.rows.find((row) => row.role === "hillclimb")?.lanes, ["claude:claude-opus-5-5@xhigh"]);
+
+      const plan = await planAndProbe("claude", { env });
+      writeSheet(plan, runDir, { home, env });
+      assert.equal(readFileSync(integration, "utf8"), `${before}@./pstack-models.md\n`);
+      assert.equal(readFileSync(join(cfg, "pstack-models.md"), "utf8"), firstRunSheet("claude"));
+      assert.equal(readFileSync(unrelated, "utf8"), sheetWithHighHillclimb());
+    });
+
+    it(`still refuses two genuine imports when a target contains a literal @ with ${label}`, () => {
+      const cfg = join(home, "cfg");
+      const env = { CLAUDE_CONFIG_DIR: cfg };
+      put(join(cfg, "at@literal", "pstack-models.md"), sheetWithHighHillclimb());
+      const before = `@./at@literal/pstack-models.md${lineEnd}@./pstack-models.md${lineEnd}`;
+      const integration = put(join(cfg, "CLAUDE.md"), before);
+      const message = `inconsistent state: ${integration} imports pstack-models.md 2 times (lines 1, 2); keep exactly one import`;
+      assert.throws(() => loadState({ parent: "claude", home, env, matrix }), { message });
+      assert.throws(() => buildPlan({ parent: "claude", home, env, matrix }), { message });
+      assert.equal(readFileSync(integration, "utf8"), before);
+      assert.equal(existsSync(join(cfg, "pstack-models.md")), false);
+    });
+
+    it(`still refuses uncertain Markdown around a target containing a literal @ with ${label}`, () => {
+      const cfg = join(home, "cfg");
+      const env = { CLAUDE_CONFIG_DIR: cfg };
+      put(join(cfg, "at@literal", "pstack-models.md"), sheetWithHighHillclimb());
+      const before = `[@./at@literal/pstack-models.md](other.md)${lineEnd}`;
+      const integration = put(join(cfg, "CLAUDE.md"), before);
+      assert.throws(() => loadState({ parent: "claude", home, env, matrix }), /an HTML tag, a link or a backslash comes before it/);
+      assert.throws(() => buildPlan({ parent: "claude", home, env, matrix }), /an HTML tag, a link or a backslash comes before it/);
+      assert.equal(readFileSync(integration, "utf8"), before);
+      assert.equal(existsSync(join(cfg, "pstack-models.md")), false);
+    });
+  }
+
   it("carries a copied profile's imported sheet into the redirected home and replaces the one import in place", async () => {
     const cfg = join(home, "cfg");
     const env = { CLAUDE_CONFIG_DIR: cfg };
