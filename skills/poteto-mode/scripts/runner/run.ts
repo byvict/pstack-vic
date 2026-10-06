@@ -222,11 +222,7 @@ function unavailableStatus(value: string, requestedModel: string): LaneFailure {
   ) {
     return "unauthenticated";
   }
-  type Subject =
-    | { readonly kind: "generic" }
-    | { readonly kind: "model"; readonly id: string }
-    | { readonly kind: "opaque" };
-  type Claim = { readonly end: number; readonly subject: Subject };
+  type Claim = { readonly end: number; readonly kind: "refusal" | "opaque" };
   const predicate = "(?:not found|unknown|unavailable|unsupported|not supported|invalid)";
   const atom = String.raw`(?:"([A-Za-z0-9_.-]+)"|'([A-Za-z0-9_.-]+)'|\[([A-Za-z0-9_.-]+)\]|([A-Za-z0-9_.-]+))`;
   const prefix = new RegExp(String.raw`(?:model[ \t]+(?:is[ \t]+)?${predicate}\b|invalid[ \t]+model(?=$|[^A-Za-z0-9_.-]|\.(?=$|[^A-Za-z0-9_.-])))(?:[ \t]+with[ \t]+this[ \t]+account\b)?`, "iy");
@@ -242,11 +238,12 @@ function unavailableStatus(value: string, requestedModel: string): LaneFailure {
         const tail = line.slice(prefix.lastIndex);
         const qualified = qualifiedTail.exec(tail);
         if (qualified !== null) {
-          return { end, subject: { kind: "model", id: qualified[1] ?? qualified[2] ?? qualified[3] ?? qualified[4] } };
+          const id = qualified[1] ?? qualified[2] ?? qualified[3] ?? qualified[4];
+          return { end, kind: grokModelAvailable(id, requestedModel) ? "refusal" : "opaque" };
         }
         return {
           end,
-          subject: /^[ \t]*(?:$|[.!?](?=$|[ \t]))/.test(tail) ? { kind: "generic" } : { kind: "opaque" },
+          kind: /^[ \t]*(?:$|[.!?](?=$|[ \t]))/.test(tail) ? "refusal" : "opaque",
         };
       }
     }
@@ -254,10 +251,10 @@ function unavailableStatus(value: string, requestedModel: string): LaneFailure {
       direct.lastIndex = at;
       const refusal = direct.exec(line);
       if (refusal !== null) {
-        return {
-          end: direct.lastIndex,
-          subject: { kind: "model", id: refusal[1] ?? refusal[2] ?? refusal[3] ?? refusal[4] },
-        };
+        const id = refusal[1] ?? refusal[2] ?? refusal[3] ?? refusal[4];
+        if (grokModelAvailable(id, requestedModel)) {
+          return { end: direct.lastIndex, kind: "refusal" };
+        }
       }
     }
     return null;
@@ -272,8 +269,7 @@ function unavailableStatus(value: string, requestedModel: string): LaneFailure {
         continue;
       }
       cursor = claim.end;
-      if (claim.subject.kind === "generic" ||
-        (claim.subject.kind === "model" && grokModelAvailable(claim.subject.id, requestedModel))) {
+      if (claim.kind === "refusal") {
         return "unavailable-model";
       }
     }

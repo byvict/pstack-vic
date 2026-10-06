@@ -1135,6 +1135,11 @@ describe("runLane", () => {
   }
 
   const opaqueDiagnostics: readonly [string, string][] = [
+    ["logger opaque bare", "ERROR Invalid model: \"other-model <requested> is not supported\""],
+    ["logger opaque quoted", "\"ERROR\" Invalid model: \"other-model <requested> is not supported\""],
+    ["logger opaque bracketed", "[ERROR] Invalid model: \"other-model <requested> is not supported\""],
+    ["unrelated direct", "[other-model] invalid"],
+    ["unrelated logger prefix", "[ERROR] Invalid model: other-model"],
     ["quoted inner generic", 'Invalid model: "other-model model not found. Choose another."'],
     ["comma inner generic", "Invalid model: other-model, model not found."],
     ["comma inner generic at end", "Invalid model: other-model, model not found"],
@@ -1152,6 +1157,11 @@ describe("runLane", () => {
     ["literal dot subject", "Invalid model ."],
   ];
   const independentDiagnostics: [string, string][] = [
+    ["logger requested bare", "ERROR Invalid model: <requested>"],
+    ["logger requested quoted", "\"ERROR\" Invalid model: <requested>"],
+    ["logger requested bracketed", "[ERROR] Invalid model: <requested>"],
+    ["requested direct overlapping prefix", "<requested> invalid model: other-model"],
+    ["requested direct before logger", "<requested> is not supported; [ERROR] Invalid model: \"other-model <requested> is not supported\""],
     ["earlier direct", '<requested> is not supported; Invalid model: "other-model model not found."'],
     ["later direct", 'Invalid model: "other-model model not found."\n<requested> is not supported'],
     ["later generic", 'Invalid model: "other-model model not found."\nmodel not found'],
