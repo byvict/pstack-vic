@@ -3,8 +3,13 @@ import { delimiter, join, resolve } from "node:path";
 import { cliFor, PROVIDERS } from "./types.ts";
 
 /**
- * On the operator's Mac and on CI the real claude sits beside node, so the
- * directory of process.execPath stays out of PATH.
+ * The environment for anything a test runs that could launch a provider CLI.
+ * PATH holds only `fakeBins` and a directory with one link to this node,
+ * and HOME is `home`, a temporary directory of the test. Nothing of the
+ * operator's PATH or HOME is in it, so a fake that is missing or a refusal
+ * that regresses ends in a spawn error, never in the real claude, codex, grok
+ * or gh. On the operator's Mac and on CI the real claude sits beside node, so
+ * the directory of process.execPath stays out as well.
  */
 export function isolatedEnv(
   home: string,
