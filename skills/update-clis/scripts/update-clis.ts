@@ -50,7 +50,7 @@ import {
   type ModelMatrix,
 } from "../../../scripts/model-matrix.ts";
 import { runProbeLane } from "../../poteto-mode/scripts/runner/probe-lane.ts";
-import { loadState } from "../../setup-pstack/scripts/setup-pstack.ts";
+import { configHomeFor, loadState, type ConfigEnv } from "../../setup-pstack/scripts/setup-pstack.ts";
 
 export const CLIS = ["codex", "grok", "claude"] as const;
 export type Cli = (typeof CLIS)[number];
@@ -341,7 +341,6 @@ async function rawNotes(cli: Cli, from: string, to: string, context: NotesContex
 
 // --- Machine and check -------------------------------------------------------------
 
-/** Where the CLIs live: `home` holds nvm, ~/.grok, ~/.claude and the app and cache folders; `env.PATH` is what the parents resolve. */
 export interface Machine {
   readonly home: string;
   readonly env: NodeJS.ProcessEnv;
@@ -450,8 +449,8 @@ function npmEnv(prefix: string, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return { ...env, PATH: `${join(prefix, "bin")}${delimiter}${env.PATH ?? ""}` };
 }
 
-function claudeChannel(home: string): string {
-  const path = join(home, ".claude", "settings.json");
+function claudeChannel(machine: Machine): string {
+  const path = join(configHomeFor("claude", machine.home, machine.env), "settings.json");
   if (!existsSync(path)) return "latest";
   const settings = JSON.parse(readFileSync(path, "utf8")) as { autoUpdatesChannel?: unknown };
   return typeof settings.autoUpdatesChannel === "string" ? settings.autoUpdatesChannel : "latest";
@@ -459,7 +458,7 @@ function claudeChannel(home: string): string {
 
 async function latestOf(cli: Cli, copy: Copy, machine: Machine): Promise<{ channel: string; latest: string }> {
   if (copy.installer.kind === "npm") {
-    const channel = cli === "claude" ? claudeChannel(machine.home) : "latest";
+    const channel = cli === "claude" ? claudeChannel(machine) : "latest";
     const npm = join(copy.installer.prefix, "bin", "npm");
     const command = `npm view ${copy.installer.package} dist-tags`;
     const result = await run(npm, ["view", copy.installer.package, "dist-tags", "--json"], npmEnv(copy.installer.prefix, machine.env), 60_000);
@@ -767,17 +766,11 @@ export interface ProbePair {
   readonly parents: readonly string[];
 }
 
-/**
- * The pairs a CLI's probe runs: every lane of the two sheets that reaches this
- * CLI through the runner in that parent (claude from the Codex sheet, codex from
- * the Claude sheet, grok from both), once per family@effort, in matrix order. A
- * parent without a sheet contributes its matrix defaults.
- */
-export function probePairs(cli: Cli, home: string, matrix: ModelMatrix = loadMatrix()): ProbePair[] {
+export function probePairs(cli: Cli, home: string, env: ConfigEnv = {}, matrix: ModelMatrix = loadMatrix()): ProbePair[] {
   const pairs = new Map<string, { family: Family; effort: string; parents: string[] }>();
   for (const parent of Object.keys(matrix.parents)) {
-    const state = loadState({ parent, home, matrix });
-    const rows = state.exists ? state.rows : matrix.roles.map((role) => ({ lanes: roleDefault(matrix, role.role, parent) }));
+    const state = loadState({ parent, home, env, matrix });
+    const rows = state.source.kind === "first-run" ? matrix.roles.map((role) => ({ lanes: roleDefault(matrix, role.role, parent) })) : state.rows;
     for (const lane of rows.flatMap((row) => row.lanes)) {
       const descriptor = parseDescriptor(lane);
       const family = descriptor === null ? null : familyFor(matrix, descriptor);
@@ -946,7 +939,7 @@ export async function probe(cli: Cli, runDir: string, machine: Machine, options:
   const dir = join(runDir, `probe-${cli}-${version}`);
   if (existsSync(dir)) throw new Error(`${dir} already exists: ${cli} ${version} was probed in this run`);
   mkdirSync(dir);
-  const pairs = probePairs(cli, machine.home);
+  const pairs = probePairs(cli, machine.home, machine.env);
   const codex = cli === "codex" ? resolved : (await copiesOf("codex", machine)).resolved;
   const lanes: ProbeLaneResult[] = [];
   for (const pair of pairs) {
