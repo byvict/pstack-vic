@@ -938,9 +938,9 @@ export async function probe(cli: Cli, runDir: string, machine: Machine, options:
   const version = resolved.version ?? "unknown";
   const dir = join(runDir, `probe-${cli}-${version}`);
   if (existsSync(dir)) throw new Error(`${dir} already exists: ${cli} ${version} was probed in this run`);
-  mkdirSync(dir);
   const pairs = probePairs(cli, machine.home, machine.env);
   const codex = cli === "codex" ? resolved : (await copiesOf("codex", machine)).resolved;
+  mkdirSync(dir);
   const lanes: ProbeLaneResult[] = [];
   for (const pair of pairs) {
     for (const lane of PROBE_LANES[cli]) {

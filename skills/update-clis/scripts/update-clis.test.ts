@@ -1078,6 +1078,22 @@ describe("probe", () => {
     assert.deepEqual(laneRows(value).filter(([lane]) => lane === "read").map(([, pair]) => pair), ["sol-6-1@low", "sol-6-1@xhigh", "astra@max"]);
   });
 
+  it("leaves no probe directory behind when the sheets stop it, so the same run probes once they are fixed", async () => {
+    const machine = fakeMachine();
+    withSheets(machine, { claude: CLAUDE_SHEET, codex: CODEX_SHEET });
+    const integration = join(machine.home, ".claude", "CLAUDE.md");
+    writeFileSync(integration, "@~/.claude/pstack-models.md\n@./pstack-models.md\n");
+    const stopped = await probeRun(machine, "codex");
+    assert.equal(stopped.code, 1);
+    assert.equal(stopped.stderr, `error: inconsistent state: ${integration} imports pstack-models.md 2 times (lines 1, 2); keep exactly one import\n`);
+    assert.deepEqual(readdirSync(stopped.dir).filter((name) => name.startsWith("probe-")), []);
+
+    writeFileSync(integration, "@~/.claude/pstack-models.md\n");
+    const fixed = await json(["probe", "--cli", "codex", "--dir", stopped.dir, "--home", machine.home, "--timeout", "60", "--plugin-root", fakePluginRoot()], machine.env);
+    assert.equal(fixed.code, 0, fixed.stderr);
+    assert.equal(fixed.value.dir, join(stopped.dir, "probe-codex-0.155.1"));
+  });
+
   it("fails the sandbox lane when a write outside the workspace goes through or CODEX_SANDBOX is missing", async () => {
     const machine = fakeMachine();
     withSheets(machine, { claude: CLAUDE_SHEET, codex: CODEX_SHEET });
