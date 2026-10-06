@@ -611,6 +611,112 @@ describe("buildPlan", () => {
   });
 });
 
+describe("swarm fallback", () => {
+  const nativeChoices = [
+    { parent: "codex", descriptor: "codex:gpt-6.1-sol@xhigh" },
+    { parent: "claude", descriptor: "claude:claude-opus-5-5@xhigh" },
+    { parent: "grok", descriptor: "grok:grok-4.7@xhigh" },
+  ];
+
+  it("leaves first-run and existing sheets disabled unless explicitly configured", () => {
+    for (const { parent } of nativeChoices) {
+      const first = buildPlan({ parent, home, matrix });
+      assert.equal(first.sheet, firstRunSheet(parent));
+      putSheet(parent, first.sheet);
+      assert.equal(buildPlan({ parent, home, matrix }).sheet, first.sheet);
+      assert.doesNotMatch(first.sheet, /^swarm fallback:/m);
+    }
+  });
+
+  it("preserves one explicit native descriptor per parent across state and plan", () => {
+    for (const { parent, descriptor } of nativeChoices) {
+      const plan = buildPlan({ parent, home, matrix, swarmFallback: descriptor });
+      assert.equal(plan.sheet, `${firstRunSheet(parent)}swarm fallback: ${descriptor}\n`);
+      putSheet(parent, plan.sheet);
+      assert.deepEqual(loadState({ parent, home, matrix }).rows.at(-1), { role: "swarm fallback", lanes: [descriptor] });
+      assert.equal(buildPlan({ parent, home, matrix }).sheet, plan.sheet);
+    }
+  });
+
+  it("rejects aliases, lists, foreign providers and unsupported models or efforts", () => {
+    for (const descriptor of [
+      "auto", "inherit-parent", "off", "gpt-6.1-sol@xhigh",
+      "grok:grok-4.7@xhigh", "claude:claude-opus-5-5@xhigh",
+      "codex:gpt-6.1-sol@turbo", "codex:unknown@xhigh",
+      "codex:gpt-6.1-sol@xhigh, codex:gpt-6-astra@max",
+    ]) {
+      assert.throws(() => buildPlan({ parent: "codex", home, matrix, swarmFallback: descriptor }), SetupError, descriptor);
+      putSheet("codex", `swarm fallback: ${descriptor}\n`);
+      assert.throws(() => loadState({ parent: "codex", home, matrix }), SetupError, descriptor);
+      rmSync(sheetPathFor("codex", home));
+    }
+    for (const line of ["swarm fallback:", "swarm fallback: ", "swarm fallback: codex:gpt-6.1-sol@xhigh,"]) {
+      assert.throws(() => parseSheet(`${line}\n`, matrix), /exactly one provider-qualified descriptor/);
+    }
+    assert.throws(() => parseSheet("swarm fallback: auto\nswarm fallback: auto\n", matrix), /duplicate role/);
+    assert.throws(() => buildPlan({ parent: "claude", home, matrix, swarmFallback: "codex:gpt-6.1-sol@xhigh" }), /must use claude/);
+    assert.throws(() => buildPlan({ parent: "grok", home, matrix, swarmFallback: "codex:gpt-6.1-sol@xhigh" }), /must use grok/);
+  });
+
+  it("includes the fallback in family effort changes and lets an explicit descriptor override them", () => {
+    const first = buildPlan({ parent: "codex", home, matrix, swarmFallback: "codex:gpt-6.1-sol@xhigh" });
+    putSheet("codex", first.sheet);
+    const changed = buildPlan({ parent: "codex", home, matrix, efforts: { "sol-6-1": "high" } });
+    assert.deepEqual(lanesOf(changed, "swarm fallback"), ["codex:gpt-6.1-sol@high"]);
+    const explicit = buildPlan({ parent: "codex", home, matrix, efforts: { "sol-6-1": "high" }, swarmFallback: "codex:gpt-6.1-sol@max" });
+    assert.deepEqual(lanesOf(explicit, "swarm fallback"), ["codex:gpt-6.1-sol@max"]);
+    assert.deepEqual(explicit.efforts["sol-6-1"], ["high", "max"]);
+  });
+
+  it("normalizes a persisted legacy descriptor but requires a current descriptor for changes", () => {
+    putSheet("claude", "swarm fallback: claude:claude-opus-5@high\n");
+    const state = loadState({ parent: "claude", home, matrix });
+    assert.deepEqual(state.rows, [{ role: "swarm fallback", lanes: ["claude:claude-opus-5-5@high"] }]);
+    assert.deepEqual(state.migrations, [{ role: "swarm fallback", from: "claude:claude-opus-5@high", to: "claude:claude-opus-5-5@high" }]);
+    assert.throws(() => buildPlan({ parent: "claude", home, matrix, swarmFallback: "claude:claude-opus-5@high" }), /legacy descriptor/);
+  });
+
+  it("requires a new fallback family's probe before writing and preserves it on a rerun", () => {
+    const sheet = matrix.roles.map((role) => `${role.role}: ${role.selection === "cross-family" ? "grok:grok-4.7@xhigh" : "auto"}`).join("\n");
+    putSheet("codex", `${sheet}\n`);
+    putLedger("codex", ["grok-4-7"]);
+    const plan = buildPlan({ parent: "codex", home, matrix, swarmFallback: "codex:gpt-6.1-sol@high" });
+    assert.deepEqual(plan.pairs.map((p) => [p.pair, p.route, p.native]), [
+      ["sol-6-1@high", "native", { primitive: "spawn_agent", model: "gpt-6.1-sol", reasoning_effort: "high" }],
+    ]);
+    savePlan(runDir, plan);
+    assert.throws(() => writeSheet(plan, runDir, { home }), /sol-6-1@high/);
+    assert.equal(readFileSync(plan.sheetPath, "utf8"), `${sheet}\n`);
+    assert.equal(existsSync(plan.integrationPath), false);
+    const [pair] = plan.pairs;
+    assert.ok(pair);
+    attestNative(plan, runDir, pair.pair, pair.marker);
+    writeSheet(plan, runDir, { home });
+    assert.match(readFileSync(plan.integrationPath, "utf8"), /^swarm fallback: codex:gpt-6\.1-sol@high$/m);
+    const again = buildPlan({ parent: "codex", home, matrix });
+    assert.deepEqual(again.pairs, []);
+    const rerun = writeSheet(again, runDir, { home });
+    assert.deepEqual([rerun.sheet, rerun.integration, rerun.ledger], ["unchanged", "unchanged", "unchanged"]);
+
+    const disabled = buildPlan({ parent: "codex", home, matrix, swarmFallback: null });
+    assert.deepEqual(disabled.pairs, []);
+    writeSheet(disabled, runDir, { home });
+    assert.doesNotMatch(readFileSync(disabled.sheetPath, "utf8"), /swarm fallback/);
+    assert.doesNotMatch(readFileSync(disabled.integrationPath, "utf8"), /swarm fallback/);
+    assert.equal(disabled.sheet, buildPlan({ parent: "codex", home, matrix }).sheet);
+  });
+
+  it("recovers the setting from the integration and rejects sheet/block disagreements", () => {
+    putLedger("codex", matrix.families.map((f) => f.family));
+    const plan = buildPlan({ parent: "codex", home, matrix, swarmFallback: "codex:gpt-6.1-sol@xhigh" });
+    writeSheet(plan, runDir, { home });
+    rmSync(plan.sheetPath);
+    assert.deepEqual(loadState({ parent: "codex", home, matrix }).rows.at(-1), { role: "swarm fallback", lanes: ["codex:gpt-6.1-sol@xhigh"] });
+    putSheet("codex", firstRunSheet("codex"));
+    assert.throws(() => loadState({ parent: "codex", home, matrix }), /swarm fallback \(sheet: no row; block: codex:gpt-6.1-sol@xhigh\)/);
+  });
+});
+
 describe("pickLane", () => {
   it("excludes a Grok root and its implementation providers from the reviewer pool", () => {
     const result = pickLane({ parent: "grok", home, matrix, role: "trail reviewer pool", executors: ["claude"] });
@@ -1676,6 +1782,26 @@ function cli(args: string[], env: NodeJS.ProcessEnv) {
 }
 
 describe("command line", () => {
+  it("plans, writes, reads and disables a native swarm fallback through the CLI", () => {
+    putLedger("codex", matrix.families.map((f) => f.family));
+    const planArgs = ["plan", "--parent", "codex", "--home", home, "--dir", runDir];
+    const enabled = cli([...planArgs, "--swarm-fallback", "codex:gpt-6.1-sol@xhigh"], noCliEnv());
+    assert.equal(enabled.code, 0, enabled.stderr);
+    assert.equal(cli(["write", "--dir", runDir, "--home", home], noCliEnv()).code, 0);
+    const state = cli(["state", "--parent", "codex", "--home", home], noCliEnv());
+    assert.equal(state.code, 0, state.stderr);
+    assert.deepEqual(JSON.parse(state.stdout).rows.at(-1), { role: "swarm fallback", lanes: ["codex:gpt-6.1-sol@xhigh"] });
+    const disabled = cli([...planArgs, "--swarm-fallback", "off"], noCliEnv());
+    assert.equal(disabled.code, 0, disabled.stderr);
+    assert.equal(cli(["write", "--dir", runDir, "--home", home], noCliEnv()).code, 0);
+    assert.doesNotMatch(readFileSync(sheetPathFor("codex", home), "utf8"), /swarm fallback/);
+    assert.doesNotMatch(readFileSync(integrationPathFor("codex", home), "utf8"), /swarm fallback/);
+    const bad = cli([...planArgs, "--swarm-fallback", "grok:grok-4.7@xhigh"], noCliEnv());
+    assert.equal(bad.code, 1);
+    assert.match(bad.stderr, /native provider of codex/);
+    assert.equal(cli(["state", "--parent", "codex", "--home", home, "--swarm-fallback", "off"], noCliEnv()).code, 64);
+  });
+
   it("state prints the parent's state as JSON", () => {
     const result = cli(["state", "--parent", "claude", "--home", home], noCliEnv());
     assert.equal(result.code, 0, result.stderr);
