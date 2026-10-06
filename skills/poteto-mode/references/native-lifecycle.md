@@ -1,0 +1,40 @@
+# Native agent capacity and lifecycle
+
+Read this before native fan-out, a later phase, or a replacement dispatch. Provider dispatch selects the configured model and effort. This contract decides when a native agent can run and whether an existing handle can carry the task.
+
+## Plan against the current host
+
+Inspect the tools and their schemas in this session. Record which operations can spawn, list, wait, send a new task to an idle agent, interrupt, and close an agent. Use only advertised operations. A provider name does not establish which lifecycle tools its host exposes.
+
+Keep a small handle inventory in the run's existing notes: assigned model and effort, task, working directory, required tools, status, and result path. Reconcile it with the host's agent list when available. Use the host's reported capacity and accounting scope, including the root and descendants when they count. An unknown limit stays unknown; do not hard-code four or infer available slots from the number of running agents alone.
+
+Completion produces a result. It does not prove that the host released the thread's slot. Interruption stops a turn and is not closure either. Mark a handle released only when a documented host operation or capacity report establishes that fact. A failed spawn consumes no lane result; keep its error as evidence.
+
+Plan all phases before filling the first wave. Account for later model/effort combinations and roles that need a fresh context, including a judge or independent verifier. When completed handles cannot be released, reserve capacity for those phases. If the known capacity cannot fit the required distinct contexts over the run, record the affected gaps before dispatch. Waiting alone cannot make a retained handle disappear.
+
+## Dispatch within capacity
+
+A fan-out phase includes all requested lanes, but only the available window runs at once. Start independent native and external work together. Keep excess native tasks queued, collect terminal results, then launch the next eligible wave. N is the requested lane count, not a promise of N simultaneous native threads. Preserve each lane's descriptor, brief, output, and coverage accounting across waves.
+
+Prefer a fresh agent for new work, including a fix round, retry, follow-up, or next queue item. Give it consolidated scope: the original brief, later directives, prior report, branch, and current evidence. A PR owner role can outlive its agent.
+
+Reuse an existing agent only when its task needs costly-to-transfer agent-local state, such as uncommitted work or a running process, or when native capacity prevents a fresh dispatch. For either exception, all of these must hold:
+
+- The agent is idle, its previous result has been collected, and its previous assignment is finished.
+- Its assigned model and effort match the new descriptor exactly. An instruction in a follow-up cannot change either. Resolve aliases to their actual assignment before comparing.
+- Its tools and working directory support the new task's access and write scope. Required MCP access still needs a successful source call under the provider-dispatch MCP rule.
+- Retained context is compatible with the role. Separate candidates and independent review opinions need separate contexts. An author cannot become its own independent verifier or cross-judge. Reuse does not create another independent vote.
+
+Record the reuse reason, handle, descriptor, prior task, and new task in the existing run notes. Send one complete brief through the advertised operation that starts a new turn on an idle agent. Keep new outputs separate from the prior result. Mere familiarity is not a reuse reason. Do not interrupt a healthy task to force reuse or rely on a status message to start a new turn.
+
+If closure is available, collect the result and preserve its artifacts before closing a finished agent that is no longer needed. Check the operation's result before treating its slot as free. If the close operation is absent, keep the handle as idle and retained. Use a compatible idle handle or leave the task queued while a usable running handle finishes.
+
+If concurrency itself is part of the proof, such as a simultaneous race or load measurement, waves do not satisfy it. Report the unmet execution requirement rather than claiming the same result from serial execution.
+
+## When no valid dispatch remains
+
+On a capacity rejection, reconcile the inventory and apply the rules above. Retry after confirmed release, or once after a newly completed task when the host's release behavior is unknown. If completion still leaves spawning blocked, retain that evidence and use compatible reuse; do not keep retrying an unchanged state. If no running task can lead to a compatible handle or a free slot, record a native capacity dropout for the affected lane and apply the calling skill's gap or dropout policy. Continue independent work; a required missing lane never counts as a pass.
+
+Keep the configured model, effort, and route. Native exhaustion does not authorize launching the same provider through a raw CLI, lying about `--parent`, substituting another model, or having the parent impersonate the missing reviewer. A separate CLI session does not inherit this conversation's MCP access. The external runner's same-provider rejection remains in force.
+
+Report the observed limit or exact tool error, retained handles, unavailable operation, and affected lanes. Distinguish an observed capacity rejection from an inference about why the host retains a thread. Missing `close_agent` alone does not prove a host leak.

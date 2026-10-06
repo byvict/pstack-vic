@@ -29,7 +29,7 @@ For each candidate, read the first JSONL line and check that `message.content[0]
 
 ### 2. Spawn three reviewers in parallel
 
-Start all three read-only lanes in one fan-out phase through provider dispatch. Reviewers need MCP access for context lookups (tickets, chat threads, observability traces referenced in the transcript); follow the central MCP-dependent task rule. The prompt forbids file writes; the parent applies edits.
+Schedule all three read-only lanes through provider dispatch's [native lifecycle rules](../poteto-mode/references/native-lifecycle.md), including capacity for the later synthesizer. Reviewers need MCP access for context lookups (tickets, chat threads, observability traces referenced in the transcript); follow the central MCP-dependent task rule. The prompt forbids file writes; the parent applies edits.
 
 | Lens | Role | Prompt template |
 |---|---|---|

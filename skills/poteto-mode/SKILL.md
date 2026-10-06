@@ -100,7 +100,7 @@ Preserve the report fields required by the routed skill, including exact SHAs, m
 
 You own every subagent's work. Review the diff and write your own summary, don't pass through what it said. A second opinion is the same prompt against a different model. Agreement is high-signal.
 
-**Fresh subagents by default.** Give new work to a fresh subagent with consolidated scope, meaning the original brief, every later directive, and the prior agent's report and branch. This holds for a fix round, a follow-up, a retry, and the next queue item. Resume, message, or queue a follow-up on an existing subagent only when the new work strictly needs state that lives in that agent and is costly to move: its local checkout, its uncommitted changes, or a process it still runs, such as a dev server, a simulator, or a babysit watcher. A stop or hold order to a running agent is not reuse. A role such as a PR owner outlives its agent. Once that agent returns, a fresh agent takes the role's next round. Interrupt-chained resumes silently drop directives, so fire a fresh subagent with consolidated scope rather than trusting a "done" summary. When applying this exception, record the required agent-local state and why transferring it is costly in the existing decision trail. Prior familiarity with the task does not satisfy the exception.
+**Agent lifecycle.** Before native fan-out, a fix round, retry, follow-up, or next queue item, read [native-lifecycle.md](references/native-lifecycle.md). It owns the fresh-agent default, state and capacity exceptions, compatibility checks, and slot accounting. A completed agent is not necessarily a released slot.
 
 ## Writing the reply
 

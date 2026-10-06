@@ -23,6 +23,8 @@ Only when `CLAUDE_CONFIG_DIR` redirects the home, render exactly `@./pstack-mode
 
 ## Tool actions
 
+Resolve these actions against the current session's advertised tools and schemas. Codex hosts expose different lifecycle operations. Before dispatching or reusing agents, read [native-lifecycle.md](native-lifecycle.md).
+
 | pstack / Claude action | Codex equivalent |
 |------------------------|------------------|
 | Read a file | `shell` (`cat`, `head`, `tail`) |
@@ -34,11 +36,13 @@ Only when `CLAUDE_CONFIG_DIR` redirects the home, render exactly `@./pstack-mode
 | Invoke a skill (the `Skill` tool, `/command`) | Skills load natively. Follow the instructions presented. |
 | `paths` frontmatter scopes automatic loading | Claude Code only. On Codex, invoke `pstack:typescript-best-practices` by name. |
 | Dispatch a subagent (the `Agent`/`Task` tool) | `spawn_agent` |
-| Dispatch N parallel subagents in one turn | N `spawn_agent` calls in one response |
+| Dispatch N parallel subagents | `spawn_agent` calls within the host's capacity, with queued waves per the lifecycle contract |
 | Wait for a subagent result | `wait_agent` |
-| Free a finished subagent slot | `close_agent` |
+| Start a new task on a compatible idle subagent | `followup_task` when advertised, or the host's documented equivalent; a plain message may not start a turn |
+| Stop a running subagent turn | `interrupt_agent` when advertised; this does not establish slot release |
+| Free a finished subagent slot | `close_agent` only when advertised and its result establishes release; otherwise retain the idle handle |
 | Track tasks (the todolist / `TodoWrite`) | `update_plan` |
-| The program's agent list (the audit tick of the autopilot playbooks) and the background task list (Orchestrate's read-only probe) | The subagents you spawned and have not closed (`spawn_agent` handles) and your persistent exec sessions |
+| The program's agent list (the audit tick of the autopilot playbooks) and the background task list (Orchestrate's read-only probe) | `list_agents` when advertised, reconciled with retained subagent handles and persistent exec sessions |
 | Ask the human a fixed-choice question (`AskUserQuestion`) | Ask in plain text and let the user answer. Codex has no structured-choice tool. |
 | Transcript directory (show-me-your-work audit, session pickup) | `~/.codex/sessions/`, same no-glob rule |
 

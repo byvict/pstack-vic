@@ -20,7 +20,7 @@ When in doubt, take the simple path.
 
 ## Step 2a. Explore (complex questions only)
 
-Decompose the question into 2 to 4 exploration angles, each a distinct slice of the subsystem. Start all explorers in one fan-out phase through provider dispatch. Use your configured `how explorer` role (default: its row in the role table of [`provider-dispatch.md`](../poteto-mode/references/provider-dispatch.md)) in `read-only` mode. A native lane uses the parent subagent primitive; an external lane uses the launcher directly.
+Decompose the question into 2 to 4 exploration angles, each a distinct slice of the subsystem. Schedule the explorers through provider dispatch's [native lifecycle rules](../poteto-mode/references/native-lifecycle.md), including capacity for the later explainer. Use your configured `how explorer` role (default: its row in the role table of [`provider-dispatch.md`](../poteto-mode/references/provider-dispatch.md)) in `read-only` mode. A native lane uses the parent subagent primitive; an external lane uses the launcher directly.
 
 Each explorer gets the prompt in `references/explorer-prompt.md` with its angle filled in. Then go to Step 3.
 
