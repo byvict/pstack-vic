@@ -258,7 +258,7 @@
       "id": "grok.events",
       "cli": "grok",
       "kind": "lane",
-      "contract": "`streaming-messages-json`: an event `type: result` with `subtype`, `is_error`, `result`, `modelUsage`, `session_id`, `usage`, `total_cost_usd`",
+      "contract": "`streaming-messages-json`: an event `type: result` with `subtype`, `is_error`, `stop_reason`, `errors`, `result`, `modelUsage`, `session_id`, `usage`, `total_cost_usd`",
       "pointers": [{ "file": "skills/poteto-mode/scripts/runner/parse-output.ts", "anchor": "function parseGrok" }],
       "coveredBy": ["read", "write", "seatbelt"],
       "measuredOn": "1.0.5"

@@ -1726,3 +1726,41 @@ A saída exige geração final após ferramentas, `end_turn` e prova terminal do
 Dispatch, referência pública, atribuição em `NOTICE.md` e seis touchpoints ACP acompanham a rota. Os touchpoints têm `coveredBy: []`: os probes de setup/update ainda cobrem o CLI, e mudanças ACP sem probe seguram a atualização.
 
 Verificação local: runner final (141/141), contratos (4/4), Bun (74/74) e typecheck, matriz, agentes, colisões, manifests e diff check. O `npm test` amplo (529/529) antecede os últimos ajustes de protocolo; a suíte final do runner cobre esse delta. As provas de produção ficam no PR.
+
+# 0.5.11 — Falha terminal do Grok com o motivo do provedor, e os streams do filho ao lado do receipt (2026-10-05)
+
+O digest do open-pstack de 2026-10-05 deu `adaptar` aos cinco commits da issue #78 do open: `72019f4`, `bdd51f6`, `19d6d5b`, `21e134f` e `ef6c5c4`. Até a 0.5.9, um resultado de falha bem formado do Grok (`is_error: true`) virava `malformed-output` (saída 65) com a mensagem genérica `grok reported an error result`. Depois de uma saída diferente de zero o runner nem lia o stream, e o Grok sai com 1 em erro (documentação headless do Grok, tabela Exit Codes). O motivo do provedor só aparecia no fim de `error.evidence`, e modelo, sessão, uso e custo sumiam do receipt. Os bytes de stdout e stderr do filho ficavam só na memória do runner. Esta versão é a cópia auditada dos cinco commits, adaptada ao runner em Node daqui. O plano é `docs/superpowers/plans/2026-10-05-open-digest-adaptar.md`, seção PR-A.
+
+## Vereditos
+
+| Commit | Veredito | Como entrou |
+| --- | --- | --- |
+| `72019f4` (testes que reproduzem os defeitos) | adaptar | os casos de `parse-output.test.ts` e o bloco `issue78` de `run.test.ts`, em `node:test` com `matchObject`; os fakes em Node com `writeSync`, porque no macOS a escrita do Node num pipe é assíncrona e o `process.exit` cortaria a saída |
+| `bdd51f6` (classificação e metadados) | adaptar | `ProviderResultError` e o `parseGrok` novo como no open, com os campos declarados na classe (o Node só apaga tipos e não aceita parameter properties); em `run.ts`, a falha tipada viaja pelo `LaneOutcome` até `finish`, que é onde este runner monta o receipt (o open faz tudo em `executeLane`); o teste do open sobre o resultado de erro do fake não existe aqui |
+| `19d6d5b` (sidecars) | adaptar | `reserveOutputs`, `captureStream` com descritor e `stdoutPath`/`stderrPath` como no open; o `captureStream` daqui lê um `Readable` do Node, então a escrita fica no handler de `data`, e uma falha de escrita destrói o stream com o erro, o que rejeita a captura; os descritores chegam ao filho pelo `LaneContext`; nos testes, `mock.method(fs, "writeSync")` com `syncBuiltinESMExports` no lugar do `spyOn`, e um limite de 10 s no caso da falha de escrita, porque o `node:test` não tem o timeout de 5 s que o `bun:test` impunha |
+| `21e134f` (texto) | adaptar | o parágrafo dos caminhos e o de dropouts de `provider-dispatch.md`, cada um fundido com as frases que só existem aqui (política de pool, `bypassPermissions`) |
+| `ef6c5c4` (saída diferente de zero sem falha tipada) | aplica | — |
+
+## O que a versão faz
+
+- **Falha tipada do Grok.** `parseGrok` exige `subtype` string e `is_error` booleano. Sem eles, `grok result did not contain a valid terminal status` (`malformed-output`, 65). Um resultado de falha lança `ProviderResultError` com a mensagem do provedor (`errors` juntos, senão `error`, `error.message`, `result` ou `grok reported <subtype>`) e o status: `cancelled` quando `stop_reason` ou `subtype` é `cancelled`/`canceled` ou a mensagem começa com `User cancelled the execution` ou `PermissionCancelled`, senão `child-failed`.
+- **O receipt da falha.** O runner lê o stream do Grok também depois de uma saída diferente de zero, quando ele não está vazio. A falha tipada vira o status do receipt (130 para `cancelled`, 70 para `child-failed`), a mensagem vai em `error.message` e na frente de `error.evidence`, `reportedModel`, `sessionId`, `usage` e `costUsd` ficam, e `exitCode` é o do filho. Sem falha tipada, uma saída diferente de zero continua `child exited with status N`. Cancelamento e timeout do launcher continuam na frente.
+- **Sidecars.** `reserveOutputs` reserva também `<receipt>.stdout` e `<receipt>.stderr`, com `wx` e modo `0600`, recusa quando os cinco caminhos (prompt, output, receipt e os dois sidecars) se repetem, e desfaz só o que criou. O `captureStream` do filho do modelo grava cada pedaço inteiro no sidecar antes de decodificar o texto; o preflight não grava. O receipt ganha `stdoutPath` e `stderrPath` (`schemaVersion` continua 1). Uma falha de escrita num sidecar termina a lane como `child-failed` sem esperar o filho, porque o `runProcess` passa a correr também a promessa das capturas. Essa mesma entrada fecha uma janela que a investigação `how` confirmou na 0.5.9: a promessa das capturas ficava sem handler até o filho sair, e um erro de pipe nesse intervalo derrubava o launcher com saída 1, sem receipt.
+- **Contrato da CLI.** `grok.events` em `cli-touchpoints.json` passa a nomear `stop_reason` e `errors`, que o parser agora lê.
+- **Textos.** `provider-dispatch.md` ganha o texto do open sobre os sidecars e sobre os três desfechos de uma falha do Grok (130, 70, 65). `docs/reference.md` cita os dois sidecars no parágrafo das lanes externas.
+
+## O que ficou de fora
+
+- O modo `auto` de permissão do Grok (`47cd5a2`, `fb2c4f8`, `6313b6c` do open): o runner segue em `bypassPermissions` com o sandbox, e o parágrafo de `provider-dispatch.md` que diz isso não muda (Apêndice B do plano).
+- Os commits do open que vieram depois em `run.ts` e `parse-output.ts` (`grokModelAvailable`, a dica do sandbox do Codex, o effort `ultra`) são de outros PRs deste programa ou ficam fora.
+- O texto de ajuda do `cli.ts` continua dizendo só que output e receipt não podem existir; o open não mexeu nele.
+
+## Fora dos arquivos do plano
+
+- `README.md`: só o `--ref v0.5.10`, que `scripts/manifests.test.ts` confere junto com a versão.
+
+## Verificação
+
+- `node --test` de `parse-output.test.ts` e `run.test.ts`: 71 testes. Os 24 casos novos ou estendidos falham com o código da 0.5.9, e `parse-output.test.ts` nem carrega sem `ProviderResultError`.
+- `npm test` (496 testes), `npm run test:bun`, `npm run matrix:check`, `npm run agents:check`, `npm run collision:check` e `git diff --check`.
+- `proof/you-see.mjs`, na trilha do programa (`~/Dev/Skills/pstack-vic-runs/2026-10-05-open-digest-adaptar/pr-a/`), roda o launcher real com um `grok` falso que devolve `{"type":"result","subtype":"api_error","is_error":true,"errors":["API unavailable"]}`. Na 0.5.9: saída 65, `malformed-output`, sem sidecars. Nesta versão: saída 70, `child-failed`, `API unavailable` em `error.message` e no começo de `error.evidence`, e os dois sidecars `-rw-------` com os bytes exatos do filho.
