@@ -9,17 +9,21 @@ Configure one portable model sheet for the current parent harness. Read [`provid
 
 The deterministic half of this skill is `scripts/setup-pstack.ts`, next to this file (Node 24, no dependencies; run it as `node <this skill's directory>/scripts/setup-pstack.ts <subcommand>`). It reads the matrix, reads and normalizes the current sheet, renders the new one, runs the external probes through the runner, refuses to write while any required probe is missing, and writes with snapshot, read-back, and restore. You own the conversation (parent, efforts, role changes, confirmation) and the native one-turn probes. Every subcommand prints JSON; `--help` prints the usage. Never edit the sheet or the integration files by hand, and never paste a rendered sheet as the result. A sixth subcommand, `pick`, is not a setup step: a skill calls it at dispatch time to take one lane from a pool row. A second script, `scripts/authorize.ts`, checks the operator's standing authorization (step 10).
 
-Claude Code writes `~/.claude/pstack-models.md` and loads it from `~/.claude/CLAUDE.md` with:
+Every subcommand resolves `<config-home>` once with the [harness config-home rule](../poteto-mode/references/codex-tools.md#harness-config-homes). The script reads `CLAUDE_CONFIG_DIR` and `CODEX_HOME` from the shell that runs it, and uses the resolved home for every write, snapshot, restoration, and readback. Current-state reads start there and follow the import of a copied profile (step 2).
+
+Claude Code writes `<config-home>/pstack-models.md` and loads it from `<config-home>/CLAUDE.md` using the import rule in step 8. When `<config-home>` is the default home, the import is exactly the legacy line:
 
 ```text
 @~/.claude/pstack-models.md
 ```
 
-Codex writes `~/.codex/pstack-models.md`. Codex has no `@` include, so the script mirrors the sheet's exact bytes inside one bounded block in `~/.codex/AGENTS.md` and keeps the sheet as the editable source of truth:
+Only when `CLAUDE_CONFIG_DIR` redirects the home is it exactly `@./pstack-models.md`, relative to the importing file's directory.
+
+Codex writes `<config-home>/pstack-models.md`. Codex has no `@` include, so the script mirrors the sheet's exact bytes inside one bounded block in `<config-home>/AGENTS.md` and keeps the sheet as the editable source of truth:
 
 ```text
 <!-- pstack:models:begin -->
-<exact contents of ~/.codex/pstack-models.md>
+<exact contents of the resolved model sheet>
 <!-- pstack:models:end -->
 ```
 
@@ -43,9 +47,11 @@ Use the harness and tool surface running this skill: Claude Code (`--parent clau
 node scripts/setup-pstack.ts state --parent <parent>
 ```
 
-The JSON says whether the parent's sheet exists (`exists`), its path, the normalized rows, the `migrations` it applied in memory (old Fable revisions become `fable`; `opus` and old Opus revisions become `claude-opus-5-5`; `gpt-5.6-sol` becomes `gpt-6-sol`, preserving provider, effort, role, and lane order), and one `efforts` entry per matrix family with its `status`, the distinct `efforts` in use, and the `rows` that use them. A family's status is `current` (every lane of the family shares one effort), `mixed` (its lanes use two or more efforts; a valid sheet, not a conflict), `unassigned` (first run: the matrix Default effort is proposed), or `outside-map` (no role uses the family, so no effort can persist for it; on a Claude Code parent, Sol is outside the first-run map by the 2026-09-17 decision, and on a Codex parent it is the default of the four authoring rows).
+The JSON says whether the parent's sheet exists (`exists`), its path (`sheetPath`, inside `configHome`), where the rows came from (`source`), the normalized rows, the `migrations` it applied in memory (old Fable revisions become `fable`; `opus` and old Opus revisions become `claude-opus-5-5`; `gpt-5.6-sol` becomes `gpt-6-sol`, preserving provider, effort, role, and lane order), and one `efforts` entry per matrix family with its `status`, the distinct `efforts` in use, and the `rows` that use them. A family's status is `current` (every lane of the family shares one effort), `mixed` (its lanes use two or more efforts; a valid sheet, not a conflict), `unassigned` (first run: the matrix Default effort is proposed), or `outside-map` (no role uses the family, so no effort can persist for it; on a Claude Code parent, Sol is outside the first-run map by the 2026-09-17 decision, and on a Codex parent it is the default of the four authoring rows).
 
-The script stops on inconsistent state: an unknown or duplicate role row, a bare host-native slug, an unregistered Claude model, a provider/model pair outside the matrix, or an effort outside the family's Selectable efforts. Show the error verbatim and resolve it with the operator before going on. Do not probe or write while any inconsistency is unresolved.
+The `source` is the sheet itself, the sheet that `<config-home>/CLAUDE.md` imports from elsewhere (a copied profile), the Codex or Grok `AGENTS.md` block when the sheet is missing, or `first-run`. `missingImport` names an import whose target does not exist. When `source` is not the sheet, name it and the destination `sheetPath` in step 7, because the write carries its rows into `<config-home>/pstack-models.md`.
+
+The script stops on inconsistent state: an unknown or duplicate role row, a bare host-native slug, an unregistered Claude model, a provider/model pair outside the matrix, an effort outside the family's Selectable efforts, two sheet imports in `CLAUDE.md`, broken block markers in `AGENTS.md`, or a sheet whose lanes differ from those of the import target or of the block. Show the error verbatim and resolve it with the operator before going on. Do not probe or write while any inconsistency is unresolved.
 
 ### 3. Show the map as a table, then ask only for the roles that change
 
@@ -109,11 +115,11 @@ Ask for confirmation. After the operator confirms:
 node scripts/setup-pstack.ts write --dir <dir>
 ```
 
-`write` verifies every required family probe and the fresh Grok owner capability against the run directory first and refuses (exit 1, nothing touched) while any is missing or failed. It then snapshots the sheet, the parent integration, and the ledger, renders the integration and the ledger (plus one entry per family this plan probed), compares, writes only what changed, reads each back, and restores every snapshot if a write or read-back fails. The result names each target as `created`, `updated`, or `unchanged`. An unchanged rerun is byte-identical and reports all three as `unchanged`.
+`write` refuses a plan made for another config home, so run it with the same `--home` and variable as `plan`. After that it verifies every required family probe and the fresh Grok owner capability against the run directory and refuses (exit 1, nothing touched) while any is missing or failed. It then snapshots the sheet, the parent integration, and the ledger, renders the integration and the ledger (plus one entry per family this plan probed), compares, writes only what changed, reads each back, and restores every snapshot if a write or read-back fails. The result names each target as `created`, `updated`, or `unchanged`. An unchanged rerun is byte-identical and reports all three as `unchanged`.
 
 ### 8. How the integration is wired
 
-On Claude Code, the integration is the single `@~/.claude/pstack-models.md` line in `~/.claude/CLAUDE.md`: appended once on first run, left alone when present, inconsistent when duplicated. On Codex and Grok, it is the exact sheet bytes between one `<!-- pstack:models:begin -->` and `<!-- pstack:models:end -->` pair in the respective `~/.codex/AGENTS.md` or `~/.grok/AGENTS.md`: one block appended at the end on first run, the whole block replaced on a rerun. Missing, duplicated, or reversed markers, or a directory where a file should be, stop the write as inconsistent state instead of guessing a boundary.
+On Claude Code, the integration is the one `@` import in `<config-home>/CLAUDE.md` whose target's basename is `pstack-models.md`, in any directory or spelling, found the way Claude Code parses imports (an import in a list item counts, and one in a fenced block, a code span or quotes does not). The default home renders exactly `@~/.claude/pstack-models.md`, and a home that `CLAUDE_CONFIG_DIR` redirects renders exactly `@./pstack-models.md`. Zero imports appends one, one is replaced in place with every other byte kept, and more than one stops as inconsistent state before either write. On Codex and Grok, it is the exact sheet bytes between one `<!-- pstack:models:begin -->` and `<!-- pstack:models:end -->` pair in `<config-home>/AGENTS.md` (always `~/.grok/AGENTS.md` on Grok): one block appended at the end on first run, the whole block replaced on a rerun. Missing, duplicated, or reversed markers, or a directory where a file should be, stop the write as inconsistent state instead of guessing a boundary.
 
 Do not copy the model sheet or the ledger between harnesses; route availability can differ even on the same host, so each parent keeps its own ledger and probes a family the first time it uses it.
 
@@ -151,7 +157,7 @@ The authorization is the operator's act. Never run `apply` yourself, never write
 
 On Grok, include `--permission-mode <observed effective session mode>` in the check. Follow [grok-tools.md](../poteto-mode/references/grok-tools.md) to obtain that mode. A config file alone does not prove the mode of a T3 session, and the script writes no Grok approval setting.
 
-On exit 1 on Codex, show the `reason`. Codex has no such list. Codex asks for no approval when `approval_policy` is `"never"` at the top level of `~/.codex/config.toml`. The operator sets that value, or accepts that Codex stops to ask.
+On exit 1 on Codex, show the `reason`. Codex has no such list. Codex asks for no approval when `approval_policy` is `"never"` at the top level of `<config-home>/config.toml`. The operator sets that value, or accepts that Codex stops to ask.
 
 The entry names its version (`pstack standing authorization v2`). `check` requires exactly one grant-shaped entry and that entry must be the current exact body. Missing, stale, duplicate and coexisting grants fail without changing settings; the diagnostic identifies which condition was observed. The 0.5.3 safety correction keeps version 2 and requires the operator to review the current entry and run `apply` again. The existing in-place replacement, typed confirmation and backup remain unchanged. To withdraw the authorization, the operator deletes the entry from `autoMode.allow`.
 
