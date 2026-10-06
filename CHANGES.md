@@ -1851,7 +1851,7 @@ A regra fica em `provider-dispatch.md`, com referências em Swarm e poteto-mode.
 
 A prova inicial com Grok 4.7, servido como `grok-4.7-build`, concluiu pela rota ACP a partir do Codex: abriu um PTY, escreveu e leu um marcador e fechou os descritores. Os três cenários documentais distinguiram revisão com somente leitura, PTY autorizado e PTY incompatível com confinamento obrigatório. Essa prova não executou uma raiz Claude Code nem Chromium.
 
-# Em desenvolvimento. Attack the Premise do open. 2026-10-06
+# 0.5.20. Attack the Premise do open. 2026-10-06
 
 `principle-attack-the-premise/SKILL.md` e sua linha no roteador `poteto-mode` passam a ser cópias exatas do open em `de67e6b40511814171e5e4c8ad7af3b79f07c9ee` (1.4.1). O texto foi introduzido em `64f174e6f4aad110005e4b4a51c859c12c843eb3`. O princípio exige escrever e testar a premissa compartilhada antes de outra correção. O censo por ator se aplica a problemas de desequilíbrio. Um censo uniforme contraria a hipótese de assimetria, mas não prova que a premissa está correta.
 
