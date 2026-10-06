@@ -1801,7 +1801,7 @@ Os testes de shell do open (`tests/setup-config-home-repro.sh` e o bloco #120 de
 
 ## O que muda
 
-- **Um resolvedor.** `configHomeFor(parent, home, env)` em `setup-pstack.ts` decide o diretório, e o sheet, a integração, o ledger e o `settings.json` do `authorize.ts` saem dele. O Grok fica em `~/.grok`, porque a CLI não documenta variável. Um valor que não é caminho absoluto (relativo, `~` literal, só espaços) faz o script parar com erro, porque o harness o resolveu contra um diretório que o script não vê.
+- **Um resolvedor.** `configHomeFor(parent, home, env)` em `setup-pstack.ts` decide o diretório, e o sheet, a integração, o ledger e o `settings.json` do `authorize.ts` saem dele. O Grok fica em `~/.grok`, como o plano manda. Um valor que não é caminho absoluto (relativo, `~` literal, só espaços) faz o script parar com erro, porque o harness o resolveu contra um diretório que o script não vê.
 - **O ambiente entra só pela linha de comando.** Só o `Io` padrão do `main` carrega `process.env`. Uma chamada da biblioteca sem `env` usa os homes padrão, então nenhum teste em processo e nenhuma execução do `update-clis` alcança um diretório redirecionado.
 - **O import do Claude.** A busca segue as regras documentadas do Claude Code: um import num item de lista conta, e um dentro de bloco cercado, de código entre crases ou entre aspas não conta. Só o `@caminho` é trocado, e o resto da linha fica. Um `CLAUDE_CONFIG_DIR` que aponta para `~/.claude` continua sendo o home padrão e mantém a linha antiga.
 - **A fonte do estado.** `state` ganha `configHome`, `source` (`sheet`, `import`, `block` ou `first-run`) e `missingImport`. `exists` continua a dizer se o sheet do config home existe. O Grok, que espelha o sheet no mesmo bloco do Codex, ganha a mesma recuperação. Uma diferença só de prosa entre o sheet e o bloco não conta como conflito. O sheet e o import de um perfil copiado também são comparados, como na regra de `6ef25f5`, e um alvo de import ausente não apaga um sheet que existe.
@@ -1813,6 +1813,7 @@ Os testes de shell do open (`tests/setup-config-home-repro.sh` e o bloco #120 de
 
 - O `update-clis` chama `loadState` sem `env` e continua lendo os homes padrão. A leitura do `settings.json` em `claudeChannel` e o backup do `config.toml` em `scripts/release.ts` também ficam como estão.
 - Uma escolha explícita de fonte (`--source`) não entra. O plano manda parar, e a mensagem diz qual arquivo remover.
+- O `GROK_HOME`. O plano partiu de que a CLI do Grok não documenta variável, mas a 1.0.46 documenta, no próprio binário: "`GROK_HOME` | Override config directory (default: `~/.grok`)". Nem o setup nem o runner o seguem ainda. Seguir é um PR próprio, que também ajusta o runner e `grok-tools.md`.
 - Os diretórios de transcript (`~/.claude/projects/`, `~/.codex/sessions/`) não mudam, como no open.
 
 ## Verificação
