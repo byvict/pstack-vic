@@ -1134,6 +1134,116 @@ describe("runLane", () => {
     });
   }
 
+  const opaqueDiagnostics: readonly [string, string][] = [
+    ["quoted inner generic", 'Invalid model: "other-model model not found. Choose another."'],
+    ["comma inner generic", "Invalid model: other-model, model not found."],
+    ["comma inner generic at end", "Invalid model: other-model, model not found"],
+    ["account inner generic", 'model is not supported with this account: "other-model model not found. Choose another."'],
+    ["quoted inner direct", 'Invalid model: "other-model <requested> is not supported"'],
+    ["positive inner prose", 'Invalid model: "other-model feature is supported"'],
+    ["first closing bracket", "Invalid model: ] model not found"],
+    ["first closing parenthesis", "Invalid model: ) <requested> is not supported"],
+    ["first colon", "Invalid model: : model not found"],
+    ["invalid head then predicate", "invalid model is not supported"],
+    ["model predicate then comma", "model not found, <requested> is not supported"],
+    ["invalid head then comma", "Invalid model, <requested> is not supported"],
+    ["closed other id then direct", 'Invalid model: "other-model" <requested> is not supported'],
+    ["predicate dot suffix", "model not found.preview <requested> is not supported"],
+    ["literal dot subject", "Invalid model ."],
+  ];
+  const independentDiagnostics: [string, string][] = [
+    ["earlier direct", '<requested> is not supported; Invalid model: "other-model model not found."'],
+    ["later direct", 'Invalid model: "other-model model not found."\n<requested> is not supported'],
+    ["later generic", 'Invalid model: "other-model model not found."\nmodel not found'],
+  ];
+  for (const [label, boundary] of [["CR", "\r"], ["CRLF", "\r\n"],
+    ["line separator", "\u2028"], ["paragraph separator", "\u2029"]]) {
+    independentDiagnostics.push(
+      [`qualified before ${label}`, `Invalid model: <requested>${boundary}Unrelated feature is supported.`],
+      [`later direct after ${label}`, `Invalid model: "other-model model not found."${boundary}<requested> is not supported`],
+      [`later generic after ${label}`, `Invalid model: "other-model model not found."${boundary}model not found`],
+    );
+  }
+  const authDiagnostics: readonly [string, string][] = [
+    ["auth inside rejected tail", 'Invalid model: "other-model Not authenticated. model not found."'],
+  ];
+  const diagnosticModels = { claude: "claude-opus-5-5", codex: "gpt-6.1-sol", grok: "grok-4.7" };
+  for (const expected of [
+    { cases: opaqueDiagnostics, successExit: 0, successStatus: "complete", preflightExit: 77,
+      preflightStatus: "unauthenticated", modelExit: 70, modelStatus: "child-failed" },
+    { cases: independentDiagnostics, successExit: 69, successStatus: "unavailable-model", preflightExit: 69,
+      preflightStatus: "unavailable-model", modelExit: 69, modelStatus: "unavailable-model" },
+    { cases: authDiagnostics, successExit: 77, successStatus: "unauthenticated", preflightExit: 77,
+      preflightStatus: "unauthenticated", modelExit: 77, modelStatus: "unauthenticated" },
+  ] as const) {
+    for (const [label, diagnostic] of expected.cases) {
+      it(`owns ${label} during Grok successful preflight`, { timeout: GROK_RETRY_RUN_BUDGET_MS }, async () => {
+        const input = { ...options("grok", "owned-success"), model: diagnosticModels.grok };
+        const started = join(scratch, "owned-success.started");
+        const attempts = join(scratch, "owned-success.attempts");
+        process.env.FAKE_MODEL_STARTED_PATH = started;
+        process.env.FAKE_GROK_PREFLIGHT_LOG_PATH = attempts;
+        process.env.FAKE_GROK_PREFLIGHT_OUTPUT = `You are logged in.\nAvailable models: ${input.model}`;
+        process.env.FAKE_GROK_PREFLIGHT_ERROR = diagnostic.replaceAll("<requested>", input.model);
+        const result = await runLane(input);
+
+        assert.equal(result.exitCode, expected.successExit);
+        assert.equal(existsSync(started), expected.successExit === 0);
+        assert.equal(existsSync(input.outputPath), expected.successExit === 0);
+        if (expected.successExit === 0) assert.equal(readFileSync(input.outputPath, "utf8"), "GROK_OK");
+        assert.equal(readFileSync(attempts, "utf8"), "attempt\n".repeat(expected.successExit === 77 ? 2 : 1));
+        matchObject(receipt(input.receiptPath), {
+          model: input.model, status: expected.successStatus, exitCode: 0,
+          preflight: { status: expected.successExit === 0 ? "passed" : "failed" },
+        });
+      });
+
+      for (const provider of PROVIDERS) {
+        it(`owns ${label} during ${provider} failed preflight`, { timeout: GROK_RETRY_RUN_BUDGET_MS }, async () => {
+          const input = { ...options(provider, "owned-preflight"), model: diagnosticModels[provider] };
+          const message = `${input.model}\n${diagnostic.replaceAll("<requested>", input.model)}`;
+          const started = join(scratch, "owned-preflight.started");
+          const attempts = join(scratch, "owned-preflight.attempts");
+          process.env.FAKE_MODEL_STARTED_PATH = started;
+          writeFileSync(join(bin, cliOf(provider)), fake.replace(
+            'if (name === "claude" && args[0] === "auth") {',
+            `if (isPreflight) { appendFileSync(${JSON.stringify(attempts)}, "attempt\\n"); err(${JSON.stringify(message)}); process.exit(1); }\nif (name === "claude" && args[0] === "auth") {`
+          ));
+          const result = await runLane(input);
+
+          assert.equal(result.exitCode, expected.preflightExit);
+          assert.equal(existsSync(started), false);
+          assert.equal(existsSync(input.outputPath), false);
+          assert.equal(readFileSync(attempts, "utf8"), "attempt\n".repeat(provider === "grok" && expected.preflightExit === 77 ? 2 : 1));
+          matchObject(receipt(input.receiptPath), {
+            model: input.model, status: expected.preflightStatus, exitCode: 1, preflight: { status: "failed" },
+          });
+        });
+
+        it(`owns ${label} during ${provider} execution`, async () => {
+          const input = { ...options(provider, "owned-model"), model: diagnosticModels[provider] };
+          const started = join(scratch, "owned-model.started");
+          const attempts = join(scratch, "owned-model.attempts");
+          process.env.FAKE_MODEL_STARTED_PATH = started;
+          process.env.FAKE_GROK_PREFLIGHT_OUTPUT = `You are logged in.\nAvailable models: ${input.model}`;
+          writeFileSync(join(bin, cliOf(provider)), scriptedModel("", diagnostic.replaceAll("<requested>", input.model), 1).replace(
+            'if (name === "claude" && args[0] === "auth") {',
+            `if (isPreflight) appendFileSync(${JSON.stringify(attempts)}, "attempt\\n");\nif (name === "claude" && args[0] === "auth") {`
+          ));
+          const result = await runLane(input);
+
+          assert.equal(result.exitCode, expected.modelExit);
+          assert.equal(existsSync(started), true);
+          assert.equal(existsSync(input.outputPath), false);
+          assert.equal(readFileSync(attempts, "utf8"), "attempt\n");
+          matchObject(receipt(input.receiptPath), {
+            model: input.model, status: expected.modelStatus, exitCode: 1, preflight: { status: "passed" },
+          });
+        });
+      }
+    }
+  }
+
   it("rejects an explicitly unsupported Grok model despite a zero-exit exact listing", async () => {
     process.env.FAKE_GROK_PREFLIGHT_OUTPUT = "You are logged in.\nAvailable models: grok-4.7";
     process.env.FAKE_GROK_PREFLIGHT_ERROR = "model grok-4.7 is not supported";

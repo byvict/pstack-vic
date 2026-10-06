@@ -222,13 +222,61 @@ function unavailableStatus(value: string, requestedModel: string): LaneFailure {
   ) {
     return "unauthenticated";
   }
-  for (const refusal of value.matchAll(/(?:^|[^A-Za-z0-9_.-])(?:model[ \t]+(?:is[ \t]+)?(?:not found|unknown|unavailable|unsupported|not supported|invalid)\b|invalid[ \t]+model(?=$|[^A-Za-z0-9_.-]|\.(?=$|[^A-Za-z0-9_.-])))(?:[ \t]+with[ \t]+this[ \t]+account\b)?(?:(?:[ \t]*:[ \t]*|[ \t]+)("[A-Za-z0-9_.-]+"|'[A-Za-z0-9_.-]+'|\[[A-Za-z0-9_.-]+\]|[A-Za-z0-9_.-]+)[ \t]*(?:[.!?][ \t]*)?$|(?=[ \t]*(?:$|[.!?](?=$|[ \t]))))/gim)) {
-    const subject = refusal[1];
-    if (subject === undefined || grokModelAvailable(subject, requestedModel)) return "unavailable-model";
+  type Subject =
+    | { readonly kind: "generic" }
+    | { readonly kind: "model"; readonly id: string }
+    | { readonly kind: "opaque" };
+  type Claim = { readonly end: number; readonly subject: Subject };
+  const predicate = "(?:not found|unknown|unavailable|unsupported|not supported|invalid)";
+  const atom = String.raw`(?:"([A-Za-z0-9_.-]+)"|'([A-Za-z0-9_.-]+)'|\[([A-Za-z0-9_.-]+)\]|([A-Za-z0-9_.-]+))`;
+  const prefix = new RegExp(String.raw`(?:model[ \t]+(?:is[ \t]+)?${predicate}\b|invalid[ \t]+model(?=$|[^A-Za-z0-9_.-]|\.(?=$|[^A-Za-z0-9_.-])))(?:[ \t]+with[ \t]+this[ \t]+account\b)?`, "iy");
+  const direct = new RegExp(String.raw`(?:model[ \t]*:[ \t]*)?${atom}[ \t]+(?:is[ \t]+)?${predicate}\b`, "iy");
+  const qualifiedTail = new RegExp(String.raw`^(?:[ \t]*:[ \t]*|[ \t]+)${atom}[ \t]*(?:[.!?][ \t]*)?$`);
+
+  function claimAt(line: string, at: number): Claim | null {
+    if (at === 0 || /[^A-Za-z0-9_.-]/.test(line[at - 1])) {
+      prefix.lastIndex = at;
+      const head = prefix.exec(line);
+      if (head !== null) {
+        const end = line.length;
+        const tail = line.slice(prefix.lastIndex);
+        const qualified = qualifiedTail.exec(tail);
+        if (qualified !== null) {
+          return { end, subject: { kind: "model", id: qualified[1] ?? qualified[2] ?? qualified[3] ?? qualified[4] } };
+        }
+        return {
+          end,
+          subject: /^[ \t]*(?:$|[.!?](?=$|[ \t]))/.test(tail) ? { kind: "generic" } : { kind: "opaque" },
+        };
+      }
+    }
+    if (at === 0 || /[ \t]/.test(line[at - 1])) {
+      direct.lastIndex = at;
+      const refusal = direct.exec(line);
+      if (refusal !== null) {
+        return {
+          end: direct.lastIndex,
+          subject: { kind: "model", id: refusal[1] ?? refusal[2] ?? refusal[3] ?? refusal[4] },
+        };
+      }
+    }
+    return null;
   }
-  for (const refusal of value.matchAll(/(?:^|[ \t])(?:model[ \t]*:[ \t]*)?(?:"([A-Za-z0-9_.-]+)"|'([A-Za-z0-9_.-]+)'|\[([A-Za-z0-9_.-]+)\]|([A-Za-z0-9_.-]+))[ \t]+(?:is[ \t]+)?(not found|unknown|unavailable|unsupported|not supported|invalid)\b/gim)) {
-    const subject = refusal[1] ?? refusal[2] ?? refusal[3] ?? refusal[4];
-    if (grokModelAvailable(subject, requestedModel)) return "unavailable-model";
+
+  for (const line of value.split(/\r\n|[\n\r\u2028\u2029]/)) {
+    let cursor = 0;
+    while (cursor < line.length) {
+      const claim = claimAt(line, cursor);
+      if (claim === null) {
+        cursor += 1;
+        continue;
+      }
+      cursor = claim.end;
+      if (claim.subject.kind === "generic" ||
+        (claim.subject.kind === "model" && grokModelAvailable(claim.subject.id, requestedModel))) {
+        return "unavailable-model";
+      }
+    }
   }
   return "child-failed";
 }
