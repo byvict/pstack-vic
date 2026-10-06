@@ -1711,3 +1711,18 @@ O PR-C do programa de adaptações do digest de 2026-10-05 traz a correção da 
 - `npm test`, `npm run test:bun`, `npm run matrix:check`, `npm run agents:check`, `npm run collision:check` e `git diff --check` passam.
 - No lançador real, `NODE_OPTIONS=--require=./preload.cjs pstack-runner --help` imprime o uso da `main` e sai com 0 sem rodar o preload, que roda com `node -e 0`. `/bin/dash pstack-runner --help`, `/bin/sh pstack-runner --help`, `sh pstack-runner --help` no diretório do runner e `npm run runner -- --help` imprimem o mesmo uso. O PID do lançador passa a ser o `node`, e um SIGTERM nele cancela a lane com recibo `cancelled`.
 - Cada frase desta seção, da linha do `NOTICE.md` e do PR tem uma prova em `~/Dev/Skills/pstack-vic-runs/2026-10-05-open-digest-adaptar/pr-c/claims-r4.tsv`, rodada no head do PR.
+
+
+# 0.5.11 — Grok ACP explícito para tarefas de host e preview (2026-10-06)
+
+O pai Codex ou Claude pode escolher `--transport grok-acp --mode full-access` para uma tarefa Grok que precisa de PTY ou do preview T3. O default continua sendo o CLI com `read-only` ou `isolated-write`; quando o pai é Grok, a tarefa usa suas ferramentas nativas. O lançador shell da 0.5.10 é preservado.
+
+O attachment opcional de `--mcp-config` liga referências de endpoint/token à tab atribuída pelo pai: `schemaVersion: 1`, `urlEnv`, `bearerTokenEnv`, `previewTabId`. O endpoint é HTTP(S) loopback. Valores inválidos falham antes da reserva; credenciais e seus escapes são ocultados antes da persistência. Full access admite MCPs e hooks já configurados no Grok, além do T3 encaminhado; não confina escrita ao `cwd` nem promete allowlist de servidores.
+
+O perfil YAML e o gate do catálogo exigem cinco builtins, mais `search_tool` e `use_tool` com attachment. Nesse caso, MCPs podem expandir o catálogo com nomes `server__tool` durante a sessão. Builtins extras, nomes malformados e duplicatas falham. Host-only não aceita ferramentas MCP. Replies internos medidos de reload não resolvem requisições nem provam modelo.
+
+A saída exige geração final após ferramentas, `end_turn` e prova terminal do modelo servido. O custo fica `null` enquanto a unidade de ticks não for comprovada. A supervisão comum em `child.ts` preserva cancelamento, deadline absoluto opcional e reap. O close tem um segundo de graça; erro ou demora depois da conversa comprovada viram evidência. Sucesso pode registrar o exit real `143`/`SIGTERM`.
+
+Dispatch, referência pública, atribuição em `NOTICE.md` e seis touchpoints ACP acompanham a rota. Os touchpoints têm `coveredBy: []`: os probes de setup/update ainda cobrem o CLI, e mudanças ACP sem probe seguram a atualização.
+
+Verificação local: runner final (141/141), contratos (4/4), Bun (74/74) e typecheck, matriz, agentes, colisões, manifests e diff check. O `npm test` amplo (529/529) antecede os últimos ajustes de protocolo; a suíte final do runner cobre esse delta. As provas de produção ficam no PR.

@@ -44,7 +44,7 @@ First, list the open issues: `list_issues` with `project` set to the id above, `
 4. **In use.** A non-empty `inUse`, or `null` because lsof could not answer, gives "adiada", with the processes. The apps' bundled binaries live in other paths and never appear there.
 5. **Notes.** Run `notes --cli <cli> --from <from> --to <to> --dir <dir>`. Exit 2 gives "notas indisponíveis", with the error. Open no issue, and go to the next CLI.
 6. **Reading.** Read every entry of `versions[].entries[]` (an entry that the source repeats appears once, under the oldest version) against `cli-touchpoints.json`. Judge each entry in the configuration the plugin actually uses: the flags, modes, tools, and events that the touchpoints' contracts name. When a contract alone does not settle an entry, open that touchpoint's pointers. Put each entry in one class:
-   - unrelated: it concerns something no lane and no harness touchpoint reaches (the TUI, interactive slash commands, MCP, subagents, a mode or policy the runner never uses);
+   - unrelated: it concerns something no lane and no harness touchpoint reaches (the TUI, interactive slash commands, or a mode or policy no touchpoint names);
    - a fix or an addition that keeps every contract, including entries with no content ("miscellaneous fixes");
    - a contract change at one or more touchpoints: a flag removed or renamed, a default changed, an output format changed, or a behavior changed at a place that a touchpoint's `contract` describes. Name every touchpoint `id` it reaches.
 

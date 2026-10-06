@@ -49,6 +49,8 @@ poteto-mode's Subagents section sets Claude-specific defaults (`subagent_type: "
 
 Do not replace every configured entry with a Codex model. `/setup-pstack` writes portable descriptors of the form `<provider>:<model>@<effort>`; the defaults per role and parent are the role table in `provider-dispatch.md`. In a Codex parent, only `codex:*` is native. Route Claude and Grok descriptors through the external launcher exactly as `provider-dispatch.md` specifies. The default panel intentionally mixes providers and contains no older GPT or Claude substitute.
 
+For an assigned external Grok task that needs PTY or T3 preview, the parent can explicitly choose `--transport grok-acp --mode full-access`. A versioned `--mcp-config` attachment carries endpoint and token environment references and its assigned preview tab. Follow the [Grok ACP contract](provider-dispatch.md#explicit-grok-acp-tasks). This grants host access and admits trusted ambient Grok integrations and hooks. Default CLI calls retain their bounded modes. Grok-native dispatch stays native.
+
 ## Claude built-in skills pstack references
 
 Some triggers name skills that ship with Claude Code, not pstack. They do not exist on Codex. Substitute the behavior:
