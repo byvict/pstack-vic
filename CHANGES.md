@@ -1773,3 +1773,13 @@ O PR-A do programa de adaptações do digest de 2026-10-05 traz cinco commits da
 - `npm test`, `npm run test:bun`, `npm run matrix:check`, `npm run agents:check`, `npm run collision:check` e `git diff --check` passam.
 - Com o código da 0.5.11 e os testes deste PR, 24 casos de `run.test.ts` falham e `parse-output.test.ts` não carrega.
 - `proof/you-see.mjs`, na trilha do programa, roda o lançador real com um `grok` falso que devolve `{"type":"result","subtype":"api_error","is_error":true,"errors":["API unavailable"]}`. Na 0.5.11, a saída é 65 e o status `malformed-output`, sem sidecars. Nesta versão, a saída é 70 e o status `child-failed`, com `API unavailable` em `error.message` e no começo de `error.evidence`, e os dois sidecars `-rw-------` com os bytes exatos do filho.
+
+# 0.5.13. Verificação por cenário, contexto compacto e reaproveitamento de evidência. 2026-10-06
+
+O `poteto-mode` mantém os checks gerais no Dono e na lane independente de gates. O boot live prepara o cenário; repetir a suíte geral ali exige uma dependência demonstrada. Os relatórios preservam os campos obrigatórios e os caminhos de evidência, com logs completos em arquivos. Retomar um agente continua sendo exceção para estado local necessário e caro de transferir, com o motivo na trilha existente. Esses três refinamentos entraram no PR #86.
+
+Shipping recupera a exceção do passo 3 da Cursor no pin `4e5b1cf`. Quando só testes, documentação ou configuração de lint mudam, a comparação de dois builds no SHA do veredito com um no head atual pode preservar o resultado de uma lane. Cada diferença é julgada e os artefatos ficam com o recibo. Inputs relevantes alterados, impacto incerto ou ausência de build comparável exigem nova execução. Markdown consumido como instrução é input relevante. Checks e revisão da mudança rodam no estado atual, e a evidência reaproveitada mantém sua identidade original.
+
+A T25 concentra a regra; a T21 e os consumidores remetem a ela, inclusive na conclusão revisada de um restack. A rodada precisa de cobertura completa atual, com prova nova ou reaproveitamento justificado para cada lane. Os 17 blocos shell de operações protegidas permanecem idênticos. O ADR 0005 e a referência pública registram a exceção restaurada. Os seis playbooks continuam gerados do mesmo pin pelas substituições classificadas.
+
+Verificação local: `npm test` com 570 testes, Bun com 74 testes e typecheck, matriz, agentes gerados, colisões e diff check. A prova com repositório Git e builds locais cobre equivalência após mudança documental, ruído entre builds antigos, alteração funcional ocultada pelo patch-id, dependência da base, instrução em Markdown e execução sem build.
