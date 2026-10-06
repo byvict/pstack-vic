@@ -1057,6 +1057,83 @@ describe("runLane", () => {
     });
   }
 
+  const incompleteQualifiedSubjects = [
+    'Invalid model: <requested>, other-model', 'Invalid model: <requested>"other-model',
+    "Invalid model: <requested>]other-model", "Invalid model: <requested>'other-model",
+    'Invalid model: "<requested>', 'Invalid model: [<requested>', 'Invalid model "other-model',
+    'model is not supported with this account: <requested>, other-model',
+    'model is not supported with this account: <requested>"other-model',
+    'model is not supported with this account "other-model',
+    'Invalid model: <requested>.', 'Invalid model: <requested>. Choose another.',
+    'model not found: <requested>. Choose another.',
+    'model is not supported with this account: <requested>. Choose another.',
+  ];
+
+  for (const diagnostic of incompleteQualifiedSubjects) {
+    it(`requires a complete qualified subject before vetoing a Grok listing: ${diagnostic}`, async () => {
+      process.env.FAKE_GROK_PREFLIGHT_OUTPUT = "You are logged in.\nAvailable models: grok-4.7";
+      process.env.FAKE_GROK_PREFLIGHT_ERROR = diagnostic.replaceAll("<requested>", "grok-4.7");
+      const input = { ...options("grok", "complete-qualified-subject"), model: "grok-4.7" };
+      const result = await runLane(input);
+
+      assert.equal(result.exitCode, 0);
+      assert.equal(readFileSync(input.outputPath, "utf8"), "GROK_OK");
+      matchObject(receipt(input.receiptPath), {
+        status: "complete", preflight: { status: "passed" },
+      });
+    });
+  }
+
+  for (const provider of PROVIDERS) {
+    for (const diagnostic of incompleteQualifiedSubjects) {
+      it(`requires a complete qualified subject during ${provider} failed preflight: ${diagnostic}`, { timeout: GROK_RETRY_RUN_BUDGET_MS }, async () => {
+        const input = options(provider, "complete-qualified-preflight");
+        const message = `${input.model}\n${diagnostic.replaceAll("<requested>", input.model)}`;
+        const modelStarted = join(scratch, "complete-qualified.started");
+        process.env.FAKE_MODEL_STARTED_PATH = modelStarted;
+        writeFileSync(join(bin, cliOf(provider)), fake.replace(
+          'if (name === "claude" && args[0] === "auth") {',
+          `if (isPreflight) { err(${JSON.stringify(message)}); process.exit(1); }\nif (name === "claude" && args[0] === "auth") {`
+        ));
+        const result = await runLane(input);
+
+        assert.equal(result.exitCode, 77);
+        assert.equal(existsSync(modelStarted), false);
+        assert.equal(existsSync(input.outputPath), false);
+        matchObject(receipt(input.receiptPath), {
+          status: "unauthenticated", preflight: { status: "failed" },
+        });
+      });
+
+      it(`requires a complete qualified subject during ${provider} execution: ${diagnostic}`, async () => {
+        const input = options(provider, "complete-qualified-model");
+        writeFileSync(join(bin, cliOf(provider)), scriptedModel("", diagnostic.replaceAll("<requested>", input.model), 1));
+        const result = await runLane(input);
+
+        assert.equal(result.exitCode, 70);
+        assert.equal(existsSync(input.outputPath), false);
+        matchObject(receipt(input.receiptPath), {
+          status: "child-failed", exitCode: 1, preflight: { status: "passed" },
+        });
+      });
+    }
+
+    it(`retains paired punctuation and whitespace outside a complete qualified subject during ${provider} execution`, async () => {
+      const model = options(provider).model;
+      for (const [index, message] of [`Invalid model: "${model}".`, `Invalid model: [${model}]!`,
+        `Invalid model: ${model} .`, `model is not supported with this account: '${model}'?`].entries()) {
+        writeFileSync(join(bin, cliOf(provider)), scriptedModel("", message, 1));
+        const input = options(provider, `complete-qualified-control-${index}`);
+        const result = await runLane(input);
+
+        assert.equal(result.exitCode, 69, message);
+        matchObject(receipt(input.receiptPath), {
+          status: "unavailable-model", exitCode: 1, preflight: { status: "passed" },
+        });
+      }
+    });
+  }
+
   it("rejects an explicitly unsupported Grok model despite a zero-exit exact listing", async () => {
     process.env.FAKE_GROK_PREFLIGHT_OUTPUT = "You are logged in.\nAvailable models: grok-4.7";
     process.env.FAKE_GROK_PREFLIGHT_ERROR = "model grok-4.7 is not supported";
