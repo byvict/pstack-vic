@@ -55,18 +55,15 @@ function argv(extra: readonly string[] = []): string[] {
 }
 
 describe("runner CLI parsing", () => {
-  it("accepts external lanes from a Grok root and refuses Grok's native lane", async () => {
+  it("accepts external and same-provider CLI lanes from a Grok root", () => {
     const codex = parseArgs(argv(["--parent", "grok", "--model", "gpt-6.1-sol"]));
     assert.equal(codex?.parent, "grok");
     assert.equal(codex?.provider, "codex");
     const claude = parseArgs(argv(["--parent", "grok", "--provider", "claude", "--model", "fable"]));
     assert.equal(claude?.provider, "claude");
-    let stderr = "";
-    const code = await main(argv(["--parent", "grok", "--provider", "grok", "--model", "grok-4.7", "--effort", "xhigh"]), Date.now(), {
-      stdout: () => {}, stderr: (text) => { stderr += text; },
-    });
-    assert.equal(code, 64);
-    assert.match(stderr, /native|same.provider/);
+    const grok = parseArgs(argv(["--parent", "grok", "--provider", "grok", "--model", "grok-4.7", "--effort", "xhigh"]));
+    assert.equal(grok?.parent, "grok");
+    assert.equal(grok?.provider, "grok");
   });
   it("does not invent a timeout", () => {
     assert.equal(parseArgs(argv())?.timeoutMs, null);

@@ -17,8 +17,9 @@ const HELP = `Usage: pstack-runner --parent <${PARENTS.join("|")}> --provider <$
   --prompt <file> --cwd <dir> --output <file> --receipt <file> [--timeout <seconds>]
   [--transport grok-acp --mode full-access [--mcp-config <file>]]
 
-Runs exactly one external model lane. Same-provider calls are rejected; use the
-parent harness's native subagent primitive for those lanes. The (provider, model)
+Runs exactly one fresh model session, including the parent's own provider.
+The parent prefers native agents and uses this runner when native dispatch cannot
+meet the task. CLI sessions do not inherit conversation MCP access. The (provider, model)
 pair must be a family in model-matrix.json and the effort must be selectable for
 it. Output and receipt paths must not already exist. There is no implicit
 timeout. Pass --timeout only when the user or task supplies a real deadline; it

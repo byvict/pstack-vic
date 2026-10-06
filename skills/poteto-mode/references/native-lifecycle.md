@@ -10,7 +10,7 @@ Keep a small handle inventory in the run's existing notes: assigned model and ef
 
 Completion produces a result. It does not prove that the host released the thread's slot. Interruption stops a turn and is not closure either. Mark a handle released only when a documented host operation or capacity report establishes that fact. A failed spawn consumes no lane result; keep its error as evidence.
 
-Plan all phases before filling the first wave. Account for later model/effort combinations and roles that need a fresh context, including a judge or independent verifier. When completed handles cannot be released, reserve capacity for those phases. If the known capacity cannot fit the required distinct contexts over the run, record the affected gaps before dispatch. Waiting alone cannot make a retained handle disappear.
+Plan all phases before filling the first wave. Account for later model/effort combinations and roles that need a fresh context, including a judge or independent verifier. When completed handles cannot be released, reserve native capacity for roles that require its tools. Assign excess tasks to fresh runner sessions when they satisfy [provider dispatch's alternative-route conditions](provider-dispatch.md#when-native-dispatch-is-unavailable). If neither route can supply a required context, record the affected gap before dispatch. Waiting alone cannot make a retained handle disappear.
 
 ## Dispatch within capacity
 
@@ -31,10 +31,10 @@ If closure is available, collect the result and preserve its artifacts before cl
 
 If concurrency itself is part of the proof, such as a simultaneous race or load measurement, waves do not satisfy it. Report the unmet execution requirement rather than claiming the same result from serial execution.
 
-## When no valid dispatch remains
+## When no valid native dispatch remains
 
-On a capacity rejection, reconcile the inventory and apply the rules above. Retry after confirmed release, or once after a newly completed task when the host's release behavior is unknown. If completion still leaves spawning blocked, retain that evidence and use compatible reuse; do not keep retrying an unchanged state. If no running task can lead to a compatible handle or a free slot, record a native capacity dropout for the affected lane and apply the calling skill's gap or dropout policy. Continue independent work; a required missing lane never counts as a pass.
+On a capacity rejection, reconcile the inventory and apply the rules above. Retry after confirmed release, or once after a newly completed task when the host's release behavior is unknown. If completion still leaves spawning blocked, retain that evidence and consider compatible reuse; do not keep retrying an unchanged state. When native execution cannot supply the required context, apply [provider dispatch's alternative route](provider-dispatch.md#when-native-dispatch-is-unavailable). A fresh same-provider runner session can satisfy an independent review; a retained author context cannot.
 
-Keep the configured model, effort, and route. Native exhaustion does not authorize launching the same provider through a raw CLI, lying about `--parent`, substituting another model, or having the parent impersonate the missing reviewer. A separate CLI session does not inherit this conversation's MCP access. The external runner's same-provider rejection remains in force.
+If no valid route remains, record the affected lane as a dropout under the calling skill's policy. Continue independent work; a required missing lane never counts as a pass. Preserve the configured provider, model, and effort. Use the runner for separate CLI sessions so its isolation and receipts apply; the parent never impersonates a missing reviewer.
 
 Report the observed limit or exact tool error, retained handles, unavailable operation, and affected lanes. Distinguish an observed capacity rejection from an inference about why the host retains a thread. Missing `close_agent` alone does not prove a host leak.

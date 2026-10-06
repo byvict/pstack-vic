@@ -13,7 +13,6 @@ import {
 } from "node:fs";
 import { dirname, resolve } from "node:path";
 import {
-  routeFor,
   reportedModelMatches as familyReportMatches,
   type Family,
 } from "../../../../scripts/model-matrix.ts";
@@ -410,11 +409,6 @@ export function validateOptions(options: RunnerOptions): void {
   if (!(options.provider in MATRIX.providers)) {
     throw new UsageError(`provider ${options.provider} is not in model-matrix.json`);
   }
-  if (routeFor(MATRIX, options.parent, options.provider) === "native") {
-    throw new UsageError(
-      `provider ${options.provider} is native to parent ${options.parent}; use the parent subagent primitive`
-    );
-  }
   if (options.model.trim().length === 0) throw new UsageError("model must not be empty");
   const pinned = pinnedFamily(options.provider, options.model);
   if (pinned !== null) {
@@ -476,7 +470,7 @@ function preparedLane(
   options: ExecutionRequest,
   invocation: CommandSpec,
   attempt: PreparedAttempt,
-  env: NodeJS.ProcessEnv = childEnvironment(options.provider),
+  env: NodeJS.ProcessEnv = childEnvironment(),
   sanitize: (value: string) => string = (value) => value,
   acp?: AcpDetail,
 ): Lane {
@@ -731,7 +725,7 @@ export async function runLane(
   const deadlineAt = options.timeoutMs === null ? null : started + options.timeoutMs;
   const request = executionRequest(options);
   const lane = request.kind === "cli" ? cliLane(request) : (() => {
-    const execution = grokAcpExecution(request, childEnvironment(request.provider));
+    const execution = grokAcpExecution(request, childEnvironment());
     return preparedLane(request, execution.command, execution.attempt, execution.environment, execution.sanitize, execution.acp);
   })();
   const cancellation = installRunCancellation();

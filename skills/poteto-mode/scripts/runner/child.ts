@@ -4,7 +4,7 @@ import { constants as osConstants, tmpdir } from "node:os";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
 import type { Readable } from "node:stream";
 import type { CommandSpec, ConfigOverlay } from "./commands.ts";
-import { cliFor, type CancellationSignal, type CliEvidence, type Provider, type RunCancellation, type LaneContext, type ModelStreams } from "./types.ts";
+import type { CancellationSignal, CliEvidence, RunCancellation, LaneContext, ModelStreams } from "./types.ts";
 
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 export interface ProcessResult {
@@ -34,17 +34,10 @@ const CLAUDE_IDENTITY = [
 ] as const;
 
 export function childEnvironment(
-  provider: Provider,
   source: NodeJS.ProcessEnv = process.env
 ): NodeJS.ProcessEnv {
   const result = { ...source };
-  const cli = cliFor(provider);
-  const remove = cli === "claude"
-    ? CODEX_IDENTITY
-    : cli === "codex"
-      ? CLAUDE_IDENTITY
-      : [...CODEX_IDENTITY, ...CLAUDE_IDENTITY];
-  for (const key of remove) delete result[key];
+  for (const key of [...CODEX_IDENTITY, ...CLAUDE_IDENTITY]) delete result[key];
   return result;
 }
 

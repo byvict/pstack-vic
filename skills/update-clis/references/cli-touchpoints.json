@@ -17,6 +17,18 @@
       "measuredOn": "0.155.1"
     },
     {
+      "id": "codex.identity-env",
+      "cli": "codex",
+      "kind": "lane",
+      "contract": "a same-provider `codex exec --ephemeral` receives no inherited Codex or Claude session identity, opens a fresh thread, and retains configuration and authentication; the parent still supplies the sandbox and disables recursive agents",
+      "pointers": [
+        { "file": "skills/poteto-mode/scripts/runner/child.ts", "anchor": "const CODEX_IDENTITY" },
+        { "file": "skills/poteto-mode/scripts/runner/commands.ts", "anchor": "\"--ephemeral\"," }
+      ],
+      "coveredBy": [],
+      "measuredOn": "0.160.0"
+    },
+    {
       "id": "codex.events",
       "cli": "codex",
       "kind": "lane",

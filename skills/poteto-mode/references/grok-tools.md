@@ -20,7 +20,7 @@ Use this mapping when the root runs on Grok Build CLI, including a T3 Code threa
 
 ## Native lanes and owners
 
-For `grok:*`, match the descriptor to its matrix family and dispatch `pstack-<stem>-<effort>` as the `subagent_type`. Plugin agents are namespaced, such as `pstack:pstack-grok-4-7-xhigh`; use the exact advertised name. The generated agent definition binds the model and effort. Skill frontmatter does not bind either, and a prompt asking a child to use a model does not change its model. Pass the complete task, grounding paths, access mode and unique output location. Launch with `background: true`, then drain every handle before judging. If the definition or the spawn tool is unavailable, record a named dropout.
+For `grok:*`, match the descriptor to its matrix family and dispatch `pstack-<stem>-<effort>` as the `subagent_type`. Plugin agents are namespaced, such as `pstack:pstack-grok-4-7-xhigh`; use the exact advertised name. The generated agent definition binds the model and effort. Skill frontmatter does not bind either, and a prompt asking a child to use a model does not change its model. Pass the complete task, grounding paths, access mode and unique output location. Launch with `background: true`, then drain every handle before judging. If the definition or the spawn tool is unavailable, apply [provider dispatch's alternative route](provider-dispatch.md#when-native-dispatch-is-unavailable).
 
 For a writer, create its dedicated worktree first and pass `cwd` to the spawn, or use native `isolation: "worktree"`. These two arguments are mutually exclusive. A reader receives the actual checkout. Ordinary lane definitions deny recursive agents; a child executes its assignment without choosing providers or starting another pstack workflow.
 
