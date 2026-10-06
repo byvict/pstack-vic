@@ -187,7 +187,6 @@ const CONTAINER = "it is in or after a list or quote that this script does not r
 const MERGED = "an indented line or a link definition continues its paragraph";
 const SPLIT = "an HTML comment splits it";
 const WORD = "another @ comes before it in the same word";
-const RETURNS = "the file has carriage returns";
 
 const FRONT_MATTER_RE = /^---\s*\n([\s\S]*?)---\s*\n?/;
 const IMPORT_RE = /(?:^|\s)@((?:[^\s\\]|\\ )+)/g;
@@ -465,21 +464,32 @@ function lineOf(text: string, offset: number): number {
   return text.slice(0, offset).split("\n").length;
 }
 
-function scanSheetImports(text: string): ImportScan {
-  const bom = text.charCodeAt(0) === 0xfeff ? 1 : 0;
-  const frontMatter = text.indexOf("---", bom + 3) < 0 ? null : FRONT_MATTER_RE.exec(text.slice(bom));
+/** The body as marked's lexer sees it, every `\r\n` and `\r` a `\n`, and the raw offset of each of its offsets. */
+function lexerBreaks(raw: string, body: number): { readonly text: string; readonly rawOffset: (at: number) => number } {
+  const pairs: number[] = [];
+  const text = raw.slice(0, body) + raw.slice(body).replace(/\r\n?/g, (pair, at: number) => {
+    if (pair.length === 2) pairs.push(body + at - pairs.length);
+    return "\n";
+  });
+  return { text, rawOffset: (at) => at + pairs.filter((pair) => pair < at).length };
+}
+
+function scanSheetImports(raw: string): ImportScan {
+  const bom = raw.charCodeAt(0) === 0xfeff ? 1 : 0;
+  const frontMatter = raw.indexOf("---", bom + 3) < 0 ? null : FRONT_MATTER_RE.exec(raw.slice(bom));
   const body = frontMatter === null ? 0 : bom + frontMatter[0].length;
+  const { text, rawOffset } = lexerBreaks(raw, body);
   const mentions: number[] = [];
   for (let at = text.indexOf("@", body); at >= 0; at = text.indexOf("@", at + 1)) {
     if (pathRun(text, at + 1).includes(SHEET_FILE)) mentions.push(at);
   }
   const reader = new ImportReader(text, mentions);
-  if (text.includes("\r")) reader.mark(body, text.length, () => unsure(RETURNS));
-  else reader.read(body);
+  reader.read(body);
   const imports: SheetImport[] = [];
   const unsureImports: UnsureImport[] = [];
   for (const [at, verdict] of [...reader.verdicts].sort(([a], [b]) => a - b)) {
-    if (verdict.kind === "loaded") imports.push({ line: lineOf(text, at), start: at, end: at + 1 + verdict.run.length, target: verdict.target });
+    const start = rawOffset(at);
+    if (verdict.kind === "loaded") imports.push({ line: lineOf(text, at), start, end: start + 1 + verdict.run.length, target: verdict.target });
     if (verdict.kind === "unsure") unsureImports.push({ line: lineOf(text, at), reason: verdict.reason });
   }
   return { imports, unsure: unsureImports };

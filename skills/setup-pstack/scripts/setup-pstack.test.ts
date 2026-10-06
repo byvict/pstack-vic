@@ -16,6 +16,7 @@ import {
   sheetPathFor,
   type ConfigEnv,
   type Plan,
+  type State,
 } from "./setup-pstack.ts";
 
 const matrix = loadMatrix();
@@ -1452,6 +1453,63 @@ describe("imports that a line scan reads differently from Claude Code", () => {
     await rewritten("# Rules\n- one\n- models @~/dotfiles/pstack-models.md\n", "# Rules\n- one\n- models @~/.claude/pstack-models.md\n");
     rmSync(join(home, ".claude"), { recursive: true });
     await appended("# Rules\n- one\n- two\n");
+  });
+});
+
+describe("a CLAUDE.md with carriage returns, which Claude Code's lexer reads as line feeds", () => {
+  const elsewhere = (): string => put(join(home, "dotfiles", "pstack-models.md"), sheetWithHighHillclimb());
+  const claudeMd = (text: string): string => put(join(home, ".claude", "CLAUDE.md"), text);
+
+  async function written(before: string, source: State["source"], after: string): Promise<void> {
+    elsewhere();
+    const integration = claudeMd(before);
+    assert.deepEqual(loadState({ parent: "claude", home, matrix }).source, source);
+    const plan = await planAndProbe("claude");
+    writeSheet(plan, runDir, { home });
+    assert.equal(readFileSync(integration, "utf8"), after);
+  }
+
+  it("appends the import to a CRLF file that has none, as main did", async () => {
+    const before = "Prefer small commits.\r\nAnswer in plain language.\r\nRun the tests before declaring done.\r\n";
+    await written(before, { kind: "first-run" }, `${before}@~/.claude/pstack-models.md\n`);
+  });
+
+  it("reads an import on a CRLF line and replaces only its path", async () => {
+    const sheet = join(home, "dotfiles", "pstack-models.md");
+    await written("Rules.\r\n\r\n@~/dotfiles/pstack-models.md\r\nMore.\r\n", { kind: "import", path: sheet }, "Rules.\r\n\r\n@~/.claude/pstack-models.md\r\nMore.\r\n");
+  });
+
+  it("reads an import after lone carriage returns and replaces only its path", async () => {
+    const sheet = join(home, "dotfiles", "pstack-models.md");
+    await written("Rules.\rMore.\r\r@~/dotfiles/pstack-models.md\r", { kind: "import", path: sheet }, "Rules.\rMore.\r\r@~/.claude/pstack-models.md\r");
+  });
+
+  it("leaves a CRLF file whose first line imports the config-home sheet byte for byte and creates the sheet", async () => {
+    const before = "@~/.claude/pstack-models.md\r\nPrefer small commits.\r\nAnswer in plain language.\r\nRun the tests before declaring done.\r\n";
+    const integration = claudeMd(before);
+    const state = loadState({ parent: "claude", home, matrix });
+    assert.deepEqual([state.source, state.missingImport], [{ kind: "first-run" }, join(home, ".claude", "pstack-models.md")]);
+    const plan = await planAndProbe("claude");
+    const result = writeSheet(plan, runDir, { home });
+    assert.deepEqual([result.sheet, result.integration], ["created", "unchanged"]);
+    assert.equal(readFileSync(integration, "utf8"), before);
+  });
+
+  it("skips imports in a CRLF fence and in CRLF front matter, and appends one that loads", async () => {
+    const fenced = "```\r\n@~/dotfiles/pstack-models.md\r\n```\r\n";
+    await written(fenced, { kind: "first-run" }, `${fenced}@~/.claude/pstack-models.md\n`);
+    rmSync(join(home, ".claude"), { recursive: true });
+    const frontMatter = "---\r\nnote: @~/dotfiles/pstack-models.md\r\n---\r\nBody\r\n";
+    await written(frontMatter, { kind: "first-run" }, `${frontMatter}@~/.claude/pstack-models.md\n`);
+  });
+
+  it("numbers the lines of a CRLF file as an editor does when it stops on two imports", () => {
+    const before = "@~/.claude/pstack-models.md\r\nNotes.\r\n@./pstack-models.md\r\n";
+    const integration = claudeMd(before);
+    const message = `inconsistent state: ${integration} imports pstack-models.md 2 times (lines 1, 3); keep exactly one import`;
+    assert.throws(() => loadState({ parent: "claude", home, matrix }), { message });
+    assert.throws(() => buildPlan({ parent: "claude", home, matrix }), { message });
+    assert.equal(readFileSync(integration, "utf8"), before);
   });
 });
 
