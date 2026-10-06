@@ -229,6 +229,7 @@ export interface InteractiveResult<T> extends ProcessResult {
 
 type ChildOperation<T> =
   | { readonly kind: "one-shot"; readonly prompt: string }
+  | { readonly kind: "cli-model"; readonly prompt: string; readonly streamFiles: ModelStreams }
   | { readonly kind: "interactive"; readonly body: (io: InteractiveIo) => Promise<T> };
 
 async function withChild<T>(args: {
@@ -239,15 +240,15 @@ async function withChild<T>(args: {
   readonly deadlineAt: number | null;
   readonly cancellation: RunCancellation;
   readonly operation: ChildOperation<T>;
-  readonly streamFiles?: ModelStreams;
   readonly evidence?: CliEvidence;
 }): Promise<InteractiveResult<T>> {
   const { deadlineAt, cancellation } = args;
   if (args.evidence !== undefined) { args.evidence.exitCode = null; args.evidence.signal = null; }
   const spawned = spawnChild(args.executable, args.spec, args.cwd, args.env);
   const { child } = spawned;
-  const stdoutCapture = captureStream(child.stdout, args.streamFiles?.stdout);
-  const stderrCapture = captureStream(child.stderr, args.streamFiles?.stderr);
+  const streamFiles = args.operation.kind === "cli-model" ? args.operation.streamFiles : undefined;
+  const stdoutCapture = captureStream(child.stdout, streamFiles?.stdout);
+  const stderrCapture = captureStream(child.stderr, streamFiles?.stderr);
   const streams = Promise.all([stdoutCapture.result, stderrCapture.result]);
   streams.catch(() => undefined);
   let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
@@ -347,7 +348,10 @@ export function runProcess(
   evidence?: CliEvidence,
   streamFiles?: ModelStreams,
 ): Promise<ProcessResult> {
-  return withChild({ executable, spec, cwd, env, deadlineAt, cancellation, evidence, streamFiles, operation: { kind: "one-shot", prompt } });
+  const operation = streamFiles === undefined
+    ? { kind: "one-shot" as const, prompt }
+    : { kind: "cli-model" as const, prompt, streamFiles };
+  return withChild({ executable, spec, cwd, env, deadlineAt, cancellation, evidence, operation });
 }
 
 export function runInteractiveChild<T>(args: {
