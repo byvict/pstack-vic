@@ -7,13 +7,15 @@
 // never the agent's questions, so it stops the autopilot and the Shipping
 // playbook at the merge until the operator records the decision where the
 // classifier reads it: one entry in `autoMode.allow` of the operator's own
-// `~/.claude/settings.json`. Claude Code reads that list from no repository
-// and from no plugin, so the entry has to be the operator's act.
+// `settings.json`, in the Claude config home (CLAUDE_CONFIG_DIR, else
+// `~/.claude`). Claude Code reads that list from no repository and from no
+// plugin, so the entry has to be the operator's act.
 
 import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { configHomeFor, type ConfigEnv } from "./setup-pstack.ts";
 
 class AuthorizeError extends Error {}
 class CliUsageError extends Error {}
@@ -34,20 +36,21 @@ export const ALLOW_ENTRY = `${MARKER}: the operator who wrote this entry is the 
 
 const BUILT_IN_RULES = "$defaults";
 
-const TARGETS: Readonly<Record<string, readonly string[]>> = {
-  claude: [".claude", "settings.json"],
-  codex: [".codex", "config.toml"],
-  grok: [".grok", "config.toml"],
+/** The file each parent keeps its approval settings in, inside its config home. */
+const SETTINGS_FILES: Readonly<Record<string, string>> = {
+  claude: "settings.json",
+  codex: "config.toml",
+  grok: "config.toml",
 };
 
-export function settingsPathFor(parent: string, home: string = homedir()): string {
-  const target = TARGETS[parent];
-  if (!target) usage(`--parent must be one of ${Object.keys(TARGETS).join(", ")}`);
-  return join(home, ...target);
+export function settingsPathFor(parent: string, home: string = homedir(), env: ConfigEnv = {}): string {
+  const file = SETTINGS_FILES[parent];
+  if (!file) usage(`--parent must be one of ${Object.keys(SETTINGS_FILES).join(", ")}`);
+  return join(configHomeFor(parent, home, env), file);
 }
 
-export function backupPathFor(parent: string, home: string = homedir()): string {
-  return `${settingsPathFor(parent, home)}.before-pstack-authorization`;
+export function backupPathFor(parent: string, home: string = homedir(), env: ConfigEnv = {}): string {
+  return `${settingsPathFor(parent, home, env)}.before-pstack-authorization`;
 }
 
 function readIfExists(path: string): string | null {
@@ -94,8 +97,15 @@ function shellQuote(word: string): string {
   return /^[A-Za-z0-9_\/.:@%+=-]+$/.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`;
 }
 
-function grantCommand(): string {
-  return [process.execPath, fileURLToPath(import.meta.url), "apply", "--parent", "claude"].map(shellQuote).join(" ");
+/**
+ * The command the operator runs on a terminal of their own. It pins the config
+ * home of `file`, so apply writes the file check read whatever that terminal
+ * exports.
+ */
+function grantCommand(file: string): string {
+  return ["/usr/bin/env", `CLAUDE_CONFIG_DIR=${dirname(file)}`, process.execPath, fileURLToPath(import.meta.url), "apply", "--parent", "claude"]
+    .map(shellQuote)
+    .join(" ");
 }
 
 export interface Check {
@@ -116,8 +126,8 @@ function codexApprovalPolicy(text: string | null): string | null {
   return null;
 }
 
-export function checkAuthorization(parent: string, home: string = homedir(), permissionMode?: string): Check {
-  const file = settingsPathFor(parent, home);
+export function checkAuthorization(parent: string, home: string = homedir(), env: ConfigEnv = {}, permissionMode?: string): Check {
+  const file = settingsPathFor(parent, home, env);
   if (parent === "grok") {
     const authorized = permissionMode === "always-approve" || permissionMode === "bypassPermissions";
     return {
@@ -148,7 +158,7 @@ export function checkAuthorization(parent: string, home: string = homedir(), per
           ? `Multiple ${GRANT_NAME} grants in autoMode.allow of ${file}; the operator must review the entry and run the grant command`
           : `The standing authorization grant in autoMode.allow of ${file} differs from the current entry; the operator must review the entry and run the grant command`,
     entry: ALLOW_ENTRY,
-    grant: grantCommand(),
+    grant: grantCommand(file),
   };
 }
 
@@ -173,10 +183,12 @@ export interface Io {
   readonly stdout: (value: string) => void;
   readonly stderr: (value: string) => void;
   readonly askOnTerminal?: (question: string) => Promise<string>;
+  /** The default Io is the real process and carries process.env; an Io without env sets no variable. */
+  readonly env?: ConfigEnv;
 }
 
-async function apply(home: string, io: Io): Promise<number> {
-  const file = settingsPathFor("claude", home);
+async function apply(home: string, env: ConfigEnv, io: Io): Promise<number> {
+  const file = settingsPathFor("claude", home, env);
   const snapshot = readIfExists(file);
   const rendered = renderGrant(snapshot, file);
   const report = (outcome: GrantOutcome, backup: string | null): void => {
@@ -187,7 +199,7 @@ async function apply(home: string, io: Io): Promise<number> {
     return 0;
   }
   if (!io.askOnTerminal) {
-    fail(`apply needs a terminal: the authorization is the operator's act, and an agent does not grant it. Run it yourself on a terminal:\n  ${grantCommand()}`);
+    fail(`apply needs a terminal: the authorization is the operator's act, and an agent does not grant it. Run it yourself on a terminal:\n  ${grantCommand(file)}`);
   }
   io.stdout(`File: ${file}\nEntry for autoMode.allow:\n\n${ALLOW_ENTRY}\n\n`);
   const answer = (await io.askOnTerminal("Type yes to write it: ")).trim().toLowerCase();
@@ -195,8 +207,8 @@ async function apply(home: string, io: Io): Promise<number> {
     io.stderr("Nothing written: the answer was not yes.\n");
     return 1;
   }
-  const backup = snapshot === null ? null : backupPathFor("claude", home);
-  if (snapshot !== null) writeFileSync(backupPathFor("claude", home), snapshot, { mode: 0o600 });
+  const backup = snapshot === null ? null : backupPathFor("claude", home, env);
+  if (snapshot !== null) writeFileSync(backupPathFor("claude", home, env), snapshot, { mode: 0o600 });
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, rendered.text);
   report(rendered.outcome, backup);
@@ -205,12 +217,15 @@ async function apply(home: string, io: Io): Promise<number> {
 
 const USAGE = `Usage: authorize <check|apply> [options]
 
-  check  --parent <${Object.keys(TARGETS).join("|")}> [--home <dir>]
+  check  --parent <${Object.keys(SETTINGS_FILES).join("|")}> [--home <dir>]
          Grok also needs --permission-mode <observed effective session mode>.
          Exit 0 when the parent may run the autopilot and the Shipping playbook without a stop for approval, 1 when it may not.
   apply  --parent claude [--home <dir>]
-         Add the standing authorization to autoMode.allow of ~/.claude/settings.json.
+         Add the standing authorization to autoMode.allow of <config-home>/settings.json.
          Asks for a yes on a terminal; refuses without one.
+
+The config home is a non-empty CLAUDE_CONFIG_DIR (claude) or CODEX_HOME (codex), else
+<home>/.claude, <home>/.codex, <home>/.grok.
 `;
 
 async function askOnTerminal(question: string): Promise<string> {
@@ -227,6 +242,7 @@ export async function main(argv: readonly string[], io: Io = {
   stdout: (v) => process.stdout.write(v),
   stderr: (v) => process.stderr.write(v),
   askOnTerminal: process.stdin.isTTY && process.stdout.isTTY ? askOnTerminal : undefined,
+  env: process.env,
 }): Promise<number> {
   try {
     const { parseArgs } = await import("node:util");
@@ -262,13 +278,14 @@ export async function main(argv: readonly string[], io: Io = {
     if (permissionMode !== undefined && (parent !== "grok" || command !== "check")) {
       usage("--permission-mode is only for check --parent grok");
     }
+    const env = io.env ?? {};
     if (command === "check") {
-      const check = checkAuthorization(parent, home, typeof permissionMode === "string" ? permissionMode : undefined);
+      const check = checkAuthorization(parent, home, env, typeof permissionMode === "string" ? permissionMode : undefined);
       io.stdout(JSON.stringify(check, null, 2) + "\n");
       return check.authorized ? 0 : 1;
     }
     if (parent !== "claude") usage("apply is for a Claude Code parent; Codex and Grok use their session approval policies");
-    return await apply(home, io);
+    return await apply(home, env, io);
   } catch (error) {
     if (error instanceof CliUsageError) {
       io.stderr(`error: ${error.message}\n${USAGE}`);
