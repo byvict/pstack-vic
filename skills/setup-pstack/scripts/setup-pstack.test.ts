@@ -273,7 +273,7 @@ describe("buildPlan", () => {
     assert.deepEqual(plan.verified, []);
     assert.deepEqual(plan.efforts, {
       fable: ["max"],
-      opus: ["xhigh"],
+      opus: ["xhigh", "max"],
       "sol-6-1": ["xhigh"],
       astra: ["max"],
       grok: ["xhigh"],
@@ -308,6 +308,25 @@ describe("buildPlan", () => {
     assert.equal(plan.pairs.find((p) => p.family === "fable")?.route, "runner");
   });
 
+  it("preserves explicit native MCP roles and voluntary aliases instead of replacing them with defaults", () => {
+    putSheet("codex", [
+      "why investigators: codex:gpt-6.1-sol@xhigh",
+      "why synthesizer: codex:gpt-6.1-sol@max",
+      "reflect tooling: inherit-parent",
+      "reflect judgment, divergent, synthesizer: auto",
+      "",
+    ].join("\n"));
+    const plan = buildPlan({ parent: "codex", home, matrix });
+    assert.deepEqual(lanesOf(plan, "why investigators"), ["codex:gpt-6.1-sol@xhigh"]);
+    assert.deepEqual(lanesOf(plan, "why synthesizer"), ["codex:gpt-6.1-sol@max"]);
+    assert.deepEqual(lanesOf(plan, "reflect tooling"), ["inherit-parent"]);
+    assert.deepEqual(lanesOf(plan, "reflect judgment, divergent, synthesizer"), ["auto"]);
+    const sol = plan.pairs.find((p) => p.family === "sol-6-1");
+    assert.equal(sol?.route, "native");
+    assert.deepEqual(sol?.native, { primitive: "spawn_agent", model: "gpt-6.1-sol", reasoning_effort: "xhigh" });
+    assert.deepEqual(plan.efforts["sol-6-1"], ["xhigh", "max"]);
+  });
+
   it("rewrites every occurrence of a family when its effort changes and moves no role", () => {
     const plan = buildPlan({ parent: "claude", home, matrix, efforts: { grok: "high" } });
     assert.deepEqual(lanesOf(plan, "bug-fix"), ["claude:claude-opus-5-5@xhigh"]);
@@ -319,7 +338,7 @@ describe("buildPlan", () => {
       "grok:grok-4.6@high",
       "claude:claude-opus-5-5@xhigh",
     ]);
-    assert.deepEqual(lanesOf(plan, "why investigators"), ["inherit-parent"]);
+    assert.deepEqual(lanesOf(plan, "why investigators"), ["claude:claude-opus-5-5@xhigh"]);
     assert.deepEqual(plan.efforts.grok, ["high"]);
     assert.equal(plan.pairs.find((p) => p.pair === "grok@high")?.descriptor, "grok:grok-4.6@high");
   });
@@ -1463,11 +1482,11 @@ describe("loadState sources", () => {
     const sheet = putSheet("codex", firstRunSheet("codex"));
     const changed = firstRunSheet("codex")
       .replace("hillclimb: codex:gpt-6-sol@xhigh", "hillclimb: codex:gpt-6-sol@high")
-      .replace("why synthesizer: inherit-parent\n", "");
+      .replace("why synthesizer: codex:gpt-6-astra@max\n", "");
     const integration = put(integrationPathFor("codex", home), `${CODEX_BLOCK_BEGIN}\n${changed}${CODEX_BLOCK_END}\n`);
     assert.throws(
       () => buildPlan({ parent: "codex", home, matrix }),
-      { message: `inconsistent state: ${sheet} and the pstack:models block of ${integration} assign different lanes to hillclimb (sheet: codex:gpt-6-sol@xhigh; block: codex:gpt-6-sol@high), why synthesizer (sheet: inherit-parent; block: no row); delete the sheet to recover the block, or remove the block to keep the sheet` }
+      { message: `inconsistent state: ${sheet} and the pstack:models block of ${integration} assign different lanes to hillclimb (sheet: codex:gpt-6-sol@xhigh; block: codex:gpt-6-sol@high), why synthesizer (sheet: codex:gpt-6-astra@max; block: no row); delete the sheet to recover the block, or remove the block to keep the sheet` }
     );
   });
 

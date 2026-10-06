@@ -707,7 +707,7 @@ export function renderRoleDefaultsMarkdown(matrix: ModelMatrix): string {
   }
   lines.push("");
   lines.push(
-    "A list is a panel: one lane per entry, in this order. A row whose label ends in `pool` is the exception: one lane runs, picked by the Cross-family selection rule below. A role whose parent columns differ takes a family native to each parent: the frontier family for the frontier solo roles, the code family for the four authoring rows. Aliases run on the parent model through its native subagent primitive."
+    "A list is a panel: one lane per entry, in this order. A row whose label ends in `pool` is the exception: one lane runs, picked by the Cross-family selection rule below. A role whose parent columns differ takes a family native to each parent. Why and Reflect adapt the pinned upstream defaults as described below. Aliases run on the parent model through its native subagent primitive."
   );
   lines.push("");
   lines.push(ROLES_END);

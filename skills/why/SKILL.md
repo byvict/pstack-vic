@@ -9,7 +9,7 @@ Investigate the motivation and intent behind code.
 
 Companion to the `how` skill. `how` answers what the code does and how it works. `why` answers what forces led to its shape.
 
-**Dispatch contract.** Resolve every configured role through [`provider-dispatch.md`](../poteto-mode/references/provider-dispatch.md). Investigators require the parent's live MCP surface, so the default and supported portable route is `inherit-parent` (or its `auto` alias). Pass the code anchor by path. On Codex, resolve remaining Claude tool names via [`codex-tools.md`](../poteto-mode/references/codex-tools.md).
+**Dispatch contract.** Resolve every configured role through [`provider-dispatch.md`](../poteto-mode/references/provider-dispatch.md). For source access, follow its [MCP-dependent tasks](../poteto-mode/references/provider-dispatch.md#mcp-dependent-tasks) rule. Pass the code anchor by path. On Codex, resolve remaining Claude tool names via [`codex-tools.md`](../poteto-mode/references/codex-tools.md).
 
 ## Operating Posture
 
@@ -60,7 +60,7 @@ Capture this as seed context (file paths, symbols, commits, PR numbers, linked t
 
 ### Discovery
 
-Before spawning investigators, discover callable MCP tools in the parent's live environment. Use its tool list and tool discovery. Configuration such as `.mcp.json` or `claude mcp list` can identify candidate servers, but cannot prove that a source was queried. Keep investigators on the inherited native route so they can consume the parent's MCP sources.
+Before spawning investigators, discover callable MCP tools in the parent's live environment. Use its tool list and tool discovery. Configuration such as `.mcp.json` or `claude mcp list` can identify candidate servers, but cannot prove that a source was queried. Use the central MCP-dependent task rule when dispatching investigators.
 
 Map each available MCP to one evidence category:
 
@@ -76,7 +76,7 @@ Investigate source control through git and `gh`. Record access failures as gaps.
 
 Account for all seven categories in the coverage map, including sources that are unavailable or skipped. Update the map from observed consumption at the gate in Step 4.
 
-Launch all matching investigators in one fan-out phase so they run concurrently. Don't ask one agent to cover multiple MCPs. Route each through your configured `why investigators` role (default `inherit-parent`, per the role table in `provider-dispatch.md`) with the assigned MCP available. Investigators still do not write files; that is a posture even when the MCP-capable execution mode is not mechanically read-only.
+Launch all matching investigators in one fan-out phase so they run concurrently. Don't ask one agent to cover multiple MCPs. Route each through your configured `why investigators` role with the assigned MCP available. Investigators still do not write files; that is a posture even when the MCP-capable execution mode is not mechanically read-only.
 
 Each investigator gets:
 1. The base prompt from `references/investigator-prompt.md`
@@ -126,7 +126,7 @@ Recover missing queries or reads through a runtime with the required MCP access.
 
 Record the validation verdict and native call or transcript references beside each receipt in the existing findings. Pass the coverage map with found, empty, unavailable, or justified skipped outcomes, complete or partial reads, and verified or unverified consumption to the synthesizer.
 
-Dispatch one synthesizer through your configured `why synthesizer` role (default `inherit-parent`). Preserve relevant MCP access because the synthesizer's quality check spot-verifies citations. It does not write files.
+Dispatch one synthesizer through your configured `why synthesizer` role. Preserve relevant MCP access because the synthesizer's quality check spot-verifies citations. It does not write files.
 
 The synthesizer gets:
 1. The investigator findings, receipts, and parent-validated coverage map

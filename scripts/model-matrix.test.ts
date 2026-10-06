@@ -388,7 +388,7 @@ describe("roles", () => {
     }
   });
 
-  it("carry the decided default map: authoring on the parent's native code family, swarm and exploration on grok, frontier solo on the parent's native frontier, panels mixed, why and reflect inherit", () => {
+  it("carry the decided default map: authoring on the parent's native code family, swarm and exploration on grok, frontier solo on the parent's native frontier, panels mixed, why and reflect native", () => {
     // Decisions of 2026-09-17 (plan, fase 6 bullets); CLI-196 moved the four authoring volume rows off grok on 2026-09-25.
     // The labels are the sheet lines /setup-pstack writes.
     for (const label of ["feature, refactoring", "bug-fix", "perf-issue", "hillclimb"]) {
@@ -404,8 +404,19 @@ describe("roles", () => {
       assert.deepEqual(roleDefault(matrix, label, "claude"), ["claude:fable@max"], `${label}/claude`);
       assert.deepEqual(roleDefault(matrix, label, "codex"), ["codex:gpt-6-astra@max"], `${label}/codex`);
     }
-    for (const label of ["why investigators", "why synthesizer", "reflect tooling", "reflect judgment, divergent, synthesizer"]) {
-      for (const parent of parents) assert.deepEqual(roleDefault(matrix, label, parent), ["inherit-parent"]);
+    const mcpDefaults = [
+      { role: "why investigators", claude: "claude:claude-opus-5-5@xhigh", codex: "codex:gpt-6-sol@xhigh" },
+      { role: "why synthesizer", claude: "claude:claude-opus-5-5@max", codex: "codex:gpt-6-astra@max" },
+      { role: "reflect tooling", claude: "claude:claude-opus-5-5@max", codex: "codex:gpt-6-sol@max" },
+      { role: "reflect judgment, divergent, synthesizer", claude: "claude:claude-opus-5-5@max", codex: "codex:gpt-6-astra@max" },
+    ];
+    for (const { role, claude, codex } of mcpDefaults) {
+      const defaults = { claude, codex, grok: "grok:grok-4.7@xhigh" };
+      for (const [parent, descriptor] of Object.entries(defaults)) {
+        assert.deepEqual(roleDefault(matrix, role, parent), [descriptor], `${role}/${parent}`);
+        const { family } = resolveDescriptor(matrix, descriptor);
+        assert.equal(routeFor(matrix, parent, family.provider), "native", `${role}/${parent}`);
+      }
     }
     for (const label of ["arena runners", "arena cross-judge pool", "architect runners", "interrogate reviewers"]) {
       for (const parent of parents) {
