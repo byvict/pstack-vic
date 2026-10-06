@@ -58,9 +58,8 @@ beforeEach(() => {
   mkdirSync(bin);
   executable(join(bin, "codex"), fakeCodex);
   restoreProcessEnv = isolateProcessEnv(join(scratch, "home"), [bin]);
-  // macOS checks a newly written executable on its first exec, which took
-  // 1.2 s for the fake and up to 6 s for a freshly checked-out launcher under
-  // load. Pay that outside the timed run.
+  // macOS vets a fresh executable on its first exec, and a checkout leaves
+  // the launcher fresh. Pay that outside the timed run.
   execFileSync(join(bin, "codex"), ["login"], { stdio: "ignore" });
   execFileSync(LAUNCHER, ["--help"], { stdio: "ignore" });
 });

@@ -77,8 +77,8 @@ before(() => {
   restoreProcessEnv = isolateProcessEnv(join(root, "home"));
   for (const name of ["claude", "codex", "grok"]) write(join(bin, name), fakeCli);
   write(join(bin, "wrap"), fakeWrapper);
-  // macOS vets a fresh executable on its first exec; pay that once here, for
-  // the fakes and for the launcher, which is fresh after a checkout.
+  // macOS vets a fresh executable on its first exec, and a checkout leaves
+  // the launcher fresh. Pay that once here.
   for (const name of ["claude", "codex", "grok", "wrap"]) {
     execFileSync(join(bin, name), name === "wrap" ? ["--", process.execPath, "--version"] : ["models"], { stdio: "ignore", env: laneEnv() });
   }
