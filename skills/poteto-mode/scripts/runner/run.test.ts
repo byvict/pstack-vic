@@ -391,7 +391,6 @@ afterEach(() => {
   rmSync(scratch, { recursive: true, force: true });
 });
 
-/** The fake, with the model run replaced by writing these bytes and exiting. */
 function scriptedModel(
   stdout: string | readonly number[],
   stderr: string | readonly number[],

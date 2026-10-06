@@ -105,7 +105,6 @@ export interface ParsedOutput {
   readonly costUsd: number | null;
 }
 
-/** What a provider reported about its run, whether or not it produced final text. */
 export type ProviderMetadata = Omit<ParsedOutput, "text">;
 
 export interface PreflightRecord {
@@ -161,10 +160,9 @@ export interface RunCancellation {
 
 export type WaitOutcome = "ready" | "cancelled" | "timed-out";
 
-/** Open descriptors of the reserved `<receipt>.stdout` and `<receipt>.stderr` sidecars. */
 export interface ModelStreams {
-  readonly stdout: number;
-  readonly stderr: number;
+  readonly stdoutFd: number;
+  readonly stderrFd: number;
 }
 
 /** The shared runtime a lane runs inside. The lane factory has already closed over its options. */
@@ -204,8 +202,7 @@ export type LaneOutcome =
     readonly kind: "failed";
     readonly status: LaneFailure;
     readonly error: ReceiptError;
-    /** Present when a well-formed provider result reported the failure. */
-    readonly metadata?: ProviderMetadata;
+    readonly providerReport?: ProviderMetadata;
   };
 
 /** One lane, prepared before reservation, run after it. */
