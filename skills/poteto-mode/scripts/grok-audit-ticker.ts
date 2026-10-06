@@ -3,7 +3,7 @@ import { statSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 
-const AUDIT_INTERVAL_MS = 30 * 60 * 1000;
+const AUDIT_INTERVAL_MS = 60 * 60 * 1000;
 
 try {
   const { values } = parseArgs({

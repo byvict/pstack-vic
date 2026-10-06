@@ -383,14 +383,14 @@
       "measuredOn": "1.0.46"
     },
     {
-      "id": "grok.goal",
+      "id": "grok.root-audit",
       "cli": "grok",
       "kind": "harness",
-      "contract": "The ACP initialize response advertises /goal; the active session supplies update_goal. A goal belongs to that root session. The detached scheduler does not perform root audits.",
+      "contract": "The root arms its hourly audit as a `monitor` running the plugin's ticker (persistent, ten-hour ceiling in 1.0.46, stopped through the retained handle). The detached scheduler and Grok's /loop run separate subagents and do not perform root audits.",
       "pointers": [
         {
           "file": "skills/poteto-mode/references/grok-tools.md",
-          "anchor": "Grok CLI 1.0.46 advertises"
+          "anchor": "Arm the hourly root audit with `monitor`"
         }
       ],
       "coveredBy": [],
