@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { loadMatrix, renderRoleSheet } from "../../../scripts/model-matrix.ts";
@@ -666,7 +666,8 @@ import {
 // PSTACK-SETUP marker it finds in the prompt in the shape the runner parses.
 // Pipes are asynchronous on macOS, so every write goes through fs.writeSync.
 const fakeCli = `#!/usr/bin/env node
-import { readFileSync, writeSync } from "node:fs";
+import { appendFileSync, readFileSync, writeSync } from "node:fs";
+if (process.env.FAKE_INVOCATION_LOG) appendFileSync(process.env.FAKE_INVOCATION_LOG, process.argv.slice(1).join(" ") + "\\n");
 const out = (text) => writeSync(1, text + "\\n");
 const err = (text) => writeSync(2, text + "\\n");
 const args = process.argv.slice(2);
@@ -841,6 +842,23 @@ describe("runProbes", () => {
       await assert.rejects(runProbes(plan, { dir: runDir, env: fakeEnv() }), {
         message: `${leftover} already exists; use a fresh run directory or remove the previous probe artifacts`,
       });
+      assert.deepEqual(readdirSync(runDir).sort(), ["plan.json", `probe-grok@xhigh.receipt.json.${stream}`]);
+    });
+
+    it(`refuses a dangling ${stream} sidecar before invoking any provider`, async () => {
+      const plan = buildPlan({ parent: "claude", home, matrix });
+      assert.ok(plan.pairs.filter((pair) => pair.route === "runner").length >= 2);
+      savePlan(runDir, plan);
+      const leftover = join(runDir, `probe-grok@xhigh.receipt.json.${stream}`);
+      const target = join(home, "missing-stream");
+      const invocations = join(home, "provider-invocations.log");
+      symlinkSync(target, leftover);
+      await assert.rejects(runProbes(plan, { dir: runDir, env: fakeEnv({ FAKE_INVOCATION_LOG: invocations }) }), {
+        message: `${leftover} already exists; use a fresh run directory or remove the previous probe artifacts`,
+      });
+      assert.equal(existsSync(invocations), false);
+      assert.equal(lstatSync(leftover).isSymbolicLink(), true);
+      assert.equal(readlinkSync(leftover), target);
       assert.deepEqual(readdirSync(runDir).sort(), ["plan.json", `probe-grok@xhigh.receipt.json.${stream}`]);
     });
   }
