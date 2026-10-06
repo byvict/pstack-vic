@@ -191,7 +191,13 @@ A Raiz não começa por conta própria. A execução só começa com o seu "go" 
 5. Confira a [autorização permanente](#autorização-permanente). Rode este comando num terminal. Ele tem de sair com código 0:
 
    ```shell
-   node ~/.claude/plugins/cache/pstack-vic/pstack/<versão>/skills/setup-pstack/scripts/authorize.ts check --parent claude
+   (
+   case "${CLAUDE_CONFIG_DIR-$HOME/.claude}" in
+     ""|[!/]*) printf '%s\n' 'error: CLAUDE_CONFIG_DIR precisa ser um caminho absoluto não vazio.' >&2; exit 1 ;;
+   esac
+   AUTHORIZE="${CLAUDE_CONFIG_DIR-$HOME/.claude}/plugins/cache/pstack-vic/pstack/<versão>/skills/setup-pstack/scripts/authorize.ts"
+   node "$AUTHORIZE" check --parent claude
+   )
    echo $?
    ```
 
@@ -322,9 +328,14 @@ Nos playbooks do pstack, um agente mergeia um PR que nenhum humano aprovou em do
 O modo automático do Claude Code bloqueia esses merges de fábrica, pelas regras "Merge Without Review" e "Self-Approval". O classificador dele lê as mensagens do usuário e os comandos, e não lê as perguntas do agente. Por isso um "ok" a uma pergunta não autoriza nada, e o modo automático nega o merge. O Claude Code não lê `autoMode.allow` de nenhum repositório nem de plugin, então o plugin não entrega a entrada.
 
 ```shell
-AUTHORIZE=~/.claude/plugins/cache/pstack-vic/pstack/<versão>/skills/setup-pstack/scripts/authorize.ts
-node $AUTHORIZE check --parent claude
-node $AUTHORIZE check --parent codex
+(
+case "${CLAUDE_CONFIG_DIR-$HOME/.claude}" in
+  ""|[!/]*) printf '%s\n' 'error: CLAUDE_CONFIG_DIR precisa ser um caminho absoluto não vazio.' >&2; exit 1 ;;
+esac
+AUTHORIZE="${CLAUDE_CONFIG_DIR-$HOME/.claude}/plugins/cache/pstack-vic/pstack/<versão>/skills/setup-pstack/scripts/authorize.ts"
+node "$AUTHORIZE" check --parent claude
+node "$AUTHORIZE" check --parent codex
+)
 ```
 
 Troque `<versão>` pela versão instalada. O primeiro comando confere o Claude Code. Ele sai com 0 quando a autorização está gravada e com 1 quando não está, e o JSON que ele imprime traz o arquivo, o motivo, a entrada e, no campo `grant`, o comando que grava a autorização. Esse comando fixa `CLAUDE_CONFIG_DIR` na pasta do arquivo que o `check` leu e só roda num terminal. Ele mostra a entrada, pede um "yes" digitado e grava. O segundo comando confere o Codex. Ele sai com 0 quando `approval_policy = "never"` está no topo do `<config-home>/config.toml` do Codex.
