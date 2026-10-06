@@ -56,7 +56,7 @@ interface Run {
   readonly questions: readonly string[];
 }
 
-async function run(argv: readonly string[], answer?: string): Promise<Run> {
+async function run(argv: readonly string[], answer?: string, env?: Record<string, string>): Promise<Run> {
   let stdout = "";
   let stderr = "";
   const questions: string[] = [];
@@ -64,6 +64,7 @@ async function run(argv: readonly string[], answer?: string): Promise<Run> {
     stdout: (v) => { stdout += v; },
     stderr: (v) => { stderr += v; },
     askOnTerminal: answer === undefined ? undefined : async (question) => { questions.push(question); return answer; },
+    env,
   });
   return { code, stdout, stderr, questions };
 }
@@ -332,5 +333,79 @@ describe("usage", () => {
     assert.equal((await run(["check", "--parent", "gemini"])).code, 64);
     assert.equal((await run(["check"])).code, 64);
     assert.equal((await run(["--parent", "claude"])).code, 64);
+  });
+});
+
+describe("a redirected config home", () => {
+  it("checks and applies the settings.json of CLAUDE_CONFIG_DIR and leaves <home>/.claude alone", async () => {
+    const cfg = join(base, "claude # config");
+    const env = { CLAUDE_CONFIG_DIR: cfg };
+    putSettings({ autoMode: { allow: ["$defaults", ALLOW_ENTRY] } });
+    const missing = await run(["check", "--parent", "claude"], undefined, env);
+    assert.equal(missing.code, 1);
+    assert.equal(JSON.parse(missing.stdout).file, join(cfg, "settings.json"));
+
+    put(join(cfg, "settings.json"), JSON.stringify({ model: "opus" }, null, 2) + "\n");
+    const applied = await run(["apply", "--parent", "claude"], "yes", env);
+    assert.equal(applied.code, 0, applied.stderr);
+    assert.deepEqual(JSON.parse(readFileSync(join(cfg, "settings.json"), "utf8")), { model: "opus", autoMode: { allow: ["$defaults", ALLOW_ENTRY] } });
+    assert.ok(existsSync(join(cfg, "settings.json.before-pstack-authorization")));
+    assert.equal((await run(["check", "--parent", "claude"], undefined, env)).code, 0);
+    assert.deepEqual(settings(), { autoMode: { allow: ["$defaults", ALLOW_ENTRY] } }, "<home>/.claude/settings.json unchanged");
+  });
+
+  it("reads no variable of the test process: an apply without env writes under --home only", async () => {
+    const decoy = join(base, "decoy");
+    const previous = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = decoy;
+    try {
+      assert.equal((await run(["apply", "--parent", "claude"], "yes")).code, 0);
+    } finally {
+      if (previous === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = previous;
+    }
+    assert.deepEqual(settings().autoMode?.allow, ["$defaults", ALLOW_ENTRY]);
+    assert.equal(existsSync(decoy), false);
+  });
+
+  it("prints a grant that pins the checked config home, and that command finds the same file from another terminal", async () => {
+    const cfg = join(base, "claude # config");
+    const report = JSON.parse((await run(["check", "--parent", "claude"], undefined, { CLAUDE_CONFIG_DIR: cfg })).stdout);
+    assert.equal(report.grant, `/usr/bin/env 'CLAUDE_CONFIG_DIR=${cfg}' ${process.execPath} ${SCRIPT} apply --parent claude`);
+
+    put(join(cfg, "settings.json"), JSON.stringify({ autoMode: { allow: ["$defaults", ALLOW_ENTRY] } }) + "\n");
+    const decoy = join(base, "decoy");
+    const replay = spawnSync("/bin/sh", ["-c", report.grant], { encoding: "utf8", env: isolatedEnv(processHome, [], { CLAUDE_CONFIG_DIR: decoy }) });
+    assert.equal(replay.status, 0, replay.stderr);
+    assert.deepEqual(JSON.parse(replay.stdout), { parent: "claude", file: join(cfg, "settings.json"), outcome: "unchanged", backup: null });
+    assert.equal(existsSync(decoy), false);
+  });
+
+  it("refuses an empty CLAUDE_CONFIG_DIR in check and apply, because Claude Code reads it as the directory it starts in", async () => {
+    putSettings({ autoMode: { allow: ["$defaults", ALLOW_ENTRY] } });
+    const before = readFileSync(settingsPathFor("claude", home), "utf8");
+    const refusal = "error: CLAUDE_CONFIG_DIR is empty; Claude Code 2.1.289 then reads settings.json and CLAUDE.md from the directory it starts in, not from ~/.claude, so unset it or set it to an absolute path\n";
+    const check = await run(["check", "--parent", "claude"], undefined, { CLAUDE_CONFIG_DIR: "" });
+    assert.deepEqual([check.code, check.stdout, check.stderr], [1, "", refusal]);
+    const apply = await run(["apply", "--parent", "claude"], "yes", { CLAUDE_CONFIG_DIR: "" });
+    assert.deepEqual([apply.code, apply.stdout, apply.stderr, apply.questions], [1, "", refusal, []]);
+    assert.equal(readFileSync(settingsPathFor("claude", home), "utf8"), before);
+    assert.equal(existsSync(backupPathFor("claude", home)), false);
+  });
+
+  it("keeps an empty CODEX_HOME as unset, as Codex does", async () => {
+    put(join(home, ".codex", "config.toml"), 'approval_policy = "never"\n');
+    const result = await run(["check", "--parent", "codex"], undefined, { CODEX_HOME: "" });
+    assert.equal(result.code, 0);
+    assert.equal(JSON.parse(result.stdout).file, join(home, ".codex", "config.toml"));
+  });
+
+  it("checks the config.toml of CODEX_HOME", async () => {
+    const codex = join(base, "codex home");
+    put(join(codex, "config.toml"), 'approval_policy = "never"\n');
+    const result = await run(["check", "--parent", "codex"], undefined, { CODEX_HOME: codex });
+    assert.equal(result.code, 0);
+    assert.equal(JSON.parse(result.stdout).file, join(codex, "config.toml"));
+    assert.equal(checkAuthorization("codex", home).authorized, false, "the default home has no config.toml");
   });
 });

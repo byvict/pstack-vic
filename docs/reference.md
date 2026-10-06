@@ -24,7 +24,7 @@ No shell, `claude plugin marketplace add byvict/pstack-vic` e `claude plugin ins
 ### Codex
 
 ```shell
-codex plugin marketplace add byvict/pstack-vic --ref v0.5.13
+codex plugin marketplace add byvict/pstack-vic --ref v0.5.14
 codex plugin add pstack@pstack-vic
 ```
 
@@ -60,7 +60,7 @@ codex plugin add pstack@pstack-vic
 
 Para desfazer no Codex, rode `codex plugin remove pstack@pstack-vic` e depois `codex plugin marketplace remove pstack-vic`.
 
-Rode `/setup-pstack` uma vez em cada pai para escrever o sheet de modelos (`~/.claude/pstack-models.md` e `~/.codex/pstack-models.md`). O último passo dele confere a [autorização permanente](#autorização-permanente), que o autopilot e o playbook Shipping exigem para mergear sem aprovação humana. Depois, `/poteto-mode` é o ponto de entrada para qualquer tarefa que peça rigor.
+Rode `/setup-pstack` uma vez em cada pai para escrever o sheet de modelos (`~/.claude/pstack-models.md` e `~/.codex/pstack-models.md`). Com `CLAUDE_CONFIG_DIR` ou `CODEX_HOME` definido, o sheet, o ledger de probes e a integração vão para esse diretório (um `CODEX_HOME` vazio conta como não definido; um `CLAUDE_CONFIG_DIR` vazio para o script, porque o Claude Code 2.1.289 então lê o `settings.json` e o `CLAUDE.md` da pasta onde abriu), e `authorize.ts` confere o `settings.json` ou o `config.toml` de lá ([Harness config homes](../skills/poteto-mode/references/codex-tools.md#harness-config-homes)). O último passo dele confere a [autorização permanente](#autorização-permanente), que o autopilot e o playbook Shipping exigem para mergear sem aprovação humana. Depois, `/poteto-mode` é o ponto de entrada para qualquer tarefa que peça rigor.
 
 ### Publicar uma versão
 
@@ -191,7 +191,13 @@ A Raiz não começa por conta própria. A execução só começa com o seu "go" 
 5. Confira a [autorização permanente](#autorização-permanente). Rode este comando num terminal. Ele tem de sair com código 0:
 
    ```shell
-   node ~/.claude/plugins/cache/pstack-vic/pstack/<versão>/skills/setup-pstack/scripts/authorize.ts check --parent claude
+   (
+   case "${CLAUDE_CONFIG_DIR-$HOME/.claude}" in
+     ""|[!/]*) printf '%s\n' 'error: CLAUDE_CONFIG_DIR precisa ser um caminho absoluto não vazio.' >&2; exit 1 ;;
+   esac
+   AUTHORIZE="${CLAUDE_CONFIG_DIR-$HOME/.claude}/plugins/cache/pstack-vic/pstack/<versão>/skills/setup-pstack/scripts/authorize.ts"
+   node "$AUTHORIZE" check --parent claude
+   )
    echo $?
    ```
 
@@ -308,11 +314,11 @@ No Codex o programa segue os mesmos playbooks. Mudam quatro coisas, que estão e
 - **A Raiz cria o worktree antes.** O `spawn_agent` não cria worktree. A Raiz cria um com `git worktree add` e passa o caminho ao Dono.
 - **Não há `run` nem `verify`.** A lane ao vivo roda o app pelo shell. Para uma tela, ela usa a automação que tiver ou entrega a você uma checagem manual concreta.
 
-A conferência antes do "go" usa o mesmo script com `--parent codex`. Ela sai com 0 quando `approval_policy = "never"` está no topo do `~/.codex/config.toml`. Com outro valor, o Codex interrompe o programa e pede aprovação.
+A conferência antes do "go" usa o mesmo script com `--parent codex`. Ela sai com 0 quando `approval_policy = "never"` está no topo do `<config-home>/config.toml` do Codex, que é `CODEX_HOME` ou `~/.codex` ([Harness config homes](../skills/poteto-mode/references/codex-tools.md#harness-config-homes)). Com outro valor, o Codex interrompe o programa e pede aprovação.
 
 ### Autorização permanente
 
-A autorização permanente é uma entrada que você grava uma vez em `autoMode.allow`, no seu `~/.claude/settings.json`. Sem ela, o modo automático do Claude Code nega o merge quando o Dono ou a sessão do Shipping chega nele.
+A autorização permanente é uma entrada que você grava uma vez em `autoMode.allow`, no `<config-home>/settings.json` do Claude Code, que é `CLAUDE_CONFIG_DIR` ou `~/.claude` ([Harness config homes](../skills/poteto-mode/references/codex-tools.md#harness-config-homes)). Sem ela, o modo automático do Claude Code nega o merge quando o Dono ou a sessão do Shipping chega nele.
 
 Nos playbooks do pstack, um agente mergeia um PR que nenhum humano aprovou em dois casos:
 
@@ -322,13 +328,17 @@ Nos playbooks do pstack, um agente mergeia um PR que nenhum humano aprovou em do
 O modo automático do Claude Code bloqueia esses merges de fábrica, pelas regras "Merge Without Review" e "Self-Approval". O classificador dele lê as mensagens do usuário e os comandos, e não lê as perguntas do agente. Por isso um "ok" a uma pergunta não autoriza nada, e o modo automático nega o merge. O Claude Code não lê `autoMode.allow` de nenhum repositório nem de plugin, então o plugin não entrega a entrada.
 
 ```shell
-AUTHORIZE=~/.claude/plugins/cache/pstack-vic/pstack/<versão>/skills/setup-pstack/scripts/authorize.ts
-node $AUTHORIZE check --parent claude
-node $AUTHORIZE apply --parent claude
-node $AUTHORIZE check --parent codex
+(
+case "${CLAUDE_CONFIG_DIR-$HOME/.claude}" in
+  ""|[!/]*) printf '%s\n' 'error: CLAUDE_CONFIG_DIR precisa ser um caminho absoluto não vazio.' >&2; exit 1 ;;
+esac
+AUTHORIZE="${CLAUDE_CONFIG_DIR-$HOME/.claude}/plugins/cache/pstack-vic/pstack/<versão>/skills/setup-pstack/scripts/authorize.ts"
+node "$AUTHORIZE" check --parent claude
+node "$AUTHORIZE" check --parent codex
+)
 ```
 
-Troque `<versão>` pela versão instalada. O primeiro comando confere o Claude Code. Ele sai com 0 quando a autorização está gravada e com 1 quando não está, e o JSON que ele imprime traz o motivo, a entrada e o comando. O segundo grava a autorização e só roda num terminal. Ele mostra a entrada, pede um "yes" digitado e grava. O terceiro confere o Codex. Ele sai com 0 quando `approval_policy = "never"` está no topo do `~/.codex/config.toml`.
+Troque `<versão>` pela versão instalada. O primeiro comando confere o Claude Code. Ele sai com 0 quando a autorização está gravada e com 1 quando não está, e o JSON que ele imprime traz o arquivo, o motivo, a entrada e, no campo `grant`, o comando que grava a autorização. Esse comando fixa `CLAUDE_CONFIG_DIR` na pasta do arquivo que o `check` leu e só roda num terminal. Ele mostra a entrada, pede um "yes" digitado e grava. O segundo comando confere o Codex. Ele sai com 0 quando `approval_policy = "never"` está no topo do `<config-home>/config.toml` do Codex.
 
 A entrada vale em qualquer repositório. Ela cobre três coisas:
 

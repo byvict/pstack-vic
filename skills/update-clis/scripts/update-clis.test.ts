@@ -581,6 +581,15 @@ describe("check", () => {
     assert.equal(value.clis[0].status, "current");
   });
 
+  it("reads the claude channel from the settings.json of CLAUDE_CONFIG_DIR", async () => {
+    const machine = fakeMachine();
+    const cfg = join(machine.home, "work-claude");
+    mkdirSync(cfg, { recursive: true });
+    writeFileSync(join(cfg, "settings.json"), JSON.stringify({ autoUpdatesChannel: "stable" }));
+    const { value } = await check(machine, ["--cli", "claude"], { ...machine.env, CLAUDE_CONFIG_DIR: cfg });
+    assert.deepEqual([value.clis[0].channel, value.clis[0].latest, value.clis[0].status], ["stable", "2.1.273", "current"]);
+  });
+
   it("marks a CLI whose latest version cannot be read as unverified and still checks the others", async () => {
     const machine = fakeMachine();
     const { code, value } = await check(machine, [], { ...machine.env, FAKE_NPM_DOWN: "1" });
@@ -978,6 +987,33 @@ describe("probe pairs", () => {
     withSheets(machine, { claude: CLAUDE_SHEET });
     assert.deepEqual(probePairs("claude", machine.home).map((p) => p.pair), ["fable@max", "opus@xhigh"]);
   });
+
+  it("reads the Claude sheet from CLAUDE_CONFIG_DIR when the environment names one", () => {
+    const machine = fakeMachine();
+    withSheets(machine, { claude: CLAUDE_SHEET, codex: CODEX_SHEET });
+    const cfg = join(machine.home, "work-claude");
+    mkdirSync(cfg, { recursive: true });
+    writeFileSync(join(cfg, "pstack-models.md"), "# pstack model configuration\n\ntrail reviewer pool: codex:gpt-6.1-sol@low\n");
+    assert.deepEqual(probePairs("codex", machine.home, { CLAUDE_CONFIG_DIR: cfg }).map((p) => p.pair), ["sol-6-1@low", "sol-6-1@xhigh", "astra@max"]);
+    assert.deepEqual(probePairs("codex", machine.home).map((p) => p.pair), ["sol@xhigh", "sol-6-1@xhigh", "astra@max"]);
+  });
+
+  it("takes a parent's rows from its AGENTS.md block when only the block holds them", () => {
+    const machine = fakeMachine();
+    withSheets(machine, { claude: CLAUDE_SHEET });
+    const block = CODEX_SHEET.replace("bug-fix: codex:gpt-6-sol@xhigh", "bug-fix: claude:claude-opus-5-5@low");
+    mkdirSync(join(machine.home, ".codex"), { recursive: true });
+    writeFileSync(join(machine.home, ".codex", "AGENTS.md"), `# mine\n<!-- pstack:models:begin -->\n${block}<!-- pstack:models:end -->\n`);
+    assert.deepEqual(probePairs("claude", machine.home).map((p) => p.pair), ["fable@max", "opus@low", "opus@xhigh"]);
+  });
+
+  it("stops on the inconsistent states that stop setup's state, plan and pick", () => {
+    const machine = fakeMachine();
+    const integration = join(machine.home, ".claude", "CLAUDE.md");
+    mkdirSync(dirname(integration), { recursive: true });
+    writeFileSync(integration, "@~/.claude/pstack-models.md\n@./pstack-models.md\n");
+    assert.throws(() => probePairs("codex", machine.home), { message: `inconsistent state: ${integration} imports pstack-models.md 2 times (lines 1, 2); keep exactly one import` });
+  });
 });
 
 describe("probe", () => {
@@ -1029,6 +1065,33 @@ describe("probe", () => {
       ["sandbox", "-", "passed"],
     ]);
     assert.match(value.lanes.find((lane: { lane: string }) => lane.lane === "sandbox").detail, /CODEX_SANDBOX=seatbelt, lane write accepted, ~\/\.grok write accepted, write outside the workspace denied/);
+  });
+
+  it("probes the codex pairs of the Claude sheet in CLAUDE_CONFIG_DIR", async () => {
+    const machine = fakeMachine();
+    withSheets(machine, { claude: CLAUDE_SHEET, codex: CODEX_SHEET });
+    const cfg = join(machine.home, "work-claude");
+    mkdirSync(cfg, { recursive: true });
+    writeFileSync(join(cfg, "pstack-models.md"), "# pstack model configuration\n\ntrail reviewer pool: codex:gpt-6.1-sol@low\n");
+    const { code, value } = await probeRun(machine, "codex", { CLAUDE_CONFIG_DIR: cfg });
+    assert.equal(code, 0, JSON.stringify(value, null, 2));
+    assert.deepEqual(laneRows(value).filter(([lane]) => lane === "read").map(([, pair]) => pair), ["sol-6-1@low", "sol-6-1@xhigh", "astra@max"]);
+  });
+
+  it("leaves no probe directory behind when the sheets stop it, so the same run probes once they are fixed", async () => {
+    const machine = fakeMachine();
+    withSheets(machine, { claude: CLAUDE_SHEET, codex: CODEX_SHEET });
+    const integration = join(machine.home, ".claude", "CLAUDE.md");
+    writeFileSync(integration, "@~/.claude/pstack-models.md\n@./pstack-models.md\n");
+    const stopped = await probeRun(machine, "codex");
+    assert.equal(stopped.code, 1);
+    assert.equal(stopped.stderr, `error: inconsistent state: ${integration} imports pstack-models.md 2 times (lines 1, 2); keep exactly one import\n`);
+    assert.deepEqual(readdirSync(stopped.dir).filter((name) => name.startsWith("probe-")), []);
+
+    writeFileSync(integration, "@~/.claude/pstack-models.md\n");
+    const fixed = await json(["probe", "--cli", "codex", "--dir", stopped.dir, "--home", machine.home, "--timeout", "60", "--plugin-root", fakePluginRoot()], machine.env);
+    assert.equal(fixed.code, 0, fixed.stderr);
+    assert.equal(fixed.value.dir, join(stopped.dir, "probe-codex-0.155.1"));
   });
 
   it("fails the sandbox lane when a write outside the workspace goes through or CODEX_SANDBOX is missing", async () => {

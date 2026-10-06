@@ -1783,3 +1783,48 @@ Shipping recupera a exceção do passo 3 da Cursor no pin `4e5b1cf`. Quando só 
 A T25 concentra a regra; a T21 e os consumidores remetem a ela, inclusive na conclusão revisada de um restack. A rodada precisa de cobertura completa atual, com prova nova ou reaproveitamento justificado para cada lane. Os 17 blocos shell de operações protegidas permanecem idênticos. O ADR 0005 e a referência pública registram a exceção restaurada. Os seis playbooks continuam gerados do mesmo pin pelas substituições classificadas.
 
 Verificação local: `npm test` com 570 testes, Bun com 74 testes e typecheck, matriz, agentes gerados, colisões e diff check. A prova com repositório Git e builds locais cobre equivalência após mudança documental, ruído entre builds antigos, alteração funcional ocultada pelo patch-id, dependência da base, instrução em Markdown e execução sem build.
+
+# 0.5.14 — O setup grava no config home do harness (2026-10-05)
+
+O Claude Code lê a configuração do usuário de `CLAUDE_CONFIG_DIR`, e o Codex de `CODEX_HOME`, quando a variável está definida. O `/setup-pstack` gravava sempre em `~/.claude` e `~/.codex`, e o `authorize.ts` lia sempre o `settings.json` e o `config.toml` de lá. Esta versão traz a issue #120 do open como regras do `setup-pstack.ts`.
+
+## Vereditos
+
+| Commit | Veredito | O que entrou |
+| --- | --- | --- |
+| `bf2bd95` | adaptar | o config home de cada pai e a seção *Harness config homes* de `codex-tools.md`; aqui um `CLAUDE_CONFIG_DIR` vazio para o script, em vez de valer como não definido |
+| `b56d187` | adaptar | o import achado pelo basename `pstack-models.md`: nenhum acrescenta um, um é trocado no lugar, mais de um para antes de gravar |
+| `239a73c` | adaptar | `@./pstack-models.md` num home redirecionado |
+| `e826c0a` | adaptar | o perfil copiado: o estado vem do alvo do import, e o `write` leva as linhas para `<config-home>/pstack-models.md` |
+| `6ef25f5` | adaptar | a escolha da fonte antes da normalização; duas fontes com lanes diferentes param o script |
+
+O teste de shell `tests/setup-config-home-repro.sh` e o bloco #120 de `tests/skill-collision-repro.sh` não entram. Aqui as regras estão no script, e os testes chamam o script.
+
+## O que muda
+
+- `configHomeFor(parent, home, env)` acha o diretório de cada pai: `CLAUDE_CONFIG_DIR` ou `CODEX_HOME`, senão `<home>/.claude` ou `<home>/.codex`. O Grok fica em `<home>/.grok`. O sheet, a integração, o ledger de probes, os arquivos que o `authorize.ts` lê e as leituras do `update-clis` saem dele.
+- Um `CODEX_HOME` vazio vale como não definido, como no Codex. Um `CLAUDE_CONFIG_DIR` vazio para o script, porque o Claude Code 2.1.289 usa o valor como está e lê o `settings.json` e o `CLAUDE.md` da pasta onde abriu. Uma variável que não é caminho absoluto também para o script.
+- O script lê o `CLAUDE.md` como o Claude Code 2.1.289: tira o front matter, troca `\r\n` e `\r` por `\n` e aplica as regras de bloco do marked 16, copiadas em `marked-rules.ts`. Uma menção ao sheet que ele não sabe ler do mesmo jeito, como uma colada em ênfase ou dentro de link, para `state`, `plan`, `pick` e `write` com a linha e o motivo.
+- Sem import, a linha vai para o fim do arquivo, depois de uma linha em branco quando o último parágrafo a deixaria em dúvida. Quando o script não tem certeza de que o fim carrega, como dentro de bloco de código, bloco HTML ou comentário, ela vai para o topo, depois do front matter e seguida de uma linha em branco. Com um import, só o caminho dele muda. O `write` relê o próprio resultado e só grava se o Claude Code carregar exatamente o sheet do config home.
+- Imports simples tratam um `@` literal no caminho como parte do mesmo alvo, e o basename `@pstack-models.md` continua sendo outro arquivo.
+- O `state` diz de onde vieram as linhas (`source`: o sheet, o import de um perfil copiado, o bloco do `AGENTS.md` ou `first-run`). Duas fontes com lanes diferentes param o script, que mostra as lanes de cada papel dos dois lados.
+- O `write` recusa um plano feito para outro config home. O comando de grant que o `authorize.ts check` imprime fixa o `CLAUDE_CONFIG_DIR` na pasta do arquivo que o `check` leu.
+- O `update-clis` lê os sheets pelo `loadState` do setup, com as mesmas paradas, e lê o canal do Claude no `settings.json` do config home. O `probe` dele só cria a pasta `probe-<cli>-<versão>` depois de ler os sheets, então uma parada não deixa pasta vazia.
+
+## Fora desta versão
+
+- O `GROK_HOME`, que a CLI do Grok 1.0.46 documenta. Nem o setup nem o runner o leem.
+- Imports aninhados, como um `CLAUDE.md` de perfil que importa outro `CLAUDE.md`, que importa o sheet. Como no `e826c0a`, o script lê só o import do `<config-home>/CLAUDE.md`.
+- O backup do `config.toml` em `scripts/release.ts`, que continua em `~/.codex`.
+
+## Fronteira
+
+Além dos arquivos do plano, este PR muda `skills/update-clis/scripts/update-clis.ts` e o teste dele, uma frase de `provider-dispatch.md`, uma de `poteto-help/SKILL.md` e a linha do `--ref` no `README.md`, e cria `marked-rules.ts` e `LICENSE-marked`.
+
+## Verificação
+
+- `setup-pstack.test.ts`, `authorize.test.ts` e `update-clis.test.ts` passam com 130, 38 e 53 testes.
+- Sempre que o script não para, o leitor do `CLAUDE.md` concorda com o do Claude Code 2.1.289, refeito a partir do binário sobre o marked 16.0.0, 16.1.2 e 16.2.0, em 80.000 variantes de 20.000 documentos gerados, com quebras de linha `\n`, `\r\n`, `\r` e misturadas, e nos arquivos Markdown de `~/Dev`.
+- Em 160.000 colocações do import nos dois homes, o Claude Code carrega exatamente o sheet do config home em todas as que o script grava.
+- `npm test`, `npm run test:bun`, `npm run matrix:check`, `npm run agents:check`, `npm run collision:check` e `git diff --check` passam.
+- Cada frase desta seção, das duas linhas do `NOTICE.md`, do PR e da prosa mudada tem uma prova em `~/Dev/Skills/pstack-vic-runs/2026-10-05-open-digest-adaptar/pr-f/claims-r3.tsv`, rodada no head do PR.

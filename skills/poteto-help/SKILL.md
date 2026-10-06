@@ -23,7 +23,7 @@ Infer the need from the message and the conversation. A named situation, such as
 
 Check the state that changes the answer, and mention it only when it does:
 
-- No models sheet for this parent (`~/.claude/pstack-models.md` on Claude Code, `~/.codex/pstack-models.md` on Codex, `~/.grok/pstack-models.md` on Grok Build) means `/setup-pstack` hasn't run on it, so every role uses its default model.
+- No models sheet for this parent (`<config-home>/pstack-models.md`, where `<config-home>` is the parent's [harness config home](../poteto-mode/references/codex-tools.md#harness-config-homes), `~/.grok` on Grok Build) means `/setup-pstack` hasn't run on it, so every role uses its default model.
 - No `verify-*` skill or other app harness in the project means agents have no scripted way to drive the app. Mention `/create-verification-skill` when the question is about proving a change works.
 
 ## Get set up

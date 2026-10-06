@@ -32,7 +32,7 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import {
   agentName,
   crossFamilyRowProblem,
@@ -53,6 +53,7 @@ import {
   type Route,
 } from "../../../scripts/model-matrix.ts";
 import { judgeLane, probePrompt, runProbeLane } from "../../poteto-mode/scripts/runner/probe-lane.ts";
+import * as marked from "./marked-rules.ts";
 
 export class SetupError extends Error {}
 
@@ -62,36 +63,496 @@ function fail(message: string): never {
 
 // --- Paths -----------------------------------------------------------------
 
-/** Per-parent home-relative locations of the sheet and the parent integration file. */
-const TARGETS: Readonly<Record<string, { readonly dir: string; readonly integration: string }>> = {
-  claude: { dir: ".claude", integration: "CLAUDE.md" },
-  codex: { dir: ".codex", integration: "AGENTS.md" },
-  grok: { dir: ".grok", integration: "AGENTS.md" },
+export type ConfigEnv = Readonly<Record<string, string | undefined>>;
+
+interface HomeVariable {
+  readonly name: string;
+  readonly emptyRefusal: string | null;
+}
+
+interface Target {
+  readonly defaultDir: string;
+  readonly variable: HomeVariable | null;
+  readonly integration: string;
+  readonly wiring: "import" | "block";
+}
+
+const TARGETS: Readonly<Record<string, Target>> = {
+  claude: {
+    defaultDir: ".claude",
+    variable: { name: "CLAUDE_CONFIG_DIR", emptyRefusal: "Claude Code 2.1.289 then reads settings.json and CLAUDE.md from the directory it starts in, not from ~/.claude" },
+    integration: "CLAUDE.md",
+    wiring: "import",
+  },
+  codex: { defaultDir: ".codex", variable: { name: "CODEX_HOME", emptyRefusal: null }, integration: "AGENTS.md", wiring: "block" },
+  grok: { defaultDir: ".grok", variable: null, integration: "AGENTS.md", wiring: "block" },
 };
 
 export const SHEET_FILE = "pstack-models.md";
 export const LEDGER_FILE = "pstack-probes.json";
 export const CLAUDE_INCLUDE_LINE = "@~/.claude/pstack-models.md";
+const CLAUDE_RELATIVE_INCLUDE_LINE = `@./${SHEET_FILE}`;
 export const CODEX_BLOCK_BEGIN = "<!-- pstack:models:begin -->";
 export const CODEX_BLOCK_END = "<!-- pstack:models:end -->";
 
-function targetFor(parent: string): { readonly dir: string; readonly integration: string } {
+function targetFor(parent: string): Target {
   const target = TARGETS[parent];
   if (!target) fail(`unknown parent ${JSON.stringify(parent)}; expected one of ${Object.keys(TARGETS).join(", ")}`);
   return target;
 }
 
-export function sheetPathFor(parent: string, home: string = homedir()): string {
-  return join(home, targetFor(parent).dir, SHEET_FILE);
+export function configHomeFor(parent: string, home: string = homedir(), env: ConfigEnv = {}): string {
+  const { defaultDir, variable } = targetFor(parent);
+  const value = variable === null ? undefined : env[variable.name];
+  if (variable === null || value === undefined || (value === "" && variable.emptyRefusal === null)) return resolve(home, defaultDir);
+  if (value === "") fail(`${variable.name} is empty; ${variable.emptyRefusal}, so unset it or set it to an absolute path`);
+  if (!isAbsolute(value)) fail(`${variable.name} must be an absolute path${variable.emptyRefusal === null ? " or empty" : ""}; got ${JSON.stringify(value)}`);
+  return resolve(value);
 }
 
-export function integrationPathFor(parent: string, home: string = homedir()): string {
+interface Location {
+  readonly parent: string;
+  readonly home: string;
+  readonly configHome: string;
+  readonly sheetPath: string;
+  readonly integrationPath: string;
+  readonly ledgerPath: string;
+  readonly wiring: Target["wiring"];
+}
+
+function locate(parent: string, home: string, env: ConfigEnv): Location {
   const target = targetFor(parent);
-  return join(home, target.dir, target.integration);
+  const configHome = configHomeFor(parent, home, env);
+  return {
+    parent,
+    home,
+    configHome,
+    sheetPath: join(configHome, SHEET_FILE),
+    integrationPath: join(configHome, target.integration),
+    ledgerPath: join(configHome, LEDGER_FILE),
+    wiring: target.wiring,
+  };
 }
 
-export function ledgerPathFor(parent: string, home: string = homedir()): string {
-  return join(home, targetFor(parent).dir, LEDGER_FILE);
+export function sheetPathFor(parent: string, home: string = homedir(), env: ConfigEnv = {}): string {
+  return locate(parent, home, env).sheetPath;
+}
+
+export function integrationPathFor(parent: string, home: string = homedir(), env: ConfigEnv = {}): string {
+  return locate(parent, home, env).integrationPath;
+}
+
+export function ledgerPathFor(parent: string, home: string = homedir(), env: ConfigEnv = {}): string {
+  return locate(parent, home, env).ledgerPath;
+}
+
+// Claude Code 2.1.289 strips front matter, lexes CLAUDE.md with marked 16 (gfm
+// off), and takes `@path` from text tokens and from what an HTML comment block
+// leaves.
+
+interface SheetImport {
+  readonly line: number;
+  readonly start: number;
+  readonly end: number;
+  readonly target: string;
+}
+
+interface UnsureImport {
+  readonly line: number;
+  readonly reason: string;
+}
+
+interface ImportScan {
+  readonly imports: readonly SheetImport[];
+  readonly unsure: readonly UnsureImport[];
+}
+
+type Verdict =
+  | { readonly kind: "loaded"; readonly target: string; readonly run: string }
+  | { readonly kind: "skipped" }
+  | { readonly kind: "unsure"; readonly reason: string };
+
+const SKIPPED: Verdict = { kind: "skipped" };
+
+function unsure(reason: string): Verdict {
+  return { kind: "unsure", reason };
+}
+
+const MARKUP = "markup touches it";
+const INLINE = "an HTML tag, a link or a backslash comes before it in its paragraph";
+const MIXED = "inline code and emphasis both come before it in its paragraph";
+const CONTAINER = "it is in or after a list or quote that this script does not read";
+const MERGED = "an indented line or a link definition continues its paragraph";
+const SPLIT = "an HTML comment splits it";
+const WORD = "another @ comes before it in the same word";
+
+const FRONT_MATTER_RE = /^---\s*\n([\s\S]*?)---\s*\n?/;
+const IMPORT_RE = /(?:^|\s)@((?:[^\s\\]|\\ )+)/g;
+const PATH_RUN_RE = /^(?:[^\s\\]|\\ )*/;
+const RUN_BEFORE_RE = /@(?:[^\s\\]|\\ )*$/;
+const PATH_MARKUP_RE = /[`*_<[]/;
+const TOKEN_ENDS = new Set(["*", "_", "`", ">", ")", "]"]);
+const QUOTE_PREFIX_RE = /^ {0,3}>[ \t]?/;
+const BULLET_LINE_RE = /^( {0,3}(?:[*+-]|\d{1,9}[.)]) {1,4})\S/;
+const BLOCK_START_RE = /^(?:`{3,}|~{3,}|[#<>[]|(?:[*+-]|\d{1,9}[.)])(?:[ \t]|$)|(?:=+|-+)[ \t]*$)/;
+const POISON_RE = /^[ \t]*(?:`{3,}|~{3,}|<(?:(?:script|pre|style|textarea)(?:[\s>]|$)|!--|\?|![A-Za-z]|!\[CDATA\[))/i;
+
+function pathRun(text: string, from: number): string {
+  return PATH_RUN_RE.exec(text.slice(from))?.[0] ?? "";
+}
+
+function pathTarget(run: string): string | null {
+  const path = run.split("#")[0].replaceAll("\\ ", " ");
+  const accepted = path.startsWith("./") || path.startsWith("~/") || (path.startsWith("/") && path !== "/")
+    || (!path.startsWith("@") && !/^[#%^&*()]+/.test(path) && /^[a-zA-Z0-9._-]/.test(path));
+  return accepted ? path : null;
+}
+
+function wordVerdict(text: string, at: number, tokenStart: boolean): Verdict {
+  if (RUN_BEFORE_RE.test(text.slice(0, at))) return unsure(WORD);
+  const run = pathRun(text, at + 1);
+  const before = text[at - 1] ?? "";
+  if (tokenStart || before === "" || /\s/.test(before)) {
+    if (PATH_MARKUP_RE.test(run.split("#")[0])) return unsure(MARKUP);
+    const target = pathTarget(run);
+    return target === null ? SKIPPED : { kind: "loaded", target, run };
+  }
+  return TOKEN_ENDS.has(before) || text[at - 2] === "\\" ? unsure(MARKUP) : SKIPPED;
+}
+
+function closingRun(text: string, from: number, length: number): number {
+  for (let k = from + 1; k < text.length; k += 1) {
+    if (text[k] !== "`" || text[k - 1] === "`") continue;
+    let end = k;
+    while (text[end] === "`") end += 1;
+    if (end - k === length) return k;
+    k = end;
+  }
+  return -1;
+}
+
+function inlineVerdict(text: string, at: number): Verdict {
+  let emphasis = false;
+  let spans = false;
+  let tokenStart = false;
+  for (let j = 0; j < at;) {
+    tokenStart = false;
+    const c = text[j];
+    if (c === "\\" || c === "[" || (c === "<" && !text.startsWith("<!--", j))) return unsure(INLINE);
+    if (c === "*" || c === "_") {
+      if (spans) return unsure(MIXED);
+      emphasis = true;
+    }
+    let end = -1;
+    if (c === "`") {
+      let open = 0;
+      while (text[j + open] === "`") open += 1;
+      const close = closingRun(text, j + open, open);
+      if (close < 0) {
+        j += open;
+        continue;
+      }
+      end = close + open;
+    } else if (c === "<") {
+      const close = text.indexOf("-->", j + 2);
+      if (close < 0) return unsure(INLINE);
+      end = close + 3;
+    } else {
+      j += 1;
+      continue;
+    }
+    if (emphasis) return unsure(MIXED);
+    spans = true;
+    if (at < end) return SKIPPED;
+    j = end;
+    tokenStart = true;
+  }
+  return wordVerdict(text, at, tokenStart);
+}
+
+/** An `@` in a plain list item, whose text Claude Code also scans raw, code spans and all. */
+function listVerdict(line: string, at: number, contentStart: number): Verdict {
+  const content = line.slice(contentStart);
+  const i = at - contentStart;
+  if (RUN_BEFORE_RE.test(content.slice(0, i))) return unsure(WORD);
+  const run = pathRun(content, i + 1);
+  const before = content[i - 1] ?? "";
+  if (before === "" || /\s/.test(before)) {
+    const target = pathTarget(run);
+    if (target !== null && (basename(target) === SHEET_FILE || !PATH_MARKUP_RE.test(target))) return { kind: "loaded", target, run };
+    return PATH_MARKUP_RE.test(run.split("#")[0]) ? unsure(MARKUP) : SKIPPED;
+  }
+  return TOKEN_ENDS.has(before) || content[i - 2] === "\\" ? unsure(MARKUP) : SKIPPED;
+}
+
+function plainStart(text: string): boolean {
+  return text.length > 0 && !BLOCK_START_RE.test(text) && !marked.hr.test(text);
+}
+
+interface Line {
+  readonly start: number;
+  readonly text: string;
+}
+
+function lineAt(text: string, start: number): Line {
+  const end = text.indexOf("\n", start);
+  return { start, text: text.slice(start, end < 0 ? text.length : end) };
+}
+
+function nextLine(text: string, line: Line): number {
+  return line.start + line.text.length + 1;
+}
+
+function isBlank(line: Line): boolean {
+  return /^[ \t]*$/.test(line.text);
+}
+
+function afterContainers(text: string, from: number): number {
+  let previousBlank = false;
+  for (let line = lineAt(text, from); line.start < text.length; line = lineAt(text, nextLine(text, line))) {
+    if (previousBlank && !isBlank(line) && !/^[ \t]/.test(line.text)) return line.start;
+    if (POISON_RE.test(line.text)) return text.length;
+    previousBlank = isBlank(line);
+  }
+  return text.length;
+}
+
+class ImportReader {
+  readonly verdicts = new Map<number, Verdict>();
+  readonly text: string;
+  readonly mentions: readonly number[];
+
+  constructor(text: string, mentions: readonly number[]) {
+    this.text = text;
+    this.mentions = mentions;
+  }
+
+  mark(from: number, to: number, verdict: (at: number) => Verdict): void {
+    let tokenEnd = from;
+    for (const at of this.mentions) {
+      if (at < from || at >= to || this.verdicts.has(at)) continue;
+      const result = at < tokenEnd ? SKIPPED : verdict(at);
+      this.verdicts.set(at, result);
+      if (result.kind === "loaded" && !PATH_MARKUP_RE.test(result.target)) tokenEnd = at + 1 + result.run.length;
+    }
+  }
+
+  inline(start: number, text: string): void {
+    this.mark(start, start + text.length, (at) => inlineVerdict(text, at - start));
+  }
+
+  html(start: number, raw: string): void {
+    if (raw.trimStart().startsWith("<!--") && raw.includes("-->")) {
+      const kept: number[] = [];
+      let rest = "";
+      let last = 0;
+      for (const comment of raw.matchAll(/<!--[\s\S]*?-->/g)) {
+        for (let k = last; k < comment.index; k += 1) kept.push(start + k);
+        rest += raw.slice(last, comment.index);
+        last = comment.index + comment[0].length;
+      }
+      for (let k = last; k < raw.length; k += 1) kept.push(start + k);
+      rest += raw.slice(last);
+      for (const match of rest.matchAll(IMPORT_RE)) {
+        const run = match[1];
+        const target = pathTarget(run);
+        if (target === null || basename(target) !== SHEET_FILE) continue;
+        const at = match.index + match[0].length - run.length - 1;
+        this.verdicts.set(kept[at], kept[at + run.length] - kept[at] === run.length ? { kind: "loaded", target, run } : unsure(SPLIT));
+      }
+    }
+  }
+
+  readContainer(start: number): number {
+    const quote = marked.blockquoteStart.test(this.text.slice(start));
+    const lines: Line[] = [];
+    for (let line = lineAt(this.text, start); line.start < this.text.length && !isBlank(line); line = lineAt(this.text, nextLine(this.text, line))) {
+      lines.push(line);
+    }
+    const contentStarts: number[] = [];
+    for (const [index, line] of lines.entries()) {
+      const contentStart = quote ? quoteContent(line.text) : listContent(line.text, index === 0);
+      if (contentStart === null) return this.opaque(start);
+      contentStarts.push(contentStart);
+    }
+    const last = lines[lines.length - 1];
+    const end = last.start + last.text.length;
+    if (quote) {
+      const parts = lines.map((line, index) => ({ start: line.start + contentStarts[index], text: line.text.slice(contentStarts[index]) }));
+      const inner = parts.map((part) => part.text).join("\n");
+      const offsets: number[] = [];
+      let offset = 0;
+      for (const part of parts) {
+        offsets.push(offset);
+        offset += part.text.length + 1;
+      }
+      parts.forEach((part, index) => this.mark(part.start, part.start + part.text.length, (at) => inlineVerdict(inner, offsets[index] + at - part.start)));
+      return end;
+    }
+    lines.forEach((line, index) => this.mark(line.start, line.start + line.text.length, (at) => listVerdict(line.text, at - line.start, contentStarts[index])));
+    let next = lineAt(this.text, end + 1);
+    while (next.start < this.text.length && isBlank(next)) next = lineAt(this.text, nextLine(this.text, next));
+    return next.start >= this.text.length || !/^[ \t]/.test(next.text) ? end : this.opaque(next.start);
+  }
+
+  opaque(start: number): number {
+    const resume = afterContainers(this.text, start);
+    this.mark(start, resume, () => unsure(CONTAINER));
+    return resume;
+  }
+
+  read(start: number): void {
+    const text = this.text;
+    let pos = start;
+    let paragraph = false;
+    while (pos < text.length) {
+      const rest = text.slice(pos);
+      let match: RegExpExecArray | null;
+      if ((match = marked.newline.exec(rest)) !== null && match[0].length > 0) {
+        if (match[0].length > 1) paragraph = false;
+      } else if ((match = marked.code.exec(rest)) !== null) {
+        this.mark(pos, pos + match[0].length, () => (paragraph ? unsure(MERGED) : SKIPPED));
+      } else if ((match = marked.fences.exec(rest)) !== null) {
+        paragraph = false;
+      } else if ((match = marked.heading.exec(rest)) !== null) {
+        const raw = match[2];
+        let heading = raw.trim();
+        if (heading.endsWith("#")) {
+          const trimmed = heading.replace(/#+$/, "");
+          if (!trimmed || trimmed.endsWith(" ")) heading = trimmed.trim();
+        }
+        this.inline(pos + match[0].indexOf(match[1]) + match[1].length + raw.length - raw.trimStart().length, heading);
+        paragraph = false;
+      } else if ((match = marked.hr.exec(rest)) !== null) {
+        paragraph = false;
+      } else if (marked.blockquoteStart.test(rest) || marked.list.test(rest)) {
+        pos = this.readContainer(pos);
+        paragraph = false;
+        continue;
+      } else if ((match = marked.html.exec(rest)) !== null) {
+        this.html(pos, match[0]);
+        paragraph = false;
+      } else if ((match = marked.def.exec(rest)) !== null) {
+        this.mark(pos, pos + match[0].length, () => (paragraph ? unsure(MERGED) : SKIPPED));
+      } else if ((match = marked.lheading.exec(rest)) !== null) {
+        this.inline(pos, match[1]);
+        paragraph = false;
+      } else if ((match = marked.paragraph.exec(rest)) !== null) {
+        this.inline(pos, match[1]);
+        paragraph = true;
+      } else {
+        break;
+      }
+      this.mark(pos, pos + match[0].length, () => SKIPPED);
+      pos += match[0].length;
+    }
+    this.mark(pos, text.length, () => unsure(CONTAINER));
+  }
+}
+
+function quoteContent(line: string): number | null {
+  const prefix = QUOTE_PREFIX_RE.exec(line)?.[0].length ?? 0;
+  const inner = line.slice(prefix);
+  return /^ {0,3}\S/.test(inner) && plainStart(inner.trimStart()) ? prefix : null;
+}
+
+function listContent(line: string, first: boolean): number | null {
+  const bullet = BULLET_LINE_RE.exec(line)?.[1].length;
+  const start = bullet ?? (first || !/^ {0,3}\S/.test(line) ? null : line.length - line.trimStart().length);
+  return start !== null && plainStart(line.slice(start)) ? start : null;
+}
+
+function lineOf(text: string, offset: number): number {
+  return text.slice(0, offset).split("\n").length;
+}
+
+function normalizeBreaks(raw: string, body: number): { readonly text: string; readonly rawOffset: (at: number) => number } {
+  const pairs: number[] = [];
+  const text = raw.slice(0, body) + raw.slice(body).replace(/\r\n?/g, (pair, at: number) => {
+    if (pair.length === 2) pairs.push(body + at - pairs.length);
+    return "\n";
+  });
+  return { text, rawOffset: (at) => at + pairs.filter((pair) => pair < at).length };
+}
+
+function bodyStart(raw: string): { readonly lexed: number; readonly top: number } {
+  const bom = raw.charCodeAt(0) === 0xfeff ? 1 : 0;
+  const frontMatter = raw.indexOf("---", bom + 3) < 0 ? null : FRONT_MATTER_RE.exec(raw.slice(bom));
+  return frontMatter === null ? { lexed: 0, top: bom } : { lexed: bom + frontMatter[0].length, top: bom + frontMatter[0].length };
+}
+
+function scanSheetImports(raw: string): ImportScan {
+  const body = bodyStart(raw).lexed;
+  const { text, rawOffset } = normalizeBreaks(raw, body);
+  const mentions: number[] = [];
+  for (let at = text.indexOf("@", body); at >= 0; at = text.indexOf("@", at + 1)) {
+    if (pathRun(text, at + 1).includes(SHEET_FILE)) mentions.push(at);
+  }
+  const reader = new ImportReader(text, mentions);
+  reader.read(body);
+  const imports: SheetImport[] = [];
+  const unsureImports: UnsureImport[] = [];
+  for (const [at, verdict] of [...reader.verdicts].sort(([a], [b]) => a - b)) {
+    const start = rawOffset(at);
+    if (verdict.kind === "loaded" && basename(verdict.target) === SHEET_FILE) imports.push({ line: lineOf(text, at), start, end: start + 1 + verdict.run.length, target: verdict.target });
+    if (verdict.kind === "unsure") unsureImports.push({ line: lineOf(text, at), reason: verdict.reason });
+  }
+  return { imports, unsure: unsureImports };
+}
+
+function tooManyImports(path: string, imports: readonly SheetImport[]): never {
+  fail(`inconsistent state: ${path} imports ${SHEET_FILE} ${imports.length} times (lines ${imports.map((i) => i.line).join(", ")}); keep exactly one import`);
+}
+
+function importTarget(path: string, where: Location): string {
+  if (path.startsWith("~/")) return resolve(where.home, path.slice(2));
+  return resolve(dirname(where.integrationPath), path);
+}
+
+function includeLineFor(where: Location): string {
+  return where.configHome === resolve(where.home, TARGETS.claude.defaultDir) ? CLAUDE_INCLUDE_LINE : CLAUDE_RELATIVE_INCLUDE_LINE;
+}
+
+function placeImport(where: Location, text: string): { readonly current: SheetImport | null; readonly rendered: string } {
+  const path = where.integrationPath;
+  const scan = scanSheetImports(text);
+  if (scan.unsure.length > 0) {
+    fail(`inconsistent state: ${path} line ${scan.unsure[0].line} mentions an import of ${SHEET_FILE} that this script cannot read the way Claude Code does (${scan.unsure[0].reason}); move the import to the top of the file as a line of its own, or remove the mention`);
+  }
+  if (scan.imports.length > 1) tooManyImports(path, scan.imports);
+  const current = scan.imports[0] ?? null;
+  const include = includeLineFor(where);
+  const separator = text.length === 0 || text.endsWith("\n") ? "" : "\n";
+  const { top } = bodyStart(text);
+  const layouts = current === null
+    ? [`${text}${separator}${include}\n`, `${text}${separator}\n${include}\n`, `${text.slice(0, top)}${include}\n\n${text.slice(top)}`]
+    : [`${text.slice(0, current.start)}${include}${text.slice(current.end)}`];
+  let detail = "a code block, an HTML block or a comment hides it";
+  for (const rendered of layouts) {
+    const after = scanSheetImports(rendered);
+    if (after.unsure.length === 0 && after.imports.length === 1 && importTarget(after.imports[0].target, where) === where.sheetPath) return { current, rendered };
+    if (after.unsure.length > 0) detail = after.unsure[0].reason;
+  }
+  fail(`inconsistent state: Claude Code would not load ${include} written into ${path} (${detail}); put the import where Claude Code loads it yourself, then run setup again`);
+}
+
+interface Block {
+  readonly start: number;
+  readonly end: number;
+  readonly sheet: string;
+}
+
+function findBlock(text: string, path: string): Block | null {
+  const begins = text.split(CODEX_BLOCK_BEGIN).length - 1;
+  const ends = text.split(CODEX_BLOCK_END).length - 1;
+  if (begins === 0 && ends === 0) return null;
+  if (begins !== 1 || ends !== 1) {
+    fail(`${path} has ${begins} begin and ${ends} end markers; expected exactly one pstack:models block`);
+  }
+  const start = text.indexOf(CODEX_BLOCK_BEGIN);
+  const stop = text.indexOf(CODEX_BLOCK_END);
+  if (stop < start) fail(`${path} pstack:models markers are reversed`);
+  return { start, end: stop + CODEX_BLOCK_END.length, sheet: text.slice(start + CODEX_BLOCK_BEGIN.length, stop).replace(/^\n/, "") };
 }
 
 // --- Sheet parsing -----------------------------------------------------------
@@ -214,11 +675,20 @@ export interface Migration {
   readonly to: string;
 }
 
+export type SheetSource =
+  | { readonly kind: "sheet"; readonly path: string }
+  | { readonly kind: "import"; readonly path: string }
+  | { readonly kind: "block"; readonly path: string }
+  | { readonly kind: "first-run" };
+
 export interface State {
   readonly parent: string;
+  readonly configHome: string;
   readonly sheetPath: string;
   readonly integrationPath: string;
   readonly exists: boolean;
+  readonly source: SheetSource;
+  readonly missingImport: string | null;
   /** Normalized rows in sheet order (first run: empty). */
   readonly rows: readonly SheetRow[];
   readonly migrations: readonly Migration[];
@@ -228,6 +698,75 @@ export interface State {
 
 function readIfExists(path: string): string | null {
   return existsSync(path) ? readFileSync(path, "utf8") : null;
+}
+
+function parseFrom(text: string, path: string, matrix: ModelMatrix): SheetRow[] {
+  try {
+    return parseSheet(text, matrix);
+  } catch (error) {
+    if (error instanceof SetupError) fail(`${path}: ${error.message}`);
+    throw error;
+  }
+}
+
+function laneDifferences(sheet: readonly SheetRow[], other: readonly SheetRow[], label: string): string[] {
+  const lanes = (rows: readonly SheetRow[]) => new Map(rows.map((r) => [r.role, r.lanes.join(", ")]));
+  const left = lanes(sheet);
+  const right = lanes(other);
+  return [...new Set([...left.keys(), ...right.keys()])]
+    .filter((role) => left.get(role) !== right.get(role))
+    .map((role) => `${role} (sheet: ${left.get(role) ?? "no row"}; ${label}: ${right.get(role) ?? "no row"})`);
+}
+
+type LoadedSource = Exclude<SheetSource, { kind: "first-run" }>;
+
+interface Loaded {
+  readonly source: LoadedSource;
+  readonly text: string;
+}
+
+function describeSource(source: LoadedSource, where: Location): string {
+  if (source.kind === "import") return `${source.path} (imported by ${where.integrationPath})`;
+  if (source.kind === "block") return `the pstack:models block of ${source.path}`;
+  return source.path;
+}
+
+function selectSource(where: Location, matrix: ModelMatrix): { readonly loaded: Loaded | null; readonly missingImport: string | null } {
+  if (existsSync(where.configHome) && !statSync(where.configHome).isDirectory()) {
+    const variable = targetFor(where.parent).variable;
+    fail(`inconsistent state: the config home ${where.configHome} is a file, not a directory; move it aside${variable === null ? "" : ` or point ${variable.name} at a directory`}`);
+  }
+  const sheetText = snapshotOf(where.sheetPath, "sheet");
+  const integration = snapshotOf(where.integrationPath, "integration file") ?? "";
+  const sheet: Loaded | null = sheetText === null ? null : { source: { kind: "sheet", path: where.sheetPath }, text: sheetText };
+  let other: Loaded | null = null;
+  let missingImport: string | null = null;
+  if (where.wiring === "import") {
+    const { current } = placeImport(where, integration);
+    if (current !== null) {
+      const target = importTarget(current.target, where);
+      const text = target === where.sheetPath ? sheetText : snapshotOf(target, "imported sheet");
+      if (text === null) missingImport = target;
+      else if (target !== where.sheetPath) other = { source: { kind: "import", path: target }, text };
+    }
+  } else {
+    const block = findBlock(integration, where.integrationPath);
+    if (block !== null) other = { source: { kind: "block", path: where.integrationPath }, text: block.sheet };
+  }
+  if (sheet !== null && other !== null) {
+    const differences = laneDifferences(
+      parseFrom(sheet.text, describeSource(sheet.source, where), matrix),
+      parseFrom(other.text, describeSource(other.source, where), matrix),
+      other.source.kind
+    );
+    if (differences.length > 0) {
+      const keep = other.source.kind === "block"
+        ? "delete the sheet to recover the block, or remove the block to keep the sheet"
+        : `delete the sheet to carry the imported one over, or change the import to ${CLAUDE_RELATIVE_INCLUDE_LINE} to keep the sheet`;
+      fail(`inconsistent state: ${describeSource(sheet.source, where)} and ${describeSource(other.source, where)} assign different lanes to ${differences.join(", ")}; ${keep}`);
+    }
+  }
+  return { loaded: sheet ?? other, missingImport };
 }
 
 /** Normalize every lane of every row, collecting migrations. */
@@ -281,19 +820,26 @@ function familyEfforts(rows: readonly SheetRow[], matrix: ModelMatrix): Record<s
 export interface StateInput {
   readonly parent: string;
   readonly home?: string;
+  readonly env?: ConfigEnv;
   readonly matrix?: ModelMatrix;
 }
 
-/** Read the parent's sheet (if any), normalize it, and derive the efforts in use per family. */
 export function loadState(input: StateInput): State {
   const matrix = input.matrix ?? loadMatrix();
-  const home = input.home ?? homedir();
   const parent = input.parent;
   if (!(parent in matrix.parents)) fail(`unknown parent ${JSON.stringify(parent)}; expected one of ${Object.keys(matrix.parents).join(", ")}`);
-  const sheetPath = sheetPathFor(parent, home);
-  const integrationPath = integrationPathFor(parent, home);
-  const text = readIfExists(sheetPath);
-  if (text === null) {
+  const where = locate(parent, input.home ?? homedir(), input.env ?? {});
+  const { loaded, missingImport } = selectSource(where, matrix);
+  const located = {
+    parent,
+    configHome: where.configHome,
+    sheetPath: where.sheetPath,
+    integrationPath: where.integrationPath,
+    exists: loaded?.source.kind === "sheet",
+    source: loaded?.source ?? { kind: "first-run" as const },
+    missingImport,
+  };
+  if (loaded === null) {
     const defaults = matrix.roles.map((r) => ({ role: r.role, lanes: roleDefault(matrix, r.role, parent) }));
     const efforts = familyEfforts(defaults, matrix);
     for (const family of matrix.families) {
@@ -302,11 +848,10 @@ export function loadState(input: StateInput): State {
         efforts[family.family] = { status: "unassigned", efforts: [family.defaultEffort], rows: [] };
       }
     }
-    return { parent, sheetPath, integrationPath, exists: false, rows: [], migrations: [], efforts };
+    return { ...located, rows: [], migrations: [], efforts };
   }
-  const { rows, migrations } = normalizeRows(parseSheet(text, matrix), matrix);
-  const efforts = familyEfforts(rows, matrix);
-  return { parent, sheetPath, integrationPath, exists: true, rows, migrations, efforts };
+  const { rows, migrations } = normalizeRows(parseFrom(loaded.text, describeSource(loaded.source, where), matrix), matrix);
+  return { ...located, rows, migrations, efforts: familyEfforts(rows, matrix) };
 }
 
 // --- Probe ledger ------------------------------------------------------------
@@ -472,7 +1017,8 @@ function nativeProbeFor(matrix: ModelMatrix, parent: string, family: Family, eff
 export function buildPlan(input: PlanInput): Plan {
   const matrix = input.matrix ?? loadMatrix();
   const home = input.home ?? homedir();
-  const state = loadState({ parent: input.parent, home, matrix });
+  const env = input.env ?? {};
+  const state = loadState({ parent: input.parent, home, env, matrix });
   const parent = state.parent;
 
   // 1. Role map: loaded rows overlay the complete documented role list.
@@ -533,7 +1079,7 @@ export function buildPlan(input: PlanInput): Plan {
   }
 
   const sheet = renderSheetDocument(rows.map((r) => `${r.role}: ${r.lanes.join(", ")}`).join("\n"));
-  const ledgerPath = ledgerPathFor(parent, home);
+  const ledgerPath = ledgerPathFor(parent, home, env);
   const ledger = parseLedger(snapshotOf(ledgerPath, "probe ledger"), ledgerPath);
   const finalEfforts = familyEfforts(rows, matrix);
   const efforts: Record<string, readonly string[]> = {};
@@ -569,7 +1115,7 @@ export function buildPlan(input: PlanInput): Plan {
     sheetPath: state.sheetPath,
     integrationPath: state.integrationPath,
     ledgerPath,
-    firstRun: !state.exists,
+    firstRun: state.source.kind === "first-run",
     efforts,
     rows,
     sheet,
@@ -606,7 +1152,7 @@ export interface PickResult extends CrossFamilyPick {
  */
 export function pickLane(input: PickInput): PickResult {
   const matrix = input.matrix ?? loadMatrix();
-  const state = loadState({ parent: input.parent, home: input.home, matrix });
+  const state = loadState({ parent: input.parent, home: input.home, env: input.env, matrix });
   const role = roleNamed(matrix, input.role);
   if (!role) fail(`unknown role ${JSON.stringify(input.role)}`);
   const row = state.rows.find((r) => r.role === role.role);
@@ -900,34 +1446,14 @@ export function verifyProbes(plan: Plan, dir: string): { readonly ok: boolean; r
 
 // --- Write -----------------------------------------------------------------
 
-/** The parent integration text after this sheet is wired in; throws on inconsistent state. */
-export function renderIntegration(parent: string, current: string | null, sheet: string): string {
-  if (parent === "claude") {
-    const text = current ?? "";
-    const count = text.split("\n").filter((line) => line.trim() === CLAUDE_INCLUDE_LINE).length;
-    if (count > 1) fail(`${CLAUDE_INCLUDE_LINE} appears ${count} times in CLAUDE.md; keep exactly one include`);
-    if (count === 1) return text;
-    return `${text}${text.length === 0 || text.endsWith("\n") ? "" : "\n"}${CLAUDE_INCLUDE_LINE}\n`;
-  }
-  if (parent === "codex" || parent === "grok") {
-    const text = current ?? "";
-    const block = `${CODEX_BLOCK_BEGIN}\n${sheet}${CODEX_BLOCK_END}\n`;
-    const begins = text.split(CODEX_BLOCK_BEGIN).length - 1;
-    const ends = text.split(CODEX_BLOCK_END).length - 1;
-    if (begins === 0 && ends === 0) {
-      return `${text}${text.length === 0 || text.endsWith("\n") ? "" : "\n"}${block}`;
-    }
-    if (begins !== 1 || ends !== 1) {
-      fail(`AGENTS.md has ${begins} begin and ${ends} end markers; expected exactly one pstack:models block`);
-    }
-    const start = text.indexOf(CODEX_BLOCK_BEGIN);
-    const stop = text.indexOf(CODEX_BLOCK_END);
-    if (stop < start) fail("AGENTS.md pstack:models markers are reversed");
-    const afterEnd = stop + CODEX_BLOCK_END.length;
-    const rest = text.slice(afterEnd).replace(/^\n/, "");
-    return `${text.slice(0, start)}${block}${rest}`;
-  }
-  fail(`no integration shape for parent ${parent}`);
+function renderIntegration(where: Location, current: string | null, sheet: string): string {
+  const text = current ?? "";
+  if (where.wiring === "import") return placeImport(where, text).rendered;
+  const separator = text.length === 0 || text.endsWith("\n") ? "" : "\n";
+  const block = `${CODEX_BLOCK_BEGIN}\n${sheet}${CODEX_BLOCK_END}\n`;
+  const found = findBlock(text, where.integrationPath);
+  if (found === null) return `${text}${separator}${block}`;
+  return `${text.slice(0, found.start)}${block}${text.slice(found.end).replace(/^\n/, "")}`;
 }
 
 export type WriteOutcome = "created" | "updated" | "unchanged";
@@ -959,17 +1485,13 @@ function snapshotOf(path: string, label: string): string | null {
   return readFileSync(path, "utf8");
 }
 
-/**
- * Commit the plan: verify its probes, render the integration and the ledger,
- * compare with the current bytes, and only then write sheet, integration, and
- * ledger, read each back, and restore every snapshot on any failure. The ledger
- * gains one entry per family this plan probed. An unchanged rerun touches nothing.
- */
-export function writeSheet(plan: Plan, dir: string, options: { readonly home?: string } = {}): WriteResult {
-  const home = options.home ?? homedir();
-  const sheetPath = sheetPathFor(plan.parent, home);
-  const integrationPath = integrationPathFor(plan.parent, home);
-  const ledgerPath = ledgerPathFor(plan.parent, home);
+export function writeSheet(plan: Plan, dir: string, options: { readonly home?: string; readonly env?: ConfigEnv } = {}): WriteResult {
+  const where = locate(plan.parent, options.home ?? homedir(), options.env ?? {});
+  const { sheetPath, integrationPath, ledgerPath } = where;
+  if (plan.sheetPath !== sheetPath || plan.integrationPath !== integrationPath || plan.ledgerPath !== ledgerPath) {
+    const variable = targetFor(plan.parent).variable;
+    fail(`${join(dir, PLAN_FILE)} was made for the config home ${dirname(plan.sheetPath)}, but this write resolves ${where.configHome}; run write with the --home${variable === null ? "" : ` and ${variable.name}`} that plan used, or run plan again`);
+  }
 
   const probes = verifyProbes(plan, dir);
   if (!probes.ok) {
@@ -979,7 +1501,7 @@ export function writeSheet(plan: Plan, dir: string, options: { readonly home?: s
   const sheetBefore = snapshotOf(sheetPath, "sheet");
   const integrationBefore = snapshotOf(integrationPath, "integration file");
   const ledgerBefore = snapshotOf(ledgerPath, "probe ledger");
-  const integrationAfter = renderIntegration(plan.parent, integrationBefore, plan.sheet);
+  const integrationAfter = renderIntegration(where, integrationBefore, plan.sheet);
   const ledgerAfter = recordProbes(ledgerBefore, ledgerPath, plan, dir);
 
   const targets = [
@@ -1047,12 +1569,18 @@ const USAGE = `Usage: setup-pstack <state|plan|probe|attest|write|pick> [options
          operator's order. The parent's own provider always counts as a writer; name every
          other provider that wrote with --executor. Exit 1 when no lane is eligible.
 
+The sheet, the ledger and the integration live in the parent's config home: CLAUDE_CONFIG_DIR
+(claude) or CODEX_HOME (codex), an absolute path, else <home>/.claude, <home>/.codex, <home>/.grok.
+An empty CODEX_HOME counts as unset. An empty CLAUDE_CONFIG_DIR stops state, plan, write and
+pick for the claude parent.
+
 Exit codes: 0 ok, 1 a probe failed, the write was refused, or no lane is eligible, 64 usage.
 `;
 
 interface Io {
   readonly stdout: (value: string) => void;
   readonly stderr: (value: string) => void;
+  readonly env?: ConfigEnv;
 }
 
 class CliUsageError extends Error {}
@@ -1082,6 +1610,7 @@ function parseRoleChanges(values: readonly string[] | undefined): Record<string,
 export async function main(argv: readonly string[], io: Io = {
   stdout: (v) => process.stdout.write(v),
   stderr: (v) => process.stderr.write(v),
+  env: process.env,
 }): Promise<number> {
   try {
     const { parseArgs } = await import("node:util");
@@ -1116,6 +1645,7 @@ export async function main(argv: readonly string[], io: Io = {
     const [command, ...rest] = parsed.positionals;
     if (rest.length > 0) usage(`unexpected arguments: ${rest.join(" ")}`);
     const home = typeof parsed.values.home === "string" ? parsed.values.home : homedir();
+    const env = io.env ?? {};
     const requireParent = (): string => {
       const parent = parsed.values.parent;
       if (typeof parent !== "string") usage("--parent is required");
@@ -1130,13 +1660,14 @@ export async function main(argv: readonly string[], io: Io = {
 
     switch (command) {
       case "state": {
-        emit(loadState({ parent: requireParent(), home }));
+        emit(loadState({ parent: requireParent(), home, env }));
         return 0;
       }
       case "plan": {
         const plan = buildPlan({
           parent: requireParent(),
           home,
+          env,
           efforts: parseAssignments(parsed.values.effort as string[] | undefined, "--effort"),
           roles: parseRoleChanges(parsed.values.role as string[] | undefined),
         });
@@ -1175,7 +1706,7 @@ export async function main(argv: readonly string[], io: Io = {
       case "write": {
         const dir = requireDir();
         const plan = loadPlan(dir);
-        emit(writeSheet(plan, dir, { home }));
+        emit(writeSheet(plan, dir, { home, env }));
         return 0;
       }
       case "pick": {
@@ -1185,7 +1716,7 @@ export async function main(argv: readonly string[], io: Io = {
           .flatMap((value) => value.split(","))
           .map((value) => value.trim())
           .filter((value) => value.length > 0);
-        const result = pickLane({ parent: requireParent(), home, role: role[0], executors });
+        const result = pickLane({ parent: requireParent(), home, env, role: role[0], executors });
         emit(result);
         return result.chosen === null ? 1 : 0;
       }

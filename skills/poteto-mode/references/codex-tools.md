@@ -2,6 +2,25 @@
 
 pstack skills retain Claude Code tool language (`Skill`, `Agent`, `AskUserQuestion`) in shared prose. On Codex the files are the same; only those tool names resolve differently. Model execution is not translated here. Read [`provider-dispatch.md`](provider-dispatch.md) for the parent-owned Claude/Codex/Grok route table and provider-qualified descriptors.
 
+## Harness config homes
+
+Resolve the current parent's config home once: Claude Code uses `CLAUDE_CONFIG_DIR` when it is set, otherwise `$HOME/.claude`; Codex uses nonempty `CODEX_HOME`, otherwise `$HOME/.codex`. The equivalent quoted shell expressions are:
+
+```bash
+"${CLAUDE_CONFIG_DIR-$HOME/.claude}"
+"${CODEX_HOME:-$HOME/.codex}"
+```
+
+Codex treats an empty `CODEX_HOME` as unset. Claude Code 2.1.289 does not, and with `CLAUDE_CONFIG_DIR` set but empty it reads `settings.json` and `CLAUDE.md` from the directory it starts in. So setup and `authorize.ts` stop on an empty `CLAUDE_CONFIG_DIR` instead of picking a home. Preserve spaces in the resolved path by quoting shell file operands. In shared instructions, `<config-home>` means this resolved parent-specific directory, not literal text to write. Use that same home for setup's sheet and integration writes, snapshots, restoration, and readback. This port keeps Grok Build at `$HOME/.grok`. Grok CLI 1.0.46 documents a `GROK_HOME` override, which neither setup nor the runner follows yet. In this port `setup-pstack.ts` resolves the home with `configHomeFor` and keeps the probe ledger there too, and `authorize.ts` checks the `settings.json` or `config.toml` of the same home. Both scripts refuse a variable that is not an absolute path.
+
+The Claude integration is the one `@` import line in `<config-home>/CLAUDE.md` whose target's basename is `pstack-models.md`, regardless of its existing directory or path spelling. Select current state using [setup-pstack step 2](../../setup-pstack/SKILL.md#2-load-current-state). When `<config-home>` is the default home, render exactly the legacy line:
+
+```text
+@~/.claude/pstack-models.md
+```
+
+Only when `CLAUDE_CONFIG_DIR` redirects the home, render exactly `@./pstack-models.md`. This relative import resolves from the importing file's directory, where the sheet also lives, so the import line contains no config-directory characters. On a rerun, replace that one line in place, preserving all unrelated bytes. If zero matching import lines exist, append one. If more than one exists, stop and report inconsistent state before either write; do not append another import or guess which one to replace. A `CLAUDE_CONFIG_DIR` that names `$HOME/.claude` is still the default home and keeps the legacy line. The script reads `CLAUDE.md` with the block rules of marked 16, the Markdown lexer of Claude Code 2.1.289. An import on a plain line, in a plain list item or in a plain quote counts. One in front matter, a fenced or indented code block, an HTML block, a code span or a link definition does not. A mention the script cannot place the way Claude Code does stops setup as inconsistent state, for example one glued to emphasis, one inside a link, or one after a list that holds a fenced code block. A new import goes at the end of the file, after a blank line when the last paragraph would leave it in doubt. When the script cannot be sure that the end loads, as inside a code block, an HTML block or a comment, it goes at the top, after any front matter and followed by a blank line.
+
 ## Tool actions
 
 | pstack / Claude action | Codex equivalent |
@@ -23,7 +42,7 @@ pstack skills retain Claude Code tool language (`Skill`, `Agent`, `AskUserQuesti
 | Ask the human a fixed-choice question (`AskUserQuestion`) | Ask in plain text and let the user answer. Codex has no structured-choice tool. |
 | Transcript directory (show-me-your-work audit, session pickup) | `~/.codex/sessions/`, same no-glob rule |
 
-Subagent dispatch needs `multi_agent` enabled. Add to `~/.codex/config.toml`:
+Subagent dispatch needs `multi_agent` enabled. Add to `<config-home>/config.toml`, using Codex's [config-home rule](#harness-config-homes):
 
 ```toml
 [features]
@@ -68,4 +87,4 @@ Some triggers name skills that ship with Claude Code, not pstack. They do not ex
 
 ## Instructions file
 
-Where a pstack skill says "your instructions file", on Codex that is `AGENTS.md` (project root, plus `~/.codex/AGENTS.md` global). On Claude Code it is `CLAUDE.md`.
+Where a pstack skill says "your instructions file", on Codex that is `AGENTS.md` (project root, plus `<config-home>/AGENTS.md` global). On Claude Code it is `CLAUDE.md` (project root, plus `<config-home>/CLAUDE.md` global). Resolve the global directory with the [config-home rule](#harness-config-homes).
