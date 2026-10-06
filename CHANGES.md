@@ -1842,3 +1842,11 @@ Verificação local: 642 testes Node, 74 testes Bun e typecheck, matriz e agente
 O pstack deixa de presumir que todo host Codex oferece `close_agent` ou que concluir uma tarefa libera sua vaga. A referência compartilhada `native-lifecycle.md` orienta a consulta às ferramentas disponíveis, a reserva de capacidade para fases posteriores e a execução em lotes. A reutilização de um agente ocioso exige modelo e esforço compatíveis, acesso às ferramentas e contexto adequado ao papel. Candidatos e opiniões independentes mantêm contextos separados.
 
 Arena, Swarm, Interrogate, How, Why, Reflect e poteto-mode seguem essa regra. Esgotar vagas não autoriza trocar o modelo nem abrir uma sessão CLI do mesmo provedor como substituta. Uma tarefa sem execução válida fica registrada como lacuna, conforme a política do fluxo. A mudança ajusta as instruções do plugin e não altera os limites do host.
+
+# 0.5.18. Seleção da rota Grok conforme a tarefa. 2026-10-06
+
+Pais Codex e Claude Code preservam o provider, o modelo e o esforço configurados e escolhem o transporte antes de lançar um worker Grok. A rota CLI atende tarefas compatíveis com suas ferramentas e seu confinamento. Tarefas autorizadas que exigem recursos bloqueados nessa rota usam ACP com acesso completo. A escolha cabe ao pai, sem exigir que o usuário peça ACP. Requisitos de confinamento e o sandbox do pai continuam valendo.
+
+A regra fica em `provider-dispatch.md`, com referências em Swarm e poteto-mode. A ausência dos drivers embutidos `run` e `verify` deixa de justificar a troca para um modelo nativo; o pai fornece o driver do projeto quando aplicável e escolhe uma rota com as ferramentas necessárias. A referência pública explica o comportamento nos dois harnesses.
+
+A prova inicial com Grok 4.7, servido como `grok-4.7-build`, concluiu pela rota ACP a partir do Codex: abriu um PTY, escreveu e leu um marcador e fechou os descritores. Os três cenários documentais distinguiram revisão com somente leitura, PTY autorizado e PTY incompatível com confinamento obrigatório. Essa prova não executou uma raiz Claude Code nem Chromium.
