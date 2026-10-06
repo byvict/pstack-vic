@@ -1354,6 +1354,24 @@ describe("the Claude sheet import", () => {
         assert.equal(existsSync(join(cfg, "pstack-models.md")), false);
       }
     });
+
+    it(`still refuses a list target whose markup changes the basename with ${label}`, () => {
+      const cfg = join(home, "cfg");
+      const env = { CLAUDE_CONFIG_DIR: cfg };
+      for (const text of [
+        "- *<pre>   @/abs/pstack-models.md</div><?---",
+        "- @./pstack-models.md*",
+        "- @./pstack-models.md_",
+        "- @./pstack-models.md`",
+      ]) {
+        const before = `${text}${lineEnd}`;
+        const integration = put(join(cfg, "CLAUDE.md"), before);
+        assert.throws(() => loadState({ parent: "claude", home, env, matrix }), /markup touches it/);
+        assert.throws(() => buildPlan({ parent: "claude", home, env, matrix }), /markup touches it/);
+        assert.equal(readFileSync(integration, "utf8"), before);
+        assert.equal(existsSync(join(cfg, "pstack-models.md")), false);
+      }
+    });
   }
 
   it("carries a copied profile's imported sheet into the redirected home and replaces the one import in place", async () => {
