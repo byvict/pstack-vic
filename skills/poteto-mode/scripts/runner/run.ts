@@ -222,7 +222,7 @@ function unavailableStatus(value: string, requestedModel: string): LaneFailure {
   ) {
     return "unauthenticated";
   }
-  if (/\b(model[ \t]+(?:is[ \t]+)?(not found|unknown|unavailable|unsupported|not supported|invalid)|invalid[ \t]+model)\b/i.test(value)) {
+  if (/(?:^|[^A-Za-z0-9_.-])(?:model[ \t]+(?:is[ \t]+)?(not found|unknown|unavailable|unsupported|not supported|invalid)\b|invalid[ \t]+model(?=$|[^A-Za-z0-9_.-]))/i.test(value)) {
     return "unavailable-model";
   }
   for (const refusal of value.matchAll(/(?:^|[ \t])(?:model[ \t]*:[ \t]*)?(?:"([A-Za-z0-9_.-]+)"|'([A-Za-z0-9_.-]+)'|\[([A-Za-z0-9_.-]+)\]|([A-Za-z0-9_.-]+))[ \t]+(?:is[ \t]+)?(not found|unknown|unavailable|unsupported|not supported|invalid)\b/gim)) {

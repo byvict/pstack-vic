@@ -883,7 +883,8 @@ describe("runLane", () => {
   for (const message of ["grok-4.70 is not supported", "feature is not supported",
     "Available models: grok-4.7, feature is not supported", "modeling is not supported",
     "Available model: grok-4.7, feature is not supported", "model: grok-4.7; feature is not supported",
-    "grok-4.7,gpt-6-sol is not supported", "grok-4.7:feature is not supported"]) {
+    "grok-4.7,gpt-6-sol is not supported", "grok-4.7:feature is not supported",
+    "other-model is not supported", "a.model is not supported", "invalid model-build"]) {
     it(`keeps an unrelated refusal separate from the requested Grok id: ${message}`, async () => {
       process.env.FAKE_GROK_PREFLIGHT_OUTPUT = "You are logged in.\nAvailable models: grok-4.7";
       process.env.FAKE_GROK_PREFLIGHT_ERROR = message;
@@ -903,7 +904,8 @@ describe("runLane", () => {
       const model = options(provider).model;
       const messages = [`Available models: ${model}, feature is not supported`, "modeling is not supported",
         `Available model: ${model}, feature is not supported`, `model: ${model}; feature is not supported`,
-        `${model},gpt-6.1-sol is not supported`, `${model}:feature is not supported`];
+        `${model},gpt-6.1-sol is not supported`, `${model}:feature is not supported`,
+        "other-model is not supported", "a.model is not supported", "invalid model-build"];
       for (const [index, message] of messages.entries()) {
         writeFileSync(join(bin, cliOf(provider)), scriptedModel("", message, 1));
         const input = options(provider, `unrelated-subject-${index}`);
@@ -917,12 +919,13 @@ describe("runLane", () => {
       }
     });
 
-    for (const label of ["compound comma", "compound colon", "ambiguous model label"]) {
+    for (const label of ["compound comma", "compound colon", "ambiguous model label", "neighboring label token"]) {
       it(`keeps ${label} separate during ${provider} failed preflight`, { timeout: GROK_RETRY_RUN_BUDGET_MS }, async () => {
         const input = options(provider, "unrelated-preflight-subject");
         const message = label === "compound comma" ? `${input.model},gpt-6.1-sol is not supported`
           : label === "compound colon" ? `${input.model}:feature is not supported`
-            : `Available model: ${input.model}, feature is not supported`;
+            : label === "ambiguous model label" ? `Available model: ${input.model}, feature is not supported`
+              : `${input.model}\nother-model is not supported`;
         const modelStarted = join(scratch, "unrelated-preflight.started");
         process.env.FAKE_MODEL_STARTED_PATH = modelStarted;
         writeFileSync(join(bin, cliOf(provider)), fake.replace(
