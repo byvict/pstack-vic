@@ -404,11 +404,11 @@ function scriptedModel(
   );
 }
 
-// The scripts change only the model path, where they sleep, exit nonzero or
-// publish markers, so the warm exec takes the preflight branch, which exits first.
+const GROK_PREFLIGHT_ARGS = ["models"];
+
 function writeGrok(script: string): void {
   writeFileSync(join(bin, cliOf("grok")), script);
-  warm("grok", ["models"]);
+  warm("grok", GROK_PREFLIGHT_ARGS);
 }
 
 describe("issue78 terminal results", () => {
