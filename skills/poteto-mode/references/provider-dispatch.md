@@ -69,7 +69,7 @@ Skills name roles by the labels below, the same labels `/setup-pstack` writes to
 | `interrogate reviewers` | Each lane reviews the diff adversarially from its own angle; a different provider per lane widens the blind spots covered. | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` |
 | `trail reviewer pool` | Reviews the decision trail of a finished run; one lane runs, the first entry whose provider wrote none of the work. | `claude:claude-opus-5-5@xhigh`, `codex:gpt-6.1-sol@xhigh`, `grok:grok-4.7@xhigh` | `claude:claude-opus-5-5@xhigh`, `codex:gpt-6.1-sol@xhigh`, `grok:grok-4.7@xhigh` | `claude:claude-opus-5-5@xhigh`, `codex:gpt-6.1-sol@xhigh`, `grok:grok-4.7@xhigh` |
 
-A list is a panel: one lane per entry, in this order. A row whose label ends in `pool` is the exception: one lane runs, picked by the Cross-family selection rule below. A role whose parent columns differ takes a family native to each parent. Why and Reflect adapt the pinned upstream defaults as described below. Aliases run on the parent model through its native subagent primitive.
+A list is a panel: one lane per entry, in this order. A row whose label ends in `pool` is the exception: one lane runs, picked by the Cross-family selection rule below. A role whose parent columns differ takes a family native to each parent. Why and Reflect adapt the pinned upstream defaults as described below. Aliases use the parent model and effort, preferring native dispatch.
 
 <!-- role-defaults:end -->
 
@@ -91,9 +91,9 @@ The top-level harness resolves the route once. A child receives an assigned prov
 
 An autopilot owner is the one child that dispatches. It is the parent of the lanes it starts, and it resolves their routes by this document on the harness its root runs on. A pool lane stays with the top-level session (see **Cross-family selection**).
 
-The route table is the one rendered above from `model-matrix.json`: a provider is native in exactly one parent and goes through the external runner everywhere else.
+The route table rendered above from `model-matrix.json` selects the preferred route. A provider is native in exactly one parent. If that parent's native route cannot meet the task, apply [When native dispatch is unavailable](#when-native-dispatch-is-unavailable). The matrix and model sheet keep the configured provider, model, and effort.
 
-`inherit-parent` and `auto` remain aliases. They use the parent's current model and effort through its native subagent primitive. In a panel they still consume one lane, but they reduce provider diversity; say so in the synthesis record.
+`inherit-parent` and `auto` remain aliases. They use the parent's current model and effort, preferring its native subagent primitive. Before using the runner, resolve the alias to an observed provider, registered model, and selectable effort. If any part is unknown or unsupported by the runner, record a gap instead of guessing. In a panel aliases still consume one lane, but they reduce provider diversity; say so in the synthesis record.
 
 ## Cross-family selection
 
@@ -137,11 +137,17 @@ Before native fan-out or a later phase, read [native-lifecycle.md](native-lifecy
 - Grok Build: match the descriptor to `pstack-<stem>-<effort>` and call `spawn_subagent` with the exact advertised plugin agent name, `background: true`, the complete task, access mode and unique output location. The agent definition carries the model and effort. Use a dedicated worktree for a writer. Drain the returned ID through `get_command_or_subagent_output`. See [grok-tools.md](grok-tools.md) for owners and aliases.
 - Codex: call `spawn_agent` with the descriptor's model and `reasoning_effort`, the complete task, grounding paths, access mode, and unique output location. Read the current tool schema; if model overrides require an unforked or limited-history spawn, use that mode and pass the complete brief explicitly. Use an isolated worktree for a writer. Codex subagents already run concurrently.
 
-Do not send a same-provider descriptor to the external runner. It rejects that call because the descriptor belongs to native dispatch. A missing native tool or exhausted capacity follows the lifecycle contract's dropout policy; it does not change the route.
+### When native dispatch is unavailable
+
+The parent may assign a fresh session through the runner to its own provider when native tools are absent, the host cannot select the configured model or effort, or capacity cannot supply the required context after the lifecycle checks. This is an execution choice within the assigned task; it needs no exception approval. The parent records the observed reason and keeps its real `--parent`, configured provider, model, effort, and access scope. The runner validates the request and executes it; it does not discover native capacity or choose another route after failure.
+
+Before dispatch, check that the runner's execution mode supplies every required capability. Give each session a complete brief, grounding paths, the exact revision or snapshot under review, and unique prompt, output, and receipt paths. Use a dedicated worktree for a writer. Independent reviewers receive fresh contexts without the author's conversation or other reviewers' conclusions. Same-provider sessions remain same-provider opinions for cross-family selection.
+
+CLI sessions do not inherit conversation tools. Follow [MCP-dependent tasks](#mcp-dependent-tasks) before assigning source-dependent work. Keep unsupported tasks as named gaps under the calling skill's policy; a CLI response cannot stand in for a required source call. A `complete` receipt proves a finished model invocation, not task coverage or approval. Record the runner receipt alongside the original native failure or capability observation. Each required lane needs one valid result; neither a failed native attempt nor its replacement counts as an extra opinion. If an earlier spawn has an uncertain outcome, reconcile it before starting a replacement.
 
 ## MCP-dependent tasks
 
-Preserve the configured model and effort when a task needs MCP tools. A same-provider descriptor uses native dispatch with the required MCPs available; `inherit-parent` and `auto` are optional model choices, not MCP requirements. Model selection and task context are separate: pass the routed skill's required prompts, grounding paths, transcript or digest, and evidence to the agent.
+Preserve the configured model and effort when a task needs MCP tools. Prefer native dispatch with the required MCPs available. A same-provider CLI session does not inherit those MCPs; use an alternative only when its execution mode explicitly provides the required access. `inherit-parent` and `auto` are optional model choices, not MCP requirements. Model selection and task context are separate: pass the routed skill's required prompts, grounding paths, transcript or digest, and evidence to the agent.
 
 Choose an execution mode that retains the required tools. When a platform's read-only or Ask mode strips MCPs, use its MCP-capable agent mode and instruct the agent not to write. If the assigned runtime cannot access a required source, record the access gap under the calling skill's coverage or dropout policy and preserve the selected model. A successful tool call and its result establish source access; a tool listing alone does not.
 

@@ -21,6 +21,12 @@ function options(overrides: Partial<RunnerOptions> = {}): RunnerOptions {
 }
 
 describe("invocationCommand", () => {
+  it("keeps the same sandbox and no-delegation controls for same-provider sessions", () => {
+    for (const [provider, model] of [["codex", "gpt-6.1-sol"], ["claude", "fable"], ["grok", "grok-4.7"]]) {
+      const external = options({ parent: provider === "codex" ? "claude" : "codex", provider, model, effort: "xhigh" });
+      assert.deepEqual(invocationCommand({ ...external, parent: provider }), invocationCommand(external));
+    }
+  });
   it("pins Codex model, effort, sandbox, cwd, and JSONL output", () => {
     const spec = invocationCommand(options());
     assert.equal(spec.command, "codex");

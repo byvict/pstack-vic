@@ -24,11 +24,11 @@ No shell, `claude plugin marketplace add byvict/pstack-vic` e `claude plugin ins
 ### Codex
 
 ```shell
-codex plugin marketplace add byvict/pstack-vic --ref v0.5.16
+codex plugin marketplace add byvict/pstack-vic --ref v0.5.17
 codex plugin add pstack@pstack-vic
 ```
 
-O Codex descobre as skills sob o namespace `pstack` (`pstack:poteto-mode`, `pstack:tdd`…), que vem de `.codex-plugin/plugin.json`; os `principle-*` também aparecem, porque `user-invocable: false` é do Claude Code. `poteto-mode` só entra quando você o pede pelo nome: `skills/poteto-mode/agents/openai.yaml` desliga a invocação implícita (`allow_implicit_invocation: false`). Para as skills que fazem fan-out (`interrogate`, `arena`, `how`, `why`, `reflect`, `architect`, `swarm`), ligue subagents em `~/.codex/config.toml`; sem isso a lane nativa do Codex vira dropout nomeado e as lanes externas seguem:
+O Codex descobre as skills sob o namespace `pstack` (`pstack:poteto-mode`, `pstack:tdd`…), que vem de `.codex-plugin/plugin.json`; os `principle-*` também aparecem, porque `user-invocable: false` é do Claude Code. `poteto-mode` só entra quando você o pede pelo nome: `skills/poteto-mode/agents/openai.yaml` desliga a invocação implícita (`allow_implicit_invocation: false`). Para as skills que fazem fan-out (`interrogate`, `arena`, `how`, `why`, `reflect`, `architect`, `swarm`), ligue subagents em `~/.codex/config.toml`. Quando faltam ferramentas nativas ou vagas, o coordenador pode usar uma sessão nova do mesmo provedor pelo runner, preservando modelo e esforço. A alternativa precisa atender às ferramentas e ao isolamento da tarefa; siga [Provider dispatch](../skills/poteto-mode/references/provider-dispatch.md#when-native-dispatch-is-unavailable). Uma tarefa sem rota válida fica como lacuna:
 
 ```toml
 [features]

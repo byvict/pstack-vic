@@ -205,13 +205,14 @@ describe("runProbeLane, simulated parent", () => {
     assert.deepEqual(Object.keys(seen).filter((key) => key === "CLAUDECODE" || key.startsWith("CLAUDE_CODE_")), ["CLAUDE_CODE_OAUTH_TOKEN"]);
   });
 
-  it("leaves the environment alone for a parent that really runs the lane", async () => {
+  it("clears session identity and preserves credentials when the real parent runs the lane", async () => {
     const dump = join(root, "env-real.json");
     const probe = lane({ provider: "claude", model: "claude-opus-5-5" }, { ...identity, FAKE_ENV_DUMP: dump });
     await runProbeLane(probe);
     const seen = JSON.parse(readFileSync(dump, "utf8"));
-    assert.equal(seen.CLAUDECODE, "1");
-    assert.equal(seen.CLAUDE_CODE_SESSION_ID, "s-1");
+    assert.equal(seen.CLAUDECODE, undefined);
+    assert.equal(seen.CLAUDE_CODE_SESSION_ID, undefined);
+    assert.equal(seen.CLAUDE_CODE_OAUTH_TOKEN, "fake-token");
     assert.ok(existsSync(probe.receiptPath));
   });
 });

@@ -47,6 +47,11 @@ const isPreflight =
   (name === "codex" && args[0] === "login") ||
   (name === "grok" && args[0] === "models");
 const stage = isPreflight ? "preflight" : "model";
+if (process.env.FAKE_REJECT_PARENT_IDENTITY === "1" &&
+    (process.env.CLAUDECODE || process.env.CODEX_THREAD_ID)) {
+  err("inherited parent session identity");
+  process.exit(1);
+}
 const startedPath = isPreflight
   ? process.env.FAKE_PREFLIGHT_STARTED_PATH
   : process.env.FAKE_MODEL_STARTED_PATH;
@@ -143,8 +148,9 @@ if (stage === "model" && process.env.FAKE_SELF_SIGNAL) {
 if (name === "claude") {
   out(JSON.stringify({result:"CLAUDE_OK",session_id:"c1",usage:{input_tokens:10,output_tokens:2},total_cost_usd:0.01,modelUsage:{[reportedModel]:{}}}));
 } else if (name === "codex") {
-  out(JSON.stringify({type:"thread.started",thread_id:"o1"}));
-  out(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:"CODEX_OK"}}));
+  const prompt = process.env.FAKE_ECHO_PROMPT === "1" ? readFileSync(0, "utf8") : "CODEX_OK";
+  out(JSON.stringify({type:"thread.started",thread_id:process.env.FAKE_ECHO_PROMPT === "1" ? "codex-" + process.pid : "o1"}));
+  out(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:prompt}}));
   out(JSON.stringify({type:"turn.completed",usage:{input_tokens:20,cached_input_tokens:5,output_tokens:3,reasoning_output_tokens:1}}));
 } else {
   out(JSON.stringify({type:"assistant",message:{content:[{type:"text",text:"progress"}]}}));
@@ -344,6 +350,8 @@ const PREFLIGHT_DEADLINE_MS = 3_000;
 const PREFLIGHT_HOLD_MS = 10 * PREFLIGHT_DEADLINE_MS;
 
 const FAKE_ENV = [
+  "FAKE_REJECT_PARENT_IDENTITY",
+  "FAKE_ECHO_PROMPT",
   "FAKE_TIMEOUT",
   "FAKE_INVALID_MODEL",
   "FAKE_CANCEL",
@@ -1183,9 +1191,70 @@ describe("runLane", () => {
     assert.equal(receipt(retry.receiptPath).status, "complete");
   });
 
-  it("rejects same-provider recursion", async () => {
-    const input = { ...options("claude"), parent: "claude" };
-    await assert.rejects(runLane(input), /native to parent/);
+  for (const provider of PROVIDERS) {
+    it(`runs a fresh ${provider} session for a ${provider} parent`, async () => {
+      process.env.CLAUDECODE = "1";
+      process.env.CODEX_THREAD_ID = "retained-parent";
+      process.env.FAKE_REJECT_PARENT_IDENTITY = "1";
+      const input = { ...options(provider), parent: provider };
+      const result = await runLane(input);
+      assert.equal(result.exitCode, 0);
+      matchObject(receipt(input.receiptPath), {
+        status: "complete", parent: provider, provider,
+        model: input.model, effort: input.effort, mode: "read-only",
+      });
+      assert.equal(readFileSync(input.outputPath, "utf8"), `${provider.toUpperCase()}_OK`);
+    });
+  }
+
+  it("runs two rounds of 14 Codex reviews in small waves with separate prompts, sessions, and receipts", async () => {
+    process.env.FAKE_ECHO_PROMPT = "1";
+    process.env.FAKE_REJECT_PARENT_IDENTITY = "1";
+    process.env.CODEX_THREAD_ID = "retained-parent";
+    const sessions = new Set<string>();
+    for (let round = 1; round <= 2; round += 1) {
+      const inputs = Array.from({ length: 14 }, (_, index) => {
+        const name = `round-${round}-review-${index + 1}`;
+        const promptPath = join(scratch, `${name}.md`);
+        writeFileSync(promptPath, `Review ${name} at commit abc123.\n`);
+        return { ...options("codex", name), parent: "codex", model: "gpt-6.1-sol", effort: "xhigh", promptPath };
+      });
+      for (let offset = 0; offset < inputs.length; offset += 3) {
+        const wave = inputs.slice(offset, offset + 3);
+        const results = await Promise.all(wave.map((input) => runLane(input)));
+        for (const [index, result] of results.entries()) {
+          const input = wave[index];
+          assert.equal(result.exitCode, 0);
+          const recorded = receipt(input.receiptPath);
+          matchObject(recorded, {
+            status: "complete", parent: "codex", provider: "codex",
+            model: "gpt-6.1-sol", effort: "xhigh", mode: "read-only",
+            promptPath: input.promptPath, outputPath: input.outputPath,
+          });
+          assert.ok(recorded.sessionId !== null);
+          assert.equal(sessions.has(recorded.sessionId), false);
+          sessions.add(recorded.sessionId);
+          assert.equal(readFileSync(input.outputPath, "utf8"), readFileSync(input.promptPath, "utf8"));
+        }
+      }
+    }
+    assert.equal(sessions.size, 28);
+  });
+
+  it("does not turn a same-provider CLI failure into an approval", async () => {
+    process.env.FAKE_INVALID_MODEL = "1";
+    const input = { ...options("codex"), parent: "codex" };
+    const result = await runLane(input);
+    assert.notEqual(result.exitCode, 0);
+    assert.equal(receipt(input.receiptPath).status, "unavailable-model");
+    assert.equal(existsSync(input.outputPath), false);
+  });
+
+  it("refuses to forward conversation MCP configuration through a same-provider CLI", async () => {
+    const input = { ...options("codex"), parent: "codex", mcpConfigPath: join(scratch, "mcp.json") };
+    await assert.rejects(runLane(input), /MCP configuration requires --transport grok-acp/);
+    assert.equal(existsSync(input.outputPath), false);
+    assert.equal(existsSync(input.receiptPath), false);
   });
 
   it("rejects a versioned Claude family before it can stay pinned", async () => {
@@ -1268,29 +1337,23 @@ describe("evidence", () => {
 });
 
 describe("childEnvironment", () => {
-  it("removes only inherited runtime identity needed to avoid nested detection", () => {
+  it("removes both parents' session identities while preserving configuration and credentials", () => {
     const source = {
       PATH: "/bin",
       CODEX_THREAD_ID: "codex",
       CODEX_CI: "1",
       CLAUDECODE: "1",
       CLAUDE_CODE_CHILD_SESSION: "1",
+      CODEX_HOME: "/config/codex",
+      CLAUDE_CONFIG_DIR: "/config/claude",
+      OPENAI_API_KEY: "fixture-key",
       KEEP_ME: "yes",
     };
-    assert.deepEqual(childEnvironment("claude", source), {
+    assert.deepEqual(childEnvironment(source), {
       PATH: "/bin",
-      CLAUDECODE: "1",
-      CLAUDE_CODE_CHILD_SESSION: "1",
-      KEEP_ME: "yes",
-    });
-    assert.deepEqual(childEnvironment("codex", source), {
-      PATH: "/bin",
-      CODEX_THREAD_ID: "codex",
-      CODEX_CI: "1",
-      KEEP_ME: "yes",
-    });
-    assert.deepEqual(childEnvironment("grok", source), {
-      PATH: "/bin",
+      CODEX_HOME: "/config/codex",
+      CLAUDE_CONFIG_DIR: "/config/claude",
+      OPENAI_API_KEY: "fixture-key",
       KEEP_ME: "yes",
     });
   });
