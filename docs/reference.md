@@ -60,7 +60,7 @@ codex plugin add pstack@pstack-vic
 
 Para desfazer no Codex, rode `codex plugin remove pstack@pstack-vic` e depois `codex plugin marketplace remove pstack-vic`.
 
-Rode `/setup-pstack` uma vez em cada pai para escrever o sheet de modelos (`~/.claude/pstack-models.md` e `~/.codex/pstack-models.md`). O último passo dele confere a [autorização permanente](#autorização-permanente), que o autopilot e o playbook Shipping exigem para mergear sem aprovação humana. Depois, `/poteto-mode` é o ponto de entrada para qualquer tarefa que peça rigor.
+Rode `/setup-pstack` uma vez em cada pai para escrever o sheet de modelos (`~/.claude/pstack-models.md` e `~/.codex/pstack-models.md`). Com `CLAUDE_CONFIG_DIR` ou `CODEX_HOME` definido e não vazio, o sheet, o ledger de probes e a integração vão para esse diretório, e `authorize.ts` confere o `settings.json` ou o `config.toml` de lá ([Harness config homes](../skills/poteto-mode/references/codex-tools.md#harness-config-homes)). O último passo dele confere a [autorização permanente](#autorização-permanente), que o autopilot e o playbook Shipping exigem para mergear sem aprovação humana. Depois, `/poteto-mode` é o ponto de entrada para qualquer tarefa que peça rigor.
 
 ### Publicar uma versão
 
