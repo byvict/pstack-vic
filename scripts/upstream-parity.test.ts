@@ -241,17 +241,12 @@ describe("upstream-parity: table shape", () => {
   const files = [{ upstream: "pstack/skills/poteto-mode/playbooks/a.md", local: FILE }];
   const row = { kind: "platform", id: "T6", reason: "The installed plugin is the stable source.", pairs: [{ file: FILE, from: "a", to: "b", count: 1 }] };
 
-  it("preserves safety provenance alongside literal substitution pairs", () => {
-    const safety = { ...row, kind: "safety", source: "docs/adr/0005-autopilot-substitui-converge.md#excecao-aprovada-na-052" };
-    assert.deepEqual(parseTable(JSON.stringify({ files, rows: [safety] })).rows, [safety]);
-  });
-
-  it("rejects unclassified rows, missing provenance and silently discarded metadata", () => {
+  it("rejects policy additions and unknown metadata", () => {
     for (const invalid of [
       { ...row, kind: undefined },
       { ...row, kind: "editorial" },
       { ...row, kind: "safety" },
-      { ...row, kind: "safety", source: " " },
+      { ...row, kind: "safety", source: "ADR" },
       { ...row, source: "a safety rule mislabeled as platform" },
       { ...row, sources: ["typo"] },
       { ...row, pairs: [{ ...row.pairs[0], source: "ignored pair field" }] },
@@ -367,19 +362,19 @@ function run(repo: string, ...args: string[]) {
 }
 
 describe("upstream-parity: check and --write on a fixture checkout", () => {
-  it("rejects missing safety provenance before writing any file", () => {
+  it("rejects a safety policy even with provenance before writing any file", () => {
     const repo = fixture({ local: "unchanged\n", second: { upstream: "second\n", local: "also unchanged\n" } });
-    const table = { ...TABLE, rows: [...TABLE.rows, { id: "T21", kind: "safety", reason: "Identity", pairs: [{ file: FILE, from: "owns the build", to: "records identity", count: 1 }] }] };
+    const table = { ...TABLE, rows: [...TABLE.rows, { id: "T21", kind: "safety", source: "ADR", reason: "Identity", pairs: [{ file: FILE, from: "owns the build", to: "records identity", count: 1 }] }] };
     put(repo, TABLE_PATH, JSON.stringify(table));
     const result = run(repo, "--write");
     assert.equal(result.status, 2);
-    assert.match(result.stderr, /safety row T21 needs a "source"/);
+    assert.match(result.stderr, /row T21 needs "kind" of "platform"/);
     assert.equal(readFileSync(join(repo, FILE), "utf8"), "unchanged\n");
     assert.equal(readFileSync(join(repo, SECOND_FILE), "utf8"), "also unchanged\n");
   });
 
-  it("rejects overlap between platform and safety pairs", () => {
-    const table: SubstitutionTable = { ...TABLE, rows: [...TABLE.rows, { id: "T21", kind: "safety", source: "ADR", reason: "Identity", pairs: [{ file: FILE, from: "cloud agent per PR", to: "owner per PR", count: 1 }] }] };
+  it("rejects overlapping platform pairs", () => {
+    const table: SubstitutionTable = { ...TABLE, rows: [...TABLE.rows, { id: "T21", kind: "platform", reason: "Local agents", pairs: [{ file: FILE, from: "cloud agent per PR", to: "owner per PR", count: 1 }] }] };
     const repo = fixture({ table, local: "unchanged\n" });
     const result = run(repo, "--write");
     assert.equal(result.status, 1);
@@ -525,22 +520,21 @@ describe("upstream-parity: this checkout", () => {
     return sha;
   }
 
-  it("the six guarded playbooks are the upstream text at the pin plus the table: check exits 0", () => {
+  it("the protected workflows are the upstream text at the pin plus platform adaptations", () => {
     pin();
     const result = spawnSync(process.execPath, [SCRIPT, "check"], { encoding: "utf8", env: process.env });
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
-    assert.match(result.stdout, /^upstream-parity: 6 files equal /);
+    assert.match(result.stdout, /^upstream-parity: 11 files equal /);
   });
 
-  it("the table guards exactly the six autopilot playbooks", () => {
+  it("protects the six autopilot playbooks and the Why workflow", () => {
     const table = parseTable(readFileSync(join(PLUGIN_ROOT, TABLE_PATH), "utf8"));
-    const names = ["autopilot-full", "autopilot-stack", "babysit", "multi-phase-plan", "opening-a-pr", "shipping"];
+    const playbooks = ["autopilot-full", "autopilot-stack", "babysit", "multi-phase-plan", "opening-a-pr", "shipping"];
+    const why = ["SKILL.md", "references/investigator-prompt.md", "references/synthesizer-prompt.md", "references/source-playbook.md", "references/sources/linear.md"];
+    const paths = [...playbooks.map((name) => `skills/poteto-mode/playbooks/${name}.md`), ...why.map((name) => `skills/why/${name}`)].sort();
     assert.deepEqual(
       [...table.files].sort((a, b) => (a.local < b.local ? -1 : 1)),
-      names.map((name) => ({
-        upstream: `pstack/skills/poteto-mode/playbooks/${name}.md`,
-        local: `skills/poteto-mode/playbooks/${name}.md`,
-      })),
+      paths.map((local) => ({ upstream: `pstack/${local}`, local })),
     );
   });
 

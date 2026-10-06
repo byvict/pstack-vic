@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Guard of the six autopilot playbooks. Each one is the upstream text at the
+// Guard of the ported workflows. Each file is the upstream text at the
 // cursor sync point of UPSTREAM.md plus the classified exact-string substitutions
 // of skills/poteto-mode/references/upstream-substitutions.json, and nothing else.
 //
@@ -44,16 +44,12 @@ export interface Pair {
   readonly count: number;
 }
 
-interface CommonRow {
+export interface Row {
   readonly id: string;
+  readonly kind: "platform";
   readonly reason: string;
   readonly pairs: readonly Pair[];
 }
-
-export type Row = CommonRow & (
-  | { readonly kind: "platform" }
-  | { readonly kind: "safety"; readonly source: string }
-);
 
 export interface SubstitutionTable {
   readonly files: readonly GuardedFile[];
@@ -129,10 +125,10 @@ export function parseTable(json: string): SubstitutionTable {
     }
     const id = entry.id;
     if (rows.some((r) => r.id === id)) throw new ParityError(`${TABLE_PATH}: row ${id} is listed twice`);
-    if (entry.kind !== "platform" && entry.kind !== "safety") {
-      throw new ParityError(`${TABLE_PATH}: row ${id} needs "kind" of "platform" or "safety"`);
+    if (entry.kind !== "platform") {
+      throw new ParityError(`${TABLE_PATH}: row ${id} needs "kind" of "platform"`);
     }
-    const allowed = entry.kind === "safety" ? ["id", "kind", "reason", "pairs", "source"] : ["id", "kind", "reason", "pairs"];
+    const allowed = ["id", "kind", "reason", "pairs"];
     const unknown = Object.keys(entry).find((key) => !allowed.includes(key));
     if (unknown) throw new ParityError(`${TABLE_PATH}: row ${id} has unknown key "${unknown}"`);
     if (typeof entry.reason !== "string" || entry.reason.trim() === "") {
@@ -166,14 +162,7 @@ export function parseTable(json: string): SubstitutionTable {
       }
       pairs.push({ file: pair.file, from: pair.from, to: pair.to, count: pair.count });
     }
-    if (entry.kind === "safety") {
-      if (typeof entry.source !== "string" || entry.source.trim() === "") {
-        throw new ParityError(`${TABLE_PATH}: safety row ${id} needs a "source"`);
-      }
-      rows.push({ id, kind: "safety", reason: entry.reason, source: entry.source, pairs });
-    } else {
-      rows.push({ id, kind: "platform", reason: entry.reason, pairs });
-    }
+    rows.push({ id, kind: "platform", reason: entry.reason, pairs });
   }
   return { files, rows };
 }

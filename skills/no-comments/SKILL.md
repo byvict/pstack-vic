@@ -1,6 +1,6 @@
 ---
 name: no-comments
-description: "Spawn the comment-sicko subagent, fix accepted findings, and offer encodings for claimed constraints."
+description: "Use only when the user explicitly names this skill or an active pstack workflow calls it. Review code comments, fix accepted findings, and encode enforceable constraints."
 ---
 
 # No comments

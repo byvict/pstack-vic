@@ -1,6 +1,6 @@
 ---
 name: unslop
-description: Cut AI tells from any writing. Must always apply.
+description: "Use only when the user explicitly names this skill or an active pstack workflow calls it. Remove AI writing patterns from prose."
 ---
 
 # Unslop

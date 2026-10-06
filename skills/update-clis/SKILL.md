@@ -1,6 +1,6 @@
 ---
 name: update-clis
-description: Update the claude, codex, and grok CLIs that pstack's external runner launches, one CLI at a time, only when the plugin keeps working on the new version; otherwise hold it and say what to adjust. Use for /update-clis, the weekly pstack-vic-cli-updates routine, "atualiza as CLIs", "atualiza o grok", or checking whether a new CLI version is safe for pstack.
+description: "Use only when the user explicitly names this skill or an active pstack workflow calls it. Update the provider CLIs and verify compatibility with the runner."
 ---
 
 # Update CLIs

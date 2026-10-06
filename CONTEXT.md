@@ -33,7 +33,7 @@ As lanes verificadoras que a Raiz lança em paralelo no head (o último commit) 
 _Avoid_: revisores, painel, verifier
 
 **Veredito** (verdict):
-O resultado único que a Raiz agrega das lanes do Enxame para um head exato. Só um Veredito limpo libera o merge, e sem a lane ao vivo ele não é limpo. Um head novo exige Veredito atual, com auditoria dos bytes exatos do patch e dos inputs de cada lane, inclusive mudanças na base. Patch-id igual sozinho não preserva evidência. A regra está no playbook Shipping.
+O resultado único que a Raiz agrega das lanes do Enxame para o patch de uma Rodada. Só um Veredito limpo libera o merge, e sem a lane ao vivo ele não é limpo. Depois de um rebase, a Raiz confere se o Veredito ainda descreve o patch pelo SHA, pela base e pelo patch-id, com a exceção de comparação de builds e as novas verificações do playbook Shipping.
 _Avoid_: aprovação, review, status
 
 **Rodada** (round):

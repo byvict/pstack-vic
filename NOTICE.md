@@ -65,3 +65,5 @@ Escrita nova, sem origem upstream (a preencher conforme as fases fecham):
 ## Modificações
 
 Conforme a licença MIT, modificações são permitidas. Avisos de copyright presentes nos arquivos de origem são preservados.
+
+- Fidelidade ao upstream (0.5.21, 2026-10-06): os seis playbooks e o fluxo Why voltam ao pin Cursor `4e5b1cf2ccb0ea3716f08c8ee0a5856b5ab93536`, com adaptações de ambiente. Foram retiradas as políticas T21–T26, a T27 redundante e a auditoria nativa de consumo de fontes. Os cinco arquivos de Why passam à mesma geração por paridade. As descrições e os metadados Codex delimitam a entrada dos fluxos por nome ou roteamento, preservando as chamadas internas. A autorização v3 acompanha esse fluxo. Attack the Premise mantém a cópia do open registrada na 0.5.20.

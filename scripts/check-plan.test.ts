@@ -71,11 +71,11 @@ describe("check-plan: the plan template of multi-phase-plan.md", () => {
 
   it("rejects a mid-sentence colon after a counted transform", () => {
     const plan = template();
-    const anchor = "Record the repository, PR, node ID";
-    const generated = applyPairs(plan, [{ id: "T21", file: PLAYBOOK, from: anchor, to: "Record identity: repository, PR, node ID", count: 1 }]);
+    const anchor = "Read these from the installed plugin";
+    const generated = applyPairs(plan, [{ id: "T21", file: PLAYBOOK, from: anchor, to: "Read these from the installed plugin: before starting", count: 1 }]);
     assert.deepEqual(generated.problems, []);
     assert.notEqual(generated.text, null);
-    const run = check("incoherent-safety.md", generated.text ?? "");
+    const run = check("incoherent-transform.md", generated.text ?? "");
     assert.equal(run.status, 1);
     assert.ok(run.problems.some((problem) => /colon/i.test(problem)), run.problems.join("\n"));
   });

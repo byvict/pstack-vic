@@ -166,7 +166,7 @@ On Grok, include `--permission-mode <observed effective session mode>` in the ch
 
 On exit 1 on Codex, show the `reason`. Codex has no such list. Codex asks for no approval when `approval_policy` is `"never"` at the top level of `<config-home>/config.toml`. The operator sets that value, or accepts that Codex stops to ask.
 
-The entry names its version (`pstack standing authorization v2`). `check` requires exactly one grant-shaped entry and that entry must be the current exact body. Missing, stale, duplicate and coexisting grants fail without changing settings; the diagnostic identifies which condition was observed. The 0.5.3 safety correction keeps version 2 and requires the operator to review the current entry and run `apply` again. The existing in-place replacement, typed confirmation and backup remain unchanged. To withdraw the authorization, the operator deletes the entry from `autoMode.allow`.
+The entry names its version (`pstack standing authorization v3`). `check` requires exactly one grant-shaped entry and that entry must be the current exact body. Missing, stale, duplicate and coexisting grants fail without changing settings; the diagnostic identifies which condition was observed. Version 3 follows the restored upstream PR workflow. An older entry requires the operator to review the current entry and run `apply` again. The existing in-place replacement, typed confirmation and backup remain unchanged. To withdraw the authorization, the operator deletes the entry from `autoMode.allow`.
 
 No playbook runs this check. Without the entry, auto mode denies the merge when an autopilot owner or the Shipping session reaches it.
 

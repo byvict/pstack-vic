@@ -1,6 +1,6 @@
 ---
 name: blast-radius
-description: "Find what a change could break somewhere else before it ships, beyond the diff, and prove the one fact it's safe because of by running real code instead of writing it up. Use for 'blast radius of X', 'what could this break', or reviewing a small diff you don't trust."
+description: "Use only when the user explicitly names this skill or an active pstack workflow calls it. Find what a change can break outside its diff and verify the affected behavior."
 ---
 
 # Blast radius

@@ -32,7 +32,7 @@ Check the state that changes the answer, and mention it only when it does:
 2. Run [`/setup-pstack`](../setup-pstack/SKILL.md) once on each parent. It picks a model and an effort for each role, as a provider-qualified descriptor such as `claude:claude-opus-5-5@xhigh`, probes each new family, and writes a sheet that `~/.claude/CLAUDE.md` includes on Claude Code and that `~/.codex/AGENTS.md` or `~/.grok/AGENTS.md` mirrors on Codex and Grok Build. The sheet applies to new sessions.
 3. Start a real task with `/poteto-mode`, a goal, and a check that can pass or fail.
 
-Installing changes nothing until a skill loads. `/poteto-mode` and `/automate-me` load only when the user types them. Every other flow skill loads when the user types it, when the model matches the request to its description, or when `/poteto-mode` runs it. The `principle-*` skills stay off the `/` menu, and the model still reads them. The [README](../../README.md) and the [Instalação section](../../docs/reference.md#instalação) of the reference have the details. Offer to word their first prompt with them.
+Workflow skills run when the user explicitly names them or an active pstack workflow calls them. Only `/setup-pstack` and `/poteto-help` load from an ordinary request. Claude Code and Grok keep workflow leaves callable by the router, with this boundary in their descriptions. Codex also disables implicit discovery through each workflow's `agents/openai.yaml`; the router reads the named skill file. The [README](../../README.md) and the [reference](../../docs/reference.md#instalação) have the details.
 
 If cost is the worry, say where the tokens go and how to spend fewer. pstack spends extra tokens on subagents and review panels. Rerun `/setup-pstack` and pick a lower effort or cheaper models. A role set to `auto` or `inherit-parent` runs on the session's model, which saves tokens when the session runs on a cheaper model. A shorter panel list runs fewer subagents, one for each entry. Save `/poteto-mode` for work that needs rigor.
 
@@ -129,7 +129,7 @@ Principles are one-rule skills that `/poteto-mode` reads and cites in its replie
 | A question got treated as the next step of the last task | Say "new task", or say the turn doesn't need the mode. |
 | A new model choice had no effect | The sheet from `/setup-pstack` applies to new sessions. Start one. |
 | Runs cost more than expected | See the cost paragraph under Get set up. |
-| A skill didn't load on its own | `/poteto-mode` and `/automate-me` load only when the user types them. The others load when the user types them, when the model matches the request to their description, or when `/poteto-mode` runs them, and it doesn't run every skill. |
+| A skill didn't load on its own | Only `/setup-pstack` and `/poteto-help` load from ordinary requests. Name the workflow explicitly or start `/poteto-mode`. |
 | Parallel agents overwrote each other | Give each writer its own worktree: `isolation: "worktree"` on the `Agent` call on Claude Code, `git worktree add` before the dispatch on Codex. |
 | An overnight run moved but finished nothing | On Claude Code, `/loop` needs a check that can pass or fail, not a duration. See the [Autopilot section](../../docs/reference.md#autopilot). |
 | The reply claims success from a green build | Ask for the real command, flow, stored value, or profile. That's the prove-it-works principle. |

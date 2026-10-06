@@ -1,6 +1,6 @@
 ---
 name: fix-ci
-description: Find failing PR checks, inspect logs or external check links, and apply focused fixes
+description: "Use only when the user explicitly names this skill or an active pstack workflow calls it. Inspect failing PR checks and apply focused fixes."
 ---
 
 # Fix CI

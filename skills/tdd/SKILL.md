@@ -1,6 +1,6 @@
 ---
 name: tdd
-description: "Use only when the user explicitly asks for TDD, a failing test, or a regression test, OR when the bug has an obvious cheap local test target. Skip when the test path is unclear, expensive, integration-heavy, or not requested."
+description: "Use only when the user explicitly names this skill or an active pstack workflow calls it. Implement a change through a failing test, a minimal fix, and refactoring."
 ---
 
 # TDD Bug Fix
