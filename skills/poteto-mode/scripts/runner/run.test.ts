@@ -385,6 +385,134 @@ afterEach(() => {
   rmSync(scratch, { recursive: true, force: true });
 });
 
+/** The fake, with the model run replaced by writing these bytes and exiting. */
+function scriptedModel(
+  stdout: string | readonly number[],
+  stderr: string | readonly number[],
+  exitCode: number
+): string {
+  const bytes = (value: string | readonly number[]): string =>
+    typeof value === "string" ? JSON.stringify(value) : `Buffer.from(${JSON.stringify(value)})`;
+  return fake.replace(
+    "const modelIndex =",
+    `writeSync(1, ${bytes(stdout)}); writeSync(2, ${bytes(stderr)}); process.exit(${exitCode});\nconst modelIndex =`
+  );
+}
+
+function writeGrok(script: string): void {
+  writeFileSync(join(bin, cliOf("grok")), script);
+}
+
+describe("issue78 terminal results", () => {
+  for (const scenario of ["cancel-zero", "cancel-nonzero", "api-error", "api-error-nonzero", "success-streams"]) {
+    it(`issue78 ${scenario}`, async () => {
+      const input = options("grok");
+      const reason = scenario.startsWith("api-error")
+        ? "API unavailable"
+        : "User cancelled the execution for tool run_terminal_command";
+      const terminal = {
+        type: "result",
+        subtype: scenario.startsWith("api-error") ? "api_error"
+          : scenario === "success-streams" ? "success" : "error_during_execution",
+        is_error: scenario !== "success-streams",
+        stop_reason: scenario.startsWith("cancel") ? "cancelled" : "end_turn",
+        errors: [reason],
+        result: "GROK_OK",
+        session_id: "terminal-session",
+        usage: { input_tokens: 30, output_tokens: 4 },
+        total_cost_usd: 0.02,
+        modelUsage: { "grok-4.6-build": {} },
+      };
+      const stdout = JSON.stringify(terminal) + "\n";
+      const stderr = "startup warning\n".repeat(400) + "\n";
+      writeGrok(scriptedModel(stdout, stderr, scenario.endsWith("nonzero") ? 1 : 0));
+      const result = await runLane(input);
+      const saved = receipt(input.receiptPath);
+      assert.equal(saved.status, scenario === "success-streams" ? "complete"
+        : scenario.startsWith("api-error") ? "child-failed" : "cancelled");
+      assert.equal(result.exitCode, scenario === "success-streams" ? 0
+        : scenario.startsWith("api-error") ? 70 : 130);
+      assert.equal(saved.exitCode, scenario.endsWith("nonzero") ? 1 : 0);
+      matchObject(saved, {
+        reportedModel: "grok-4.6-build",
+        modelVerified: true,
+        modelEvidence: "provider-report",
+        sessionId: "terminal-session",
+        usage: { inputTokens: 30, outputTokens: 4 },
+        costUsd: 0.02,
+      });
+      if (scenario !== "success-streams") {
+        assert.equal(saved.error?.message, reason);
+        assert.ok(saved.error?.evidence.startsWith(reason));
+        assert.ok((saved.error?.evidence.length ?? 0) <= 4_000);
+        assert.equal(existsSync(input.outputPath), false);
+      }
+      assert.equal(saved.schemaVersion, 1);
+    });
+  }
+
+  for (const exitCode of [0, 1]) {
+    it(`keeps malformed terminal data distinct after child exit ${exitCode}`, async () => {
+      const input = options("grok");
+      const stdout = '{"type":"result","is_error":true}\n';
+      writeGrok(scriptedModel(stdout, "", exitCode));
+      const result = await runLane(input);
+      assert.equal(result.exitCode, exitCode === 0 ? 65 : 70);
+      matchObject(result.receipt, {
+        status: exitCode === 0 ? "malformed-output" : "child-failed",
+        exitCode, reportedModel: null, modelVerified: false,
+        sessionId: null, error: { message: exitCode === 0
+          ? "grok result did not contain a valid terminal status" : "child exited with status 1" },
+      });
+      assert.equal(existsSync(input.outputPath), false);
+    });
+  }
+
+  for (const stdout of ['{"type":"system","subtype":"init"}\n', "startup failed\n"]) {
+    for (const exitCode of [0, 1]) {
+      it(`handles missing Grok terminal output ${JSON.stringify(stdout)} after exit ${exitCode}`, async () => {
+        const input = options("grok");
+        const stderr = "sandbox startup refused\n";
+        writeGrok(scriptedModel(stdout, stderr, exitCode));
+        const result = await runLane(input);
+        assert.equal(result.exitCode, exitCode === 0 ? 65 : 70);
+        matchObject(result.receipt, {
+          status: exitCode === 0 ? "malformed-output" : "child-failed",
+          exitCode, reportedModel: null, sessionId: null,
+        });
+        assert.equal(existsSync(input.outputPath), false);
+      });
+    }
+  }
+
+  it("does not invent metadata for a valid provider failure", async () => {
+    const input = options("grok");
+    writeGrok(scriptedModel(
+      JSON.stringify({ type: "result", subtype: "api_error", is_error: true, errors: ["API unavailable"] }) + "\n",
+      "",
+      1
+    ));
+    const result = await runLane(input);
+    assert.equal(result.exitCode, 70);
+    matchObject(result.receipt, {
+      status: "child-failed", exitCode: 1, reportedModel: null, modelVerified: false,
+      modelEvidence: null, sessionId: null, usage: null, costUsd: null,
+      error: { message: "API unavailable" },
+    });
+    assert.equal(existsSync(input.outputPath), false);
+  });
+
+  it("retains strict model verification for successful Grok results", async () => {
+    const input = options("grok");
+    writeGrok(fake.replace("modelUsage:{[model]:{}}", 'modelUsage:{"grok-unexpected":{}}'));
+    const result = await runLane(input);
+    assert.equal(result.exitCode, 65);
+    matchObject(result.receipt, { status: "malformed-output", modelVerified: false });
+    assert.equal(result.receipt.error?.message, "requested model grok-4.6 was not reported by grok");
+    assert.equal(existsSync(input.outputPath), false);
+  });
+});
+
 describe("runLane", () => {
   it("drives every matrix cli provider through the fake binaries", () => {
     assert.deepEqual(PROVIDERS, ["claude", "codex", "grok"]);

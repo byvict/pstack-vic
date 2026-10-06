@@ -5,7 +5,20 @@ import {
   type NormalizedUsage,
   type ParsedOutput,
   type Provider,
+  type ProviderMetadata,
 } from "./types.ts";
+
+export class ProviderResultError extends Error {
+  readonly status: "cancelled" | "child-failed";
+  readonly metadata: ProviderMetadata;
+
+  constructor(message: string, status: "cancelled" | "child-failed", metadata: ProviderMetadata) {
+    super(message);
+    this.name = "ProviderResultError";
+    this.status = status;
+    this.metadata = metadata;
+  }
+}
 
 type JsonObject = Record<string, unknown>;
 
@@ -98,19 +111,31 @@ function parseGrok(stdout: string, requestedModel: string): ParsedOutput {
   }
 
   if (result === null) throw new Error("grok result did not contain a terminal event");
-  if (result.is_error === true || result.subtype !== "success") {
-    throw new Error("grok reported an error result");
+  if (nullableString(result.subtype) === null || typeof result.is_error !== "boolean") {
+    throw new Error("grok result did not contain a valid terminal status");
   }
-  const text = nullableString(result.result);
-  if (text === null) throw new Error("grok result did not contain final text");
-
-  return {
-    text,
+  const metadata = {
     reportedModel: modelFromUsage(result.modelUsage, "grok", requestedModel),
     sessionId: nullableString(result.session_id),
     usage: normalizedUsage(result.usage),
     costUsd: finiteNumber(result.total_cost_usd) ?? null,
   };
+  if (result.is_error || result.subtype !== "success") {
+    const errors = Array.isArray(result.errors)
+      ? result.errors.filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
+      : [];
+    const message = errors.join("\n") || nullableString(result.error)
+      || nullableString(object(result.error)?.message) || nullableString(result.result)
+      || `grok reported ${result.subtype}`;
+    const cancelled = result.stop_reason === "cancelled" || result.stop_reason === "canceled"
+      || result.subtype === "cancelled" || result.subtype === "canceled"
+      || /^(?:User cancel(?:led|ed) the execution|PermissionCancelled)/i.test(message);
+    throw new ProviderResultError(message, cancelled ? "cancelled" : "child-failed", metadata);
+  }
+  const text = nullableString(result.result);
+  if (text === null) throw new Error("grok result did not contain final text");
+
+  return { text, ...metadata };
 }
 
 function parseCodex(stdout: string): ParsedOutput {

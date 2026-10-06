@@ -24,7 +24,7 @@ import {
   type CommandSpec,
 } from "./commands.ts";
 import { grokAcpExecution, readT3Attachment } from "./grok-acp.ts";
-import { parseProviderOutput, reportedModelMatches } from "./parse-output.ts";
+import { parseProviderOutput, ProviderResultError, reportedModelMatches } from "./parse-output.ts";
 import {
   cliFor,
   familyOf,
@@ -39,7 +39,6 @@ import {
   type ParsedOutput,
   type PreflightRecord,
   type Provider,
-  type ReceiptError,
   type ReceiptStatus,
   type RunCancellation,
   type RunnerOptions,
@@ -283,7 +282,7 @@ function modelProof(
 
 type Terminal =
   | { readonly kind: "complete"; readonly parsed: ParsedOutput; readonly proof: ModelProof }
-  | { readonly kind: "failed"; readonly status: LaneFailure; readonly error: ReceiptError };
+  | Extract<LaneOutcome, { readonly kind: "failed" }>;
 
 function applyModelProof(options: RunnerOptions, outcome: LaneOutcome): Terminal {
   if (outcome.kind === "failed") return outcome;
@@ -335,12 +334,12 @@ function finish(
       error: null,
     }
     : {
-      reportedModel: null,
-      modelVerified: false,
-      modelEvidence: null,
-      sessionId: null,
-      usage: null,
-      costUsd: null,
+      ...(terminal.metadata === undefined
+        ? { reportedModel: null, modelVerified: false, modelEvidence: null }
+        : modelProof(options.provider, options.model, terminal.metadata.reportedModel)),
+      sessionId: terminal.metadata?.sessionId ?? null,
+      usage: terminal.metadata?.usage ?? null,
+      costUsd: terminal.metadata?.costUsd ?? null,
       error: terminal.error,
     };
   const receipt: RunnerReceipt = {
@@ -617,13 +616,28 @@ async function runCliAttempt(
 ): Promise<LaneOutcome> {
   const result = await runModel(options, context.executable, invocation, context.environment, context, context.evidence);
 
-  if (result.cancelledBy !== null || result.timedOut || result.exitCode !== 0) {
-    const rawFailureEvidence = `${result.stderr}\n${result.stdout}`;
+  let parsed: ParsedOutput | null = null;
+  let parseError: unknown = null;
+  if (
+    result.cancelledBy === null &&
+    !result.timedOut &&
+    (result.exitCode === 0 || (cliFor(options.provider) === "grok" && result.stdout.trim().length > 0))
+  ) {
+    try {
+      parsed = parseProviderOutput(options.provider, result.stdout, result.stderr, options.model);
+    } catch (error) {
+      parseError = error;
+    }
+  }
+  const providerFailure = parseError instanceof ProviderResultError ? parseError : null;
+  const rawFailureEvidence = `${result.stderr}\n${result.stdout}`;
+
+  if (result.cancelledBy !== null || result.timedOut || providerFailure !== null || result.exitCode !== 0) {
     const status: LaneFailure = result.cancelledBy !== null
       ? "cancelled"
       : result.timedOut
         ? "timed-out"
-        : unavailableStatus(rawFailureEvidence);
+        : providerFailure?.status ?? unavailableStatus(rawFailureEvidence);
     return {
       kind: "failed",
       status,
@@ -634,30 +648,26 @@ async function runCliAttempt(
             : `launcher received ${result.cancelledBy} after child exited`
           : result.timedOut
             ? `launcher exceeded the explicit ${options.timeoutMs}ms deadline`
-            : `child exited with status ${result.exitCode}`,
-        evidence: evidence(rawFailureEvidence),
+            : providerFailure?.message ?? `child exited with status ${result.exitCode}`,
+        evidence: evidence(providerFailure === null
+          ? rawFailureEvidence
+          : `${providerFailure.message}\n${rawFailureEvidence}`),
       },
+      metadata: providerFailure?.metadata,
     };
   }
 
-  try {
-    const parsed = parseProviderOutput(
-      options.provider,
-      result.stdout,
-      result.stderr,
-      options.model
-    );
-    return { kind: "produced", parsed };
-  } catch (error) {
+  if (parsed === null) {
     return {
       kind: "failed",
       status: "malformed-output",
       error: {
-        message: error instanceof Error ? error.message : String(error),
-        evidence: evidence(`${result.stderr}\n${result.stdout}`),
+        message: parseError instanceof Error ? parseError.message : String(parseError),
+        evidence: evidence(rawFailureEvidence),
       },
     };
   }
+  return { kind: "produced", parsed };
 }
 
 /** The model child. A Grok lane gets its config overlay for the child's lifetime. */

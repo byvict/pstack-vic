@@ -105,6 +105,9 @@ export interface ParsedOutput {
   readonly costUsd: number | null;
 }
 
+/** What a provider reported about its run, whether or not it produced final text. */
+export type ProviderMetadata = Omit<ParsedOutput, "text">;
+
 export interface PreflightRecord {
   readonly argv: readonly string[];
   readonly status: "passed" | "failed" | "timed-out" | "cancelled" | "not-run";
@@ -188,7 +191,13 @@ export type LaneFailure = Exclude<ReceiptStatus, "complete">;
 
 export type LaneOutcome =
   | { readonly kind: "produced"; readonly parsed: ParsedOutput }
-  | { readonly kind: "failed"; readonly status: LaneFailure; readonly error: ReceiptError };
+  | {
+    readonly kind: "failed";
+    readonly status: LaneFailure;
+    readonly error: ReceiptError;
+    /** Present when a well-formed provider result reported the failure. */
+    readonly metadata?: ProviderMetadata;
+  };
 
 /** One lane, prepared before reservation, run after it. */
 export interface Lane {

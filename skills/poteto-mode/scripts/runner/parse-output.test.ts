@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { parseProviderOutput, reportedModelMatches } from "./parse-output.ts";
+import { parseProviderOutput, ProviderResultError, reportedModelMatches } from "./parse-output.ts";
 import { matchObject } from "./match-object.test-helper.ts";
 
 describe("parseProviderOutput", () => {
@@ -142,6 +142,46 @@ describe("parseProviderOutput", () => {
     assert.equal(reportedModelMatches("claude", "fable", "fable"), false);
     assert.equal(reportedModelMatches("claude", "fable", "fable-preview"), false);
     assert.equal(reportedModelMatches("grok", "fable", "claude-fable-9-9"), false);
+  });
+
+  for (const [stopReason, expectedStatus] of [
+    ["cancelled", "cancelled"], ["canceled", "cancelled"], ["end_turn", "child-failed"],
+  ]) {
+    it(`issue78 retains terminal metadata for ${stopReason}`, () => {
+      let failure: unknown;
+      try {
+        parseProviderOutput("grok", JSON.stringify({
+          type: "result", subtype: "error_during_execution", is_error: true,
+          stop_reason: stopReason, errors: ["Exact provider reason"],
+          session_id: "terminal-session", modelUsage: { "grok-4.6-build": {} },
+          usage: { input_tokens: 30, output_tokens: 4 }, total_cost_usd: 0.02,
+        }), "", "grok-4.6");
+      } catch (error) {
+        failure = error;
+      }
+      assert.ok(failure instanceof ProviderResultError);
+      matchObject(failure, {
+        message: "Exact provider reason", status: expectedStatus,
+        metadata: {
+          reportedModel: "grok-4.6-build", sessionId: "terminal-session",
+          usage: { inputTokens: 30, outputTokens: 4 }, costUsd: 0.02,
+        },
+      });
+    });
+  }
+
+  it("issue78 rejects incomplete terminal status", () => {
+    for (const terminal of [
+      { type: "result", result: "text" },
+      { type: "result", subtype: "success", result: "text" },
+      { type: "result", subtype: "", is_error: true },
+      { type: "result", subtype: "api_error", is_error: "true" },
+    ]) {
+      assert.throws(() => parseProviderOutput("grok", JSON.stringify(terminal), "", "grok-4.6"),
+        /valid terminal status/);
+    }
+    assert.throws(() => parseProviderOutput("grok", "not-json", "", "grok-4.6"), /non-JSON event/);
+    assert.throws(() => parseProviderOutput("grok", '{"type":"assistant"}', "", "grok-4.6"), /terminal event/);
   });
 
   it("never verifies a Codex family or a pair outside the matrix by report", () => {
