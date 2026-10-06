@@ -244,7 +244,8 @@ function startRunner(
   input: RunnerOptions,
   env: NodeJS.ProcessEnv = {}
 ): Runner {
-  const child = spawn(process.execPath, runnerArgs(input), {
+  const [launcher, ...args] = runnerArgs(input);
+  const child = spawn(launcher, args, {
     cwd: scratch,
     env: { ...process.env, ...env },
     stdio: ["ignore", "pipe", "pipe"],
