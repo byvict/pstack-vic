@@ -264,6 +264,15 @@
       "measuredOn": "1.0.5"
     },
     {
+      "id": "grok.failure-result",
+      "cli": "grok",
+      "kind": "lane",
+      "contract": "a valid `type: result` event whose `is_error` is `true` or whose `subtype` is not `success` is a failure; its message is `errors` (strings) joined, else `error`, `error.message` or `result`; `stop_reason` or `subtype` `cancelled` or `canceled`, or a message that starts with `User cancelled the execution` or `PermissionCancelled`, marks a provider cancellation (exit 130), and any other failure is `child-failed` (exit 70), also after exit 1. The headless guide of 1.0.46 documents `errors[]` on the error subtypes, `stop_reason` on `result`, `cancelled` among the turn stop reasons and exit 1 on error, and names the error subtypes `error_max_turns`, `error_during_execution` and `error_max_structured_output_retries`. The `api_error` subtype comes from the open's tests, and the `canceled` spelling and the two message prefixes from its parser (issue #78). The probe lanes pass only on `complete`, so none of them exercises this contract",
+      "pointers": [{ "file": "skills/poteto-mode/scripts/runner/parse-output.ts", "anchor": "export class ProviderResultError" }],
+      "coveredBy": [],
+      "measuredOn": "1.0.46"
+    },
+    {
       "id": "grok.reported-model",
       "cli": "grok",
       "kind": "lane",

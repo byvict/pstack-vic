@@ -232,6 +232,10 @@ describe("Grok ACP through the real runner launcher", () => {
     assert.equal(persisted.includes(attachmentEnv.T3_MCP_BEARER_TOKEN), false);
     assert.equal(persisted.includes(JSON.stringify(attachmentEnv.T3_MCP_BEARER_TOKEN).slice(1, -1)), false);
     assert.match(readFileSync(join(scratch, "out.md"), "utf8"), /\[REDACTED\]/);
+    assert.equal(result.receipt?.stdoutPath, null);
+    assert.equal(result.receipt?.stderrPath, null);
+    assert.equal(existsSync(join(scratch, "receipt.json.stdout")), false);
+    assert.equal(existsSync(join(scratch, "receipt.json.stderr")), false);
   });
 
   it("retains the authentication-only retry and exactly one prompt", async () => {

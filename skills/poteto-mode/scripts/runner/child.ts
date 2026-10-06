@@ -1,10 +1,10 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { accessSync, constants as fsConstants, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { accessSync, constants as fsConstants, mkdtempSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { constants as osConstants, tmpdir } from "node:os";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
 import type { Readable } from "node:stream";
 import type { CommandSpec, ConfigOverlay } from "./commands.ts";
-import { cliFor, type CancellationSignal, type CliEvidence, type Provider, type RunCancellation, type LaneContext } from "./types.ts";
+import { cliFor, type CancellationSignal, type CliEvidence, type Provider, type RunCancellation, type LaneContext, type ModelStreams } from "./types.ts";
 
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 export interface ProcessResult {
@@ -156,7 +156,7 @@ interface StreamCapture {
   cancel(): Promise<void>;
 }
 
-function captureStream(stream: Readable | null): StreamCapture {
+function captureStream(stream: Readable | null, descriptor?: number): StreamCapture {
   if (stream === null) {
     return { result: Promise.resolve(""), async cancel() {} };
   }
@@ -173,6 +173,18 @@ function captureStream(stream: Readable | null): StreamCapture {
       resolveText(text);
     };
     stream.on("data", (chunk: Buffer) => {
+      if (stream.destroyed) return;
+      if (descriptor !== undefined) {
+        try {
+          let offset = 0;
+          while (offset < chunk.byteLength) {
+            offset += writeSync(descriptor, chunk, offset, chunk.byteLength - offset);
+          }
+        } catch (error) {
+          stream.destroy(error instanceof Error ? error : new Error(String(error)));
+          return;
+        }
+      }
       text += decoder.decode(chunk, { stream: true });
     });
     stream.once("end", finish);
@@ -217,6 +229,7 @@ export interface InteractiveResult<T> extends ProcessResult {
 
 type ChildOperation<T> =
   | { readonly kind: "one-shot"; readonly prompt: string }
+  | { readonly kind: "cli-model"; readonly prompt: string; readonly streamFiles: ModelStreams }
   | { readonly kind: "interactive"; readonly body: (io: InteractiveIo) => Promise<T> };
 
 async function withChild<T>(args: {
@@ -233,8 +246,9 @@ async function withChild<T>(args: {
   if (args.evidence !== undefined) { args.evidence.exitCode = null; args.evidence.signal = null; }
   const spawned = spawnChild(args.executable, args.spec, args.cwd, args.env);
   const { child } = spawned;
-  const stdoutCapture = captureStream(child.stdout);
-  const stderrCapture = captureStream(child.stderr);
+  const streamFiles = args.operation.kind === "cli-model" ? args.operation.streamFiles : undefined;
+  const stdoutCapture = captureStream(child.stdout, streamFiles?.stdout);
+  const stderrCapture = captureStream(child.stderr, streamFiles?.stderr);
   const streams = Promise.all([stdoutCapture.result, stderrCapture.result]);
   streams.catch(() => undefined);
   let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
@@ -275,7 +289,7 @@ async function withChild<T>(args: {
       stdin.on("error", () => undefined);
       stdin.end(args.operation.prompt);
     }
-    const first = await Promise.race([exited, ...stopped, ...(bodyResult === null ? [] : [bodyResult])]);
+    const first = await Promise.race([exited, streams.then(() => exited), ...stopped, ...(bodyResult === null ? [] : [bodyResult])]);
     timedOut = first.kind === "timed-out";
     if (first.kind === "returned" || first.kind === "failed") {
       outcome = first;
@@ -332,8 +346,12 @@ export function runProcess(
   executable: string, spec: CommandSpec, cwd: string, env: NodeJS.ProcessEnv,
   prompt: string, deadlineAt: number | null, cancellation: RunCancellation,
   evidence?: CliEvidence,
+  streamFiles?: ModelStreams,
 ): Promise<ProcessResult> {
-  return withChild({ executable, spec, cwd, env, deadlineAt, cancellation, evidence, operation: { kind: "one-shot", prompt } });
+  const operation = streamFiles === undefined
+    ? { kind: "one-shot" as const, prompt }
+    : { kind: "cli-model" as const, prompt, streamFiles };
+  return withChild({ executable, spec, cwd, env, deadlineAt, cancellation, evidence, operation });
 }
 
 export function runInteractiveChild<T>(args: {

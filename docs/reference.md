@@ -24,7 +24,7 @@ No shell, `claude plugin marketplace add byvict/pstack-vic` e `claude plugin ins
 ### Codex
 
 ```shell
-codex plugin marketplace add byvict/pstack-vic --ref v0.5.11
+codex plugin marketplace add byvict/pstack-vic --ref v0.5.12
 codex plugin add pstack@pstack-vic
 ```
 
@@ -243,6 +243,8 @@ Uma lane externa não tem os drivers embutidos `run` nem `verify`. A rota CLI pa
 A [rota ACP](../skills/poteto-mode/references/provider-dispatch.md#explicit-grok-acp-tasks) usa sandbox Grok `off`, always-approve e exige cinco ferramentas internas do host. Com `--mcp-config`, exige também `search_tool` e `use_tool` e aceita ferramentas MCP `server__tool` carregadas durante a sessão. O arquivo tem `schemaVersion: 1`, referências `urlEnv` e `bearerTokenEnv`, e `previewTabId` atribuído pelo pai. O endpoint HTTP(S) é loopback, sem porta padrão. Cada verificador recebe aba, worktree e outputs próprios. O runner injeta a aba no prompt e grava a atribuição no recibo. Full access admite integrações MCP e hooks confiáveis da configuração Grok, além do T3 encaminhado. Não confina escrita ao worktree. O sandbox do pai continua valendo.
 
 O ACP exige resposta final após as ferramentas, `end_turn` e prova do modelo servido. O recibo registra uso acumulado, custo nulo enquanto a unidade de ticks não for comprovada, catálogo e encerramento. Um turno bem-sucedido pode ter exit `143` do servidor e sinal `SIGTERM`. Cancelamento e deadline explícito continuam valendo durante a limpeza. As sondas automáticas de setup e update ainda cobrem a rota CLI padrão. Mudança de contrato ACP sem cobertura segura a atualização. A Raiz guarda provas do runner de produção para host e preview.
+
+Na rota CLI, o runner guarda os bytes crus de stdout e stderr do filho do modelo em dois arquivos ao lado do receipt, `<receipt>.stdout` e `<receipt>.stderr`, com modo `0600` e também quando a lane cai; o receipt aponta para eles em `stdoutPath` e `stderrPath`. Na rota ACP, esses campos são `null` e não há sidecars crus.
 
 Mesmo numa lane nativa do Claude Code, o `verify` pode faltar. Você sempre pode digitar `/verify`. O agente só consegue chamá-lo quando ele aparece na lista de skills da sessão, e na versão 2.1.285 isso depende de um recurso que a Anthropic ainda libera aos poucos. Neste Mac ele não aparece: em 2026-10-01 a lista de skills de uma sessão trazia o `run` e não trazia o `verify`. Sem o `verify`, a lane de tela usa o `run`, que também opera apps Electron e apps de navegador, ou o driver que o repositório nomeia. Os seus dois repositórios não dependem do `verify`: o pstack-vic não tem tela e o Clinext tem o driver próprio, `verify-clinext`. O `run` e o `verify` são embutidos no Claude Code e não têm arquivo. Por isso, num plano, a caixa `<driver skill path>` leva o nome da skill, e a Raiz a lê carregando a skill. Um driver do repositório ela lê pelo caminho dele.
 

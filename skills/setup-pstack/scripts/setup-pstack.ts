@@ -30,7 +30,7 @@
 // Node 24, type stripping, no dependencies: erasable TypeScript only.
 
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
@@ -756,8 +756,14 @@ export async function runProbes(plan: Plan, options: ProbeOptions): Promise<Prob
   const runnerPairs = plan.pairs.filter((p) => p.route === "runner");
   for (const pair of runnerPairs) {
     const paths = probePaths(options.dir, pair.pair);
-    for (const path of [paths.output, paths.receipt]) {
-      if (existsSync(path)) fail(`${path} already exists; use a fresh run directory or remove the previous probe artifacts`);
+    for (const path of [paths.output, paths.receipt, `${paths.receipt}.stdout`, `${paths.receipt}.stderr`]) {
+      try {
+        lstatSync(path);
+      } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") continue;
+        throw error;
+      }
+      fail(`${path} already exists; use a fresh run directory or remove the previous probe artifacts`);
     }
   }
   const external = await Promise.all(runnerPairs.map((pair) => runLane(pair, plan, options)));

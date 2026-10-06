@@ -1726,3 +1726,50 @@ A saída exige geração final após ferramentas, `end_turn` e prova terminal do
 Dispatch, referência pública, atribuição em `NOTICE.md` e seis touchpoints ACP acompanham a rota. Os touchpoints têm `coveredBy: []`: os probes de setup/update ainda cobrem o CLI, e mudanças ACP sem probe seguram a atualização.
 
 Verificação local: runner final (141/141), contratos (4/4), Bun (74/74) e typecheck, matriz, agentes, colisões, manifests e diff check. O `npm test` amplo (529/529) antecede os últimos ajustes de protocolo; a suíte final do runner cobre esse delta. As provas de produção ficam no PR.
+
+# 0.5.12 — Falha terminal do Grok com o motivo do provedor, e os streams do filho ao lado do receipt (2026-10-06)
+
+O PR-A do programa de adaptações do digest de 2026-10-05 traz cinco commits da issue #78 do open-pstack, que o digest julgou `adaptar`: `72019f4`, `bdd51f6`, `19d6d5b`, `21e134f` e `ef6c5c4`. Na 0.5.11, uma lane Grok que saía com 0 depois de um evento de resultado de falha bem formado terminava `malformed-output` (saída 65) com a mensagem `grok reported an error result`. O runner também não guardava em disco os bytes de stdout e stderr do filho. O ponto de sync do open em `UPSTREAM.md` não muda.
+
+## Veredito
+
+| Commit do open | Veredito | Como entrou |
+| --- | --- | --- |
+| `72019f4` (#78) | adaptar | Entram os casos `issue78` de `parse-output.test.ts` e de `run.test.ts`, reescritos em `node:test`. Os `grok` falsos escrevem com `writeSync`, porque no macOS um `process.stdout.write` num pipe seguido de `process.exit` perde bytes. O `writeGrok` executa cada falso uma vez antes do teste, porque no macOS a primeira execução de um arquivo recém-escrito é mais lenta que as seguintes. |
+| `bdd51f6` (#78) | adaptar | Entram `ProviderResultError` e o `parseGrok` do open. Aqui a classe declara os campos, porque o Node só remove os tipos e recusa parameter properties. A falha tipada vai pelo `LaneOutcome` até `finish`, que monta o receipt neste runner. |
+| `19d6d5b` (#78) | adaptar | Entram `reserveOutputs`, o `captureStream` com descritor e `stdoutPath`/`stderrPath`. Aqui o `captureStream` de `child.ts` grava no handler de `data` de um `Readable` do Node. Nos testes, `mock.method(fs, "writeSync")` com `syncBuiltinESMExports` entra no lugar do `spyOn` do Bun. |
+| `21e134f` (#78) | adaptar | O parágrafo dos caminhos de `provider-dispatch.md` adapta o do open à rota CLI. O de dropouts é o do open com as duas passagens daqui sobre a política de pool, com o qualificador `CLI` de `non-zero CLI child exit` preservado da 0.5.11, com `after a zero exit` na frase de `malformed-output`/65 e com uma frase a mais sobre a saída diferente de zero, porque o `ef6c5c4` mudou esse caso depois do `21e134f`. |
+| `ef6c5c4` (#78) | adaptar | Entra a condição do open: a lane falha com uma falha tipada ou com uma saída diferente de zero. Entram os casos de terminal malformado ou ausente depois de saída 0 e 1. |
+
+## O que muda
+
+- `parseGrok` exige `subtype` string não vazia e `is_error` booleano. Depois de saída zero, sem eles, a lane termina `malformed-output` (65) com `grok result did not contain a valid terminal status`.
+- Um resultado de falha vira `ProviderResultError`. A mensagem vem de `errors`, senão de `error`, de `error.message` ou de `result`, senão é `grok reported <subtype>`.
+- O status é `cancelled` quando `stop_reason` ou `subtype` é `cancelled` ou `canceled`, ou quando a mensagem começa com `User cancelled the execution` ou `PermissionCancelled`. Senão, é `child-failed`.
+- O runner lê o resultado do Grok também depois de uma saída diferente de zero. Uma falha tipada dá ao receipt o status (130 para `cancelled`, 70 para `child-failed`), a mensagem em `error.message` e no começo de `error.evidence`, `reportedModel`, `sessionId`, `usage`, `costUsd` e o `exitCode` do filho.
+- Sem falha tipada, uma saída diferente de zero continua `child exited with status N`. Cancelamento e timeout do launcher continuam na frente.
+- Um login ou modelo recusado no evento de resultado, depois do preflight e com saída 1, era `unauthenticated` (77) ou `unavailable-model` (69) na 0.5.11 e agora é `child-failed` (70).
+- Na rota CLI, `reserveOutputs` reserva também `<receipt>.stdout` e `<receipt>.stderr` com modo `0600`. Ele recusa quando prompt, output, receipt e os dois sidecars não são todos distintos, e numa recusa apaga só o que criou.
+- Os sidecars da rota CLI guardam os bytes crus do filho do modelo, também quando a lane cai, e não guardam a saída do preflight. O receipt ganha `stdoutPath` e `stderrPath`, e o `schemaVersion` continua 1.
+- Uma falha de escrita num sidecar termina a lane como `child-failed` sem esperar o filho sair.
+- O pré-check do `setup-pstack` recusa também um `<receipt>.stdout` ou `<receipt>.stderr` que sobrou, antes de rodar qualquer lane.
+- `cli-touchpoints.json` ganha `grok.failure-result`, com `coveredBy` vazio, porque as sondas só passam com `complete`.
+- `provider-dispatch.md` e `docs/reference.md` citam os sidecars. O parágrafo de dropouts de `provider-dispatch.md` cita as saídas 130, 70 e 65 de uma falha do Grok, e o passo 10 de `update-clis` manda ler o `error.message` de um `child-failed` do Grok.
+
+## O que ficou de fora
+
+- O modo `auto` de permissão do Grok (`47cd5a2`, `fb2c4f8` e a parte do runner de `6313b6c`), que o digest julgou `não aplica`. O runner segue em `bypassPermissions`.
+- O texto de ajuda do `cli.ts` não cita os sidecars, como o do open.
+
+## Fora dos arquivos do plano
+
+- `README.md`: o `--ref v0.5.12`, que `scripts/manifests.test.ts` confere com a versão.
+- `skills/setup-pstack/scripts/setup-pstack.ts` e o seu teste: o pré-check de `runProbes` recusa entradas existentes nos caminhos de saída, receipt e sidecars, inclusive links simbólicos sem alvo. Os testes dos sidecars conferem a recusa antes de chamar os provedores e a preservação das entradas.
+- `skills/update-clis/SKILL.md`: uma linha no passo 10.
+- `skills/poteto-mode/scripts/runner/child.ts` e `grok-acp.test.ts`: a captura segue a supervisão extraída na 0.5.11. O ACP não grava streams crus e mantém `stdoutPath` e `stderrPath` nulos. O teste de credenciais verifica esses campos e a ausência de sidecars.
+
+## Verificação
+
+- `npm test`, `npm run test:bun`, `npm run matrix:check`, `npm run agents:check`, `npm run collision:check` e `git diff --check` passam.
+- Com o código da 0.5.11 e os testes deste PR, 24 casos de `run.test.ts` falham e `parse-output.test.ts` não carrega.
+- `proof/you-see.mjs`, na trilha do programa, roda o lançador real com um `grok` falso que devolve `{"type":"result","subtype":"api_error","is_error":true,"errors":["API unavailable"]}`. Na 0.5.11, a saída é 65 e o status `malformed-output`, sem sidecars. Nesta versão, a saída é 70 e o status `child-failed`, com `API unavailable` em `error.message` e no começo de `error.evidence`, e os dois sidecars `-rw-------` com os bytes exatos do filho.
