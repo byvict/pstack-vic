@@ -178,6 +178,11 @@ async function waitFor(
   }
 }
 
+function grokModelAvailable(value: string, model: string): boolean {
+  const escaped = model.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^A-Za-z0-9_.-])${escaped}($|[^A-Za-z0-9_.-])`).test(value);
+}
+
 function preflightPassed(provider: Provider, model: string, result: ProcessResult): boolean {
   if (result.exitCode !== 0 || result.timedOut) return false;
   const combined = `${result.stdout}\n${result.stderr}`;
@@ -197,7 +202,8 @@ function preflightPassed(provider: Provider, model: string, result: ProcessResul
     case "codex":
       return /logged in/i.test(combined);
     case "grok":
-      return /logged in/i.test(combined) && combined.includes(model);
+      return unavailableStatus(combined, model) === "child-failed" &&
+        /\blogged in\b/i.test(combined) && grokModelAvailable(combined, model);
     default:
       return false;
   }
@@ -209,12 +215,18 @@ function successfulPreflightEvidence(provider: Provider, model: string): string 
     : "authenticated";
 }
 
-function unavailableStatus(value: string): LaneFailure {
-  if (/not logged in|unauthenticated|authentication|sign in|login required/i.test(value)) {
+function unavailableStatus(value: string, requestedModel: string): LaneFailure {
+  if (
+    /\b(not logged in|not authenticated|unauthenticated|login required)\b/i.test(value) ||
+    /\b(authentication(?: is)?[ -](failed|failure|required|error)|(?:please|must|need to) sign in|sign[ -]in required|sign in to (continue|proceed))\b/i.test(value)
+  ) {
     return "unauthenticated";
   }
   if (/model.{0,40}(not found|unknown|unavailable|unsupported|not supported|invalid)|invalid.{0,20}model/i.test(value)) {
     return "unavailable-model";
+  }
+  for (const refusal of value.matchAll(/(?:^|[ \t])(\S+)[ \t]+(?:is[ \t]+)?(not found|unknown|unavailable|unsupported|not supported|invalid)\b/gim)) {
+    if (grokModelAvailable(refusal[1], requestedModel)) return "unavailable-model";
   }
   return "child-failed";
 }
@@ -224,9 +236,9 @@ function preflightFailureStatus(
   model: string,
   value: string
 ): LaneFailure {
-  const status = unavailableStatus(value);
+  const status = unavailableStatus(value, model);
   if (status !== "child-failed") return status;
-  return cliFor(provider) === "grok" && !value.includes(model)
+  return cliFor(provider) === "grok" && !grokModelAvailable(value, model)
     ? "unavailable-model"
     : "unauthenticated";
 }
@@ -652,7 +664,7 @@ async function runCliAttempt(
       ? "cancelled"
       : result.timedOut
         ? "timed-out"
-        : providerFailure?.status ?? unavailableStatus(rawFailureEvidence);
+        : providerFailure?.status ?? unavailableStatus(rawFailureEvidence, options.model);
     return {
       kind: "failed",
       status,
