@@ -1,11 +1,9 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { childEnvironment, findExecutable, runProcess, stageOverlay, type ProcessResult } from "./child.ts";
+export { childEnvironment, findExecutable } from "./child.ts";
 import {
-  accessSync,
   closeSync,
-  constants as fsConstants,
   existsSync,
   mkdirSync,
-  mkdtempSync,
   openSync,
   readFileSync,
   rmSync,
@@ -13,9 +11,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { constants as osConstants, tmpdir } from "node:os";
-import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
-import type { Readable } from "node:stream";
+import { dirname, resolve } from "node:path";
 import {
   routeFor,
   reportedModelMatches as familyReportMatches,
@@ -26,8 +22,8 @@ import {
   invocationCommand,
   preflightCommand,
   type CommandSpec,
-  type ConfigOverlay,
 } from "./commands.ts";
+import { grokAcpExecution, readT3Attachment } from "./grok-acp.ts";
 import { parseProviderOutput, reportedModelMatches } from "./parse-output.ts";
 import {
   cliFor,
@@ -47,22 +43,16 @@ import {
   type ReceiptStatus,
   type RunCancellation,
   type RunnerOptions,
+  type ExecutionRequest,
+  type PreparedAttempt,
+  type PreparedContext,
+  type AcpDetail,
   type RunnerReceipt,
   type WaitOutcome,
 } from "./types.ts";
 
 const ERROR_EVIDENCE_LIMIT = 4_000;
 const GROK_PREFLIGHT_RETRY_DELAY_MS = 5_000;
-const MAX_TIMER_DELAY_MS = 2_147_483_647;
-
-interface ProcessResult {
-  readonly exitCode: number | null;
-  readonly signal: string | null;
-  readonly stdout: string;
-  readonly stderr: string;
-  readonly timedOut: boolean;
-  readonly cancelledBy: CancellationSignal | null;
-}
 
 export interface RunResult {
   readonly exitCode: number;
@@ -140,296 +130,6 @@ function installRunCancellation(): RunCancellation {
       globalThis.process.off("SIGTERM", onTerminate);
     },
   };
-}
-
-const CODEX_IDENTITY = [
-  "CODEX_THREAD_ID",
-  "CODEX_SESSION_ID",
-  "CODEX_CI",
-  "CODEX_SHELL",
-  "CODEX_SANDBOX",
-  "CODEX_SANDBOX_NETWORK_DISABLED",
-  "CODEX_INTERNAL_ORIGINATOR_OVERRIDE",
-] as const;
-
-const CLAUDE_IDENTITY = [
-  "CLAUDECODE",
-  "CLAUDE_CODE_CHILD_SESSION",
-  "CLAUDE_CODE_SESSION_ID",
-  "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS",
-] as const;
-
-export function childEnvironment(
-  provider: Provider,
-  source: NodeJS.ProcessEnv = process.env
-): NodeJS.ProcessEnv {
-  const result = { ...source };
-  const cli = cliFor(provider);
-  const remove = cli === "claude"
-    ? CODEX_IDENTITY
-    : cli === "codex"
-      ? CLAUDE_IDENTITY
-      : [...CODEX_IDENTITY, ...CLAUDE_IDENTITY];
-  for (const key of remove) delete result[key];
-  return result;
-}
-
-/** Resolve a command on PATH the way Bun.which did: first executable regular file wins. */
-export function findExecutable(
-  command: string,
-  path: string | undefined,
-  cwd: string
-): string | null {
-  const candidates = command.includes("/")
-    ? [isAbsolute(command) ? command : resolve(cwd, command)]
-    : (path ?? "")
-        .split(delimiter)
-        .filter((entry) => entry.length > 0)
-        .map((entry) => join(entry, command));
-  for (const candidate of candidates) {
-    try {
-      if (!statSync(candidate).isFile()) continue;
-      accessSync(candidate, fsConstants.X_OK);
-      return candidate;
-    } catch {
-      continue;
-    }
-  }
-  return null;
-}
-
-interface StagedOverlay {
-  readonly env: NodeJS.ProcessEnv;
-  readonly directory: string;
-}
-
-function stageOverlay(env: NodeJS.ProcessEnv, overlay: ConfigOverlay): StagedOverlay {
-  const directory = mkdtempSync(join(tmpdir(), "pstack-runner-"));
-  const file = join(directory, overlay.fileName);
-  try {
-    writeFileSync(file, overlay.content, { encoding: "utf8", mode: 0o600 });
-  } catch (error) {
-    rmSync(directory, { recursive: true, force: true });
-    throw error;
-  }
-  const staged: NodeJS.ProcessEnv = { ...env, [overlay.variable]: file };
-  for (const key of overlay.unset) delete staged[key];
-  return { env: staged, directory };
-}
-
-function exitCodeOf(code: number | null, signal: NodeJS.Signals | null): number {
-  if (code !== null) return code;
-  const number = signal === null ? 0 : (osConstants.signals[signal] ?? 0);
-  return 128 + number;
-}
-
-interface Spawned {
-  readonly child: ChildProcess;
-  readonly exited: Promise<number>;
-}
-
-function spawnChild(
-  executable: string,
-  spec: CommandSpec,
-  cwd: string,
-  env: NodeJS.ProcessEnv
-): Spawned {
-  const child = spawn(executable, [...spec.args], {
-    cwd,
-    env,
-    stdio: [spec.stdin === "prompt" ? "pipe" : "ignore", "pipe", "pipe"],
-  });
-  const exited = new Promise<number>((resolveExit, rejectExit) => {
-    child.once("error", rejectExit);
-    child.once("exit", (code, signal) => resolveExit(exitCodeOf(code, signal)));
-  });
-  // A rejection is observed by whoever awaits `exited`; keep Node from
-  // reporting it as unhandled when the race that would have observed it has
-  // already settled.
-  exited.catch(() => undefined);
-  return { child, exited };
-}
-
-async function terminate(
-  spawned: Spawned,
-  signal: CancellationSignal = "SIGTERM"
-): Promise<boolean> {
-  const { child, exited } = spawned;
-  if (child.pid === undefined) return false;
-  if (child.exitCode !== null || child.signalCode !== null) return false;
-  child.kill(signal);
-  let graceTimer: ReturnType<typeof setTimeout> | null = null;
-  let done: boolean;
-  try {
-    done = await Promise.race([
-      exited.then(() => true),
-      new Promise<boolean>((resolveGrace) => {
-        graceTimer = setTimeout(() => resolveGrace(false), 1_000);
-      }),
-    ]);
-  } finally {
-    if (graceTimer !== null) clearTimeout(graceTimer);
-  }
-  if (!done) {
-    child.kill("SIGKILL");
-    await exited;
-  }
-  return true;
-}
-
-interface StreamCapture {
-  readonly result: Promise<string>;
-  cancel(): Promise<void>;
-}
-
-function captureStream(stream: Readable | null): StreamCapture {
-  if (stream === null) {
-    return { result: Promise.resolve(""), async cancel() {} };
-  }
-  const decoder = new TextDecoder();
-  let text = "";
-  let finished = false;
-  let cancellationRequested = false;
-
-  const result = new Promise<string>((resolveText, rejectText) => {
-    const finish = (): void => {
-      if (finished) return;
-      finished = true;
-      text += decoder.decode();
-      resolveText(text);
-    };
-    stream.on("data", (chunk: Buffer) => {
-      text += decoder.decode(chunk, { stream: true });
-    });
-    stream.once("end", finish);
-    stream.once("close", finish);
-    stream.once("error", (error) => {
-      if (cancellationRequested) {
-        finish();
-      } else if (!finished) {
-        finished = true;
-        rejectText(error);
-      }
-    });
-  });
-
-  return {
-    result,
-    async cancel() {
-      cancellationRequested = true;
-      stream.destroy();
-      await result.catch(() => undefined);
-    },
-  };
-}
-
-type ProcessEvent =
-  | { readonly kind: "exited"; readonly exitCode: number }
-  | { readonly kind: "cancelled"; readonly signal: CancellationSignal }
-  | { readonly kind: "timed-out" };
-
-async function runProcess(
-  executable: string,
-  spec: CommandSpec,
-  cwd: string,
-  env: NodeJS.ProcessEnv,
-  prompt: string,
-  deadlineAt: number | null,
-  cancellation: RunCancellation
-): Promise<ProcessResult> {
-  const spawned = spawnChild(executable, spec, cwd, env);
-  const { child } = spawned;
-  let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
-  const stdoutCapture = captureStream(child.stdout);
-  const stderrCapture = captureStream(child.stderr);
-  const streams = Promise.all([stdoutCapture.result, stderrCapture.result]);
-  const exited = spawned.exited.then((exitCode): ProcessEvent => ({
-    kind: "exited",
-    exitCode,
-  }));
-  const cancelled = cancellation.promise.then((signal): ProcessEvent => ({
-    kind: "cancelled",
-    signal,
-  }));
-  const deadline: Promise<ProcessEvent> | null = deadlineAt === null
-    ? null
-    : new Promise((resolveDeadline) => {
-      const arm = (): void => {
-        const remaining = deadlineAt - Date.now();
-        if (remaining <= 0) {
-          resolveDeadline({ kind: "timed-out" });
-          return;
-        }
-        deadlineTimer = setTimeout(arm, Math.min(remaining, MAX_TIMER_DELAY_MS));
-      };
-      arm();
-    });
-  try {
-    if (spec.stdin === "prompt") {
-      const stdin = child.stdin;
-      if (stdin === null) throw new Error("child stdin pipe was not created");
-      // The child may exit before reading the prompt; a broken pipe is not a
-      // launcher failure, the child's exit status is.
-      stdin.on("error", () => undefined);
-      stdin.end(prompt);
-    }
-
-    const completions = [exited, cancelled];
-    if (deadline !== null) completions.push(deadline);
-    const first = await Promise.race(completions);
-
-    let outcome = first;
-    let captured: readonly [string, string] | null = null;
-    let signalSent: CancellationSignal | null = null;
-
-    if (first.kind === "exited") {
-      const drains: Array<Promise<
-        | { readonly kind: "drained"; readonly captured: readonly [string, string] }
-        | ProcessEvent
-      >> = [
-        streams.then((value) => ({ kind: "drained" as const, captured: value })),
-        cancelled,
-      ];
-      if (deadline !== null) drains.push(deadline);
-      const drain = await Promise.race(drains);
-      if (drain.kind === "drained") {
-        captured = drain.captured;
-        if (deadlineAt !== null && Date.now() >= deadlineAt) {
-          outcome = { kind: "timed-out" };
-        }
-      } else {
-        outcome = drain;
-      }
-    }
-
-    const cancelledBy = cancellation.signal;
-    const timedOut = cancelledBy === null && outcome.kind === "timed-out";
-    if (cancelledBy !== null) {
-      if (await terminate(spawned, cancelledBy)) signalSent = cancelledBy;
-    } else if (timedOut) {
-      if (await terminate(spawned)) signalSent = "SIGTERM";
-    }
-    if (captured === null) {
-      await Promise.all([stdoutCapture.cancel(), stderrCapture.cancel()]);
-      captured = await streams;
-    }
-
-    return {
-      exitCode: await spawned.exited,
-      signal: signalSent,
-      stdout: captured[0],
-      stderr: captured[1],
-      timedOut,
-      cancelledBy,
-    };
-  } catch (error) {
-    await terminate(spawned, cancellation.signal ?? "SIGTERM").catch(() => false);
-    await Promise.all([stdoutCapture.cancel(), stderrCapture.cancel()]);
-    await Promise.allSettled([stdoutCapture.result, stderrCapture.result]);
-    throw error;
-  } finally {
-    if (deadlineTimer !== null) clearTimeout(deadlineTimer);
-  }
 }
 
 async function waitFor(
@@ -652,6 +352,7 @@ function finish(
     argv: evidence.argv,
     exitCode: evidence.exitCode,
     signal: evidence.signal,
+    ...(evidence.acp === undefined ? {} : { acp: evidence.acp }),
     ...fields,
   };
 
@@ -682,6 +383,7 @@ export function pinnedFamily(provider: Provider, model: string): Family | null {
 }
 
 export function validateOptions(options: RunnerOptions): void {
+  validateRoute(options);
   if (!(options.parent in MATRIX.parents)) {
     throw new UsageError(`parent ${options.parent} is not in model-matrix.json`);
   }
@@ -750,8 +452,14 @@ function stoppedBeforeChild(
   };
 }
 
-function cliLane(options: RunnerOptions): Lane {
-  const invocation = invocationCommand(options);
+function preparedLane(
+  options: ExecutionRequest,
+  invocation: CommandSpec,
+  attempt: PreparedAttempt,
+  env: NodeJS.ProcessEnv = childEnvironment(options.provider),
+  sanitize: (value: string) => string = (value) => value,
+  acp?: AcpDetail,
+): Lane {
   const preflight = preflightCommand(options.provider);
   const ev: CliEvidence = {
     executable: null,
@@ -763,19 +471,22 @@ function cliLane(options: RunnerOptions): Lane {
     argv: [invocation.command, ...invocation.args],
     exitCode: null,
     signal: null,
+    ...(acp === undefined ? {} : { acp }),
   };
-  return { evidence: ev, run: (context) => runCliLane(options, invocation, preflight, ev, context) };
+  return { evidence: ev, sanitize, run: (context) => runPreparedLane(options, invocation, preflight, ev, context, attempt, env, sanitize) };
 }
 
-async function runCliLane(
-  options: RunnerOptions,
+async function runPreparedLane(
+  options: ExecutionRequest,
   invocation: CommandSpec,
   preflight: CommandSpec,
   ev: CliEvidence,
-  context: LaneContext
+  context: LaneContext,
+  attempt: PreparedAttempt,
+  env: NodeJS.ProcessEnv,
+  sanitize: (value: string) => string,
 ): Promise<LaneOutcome> {
   const { deadlineAt, cancellation } = context;
-  const env = childEnvironment(options.provider);
   const executable = findExecutable(invocation.command, env.PATH, options.cwd);
   ev.executable = executable;
   ev.argv = [executable ?? invocation.command, ...invocation.args];
@@ -800,9 +511,10 @@ async function runCliLane(
     env,
     "",
     deadlineAt,
-    cancellation
+    cancellation,
+    ev
   );
-  let rawPreflightEvidence = evidence(`${preflightResult.stdout}\n${preflightResult.stderr}`);
+  let rawPreflightEvidence = evidence(sanitize(`${preflightResult.stdout}\n${preflightResult.stderr}`));
   let passed = preflightPassed(options.provider, options.model, preflightResult);
   let preflightEvidence = passed
     ? successfulPreflightEvidence(options.provider, options.model)
@@ -836,9 +548,10 @@ async function runCliLane(
       env,
       "",
       deadlineAt,
-      cancellation
+      cancellation,
+      ev
     );
-    rawPreflightEvidence = evidence(`${preflightResult.stdout}\n${preflightResult.stderr}`);
+    rawPreflightEvidence = evidence(sanitize(`${preflightResult.stdout}\n${preflightResult.stderr}`));
     passed = preflightPassed(options.provider, options.model, preflightResult);
     preflightEvidence = retriedPreflightEvidence(
       firstPreflightEvidence,
@@ -889,7 +602,20 @@ async function runCliLane(
     return stoppedBeforeChild(ev, beforeModel, cancellation, "before model execution");
   }
 
-  const result = await runModel(options, executable, invocation, env, context, ev);
+  return attempt({ ...context, executable, environment: env, evidence: ev });
+}
+
+function cliLane(options: Extract<ExecutionRequest, { kind: "cli" }>): Lane {
+  const invocation = invocationCommand(options);
+  return preparedLane(options, invocation, (context) => runCliAttempt(options, invocation, context));
+}
+
+async function runCliAttempt(
+  options: Extract<ExecutionRequest, { kind: "cli" }>,
+  invocation: CommandSpec,
+  context: PreparedContext,
+): Promise<LaneOutcome> {
+  const result = await runModel(options, context.executable, invocation, context.environment, context, context.evidence);
 
   if (result.cancelledBy !== null || result.timedOut || result.exitCode !== 0) {
     const rawFailureEvidence = `${result.stderr}\n${result.stdout}`;
@@ -954,7 +680,8 @@ async function runModel(
       staged?.env ?? env,
       context.prompt,
       context.deadlineAt,
-      context.cancellation
+      context.cancellation,
+      ev
     );
   } finally {
     if (staged !== null) rmSync(staged.directory, { recursive: true, force: true });
@@ -970,7 +697,11 @@ export async function runLane(
 ): Promise<RunResult> {
   validateOptions(options);
   const deadlineAt = options.timeoutMs === null ? null : started + options.timeoutMs;
-  const lane = cliLane(options);
+  const request = executionRequest(options);
+  const lane = request.kind === "cli" ? cliLane(request) : (() => {
+    const execution = grokAcpExecution(request, childEnvironment(request.provider));
+    return preparedLane(request, execution.command, execution.attempt, execution.environment, execution.sanitize, execution.acp);
+  })();
   const cancellation = installRunCancellation();
   try {
     reserveOutputs(options);
@@ -981,7 +712,12 @@ export async function runLane(
         cancellation,
         wait: (delayMs) => waitFor(delayMs, deadlineAt, cancellation),
       };
-      return finish(options, started, lane.evidence, await lane.run(context));
+      const outcome = await lane.run(context);
+      const checkpoint = await context.wait(0);
+      if (checkpoint !== "ready" && lane.evidence.acp !== undefined) lane.evidence.acp.shutdownIntent = checkpoint;
+      return finish(options, started, lane.evidence, checkpoint === "ready" || (outcome.kind === "failed" && outcome.status === checkpoint)
+        ? outcome
+        : stoppedBeforeChild(lane.evidence, checkpoint, cancellation, "before receipt completion"));
     } catch (error) {
       const signal = cancellation.signal;
       const status: LaneFailure = signal !== null
@@ -1003,7 +739,7 @@ export async function runLane(
             : status === "timed-out"
               ? "explicit deadline elapsed after reserving output paths"
               : "launcher failed after reserving output paths",
-          evidence: evidence(message),
+          evidence: evidence(lane.sanitize?.(message) ?? message),
         },
       });
     }
@@ -1019,5 +755,33 @@ export function resolvedOptions(options: RunnerOptions): RunnerOptions {
     cwd: resolve(options.cwd),
     outputPath: resolve(options.outputPath),
     receiptPath: resolve(options.receiptPath),
+    ...(options.mcpConfigPath === undefined ? {} : { mcpConfigPath: resolve(options.mcpConfigPath) }),
   };
+}
+
+export function validateRoute(options: RunnerOptions): void {
+  if (options.transport === undefined || options.transport === "cli") {
+    if (options.mode === "full-access") throw new UsageError("full-access requires --transport grok-acp");
+    if (options.mcpConfigPath !== undefined) throw new UsageError("MCP configuration requires --transport grok-acp");
+    return;
+  }
+  if (options.transport !== "grok-acp") throw new UsageError("unsupported transport");
+  if (options.parent !== "codex" && options.parent !== "claude") throw new UsageError("Grok ACP requires parent codex or claude; use Grok's native subagent primitive");
+  if (options.provider !== "grok") throw new UsageError("Grok ACP requires provider grok");
+  if (options.mode !== "full-access") throw new UsageError("Grok ACP requires explicit --mode full-access");
+}
+
+function executionRequest(options: RunnerOptions): ExecutionRequest {
+  validateRoute(options);
+  const files = {
+    model: options.model, effort: options.effort, promptPath: options.promptPath, cwd: options.cwd,
+    outputPath: options.outputPath, receiptPath: options.receiptPath, timeoutMs: options.timeoutMs,
+  };
+  if (options.transport === "grok-acp") {
+    if ((options.parent !== "codex" && options.parent !== "claude") || options.provider !== "grok" || options.mode !== "full-access") throw new UsageError("invalid Grok ACP request");
+    return { ...files, kind: "grok-acp", parent: options.parent, provider: "grok", mode: "full-access",
+      t3: options.mcpConfigPath === undefined ? null : readT3Attachment(options.mcpConfigPath) };
+  }
+  if (options.mode === "full-access") throw new UsageError("full-access requires Grok ACP");
+  return { ...files, kind: "cli", parent: options.parent, provider: options.provider, mode: options.mode };
 }

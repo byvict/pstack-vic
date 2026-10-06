@@ -33,12 +33,49 @@ export interface RunnerOptions {
   readonly provider: Provider;
   readonly model: string;
   readonly effort: Effort;
-  readonly mode: AccessMode;
+  readonly mode: AccessMode | "full-access";
+  readonly transport?: "cli" | "grok-acp";
+  readonly mcpConfigPath?: string;
   readonly promptPath: string;
   readonly cwd: string;
   readonly outputPath: string;
   readonly receiptPath: string;
   readonly timeoutMs: number | null;
+}
+
+export interface T3Attachment {
+  readonly previewTabId: string;
+  readonly urlEnv: string;
+  readonly bearerTokenEnv: string;
+}
+
+type RequestFiles = Pick<RunnerOptions,
+  "model" | "effort" | "promptPath" | "cwd" | "outputPath" | "receiptPath" | "timeoutMs">;
+
+export type ExecutionRequest = RequestFiles & (
+  | { readonly kind: "cli"; readonly parent: Parent; readonly provider: Provider; readonly mode: AccessMode }
+  | {
+      readonly kind: "grok-acp";
+      readonly parent: "codex" | "claude";
+      readonly provider: "grok";
+      readonly mode: "full-access";
+      readonly t3: T3Attachment | null;
+    }
+);
+
+export type GrokAcpRequest = Extract<ExecutionRequest, { readonly kind: "grok-acp" }>;
+
+export interface AcpDetail {
+  stage: "preflight" | "initialize" | "authenticate" | "session" | "model" | "capability-check" | "prompt" | "shutdown" | "finished";
+  sessionId: string | null;
+  stopReason: string | null;
+  observedModels: readonly string[];
+  effectiveTools: readonly string[];
+  shutdownIntent: "session-complete" | "cancelled" | "timed-out" | "failure" | null;
+  readonly grokSandbox: "off";
+  closeOutcome: "closed" | "rpc-error" | "grace-elapsed" | null;
+  readonly mcpScope: "none" | "configured-and-forwarded";
+  readonly attachment: T3Attachment | null;
 }
 
 export type ReceiptStatus =
@@ -86,7 +123,8 @@ export interface RunnerReceipt {
   readonly provider: Provider;
   readonly model: string;
   readonly effort: Effort;
-  readonly mode: AccessMode;
+  readonly mode: RunnerOptions["mode"];
+  readonly acp?: AcpDetail;
   readonly cwd: string;
   readonly promptPath: string;
   readonly outputPath: string;
@@ -142,6 +180,7 @@ export interface CliEvidence {
   argv: readonly string[];
   exitCode: number | null;
   signal: string | null;
+  readonly acp?: AcpDetail;
 }
 
 /** Everything a lane can end as. Only finish() may mint "complete". */
@@ -154,7 +193,16 @@ export type LaneOutcome =
 /** One lane, prepared before reservation, run after it. */
 export interface Lane {
   readonly evidence: CliEvidence;
+  sanitize?(value: string): string;
   run(context: LaneContext): Promise<LaneOutcome>;
 }
+
+export interface PreparedContext extends LaneContext {
+  readonly executable: string;
+  readonly environment: NodeJS.ProcessEnv;
+  readonly evidence: CliEvidence;
+}
+
+export type PreparedAttempt = (context: PreparedContext) => Promise<LaneOutcome>;
 
 export class UsageError extends Error {}

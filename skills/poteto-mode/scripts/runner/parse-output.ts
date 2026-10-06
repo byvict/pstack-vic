@@ -45,7 +45,7 @@ function normalizedUsage(value: unknown): NormalizedUsage | null {
     : null;
 }
 
-function modelFromUsage(
+export function modelFromUsage(
   value: unknown,
   provider: Provider,
   requestedModel: string

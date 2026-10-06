@@ -10,7 +10,7 @@ import {
 export interface CommandSpec {
   readonly command: string;
   readonly args: readonly string[];
-  readonly stdin: "prompt" | "none";
+  readonly stdin: "prompt" | "none" | "interactive";
 }
 
 /** A config file the child finds through `variable`, with the variables that would shadow it removed. */
@@ -134,6 +134,8 @@ export function invocationCommand(
   options: RunnerOptions,
   env: NodeJS.ProcessEnv = process.env
 ): CommandSpec {
+  const mode = options.mode;
+  if (mode === "full-access") throw new UsageError("full-access requires the Grok ACP transport");
   const cli = requireCli(options.provider);
   switch (cli) {
     case "claude":
@@ -146,16 +148,16 @@ export function invocationCommand(
           "--effort",
           options.effort,
           "--permission-mode",
-          permissionMode(options.mode),
+          permissionMode(mode),
           "--setting-sources",
           "project",
           "--strict-mcp-config",
           "--tools",
-          claudeTools(options.mode),
+          claudeTools(mode),
           "--no-session-persistence",
           "--disable-slash-commands",
           "--disallowed-tools",
-          claudeDeniedTools(options.mode),
+          claudeDeniedTools(mode),
           "--output-format",
           "json",
         ],
@@ -171,7 +173,7 @@ export function invocationCommand(
           "--config",
           effortOverride(options.effort),
           "--sandbox",
-          codexSandbox(options.mode),
+          codexSandbox(mode),
           "--cd",
           options.cwd,
           "--skip-git-repo-check",
@@ -202,9 +204,9 @@ export function invocationCommand(
           "--permission-mode",
           grokPermissionMode(),
           "--sandbox",
-          grokSandbox(options.mode, insideCodexSandbox(env)),
+          grokSandbox(mode, insideCodexSandbox(env)),
           "--tools",
-          grokTools(options.mode),
+          grokTools(mode),
           "--disallowed-tools",
           "Agent,search_tool,use_tool",
           "--output-format",
@@ -220,4 +222,34 @@ export function invocationCommand(
     default:
       throw new UsageError(`no invocation command for CLI ${cli}`);
   }
+}
+
+export function grokAcpCommand(profilePath: string): CommandSpec {
+  return {
+    command: "grok",
+    args: ["--sandbox", "off", "agent", "--always-approve", "--no-leader", "--agent-profile", profilePath, "stdio"],
+    stdin: "interactive",
+  };
+}
+
+export function grokAcpTools(forwardMcp: boolean): readonly string[] {
+  return ["run_terminal_command", "read_file", "search_replace", "list_dir", "grep",
+    ...(forwardMcp ? ["search_tool", "use_tool"] : [])];
+}
+
+export function grokAcpProfile(forwardMcp: boolean): string {
+  const tools = ["read_file", "grep", "list_dir", "run_terminal_cmd", "search_replace", ...(forwardMcp ? ["search_tool", "use_tool"] : [])];
+  const denied = ["Agent", "Task", "spawn_subagent", "workflow", "monitor", "scheduler_create", "scheduler_delete", "scheduler_list",
+    "web_search", "web_fetch", "image_gen", "image_edit", "image_to_video", "reference_to_video", "ask_user_question", "enter_plan_mode", "exit_plan_mode",
+    ...(forwardMcp ? [] : ["search_tool", "use_tool"])];
+  return ["---", "name: pstack-external-grok-lane", "description: Execute one assigned external lane.", "tools:",
+    ...tools.map((tool) => `  - ${tool}`), "disallowedTools:", ...denied.map((tool) => `  - ${tool}`), "---",
+    "Execute the assigned task only. Do not start workflows or subagents.", ""].join("\n");
+}
+
+export function grokAcpOverlay(): ConfigOverlay {
+  return {
+    variable: "GROK_CONFIG_PATH", unset: ["GROK_CONFIG"], fileName: "grok-lane.toml",
+    content: '[shell_environment_policy]\ninherit = "core"\n[subagents]\nenabled = false\n',
+  };
 }
