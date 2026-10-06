@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,8 +9,8 @@ import { isolatedEnv, isolateProcessEnv } from "./isolated-env.test-helper.ts";
 
 const RUNNER_DIR = import.meta.dirname;
 const LAUNCHER = join(RUNNER_DIR, "pstack-runner");
-// A fresh fake's first exec reached 4.7 s on a loaded Mac (see run.test.ts).
 const RUN_BUDGET_MS = 10_000;
+const PROMPT_PAST_PIPE_CAPACITY = "Return the marker.\n".repeat(100_000);
 
 interface Startup {
   readonly nodeOptions?: string;
@@ -27,7 +27,6 @@ const STARTUPS: Readonly<Record<string, Startup>> = {
   "bare-name": { bareName: true },
 };
 
-// The lane PATH holds only the fakes and node, so cat goes by absolute path.
 const fakeCodex = `#!/bin/sh
 if [ "$1" = "login" ]; then
   printf '%s\\n' 'Logged in using ChatGPT'
@@ -71,8 +70,7 @@ describe("pstack-runner launcher", () => {
       const requirePreload = join(scratch, "require-preload.ran");
       const importPreload = join(scratch, "import-preload.ran");
       const helperRan = join(scratch, "helper.ran");
-      // Past the pipe capacity, so the fake must drain stdin before it answers.
-      writeFileSync(prompt, "Return the marker.\n".repeat(100_000));
+      writeFileSync(prompt, PROMPT_PAST_PIPE_CAPACITY);
       writeFileSync(join(scratch, "project-preload.cjs"),
         `require("node:fs").writeFileSync(${JSON.stringify(requirePreload)}, "require preload ran\\n");\n`);
       writeFileSync(join(scratch, "project-preload.mjs"),
@@ -92,7 +90,6 @@ describe("pstack-runner launcher", () => {
         PSTACK_INHERITED_ENV_SENTINEL: "inherited-from-parent",
         ...(startup.nodeOptions === undefined ? {} : { NODE_OPTIONS: startup.nodeOptions }),
       });
-      execFileSync(join(bin, "codex"), ["login"], { env, stdio: "ignore" });
       const flags = [
         "--parent", "claude",
         "--provider", "codex",
