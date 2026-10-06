@@ -14,6 +14,7 @@ const PROMPT_PAST_PIPE_CAPACITY = "Return the marker.\n".repeat(100_000);
 
 interface Startup {
   readonly nodeOptions?: string;
+  readonly bunOptions?: string;
   readonly dotenv?: true;
   readonly hostileHelpers?: true;
   readonly bareName?: true;
@@ -22,7 +23,12 @@ interface Startup {
 const STARTUPS: Readonly<Record<string, Startup>> = {
   "node-options-require": { nodeOptions: "--require=./project-preload.cjs" },
   "node-options-import": { nodeOptions: "--import=./project-preload.mjs" },
-  combined: { nodeOptions: "--require=./project-preload.cjs --import=./project-preload.mjs", dotenv: true },
+  "bun-options": { bunOptions: "--env-file=./startup.env" },
+  combined: {
+    nodeOptions: "--require=./project-preload.cjs --import=./project-preload.mjs",
+    bunOptions: "--env-file=./startup.env",
+    dotenv: true,
+  },
   "hostile-path": { hostileHelpers: true },
   "bare-name": { bareName: true },
 };
@@ -33,7 +39,7 @@ if [ "$1" = "login" ]; then
   exit 0
 fi
 /bin/cat > "$PSTACK_PROMPT_CAPTURE"
-printf '%s\\n' "\${PSTACK_PROJECT_ENV_SENTINEL-unset}" "\${PSTACK_LOCAL_ENV_SENTINEL-unset}" "\${PSTACK_INHERITED_ENV_SENTINEL-unset}" "\${PSTACK_SENTINEL-unset}" "\${NODE_OPTIONS-unset}" > "$PSTACK_ENV_CAPTURE"
+printf '%s\\n' "\${PSTACK_PROJECT_ENV_SENTINEL-unset}" "\${PSTACK_LOCAL_ENV_SENTINEL-unset}" "\${PSTACK_INHERITED_ENV_SENTINEL-unset}" "\${BUN_OPTIONS-unset}" "\${NODE_OPTIONS-unset}" "\${PSTACK_SENTINEL-unset}" > "$PSTACK_ENV_CAPTURE"
 printf '%s\\n' '{"type":"thread.started","thread_id":"isolated"}' '{"type":"item.completed","item":{"type":"agent_message","text":"CODEX_OK"}}' '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
 `;
 
@@ -78,6 +84,7 @@ describe("pstack-runner launcher", () => {
         `require("node:fs").writeFileSync(${JSON.stringify(requirePreload)}, "require preload ran\\n");\n`);
       writeFileSync(join(scratch, "project-preload.mjs"),
         `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(importPreload)}, "import preload ran\\n");\nprocess.env.PSTACK_SENTINEL = "set-by-import-preload";\n`);
+      writeFileSync(join(scratch, "startup.env"), "PSTACK_PROJECT_ENV_SENTINEL=loaded-from-bun-options\n");
       if (startup.dotenv) {
         writeFileSync(join(scratch, ".env"), "PSTACK_PROJECT_ENV_SENTINEL=loaded-from-project-dotenv\n");
         writeFileSync(join(scratch, ".env.local"), "PSTACK_LOCAL_ENV_SENTINEL=loaded-from-project-local-dotenv\n");
@@ -92,6 +99,7 @@ describe("pstack-runner launcher", () => {
         PSTACK_PROMPT_CAPTURE: capturedPrompt,
         PSTACK_INHERITED_ENV_SENTINEL: "inherited-from-parent",
         ...(startup.nodeOptions === undefined ? {} : { NODE_OPTIONS: startup.nodeOptions }),
+        ...(startup.bunOptions === undefined ? {} : { BUN_OPTIONS: startup.bunOptions }),
       });
       const flags = [
         "--parent", "claude",
@@ -117,7 +125,7 @@ describe("pstack-runner launcher", () => {
         receipt: existsSync(receipt) ? readFileSync(receipt, "utf8") : null,
       }));
       assert.equal(readFileSync(capturedPrompt, "utf8"), readFileSync(prompt, "utf8"));
-      assert.equal(readFileSync(capturedEnv, "utf8"), "unset\nunset\ninherited-from-parent\nunset\nunset\n");
+      assert.equal(readFileSync(capturedEnv, "utf8"), "unset\nunset\ninherited-from-parent\nunset\nunset\nunset\n");
       assert.equal(existsSync(requirePreload), false, "the --require preload ran");
       assert.equal(existsSync(importPreload), false, "the --import preload ran");
       assert.equal(existsSync(helperRan), false, "a PATH helper ran before exec");
