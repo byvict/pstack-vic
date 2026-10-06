@@ -1153,11 +1153,10 @@ function put(path: string, text: string): string {
 }
 
 describe("configHomeFor", () => {
-  it("takes a non-empty CLAUDE_CONFIG_DIR or CODEX_HOME, treats empty as unset, and keeps Grok under the home", () => {
+  it("takes CLAUDE_CONFIG_DIR or a non-empty CODEX_HOME, treats an empty CODEX_HOME as unset, and keeps Grok under the home", () => {
     const cfg = join(home, "claude # config");
     const codex = join(home, "codex home");
     assert.equal(configHomeFor("claude", home, { CLAUDE_CONFIG_DIR: cfg }), cfg);
-    assert.equal(configHomeFor("claude", home, { CLAUDE_CONFIG_DIR: "" }), join(home, ".claude"));
     assert.equal(configHomeFor("claude", home, {}), join(home, ".claude"));
     assert.equal(configHomeFor("codex", home, { CODEX_HOME: codex }), codex);
     assert.equal(configHomeFor("codex", home, { CODEX_HOME: "", CLAUDE_CONFIG_DIR: cfg }), join(home, ".codex"));
@@ -1169,9 +1168,18 @@ describe("configHomeFor", () => {
 
   it("refuses a variable that is not an absolute path", () => {
     for (const value of ["relative/dir", "~/.claude-work", "   "]) {
-      assert.throws(() => configHomeFor("claude", home, { CLAUDE_CONFIG_DIR: value }), { message: `CLAUDE_CONFIG_DIR must be an absolute path or empty; got ${JSON.stringify(value)}` });
+      assert.throws(() => configHomeFor("claude", home, { CLAUDE_CONFIG_DIR: value }), { message: `CLAUDE_CONFIG_DIR must be an absolute path; got ${JSON.stringify(value)}` });
     }
     assert.throws(() => loadState({ parent: "codex", home, matrix, env: { CODEX_HOME: "codex" } }), { message: 'CODEX_HOME must be an absolute path or empty; got "codex"' });
+  });
+
+  it("refuses an empty CLAUDE_CONFIG_DIR, which Claude Code reads as the directory it starts in", () => {
+    const empty = "CLAUDE_CONFIG_DIR is empty; Claude Code 2.1.289 then reads settings.json and CLAUDE.md from the directory it starts in, not from ~/.claude, so unset it or set it to an absolute path";
+    const env = { CLAUDE_CONFIG_DIR: "" };
+    assert.throws(() => configHomeFor("claude", home, env), { message: empty });
+    assert.throws(() => loadState({ parent: "claude", home, matrix, env }), { message: empty });
+    assert.throws(() => buildPlan({ parent: "claude", home, matrix, env }), { message: empty });
+    assert.equal(configHomeFor("codex", home, { CLAUDE_CONFIG_DIR: "", CODEX_HOME: "" }), join(home, ".codex"));
   });
 
   it("reads no variable of the test process: only an env the caller passes moves a path", () => {
@@ -1222,12 +1230,10 @@ describe("writeSheet in a redirected config home", () => {
     assert.equal(existsSync(join(home, ".codex")), false);
   });
 
-  it("treats an empty CLAUDE_CONFIG_DIR as unset: the default home and the legacy include", async () => {
-    const env = { CLAUDE_CONFIG_DIR: "" };
-    const plan = await planAndProbe("claude", { env });
-    writeSheet(plan, runDir, { home, env });
-    assert.equal(readFileSync(join(home, ".claude", "pstack-models.md"), "utf8"), plan.sheet);
-    assert.equal(readFileSync(join(home, ".claude", "CLAUDE.md"), "utf8"), "@~/.claude/pstack-models.md\n");
+  it("refuses to write with an empty CLAUDE_CONFIG_DIR and leaves the default home alone", async () => {
+    const plan = await planAndProbe("claude");
+    assert.throws(() => writeSheet(plan, runDir, { home, env: { CLAUDE_CONFIG_DIR: "" } }), { message: /^CLAUDE_CONFIG_DIR is empty; / });
+    assert.equal(existsSync(join(home, ".claude")), false);
   });
 
   it("keeps the legacy include when CLAUDE_CONFIG_DIR names the default home", async () => {
@@ -1317,7 +1323,7 @@ describe("loadState sources", () => {
     const sheet = put(join(cfg, "pstack-models.md"), firstRunSheet("claude"));
     assert.throws(
       () => loadState({ parent: "claude", home, env, matrix }),
-      { message: `inconsistent state: ${sheet} and ${imported} (imported by ${integration}) assign different lanes to hillclimb; delete the sheet to carry the imported one over, or change the import to @./pstack-models.md to keep the sheet` }
+      { message: `inconsistent state: ${sheet} and ${imported} (imported by ${integration}) assign different lanes to hillclimb (sheet: claude:claude-opus-5-5@xhigh; import: claude:claude-opus-5-5@high); delete the sheet to carry the imported one over, or change the import to @./pstack-models.md to keep the sheet` }
     );
     writeFileSync(sheet, `${sheetWithHighHillclimb()}\nA note the operator kept.\n`);
     assert.deepEqual(loadState({ parent: "claude", home, env, matrix }).source, { kind: "sheet", path: sheet });
@@ -1337,13 +1343,15 @@ describe("loadState sources", () => {
     assert.equal(readFileSync(sheetPathFor("codex", home), "utf8"), customized);
   });
 
-  it("stops when the Codex sheet and its block assign different lanes, naming both", () => {
+  it("stops when the Codex sheet and its block assign different lanes, naming both sides of each role", () => {
     const sheet = putSheet("codex", firstRunSheet("codex"));
-    const changed = firstRunSheet("codex").replace("hillclimb: codex:gpt-6-sol@xhigh", "hillclimb: codex:gpt-6-sol@high");
+    const changed = firstRunSheet("codex")
+      .replace("hillclimb: codex:gpt-6-sol@xhigh", "hillclimb: codex:gpt-6-sol@high")
+      .replace("why synthesizer: inherit-parent\n", "");
     const integration = put(integrationPathFor("codex", home), `${CODEX_BLOCK_BEGIN}\n${changed}${CODEX_BLOCK_END}\n`);
     assert.throws(
       () => buildPlan({ parent: "codex", home, matrix }),
-      { message: `inconsistent state: ${sheet} and the pstack:models block of ${integration} assign different lanes to hillclimb; delete the sheet to recover the block, or remove the block to keep the sheet` }
+      { message: `inconsistent state: ${sheet} and the pstack:models block of ${integration} assign different lanes to hillclimb (sheet: codex:gpt-6-sol@xhigh; block: codex:gpt-6-sol@high), why synthesizer (sheet: inherit-parent; block: no row); delete the sheet to recover the block, or remove the block to keep the sheet` }
     );
   });
 
@@ -1356,6 +1364,106 @@ describe("loadState sources", () => {
   it("recovers a Grok sheet from its block the same way", () => {
     const integration = put(integrationPathFor("grok", home), `${CODEX_BLOCK_BEGIN}\n${firstRunSheet("grok")}${CODEX_BLOCK_END}\n`);
     assert.deepEqual(loadState({ parent: "grok", home, matrix }).source, { kind: "block", path: integration });
+  });
+});
+
+describe("imports that a line scan reads differently from Claude Code", () => {
+  const elsewhere = (): string => put(join(home, "dotfiles", "pstack-models.md"), sheetWithHighHillclimb());
+  const claudeMd = (text: string): string => put(join(home, ".claude", "CLAUDE.md"), text);
+  const hidden = (path: string): string =>
+    `inconsistent state: Claude Code would not load @~/.claude/pstack-models.md written into ${path} (the file ends inside a code block, an HTML block or a comment); add that line yourself at the top of the file, then run setup again`;
+  const unsure = (path: string, line: number, reason: string): string =>
+    `inconsistent state: ${path} line ${line} mentions an import of pstack-models.md that this script cannot read the way Claude Code does (${reason}); move the import to the top of the file as a line of its own, or remove the mention`;
+
+  async function rewritten(before: string, after: string): Promise<void> {
+    const sheet = elsewhere();
+    const integration = claudeMd(before);
+    assert.deepEqual(loadState({ parent: "claude", home, matrix }).source, { kind: "import", path: sheet });
+    const plan = await planAndProbe("claude");
+    assert.equal(plan.firstRun, false);
+    writeSheet(plan, runDir, { home });
+    assert.equal(readFileSync(integration, "utf8"), after);
+    assert.match(readFileSync(join(home, ".claude", "pstack-models.md"), "utf8"), /^hillclimb: claude:claude-opus-5-5@high$/m);
+  }
+
+  async function appended(before: string, after = `${before}@~/.claude/pstack-models.md\n`): Promise<void> {
+    elsewhere();
+    const integration = claudeMd(before);
+    assert.deepEqual(loadState({ parent: "claude", home, matrix }).source, { kind: "first-run" });
+    const plan = await planAndProbe("claude");
+    writeSheet(plan, runDir, { home });
+    assert.equal(readFileSync(integration, "utf8"), after);
+  }
+
+  function stops(before: string, message: string): void {
+    elsewhere();
+    const integration = claudeMd(before);
+    assert.throws(() => loadState({ parent: "claude", home, matrix }), { message });
+    assert.throws(() => buildPlan({ parent: "claude", home, matrix }), { message });
+    assert.equal(readFileSync(integration, "utf8"), before);
+    assert.equal(existsSync(join(home, ".claude", "pstack-models.md")), false);
+  }
+
+  it("loads an import right after an HTML comment on its line, and rewrites it there", async () => {
+    await rewritten("<!-- models -->@~/dotfiles/pstack-models.md\n", "<!-- models -->@~/.claude/pstack-models.md\n");
+  });
+
+  it("loads an import after an indented fence line that only continues a paragraph", async () => {
+    await rewritten("Para\n    ```\n@~/dotfiles/pstack-models.md\n", "Para\n    ```\n@~/.claude/pstack-models.md\n");
+  });
+
+  it("counts only the plain import when a second one sits in an indented code block", async () => {
+    await rewritten("@~/dotfiles/pstack-models.md\n\n    @./pstack-models.md\n", "@~/.claude/pstack-models.md\n\n    @./pstack-models.md\n");
+  });
+
+  it("skips an import in an indented code block and appends one that loads", async () => {
+    await appended("Notes.\n\n    @~/dotfiles/pstack-models.md\n");
+  });
+
+  it("skips an import in front matter and appends one that loads", async () => {
+    await appended("---\nnote: @~/dotfiles/pstack-models.md\n---\nBody\n");
+  });
+
+  it("stops when an unclosed HTML comment would hide the appended import", () => {
+    stops("<!-- @~/dotfiles/pstack-models.md\n", hidden(join(home, ".claude", "CLAUDE.md")));
+  });
+
+  it("skips an import in an HTML block and appends one after a blank line, which ends the block", async () => {
+    await appended("<div>\n@~/dotfiles/pstack-models.md\n</div>\n", "<div>\n@~/dotfiles/pstack-models.md\n</div>\n\n@~/.claude/pstack-models.md\n");
+  });
+
+  it("stops on an import glued to emphasis, which Claude Code loads", () => {
+    stops("*@~/dotfiles/pstack-models.md*\n", unsure(join(home, ".claude", "CLAUDE.md"), 1, "markup touches it"));
+  });
+
+  it("stops on an import in link text, which Claude Code loads", () => {
+    stops("[@~/dotfiles/pstack-models.md](https://example.com)\n", unsure(join(home, ".claude", "CLAUDE.md"), 1, "an HTML tag, a link or a backslash comes before it in its paragraph"));
+  });
+
+  it("stops on an import glued inside an inline tag, which Claude Code loads", () => {
+    stops("<span>@~/dotfiles/pstack-models.md</span>\n", unsure(join(home, ".claude", "CLAUDE.md"), 1, "an HTML tag, a link or a backslash comes before it in its paragraph"));
+  });
+
+  it("appends after a blank line when the last paragraph would leave a lazy line unsure", async () => {
+    await appended("See [the docs](https://example.com).", "See [the docs](https://example.com).\n\n@~/.claude/pstack-models.md\n");
+  });
+
+  it("still reads a plain list item and appends after a list as a lazy line", async () => {
+    await rewritten("# Rules\n- one\n- models @~/dotfiles/pstack-models.md\n", "# Rules\n- one\n- models @~/.claude/pstack-models.md\n");
+    rmSync(join(home, ".claude"), { recursive: true });
+    await appended("# Rules\n- one\n- two\n");
+  });
+});
+
+describe("a config home that is a file", () => {
+  it("stops state and plan before any probe", () => {
+    const cfg = put(join(home, "cfg"), "not a directory\n");
+    const env = { CLAUDE_CONFIG_DIR: cfg };
+    const message = `inconsistent state: the config home ${cfg} is a file, not a directory; move it aside or point CLAUDE_CONFIG_DIR at a directory`;
+    assert.throws(() => loadState({ parent: "claude", home, env, matrix }), { message });
+    assert.throws(() => buildPlan({ parent: "claude", home, env, matrix }), { message });
+    put(join(home, ".grok"), "not a directory\n");
+    assert.throws(() => loadState({ parent: "grok", home, matrix }), { message: `inconsistent state: the config home ${join(home, ".grok")} is a file, not a directory; move it aside` });
   });
 });
 
@@ -1400,6 +1508,13 @@ describe("command line", () => {
     assert.equal(written.code, 0, written.stderr);
     assert.equal(readFileSync(join(cfg, "CLAUDE.md"), "utf8"), "@./pstack-models.md\n");
     assert.equal(existsSync(join(home, ".claude")), false);
+  });
+
+  it("refuses an empty CLAUDE_CONFIG_DIR from its own environment", () => {
+    const result = cli(["state", "--parent", "claude", "--home", home], { ...noCliEnv(), CLAUDE_CONFIG_DIR: "" });
+    assert.equal(result.code, 1);
+    assert.equal(result.stderr, "error: CLAUDE_CONFIG_DIR is empty; Claude Code 2.1.289 then reads settings.json and CLAUDE.md from the directory it starts in, not from ~/.claude, so unset it or set it to an absolute path\n");
+    assert.equal(result.stdout, "");
   });
 
   it("plan writes plan.json into the run directory and prints it", () => {

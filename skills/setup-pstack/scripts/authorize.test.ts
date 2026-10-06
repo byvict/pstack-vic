@@ -381,6 +381,25 @@ describe("a redirected config home", () => {
     assert.equal(existsSync(decoy), false);
   });
 
+  it("refuses an empty CLAUDE_CONFIG_DIR in check and apply, because Claude Code reads it as the directory it starts in", async () => {
+    putSettings({ autoMode: { allow: ["$defaults", ALLOW_ENTRY] } });
+    const before = readFileSync(settingsPathFor("claude", home), "utf8");
+    const refusal = "error: CLAUDE_CONFIG_DIR is empty; Claude Code 2.1.289 then reads settings.json and CLAUDE.md from the directory it starts in, not from ~/.claude, so unset it or set it to an absolute path\n";
+    const check = await run(["check", "--parent", "claude"], undefined, { CLAUDE_CONFIG_DIR: "" });
+    assert.deepEqual([check.code, check.stdout, check.stderr], [1, "", refusal]);
+    const apply = await run(["apply", "--parent", "claude"], "yes", { CLAUDE_CONFIG_DIR: "" });
+    assert.deepEqual([apply.code, apply.stdout, apply.stderr, apply.questions], [1, "", refusal, []]);
+    assert.equal(readFileSync(settingsPathFor("claude", home), "utf8"), before);
+    assert.equal(existsSync(backupPathFor("claude", home)), false);
+  });
+
+  it("keeps an empty CODEX_HOME as unset, as Codex does", async () => {
+    put(join(home, ".codex", "config.toml"), 'approval_policy = "never"\n');
+    const result = await run(["check", "--parent", "codex"], undefined, { CODEX_HOME: "" });
+    assert.equal(result.code, 0);
+    assert.equal(JSON.parse(result.stdout).file, join(home, ".codex", "config.toml"));
+  });
+
   it("checks the config.toml of CODEX_HOME", async () => {
     const codex = join(base, "codex home");
     put(join(codex, "config.toml"), 'approval_policy = "never"\n');
