@@ -324,11 +324,10 @@ O modo automático do Claude Code bloqueia esses merges de fábrica, pelas regra
 ```shell
 AUTHORIZE=~/.claude/plugins/cache/pstack-vic/pstack/<versão>/skills/setup-pstack/scripts/authorize.ts
 node $AUTHORIZE check --parent claude
-node $AUTHORIZE apply --parent claude
 node $AUTHORIZE check --parent codex
 ```
 
-Troque `<versão>` pela versão instalada. O primeiro comando confere o Claude Code. Ele sai com 0 quando a autorização está gravada e com 1 quando não está, e o JSON que ele imprime traz o motivo, a entrada e o comando. O segundo grava a autorização e só roda num terminal. Ele mostra a entrada, pede um "yes" digitado e grava. O terceiro confere o Codex. Ele sai com 0 quando `approval_policy = "never"` está no topo do `~/.codex/config.toml`.
+Troque `<versão>` pela versão instalada. O primeiro comando confere o Claude Code. Ele sai com 0 quando a autorização está gravada e com 1 quando não está, e o JSON que ele imprime traz o arquivo, o motivo, a entrada e, no campo `grant`, o comando que grava a autorização. Esse comando fixa `CLAUDE_CONFIG_DIR` na pasta do arquivo que o `check` leu e só roda num terminal. Ele mostra a entrada, pede um "yes" digitado e grava. O segundo comando confere o Codex. Ele sai com 0 quando `approval_policy = "never"` está no topo do `<config-home>/config.toml` do Codex.
 
 A entrada vale em qualquer repositório. Ela cobre três coisas:
 

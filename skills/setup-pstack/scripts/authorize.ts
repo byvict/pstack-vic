@@ -217,8 +217,9 @@ const USAGE = `Usage: authorize <check|apply> [options]
          Add the standing authorization to autoMode.allow of <config-home>/settings.json.
          Asks for a yes on a terminal; refuses without one.
 
-The config home is a non-empty CLAUDE_CONFIG_DIR (claude) or CODEX_HOME (codex), else
-<home>/.claude, <home>/.codex, <home>/.grok.
+The config home is CLAUDE_CONFIG_DIR (claude) or CODEX_HOME (codex), an absolute path, else
+<home>/.claude, <home>/.codex, <home>/.grok. An empty CODEX_HOME counts as unset. An empty
+CLAUDE_CONFIG_DIR stops check --parent claude and apply.
 `;
 
 async function askOnTerminal(question: string): Promise<string> {

@@ -1563,8 +1563,10 @@ const USAGE = `Usage: setup-pstack <state|plan|probe|attest|write|pick> [options
          operator's order. The parent's own provider always counts as a writer; name every
          other provider that wrote with --executor. Exit 1 when no lane is eligible.
 
-The sheet, the ledger and the integration live in the parent's config home: a non-empty
-CLAUDE_CONFIG_DIR (claude) or CODEX_HOME (codex), else <home>/.claude, <home>/.codex, <home>/.grok.
+The sheet, the ledger and the integration live in the parent's config home: CLAUDE_CONFIG_DIR
+(claude) or CODEX_HOME (codex), an absolute path, else <home>/.claude, <home>/.codex, <home>/.grok.
+An empty CODEX_HOME counts as unset. An empty CLAUDE_CONFIG_DIR stops state, plan, write and
+pick for the claude parent.
 
 Exit codes: 0 ok, 1 a probe failed, the write was refused, or no lane is eligible, 64 usage.
 `;
