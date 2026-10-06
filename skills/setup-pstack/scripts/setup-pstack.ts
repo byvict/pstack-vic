@@ -201,11 +201,11 @@ function pathRun(text: string, from: number): string {
   return PATH_RUN_RE.exec(text.slice(from))?.[0] ?? "";
 }
 
-function sheetTarget(run: string): string | null {
+function pathTarget(run: string): string | null {
   const path = run.split("#")[0].replaceAll("\\ ", " ");
   const accepted = path.startsWith("./") || path.startsWith("~/") || (path.startsWith("/") && path !== "/")
     || (!path.startsWith("@") && !/^[#%^&*()]+/.test(path) && /^[a-zA-Z0-9._-]/.test(path));
-  return accepted && basename(path) === SHEET_FILE ? path : null;
+  return accepted ? path : null;
 }
 
 function wordVerdict(text: string, at: number, tokenStart: boolean): Verdict {
@@ -214,7 +214,7 @@ function wordVerdict(text: string, at: number, tokenStart: boolean): Verdict {
   const before = text[at - 1] ?? "";
   if (tokenStart || before === "" || /\s/.test(before)) {
     if (PATH_MARKUP_RE.test(run.split("#")[0])) return unsure(MARKUP);
-    const target = sheetTarget(run);
+    const target = pathTarget(run);
     return target === null ? SKIPPED : { kind: "loaded", target, run };
   }
   return TOKEN_ENDS.has(before) || text[at - 2] === "\\" ? unsure(MARKUP) : SKIPPED;
@@ -278,7 +278,7 @@ function listVerdict(line: string, at: number, contentStart: number): Verdict {
   const run = pathRun(content, i + 1);
   const before = content[i - 1] ?? "";
   if (before === "" || /\s/.test(before)) {
-    const target = sheetTarget(run);
+    const target = pathTarget(run);
     if (target !== null) return { kind: "loaded", target, run };
     return PATH_MARKUP_RE.test(run.split("#")[0]) ? unsure(MARKUP) : SKIPPED;
   }
@@ -328,8 +328,12 @@ class ImportReader {
   }
 
   mark(from: number, to: number, verdict: (at: number) => Verdict): void {
+    let tokenEnd = from;
     for (const at of this.mentions) {
-      if (at >= from && at < to && !this.verdicts.has(at)) this.verdicts.set(at, verdict(at));
+      if (at < from || at >= to || this.verdicts.has(at)) continue;
+      const result = at < tokenEnd ? SKIPPED : verdict(at);
+      this.verdicts.set(at, result);
+      if (result.kind === "loaded" && !PATH_MARKUP_RE.test(result.target)) tokenEnd = at + 1 + result.run.length;
     }
   }
 
@@ -351,8 +355,8 @@ class ImportReader {
       rest += raw.slice(last);
       for (const match of rest.matchAll(IMPORT_RE)) {
         const run = match[1];
-        const target = sheetTarget(run);
-        if (target === null) continue;
+        const target = pathTarget(run);
+        if (target === null || basename(target) !== SHEET_FILE) continue;
         const at = match.index + match[0].length - run.length - 1;
         this.verdicts.set(kept[at], kept[at + run.length] - kept[at] === run.length ? { kind: "loaded", target, run } : unsure(SPLIT));
       }
@@ -490,7 +494,7 @@ function scanSheetImports(raw: string): ImportScan {
   const unsureImports: UnsureImport[] = [];
   for (const [at, verdict] of [...reader.verdicts].sort(([a], [b]) => a - b)) {
     const start = rawOffset(at);
-    if (verdict.kind === "loaded") imports.push({ line: lineOf(text, at), start, end: start + 1 + verdict.run.length, target: verdict.target });
+    if (verdict.kind === "loaded" && basename(verdict.target) === SHEET_FILE) imports.push({ line: lineOf(text, at), start, end: start + 1 + verdict.run.length, target: verdict.target });
     if (verdict.kind === "unsure") unsureImports.push({ line: lineOf(text, at), reason: verdict.reason });
   }
   return { imports, unsure: unsureImports };
