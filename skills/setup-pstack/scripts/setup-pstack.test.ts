@@ -1323,6 +1323,37 @@ describe("the Claude sheet import", () => {
       assert.equal(readFileSync(integration, "utf8"), before);
       assert.equal(existsSync(join(cfg, "pstack-models.md")), false);
     });
+
+    it(`keeps a skipped comment marker separate from the live import after it with ${label}`, async () => {
+      const cfg = join(home, "cfg");
+      const env = { CLAUDE_CONFIG_DIR: cfg };
+      const imported = put(join(cfg, "elsewhere", "pstack-models.md"), sheetWithHighHillclimb());
+      const before = `<!--@noise-->@./elsewhere/pstack-models.md${lineEnd}`;
+      const integration = put(join(cfg, "CLAUDE.md"), before);
+      assert.deepEqual(loadState({ parent: "claude", home, env, matrix }).source, { kind: "import", path: imported });
+      const plan = await planAndProbe("claude", { env });
+      writeSheet(plan, runDir, { home, env });
+      assert.equal(readFileSync(integration, "utf8"), `<!--@noise-->@./pstack-models.md${lineEnd}`);
+      assert.equal(readFileSync(join(cfg, "pstack-models.md"), "utf8"), sheetWithHighHillclimb());
+    });
+
+    it(`still refuses comment-split and marked list targets with nested @ characters with ${label}`, () => {
+      const cfg = join(home, "cfg");
+      const env = { CLAUDE_CONFIG_DIR: cfg };
+      for (const text of [
+        "<!-- before -->@./at<!--@noise-->literal/pstack-models.md",
+        "- @./at<!--@noise-->@literal/pstack-models.md",
+        "*@./at@literal/pstack-models.md*",
+        "@@./at@literal/pstack-models.md",
+      ]) {
+        const before = `${text}${lineEnd}`;
+        const integration = put(join(cfg, "CLAUDE.md"), before);
+        assert.throws(() => loadState({ parent: "claude", home, env, matrix }), /cannot read the way Claude Code does/);
+        assert.throws(() => buildPlan({ parent: "claude", home, env, matrix }), /cannot read the way Claude Code does/);
+        assert.equal(readFileSync(integration, "utf8"), before);
+        assert.equal(existsSync(join(cfg, "pstack-models.md")), false);
+      }
+    });
   }
 
   it("carries a copied profile's imported sheet into the redirected home and replaces the one import in place", async () => {
