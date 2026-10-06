@@ -1,6 +1,6 @@
 ---
 name: reflect
-description: Spawn three parallel review subagents over the active transcript, surface learnings, and route each to a concrete edit on an existing skill. Use when the user says reflect.
+description: "Use only when the user explicitly names this skill or an active pstack workflow calls it. Review a completed session and apply lessons to existing skills."
 ---
 
 # Reflect

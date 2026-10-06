@@ -1,6 +1,6 @@
 ---
 name: arena
-description: "Spawn N parallel candidates at the same task, pick a base, graft the strongest parts of the losers into it. Use for /arena, 'arena this', 'throw it in the arena', or when one attempt at a non-trivial artifact would lock in the wrong shape."
+description: "Use only when the user explicitly names this skill or an active pstack workflow calls it. Run competing implementations and combine their strongest parts."
 ---
 
 # Arena

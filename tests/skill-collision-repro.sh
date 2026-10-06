@@ -39,9 +39,9 @@ else
   note "ok: all principle-* leaves request user-hidden and remain model-readable"
 fi
 
-# CHANGES.md, decisão 1 da fase 4: poteto-mode invoca as skills de fluxo pelo
-# modelo, então nenhuma pode carregar disable-model-invocation. A exceção é o
-# próprio poteto-mode, que só o usuário liga (scripts/manifests.test.ts).
+# Fluxos entram por nome ou pelo roteador. As descrições delimitam a entrada
+# no Claude/Grok; manter a ferramenta Skill disponível preserva o roteamento.
+# No Codex, a política de descoberta é conferida em scripts/manifests.test.ts.
 routed_model_bad=""
 for routed_skill in "$repo"/skills/*/SKILL.md; do
   case "$routed_skill" in */skills/principle-*|*/skills/poteto-mode/SKILL.md) continue ;; esac

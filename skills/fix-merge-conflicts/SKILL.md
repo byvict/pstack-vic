@@ -1,6 +1,6 @@
 ---
 name: fix-merge-conflicts
-description: Resolve merge conflicts non-interactively, validate build and tests, and finalize conflict resolution
+description: "Use only when the user explicitly names this skill or an active pstack workflow calls it. Resolve merge conflicts and validate the resulting code."
 ---
 
 # Fix merge conflicts

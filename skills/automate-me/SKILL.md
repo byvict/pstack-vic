@@ -1,6 +1,6 @@
 ---
 name: automate-me
-description: "Use for \"automate me\", \"create/update/refresh my -mode skill\", \"turn/capture my preferences or working style into a skill\", or wanting agents to follow how the user works. Drafts or revises a personal -mode skill via skill-creator + unslop, optionally pulling fresh evidence from recent transcripts."
+description: "Use only when the user explicitly names this skill or an active pstack workflow calls it. Capture the user's working preferences in a mode skill."
 ---
 
 # Automate me

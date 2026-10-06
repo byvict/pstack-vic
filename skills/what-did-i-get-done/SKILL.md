@@ -1,6 +1,6 @@
 ---
 name: what-did-i-get-done
-description: Summarize authored commits over a user-specified time period into a concise update
+description: "Use only when the user explicitly names this skill or an active pstack workflow calls it. Summarize authored commits over a specified period."
 ---
 
 # What did I get done

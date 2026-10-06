@@ -112,7 +112,7 @@ describe("check on a Claude Code parent", () => {
     assert.deepEqual(settings(), { ...original, autoMode: { ...original.autoMode, allow: ["$defaults", ALLOW_ENTRY, "Keep this permission"] } });
     assert.equal(readFileSync(backupPathFor("claude", home), "utf8"), before);
     assert.equal((await run(["check", "--parent", "claude"])).code, 0);
-    assert.equal(MARKER, "pstack standing authorization v2");
+    assert.equal(MARKER, "pstack standing authorization v3");
   });
 
   it("refuses without a settings file and says what the operator runs", async () => {
@@ -179,13 +179,9 @@ describe("apply on a Claude Code parent", () => {
     assert.equal(result.questions.length, 1);
     assert.ok(result.stdout.includes(ALLOW_ENTRY));
     assert.match(result.stdout, /root or the owner of that branch/);
-    assert.match(result.stdout, /--force-with-lease=refs\/heads\/<branch>:/);
-    assert.match(result.stdout, /canonical forge readback/);
-    assert.match(result.stdout, /gh pr merge --repo <owner\/name> <pr> --squash --match-head-commit <published-head>/);
-    assert.match(result.stdout, /all current required checks pass/);
+    assert.match(result.stdout, /--force-with-lease when the playbook requires a rewritten push/);
+    assert.match(result.stdout, /current-head checks and forge requirements/);
     assert.match(result.stdout, /Every operator-named merge hold remains in force/);
-    assert.match(result.stdout, /validated push URL with --force-with-lease=refs\/heads\/<branch>:<captured-remote-head>/);
-    assert.match(result.stdout, /captured before rewriting and equal to the local pre-rewrite head/);
     assert.ok(result.stdout.includes(settingsPathFor("claude", home)));
     assert.match(result.stderr, /Nothing written/);
     assert.equal(readFileSync(settingsPathFor("claude", home), "utf8"), before);

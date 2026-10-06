@@ -21,14 +21,16 @@ No shell, `claude plugin marketplace add byvict/pstack-vic` e `claude plugin ins
 
 `poteto-mode` é um modo que você liga com `/pstack:poteto-mode`. A skill tem `disable-model-invocation: true`, como no original da Cursor, então o modelo não entra nela sozinho, nem num bug fix. O plugin não registra hook. Até a 0.1.4, um hook SessionStart copiado do open-pstack mandava toda tarefa de engenharia não trivial entrar por `poteto-mode`; saiu na 0.1.5 ([`CHANGES.md`](../CHANGES.md)).
 
+As outras skills de fluxo entram quando você as nomeia ou quando um fluxo pstack ativo as chama. As descrições expressam esse limite; elas continuam disponíveis para a ferramenta `Skill` do Claude Code. `setup-pstack` e `poteto-help` podem carregar por pedidos comuns.
+
 ### Codex
 
 ```shell
-codex plugin marketplace add byvict/pstack-vic --ref v0.5.20
+codex plugin marketplace add byvict/pstack-vic --ref v0.5.21
 codex plugin add pstack@pstack-vic
 ```
 
-O Codex descobre as skills sob o namespace `pstack` (`pstack:poteto-mode`, `pstack:tdd`…), que vem de `.codex-plugin/plugin.json`; os `principle-*` também aparecem, porque `user-invocable: false` é do Claude Code. `poteto-mode` só entra quando você o pede pelo nome: `skills/poteto-mode/agents/openai.yaml` desliga a invocação implícita (`allow_implicit_invocation: false`). Para as skills que fazem fan-out (`interrogate`, `arena`, `how`, `why`, `reflect`, `architect`, `swarm`), ligue subagents em `~/.codex/config.toml`. Quando faltam ferramentas nativas ou vagas, o coordenador pode usar uma sessão nova do mesmo provedor pelo runner, preservando modelo e esforço. A alternativa precisa atender às ferramentas e ao isolamento da tarefa; siga [Provider dispatch](../skills/poteto-mode/references/provider-dispatch.md#when-native-dispatch-is-unavailable). Uma tarefa sem rota válida fica como lacuna:
+O Codex descobre as skills sob o namespace `pstack` (`pstack:poteto-mode`, `pstack:tdd`…), que vem de `.codex-plugin/plugin.json`; os `principle-*` também aparecem, porque `user-invocable: false` é do Claude Code. As skills de fluxo entram por nome ou quando um fluxo pstack ativo as chama. Seus arquivos `agents/openai.yaml` desligam a descoberta implícita (`allow_implicit_invocation: false`); o roteador lê o arquivo da skill chamada. `setup-pstack` e `poteto-help` continuam disponíveis por pedidos comuns. Para as skills que fazem fan-out (`interrogate`, `arena`, `how`, `why`, `reflect`, `architect`, `swarm`), ligue subagents em `~/.codex/config.toml`. Quando faltam ferramentas nativas ou vagas, o coordenador pode usar uma sessão nova do mesmo provedor pelo runner, preservando modelo e esforço. A alternativa precisa atender às ferramentas e ao isolamento da tarefa; siga [Provider dispatch](../skills/poteto-mode/references/provider-dispatch.md#when-native-dispatch-is-unavailable). Uma tarefa sem rota válida fica como lacuna:
 
 ```toml
 [features]
@@ -89,10 +91,10 @@ Cada passo confere o que já foi feito, então rodar o script duas vezes não es
 ├── .github/workflows/ci.yml          # CI de cada PR e de cada push na main: o job test é o check obrigatório; depois dele, na main, o job tag cria a tag vX.Y.Z do package.json se ela ainda não existe
 ├── .github/dependabot.yml            # Dependabot: sobe as actions fixadas por SHA num PR semanal agrupado (prefixo ci), só com versões publicadas há 7 dias ou mais
 ├── model-matrix.json                 # famílias, efforts, pais, rota por pai, papéis (dado canônico)
-├── scripts/                          # loader/validação da matriz, render dos blocos gerados, gerador de agents, digest semanal dos upstreams, upstream-parity.ts (a guarda dos seis playbooks do autopilot), release.ts (troca o plugin nos dois pais depois do merge), testes (inclui manifests.test.ts)
+├── scripts/                          # loader/validação da matriz, render dos blocos gerados, gerador de agents, digest semanal dos upstreams, upstream-parity.ts (a paridade dos playbooks do autopilot e do Why), release.ts (troca o plugin nos dois pais depois do merge), testes (inclui manifests.test.ts)
 ├── skills/                           # 59 skills compartilhadas por Claude Code e Codex
 │   ├── poteto-mode/agents/           # openai.yaml: no Codex, poteto-mode só por invocação explícita
-│   ├── poteto-mode/references/       # provider-dispatch.md (rota e papéis), codex-tools.md (mapa de tools), bugbot-triage.md, upstream-substitutions.json (as trocas classificadas dos seis playbooks do autopilot)
+│   ├── poteto-mode/references/       # provider-dispatch.md (rota e papéis), codex-tools.md (mapa de tools), bugbot-triage.md, upstream-substitutions.json (as adaptações de plataforma dos playbooks e do Why)
 │   ├── poteto-mode/scripts/          # runner externo (Node 24, com probe-lane.ts, a sonda de uma lane), watch-pr, orch, check-plan.mjs, worktree-audit.sh
 │   ├── setup-pstack/scripts/         # setup-pstack.ts: estado, plano, probe, atestado e escrita do sheet, e a escolha de uma lane de um papel de pool (Node 24); authorize.ts: a autorização permanente (autopilot e Shipping)
 │   └── update-clis/                  # scripts/update-clis.ts (check, notes, install, probe) e references/cli-touchpoints.json
@@ -133,10 +135,10 @@ Numa raiz Grok o autopilot usa um monitor (`grok-audit-ticker.ts`) para emitir o
 
 Nada é declarado em manifest. O que as skills usam:
 
-- **Git 2.38 ou posterior** — os rebases protegidos usam `--no-update-refs`; uma versão anterior exige parada, sem fallback improvisado.
+- **Git** — branches, worktrees, diffs e rebases dos playbooks.
 - **Node 24** — o runner externo, os scripts da matriz, o `check-plan.mjs` e o `npm test` rodam TypeScript direto, sem build e sem Bun.
-- **CLIs `claude`, `codex` e `grok`** — autenticados, só os que o sheet de modelos usa. O runner recusa provider igual ao do pai (essa lane é nativa). A versão delas muda só pela skill `update-clis` (seção [Versões das CLIs](#versões-das-clis)).
-- **`gh`** — forge dos seis playbooks protegidos de PR; uma mutação pelo Origin é recusada enquanto não houver adaptador provado com precondição de head; `gt` só no playbook Orchestrate. A skill `update-clis` também o usa para ler as releases do codex.
+- **CLIs `claude`, `codex` e `grok`** — autenticados, só os que o sheet de modelos usa. O pai prefere lanes nativas e pode usar o runner do mesmo provedor quando a rota nativa não atende à tarefa. A versão delas muda só pela skill `update-clis` (seção [Versões das CLIs](#versões-das-clis)).
+- **`gh`** — forge padrão dos playbooks; quando Origin está disponível e resolve o repositório, os playbooks seguem essa rota. `gt` só no playbook Orchestrate. A skill `update-clis` também usa `gh` para ler as releases do codex.
 - **`lsof`** — só para `update-clis`, que o usa para saber se alguém está rodando a CLI que ela trocaria.
 - **`bun`** — só para `watch-pr` e `orch`, que vieram da Cursor sem mudança, e para os testes deles e o typecheck do `watch-pr` (`npm run test:bun`).
 - **`jq` e `rg`** — só para `worktree-audit.sh` (playbook Worktree cleanup); sem eles o audit avisa e deixa colunas em branco.
@@ -218,22 +220,12 @@ O Dono leva um PR do build ao merge. Cada Dono trabalha num worktree próprio, q
 - **Segue o playbook do tipo da tarefa.** O pedido que a Raiz entrega ao Dono (o brief) tem os campos do brief do Orchestrate e diz qual playbook rege o build: Bug fix, Feature, Refactoring ou Perf issue. O Dono copia os passos desse playbook para a lista de tarefas dele. O playbook do autopilot cuida do resto do ciclo do PR.
 - **Despacha os próprios ajudantes pela planilha de modelos.** Para os ajudantes que ele cria, o Dono faz o papel de pai: lê `provider-dispatch.md` e manda cada papel configurado pela rota dele. Uma exploração dividida em partes, por exemplo, vai pela skill `swarm`, no modelo da linha `swarm workers`. No Claude Code, uma trava recusa os agentes embutidos `Explore`, `Plan` e `general-purpose` quando um agente do pstack os chama, porque eles rodam sem a skill e fora da planilha ([Subagents](#subagents)).
 - **Anota os subagentes que cria.** O arquivo `children.tsv` guarda o ID, o tempo esperado e o estado de cada um. O tempo esperado é, no mínimo, o da execução mais longa já vista daquele tipo.
-- **Mergeia, no Autopilot-full.** O merge é o único passo que o Dono não dá sozinho. Com o Veredito limpo da Raiz, ele rebaseia na trunk atual, avisa o head novo e espera o CI passar nesse head. Um head novo exige Veredito atual. A Raiz compara os bytes exatos do patch e audita base, dependências, configuração e runtime de cada lane; patch-id igual sozinho não preserva evidência. Depois dos checks atuais, o Dono segue Guarded operations para capturar o corpo real do PR em arquivo e submeter o head publicado com host, repositório, PR, `--match-head-commit` e `--body-file` explícitos. Espera o estado `MERGED` do próprio PR, confere o commit real e pega o próximo item independente da fila. Na comparação com o commit real, só a normalização de LF final é permitida; espaços e texto literal permanecem. O arquivo preserva o corpo no squash direto; a fila nativa usa a política de metadados do GitHub, então o Dono confere e relata qualquer diferença.
+- **Mergeia, no Autopilot-full.** Com o Veredito limpo da Raiz, o Dono prepara o merge, rebaseia na trunk e espera o CI no head atual. A Raiz confere se o Veredito ainda descreve o patch, seguindo o critério de Shipping. O Dono mergeia conforme o playbook e os holds do operador. Um Dono novo pega o próximo item independente da fila.
 - **Não mergeia nem mexe na pilha, no Autopilot-stack.** Ele empurra só a própria branch e avisa STACK-READY quando o loop de babysit dele fica verde. Com o Veredito limpo, a Raiz põe o PR na pilha. Só a Raiz rebaseia e ordena a pilha.
 
-### Como cada operação fica ligada ao PR certo
+### Como publicar e reaproveitar verificações
 
-Os seis playbooks leem Guarded operations no Shipping antes da primeira operação. O registro liga host, owner, repositório, PR, node ID, branch, URLs e heads e bases da publicação e do Veredito. Cada bloco de transporte valida os URLs resolvidos contra esse registro e recusa reescritas de URL e remotes cujo nome seja um URL, inclusive em configuração herdada ou incluída. Isso valida a resolução de URLs; Git, autenticação SSH/TLS, programas de transporte e hooks habilitados continuam sendo inputs confiáveis do runtime.
-
-A primeira publicação usa lease de ausência e exige um recibo legível por máquina que prove a criação do único ref próprio. Exit zero num no-op com o mesmo tip não prova criação. Waves posteriores capturam o ref remoto exato antes dos commits e exigem igualdade com o head local e a resposta canônica do GitHub. Se a captura foi esquecida, o Dono preserva commits não publicados e recibos e pede reconciliação à Raiz; não amplia o lease nem improvisa outro push. As duas publicações comparam o head realmente observado no GitHub ao publicado. Falha, resposta parcial ou divergência impede progressão e exige reconciliar possíveis escritas no destino errado ou concorrentes; não desfaz uma escrita já feita.
-
-Pushes suprimem tags implícitas e recursão em submódulos. Ambos os rebases usam `--no-update-refs`; toda leitura de objetos e grafos ignora replacement objects e grafts legados e recusa histórico raso. O rebase independente recusa árvore suja ou contribuição com merges. O fetch captura `FETCH_HEAD`, exige o SHA selecionado e usa esse commit real no rebase. As branches são nomes literais, comparados pelo ref completo, sem aceitar opções ou aliases de revisão.
-
-Antes de reescrever, retargetar ou invalidar evidência, o responsável retira pedidos de fila e auto-merge do PR e dos descendentes dependentes e relê ambos como ausentes. O bloco completo valida o destino e o node ID pela identidade canônica antes de remover só os modos observados. Dequeue vem antes de `disablePullRequestAutoMerge`. Um merge concorrente interrompe o trabalho e exige reconciliação. O restack começa no checkout limpo que possui a branch do filho e exige contribuição linear não vazia e ancestralidade. Reaplica-a com HEAD detached, compara contagens e patches exatos e só então muda o ref próprio com compare-and-swap do tip antigo. Uma contribuição legitimamente alterada conserva o trabalho detached e os recibos; a Raiz revisa e autoriza a tupla exata após investigação e nova verificação. O bloco separado de conclusão mantém o CAS e exige uma rodada completa atual. Cada lane traz prova nova ou reaproveitamento demonstrado pelo passo 3 de [Shipping](../skills/poteto-mode/playbooks/shipping.md). Uma contribuição com merges exige investigação, sem linearizar a resolução.
-
-O patch estrito inclui as identidades completas dos blobs-base dos arquivos tocados, binários e submódulos. O recibo registra atributos efetivos dos caminhos alterados e configuração de diff, pois esses inputs afetam os bytes produzidos. Mesmo uma contribuição semanticamente igual pode exigir nova prova quando a base desse arquivo muda. Preparação e novas execuções entram no custo de performance. O passo 3 de Shipping preserva a exceção upstream de comparação de builds para mudanças limitadas a testes, documentação ou configuração de lint. Lanes sem build comparável e lanes com inputs relevantes alterados rodam novamente. Isso inclui Markdown consumido como instrução. Toda criação usa Create; Retarget, Ready e Reply também usam os blocos completos com destino validado. Eles preservam os holds do operador. O watcher só desperta o fluxo: a consulta independente de identidade compara o registro após cada wake e conserva a tupla esperada, a observada, horários, status e operação.
-
-A submissão de merge confere a identidade e o head local no mesmo bloco, exige PR aberto, pronto e sem pedidos pendentes, e lê o resultado real depois. Exit zero não prova merge: o bloco distingue merge observado, fila autorizada e pedido inesperado, que exige retirada e reconciliação. A precondição `--match-head-commit` vale na submissão; não congela para sempre um pedido de auto-merge nem vincula atomicamente a base. Cada wake relê head, base, fila e auto-merge. O GitHub exige CI, mas não publica nem impõe o Veredito independente da Raiz.
+Os playbooks seguem o fluxo da Cursor para criar, publicar, rebasear, acompanhar e mergear PRs. Shipping registra o head, a base e o patch-id do Veredito e confere se ele ainda descreve o patch antes de entregar. Quando só testes, documentação ou configuração de lint mudam, aplica a exceção upstream de comparação dos builds. Checks e mergeabilidade são conferidos no head atual. Os detalhes ficam no [playbook Shipping](../skills/poteto-mode/playbooks/shipping.md).
 
 ### O que a Raiz confere antes do merge
 
@@ -295,7 +287,7 @@ O resto é da Raiz e dos Donos: build, PR, CI, verificação e, no Autopilot-ful
 
 Um PR do Dependabot, ou um que você abriu à mão, não tem Dono. Ninguém mexe nele até você decidir. Há dois caminhos:
 
-- **Você mergeia.** Sua revisão e seu clique não dependem de um Veredito da Raiz quando o PR está fora de um programa. Confira os checks atuais, revise o PR e clique no merge. Se pedir que um agente faça o merge pelo Shipping, ele precisa do veredito do verificador independente daquele PR e segue Guarded operations, com host, repositório, PR, head e base conferidos de novo.
+- **Você mergeia.** Sua revisão e seu clique não dependem de um Veredito da Raiz quando o PR está fora de um programa. Confira os checks atuais, revise o PR e clique no merge. Se pedir que um agente faça o merge pelo Shipping, ele segue o playbook e precisa do veredito do verificador independente daquele PR.
 - **Um programa adota o PR.** Ao pedir o programa, cite o PR como um item da fila. A Raiz cria um Dono para ele, como para qualquer item, e valem as mesmas regras: Rodada do Enxame, Veredito limpo e, no Autopilot-full, merge pelo Dono. Os playbooks não têm um passo separado de adoção. Adotar é pôr o PR na fila. Se você quer clicar no merge, diga que o item é seu.
 
 ### O que mudou em relação ao fluxo antigo
@@ -346,8 +338,8 @@ Troque `<versão>` pela versão instalada. O primeiro comando confere o Claude C
 
 A entrada vale em qualquer repositório. Ela cobre três coisas:
 
-- O merge nesses dois casos, com repositório e PR explícitos, `--match-head-commit <head-publicado>`, Veredito independente atual e checks atuais aprovados. Itens reservados pelo operador continuam à espera do clique dele.
-- O trabalho da Raiz de criar subagentes Donos e verificadores, empurrar as branches dos Donos para o URL validado com lease explícito do SHA capturado antes da reescrita, igual ao head local naquele momento, e publicar Vereditos como comentários no PR.
+- O merge nesses dois casos, conforme as verificações e os comandos do playbook, incluindo squash e auto-merge quando pedidos. Itens reservados pelo operador continuam à espera do clique dele.
+- A criação de Donos e verificadores, a publicação das branches próprias pela Raiz ou pelo Dono conforme o playbook e a publicação dos Vereditos como comentários no PR.
 - O lançamento, pelo `pstack-runner`, das lanes que os playbooks nomeiam (Dono, verificador, revisor, juiz ou worker em claude, codex ou grok).
 
 Continuam bloqueados:
@@ -358,11 +350,11 @@ Continuam bloqueados:
 
 Fora de um terminal, o `apply` recusa, porque a autorização é um ato seu e não do agente. Ele mantém as regras de fábrica (`"$defaults"`) e todas as outras configurações, e copia o arquivo anterior para `settings.json.before-pstack-authorization`. Para retirar a autorização, apague a entrada.
 
-A entrada traz a versão no nome (`pstack standing authorization v2`). O `check` exige exatamente uma entrada com formato de grant e o corpo atual exato, sem alterar configurações. Ele distingue ausência, texto antigo e múltiplos grants, inclusive uma entrada atual ao lado de outra antiga. Uma v1 ou uma v2 antiga, inclusive a da 0.5.1, sai com 1 e mostra a entrada atual e o comando do operador. A correção de segurança da 0.5.3 conserva a versão 2. Revise a entrada e rode o `apply` de novo; ele a troca no lugar, com a mesma confirmação digitada e backup. Nenhum playbook roda o `check`. O passo 10 do `/setup-pstack` o roda. Rode-o também antes do "go" de um programa de autopilot, quando a Raiz declara o protocolo ([Como um programa começa](#como-um-programa-começa), passo 5).
+A entrada traz a versão no nome (`pstack standing authorization v3`). O `check` exige exatamente uma entrada com o corpo atual e distingue ausência, texto antigo e múltiplos grants, sem escrever configurações. Um grant anterior precisa da revisão e do `apply` do operador, com confirmação no terminal e backup. A instalação não faz essa migração. O passo 10 do `/setup-pstack` confere a autorização, assim como a preparação do programa antes do "go".
 
 ### De onde vem o texto dos playbooks
 
-Seis playbooks são o texto da Cursor mais uma tabela de trocas. São eles `autopilot-full`, `autopilot-stack`, `babysit`, `opening-a-pr`, `shipping` e `multi-phase-plan`. As linhas `platform` adaptam o harness. As linhas `safety` protegem identidade, publicação, retirada, restack e reutilização de evidência conforme a exceção aprovada no ADR 0005. Todas exigem motivo; `safety` também exige fonte. A tabela está em [`upstream-substitutions.json`](../skills/poteto-mode/references/upstream-substitutions.json), com o tipo, o motivo e a fonte exigida de cada linha. Ninguém edita esses seis arquivos à mão. Para mudar uma frase, mude uma troca na tabela e rode `node scripts/upstream-parity.ts --write`, que gera os seis de novo. O `npm test` roda `node scripts/upstream-parity.ts check`. Esse comando refaz os seis a partir do commit da Cursor anotado em [`UPSTREAM.md`](../UPSTREAM.md) e compara com o que está no repositório. Ele falha quando um arquivo tem uma frase que não é da Cursor nem da tabela. Também falha quando uma troca da tabela não encontra mais o texto dela na Cursor.
+Os seis playbooks do autopilot e o fluxo Why são o texto da Cursor no pin de `UPSTREAM.md` mais as adaptações de ambiente em [`upstream-substitutions.json`](../skills/poteto-mode/references/upstream-substitutions.json). A tabela aceita somente linhas `platform`, cada uma com seu motivo. Edite a tabela e rode `node scripts/upstream-parity.ts --write` para regenerar os arquivos. O `npm test` confere a paridade e recusa acréscimos de política. A correção de Attack the Premise do PR 94 mantém sua proveniência separada no open-pstack.
 
 ## Skills
 
@@ -469,7 +461,7 @@ npm run update-clis -- --help
 claude plugin validate --strict .
 ```
 
-O `npm test` roda os testes da matriz, do gerador de agents, do runner, do setup-pstack, do update-clis, da referência de skills, dos manifests e do hook, do digest dos upstreams, da paridade dos playbooks do autopilot com a Cursor, do verificador de planos (`check-plan.mjs`) contra o molde do `multi-phase-plan.md` gerado, do release e dos invariantes do pacote. O `node scripts/upstream-parity.ts check` roda só a paridade: confere que os seis playbooks do autopilot são o texto da Cursor mais as trocas de `upstream-substitutions.json`.
+O `npm test` roda os testes da matriz, do gerador de agents, do runner, do setup-pstack, do update-clis, da referência de skills, dos manifests e do hook, do digest dos upstreams, da paridade dos playbooks do autopilot e do Why com a Cursor, do verificador de planos (`check-plan.mjs`) contra o molde do `multi-phase-plan.md` gerado, do release e dos invariantes do pacote. O `node scripts/upstream-parity.ts check` roda só a paridade: confere que os seis playbooks e os cinco arquivos de Why são o texto da Cursor mais as adaptações de `upstream-substitutions.json`.
 
 O `npm run test:bun` roda no Bun os testes do `orch` e do `watch-pr`: `bun install --frozen-lockfile`, `bun test` e o typecheck do `watch-pr`. Ele precisa do `bun` no PATH. O `npm run matrix:check` confere que os blocos gerados de `provider-dispatch.md` e do `setup-pstack` estão em dia, e o `npm run agents:check` confere que os `agents/pstack-*.md` estão em dia com a matriz. O `npm run upstream:digest -- --no-fetch` monta o digest dos dois upstreams desde o ponto de sync (`UPSTREAM.md`, seção *Digest semanal*). Os dois `--help` listam os subcomandos do setup (`state`, `plan`, `probe`, `attest` e `write`) e os da atualização das CLIs (`start`, `check`, `notes`, `install`, `probe` e `finish`). O `claude plugin validate --strict .` passa o manifest do plugin e o do marketplace pelo validador do Claude Code.
 

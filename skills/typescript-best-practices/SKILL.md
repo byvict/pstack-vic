@@ -1,6 +1,6 @@
 ---
 name: typescript-best-practices
-description: TypeScript best practices. Use when reading or editing any .ts or .tsx file.
+description: "Use only when the user explicitly names this skill or an active pstack workflow calls it. Apply the TypeScript rules when a workflow reads or edits TypeScript."
 paths: ["**/*.ts", "**/*.tsx"]
 ---
 

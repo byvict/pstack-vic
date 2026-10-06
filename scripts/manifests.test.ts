@@ -150,3 +150,26 @@ describe("poteto-mode entry", () => {
     assert.match(policy, /^policy:\n  allow_implicit_invocation: false$/m);
   });
 });
+
+describe("workflow invocation", () => {
+  const skillNames = readdirSync(join(PLUGIN_ROOT, "skills"));
+  const workflows = skillNames.filter((name) => !name.startsWith("principle-") && !["setup-pstack", "poteto-help"].includes(name));
+
+  for (const name of workflows) {
+    it(`${name} disables Codex implicit discovery while preserving router access`, () => {
+      const path = join(PLUGIN_ROOT, "skills", name);
+      assert.equal(readFileSync(join(path, "agents/openai.yaml"), "utf8"), "policy:\n  allow_implicit_invocation: false\n");
+      const skill = readFileSync(join(path, "SKILL.md"), "utf8");
+      if (name !== "poteto-mode") assert.doesNotMatch(skill.split("---")[1], /^disable-model-invocation: true$/m);
+    });
+  }
+
+  it("keeps setup and help discoverable", () => {
+    for (const name of ["setup-pstack", "poteto-help"]) {
+      const path = join(PLUGIN_ROOT, "skills", name);
+      assert.doesNotMatch(readFileSync(join(path, "SKILL.md"), "utf8").split("---")[1], /^disable-model-invocation: true$/m);
+      const policy = join(path, "agents/openai.yaml");
+      if (existsSync(policy)) assert.doesNotMatch(readFileSync(policy, "utf8"), /allow_implicit_invocation: false/);
+    }
+  });
+});

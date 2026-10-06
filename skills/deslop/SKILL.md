@@ -1,6 +1,6 @@
 ---
 name: deslop
-description: Remove AI-generated code slop and clean up code style
+description: "Use only when the user explicitly names this skill or an active pstack workflow calls it. Remove generated code noise and align the diff with repository style."
 ---
 
 # Remove AI code slop

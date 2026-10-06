@@ -1,6 +1,6 @@
 ---
 name: get-pr-comments
-description: Fetch and summarize review comments from the active pull request
+description: "Use only when the user explicitly names this skill or an active pstack workflow calls it. Fetch and summarize review comments from the active pull request."
 ---
 
 # Get PR comments

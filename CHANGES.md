@@ -1860,3 +1860,15 @@ Victor aprovou esta escolha entre upstreams em 2026-10-06. Ela substitui apenas 
 As outras propostas aprovadas foram aplicadas à análise do PR-B: conferir a mudança de responsabilidade de `unavailableStatus` na investigação existente, julgar capacidade, rotas e reaproveitamento pelas regras atuais, e medir revisão e retrabalho nos registros. O relatório e o extrator ficam em `~/Dev/Skills/pstack-vic-runs/2026-10-06-premise-process-review/`. Nenhum campo, aprovação, métrica obrigatória ou exceção de reaproveitamento foi acrescentado ao processo. Os seis playbooks gerados permanecem intactos.
 
 Verificação: a skill inteira e a linha do roteador são idênticas às fontes do open. Passaram 656 testes Node, 74 testes Bun, typecheck, matriz e agentes gerados, colisões, paridade dos seis playbooks e `git diff --check`.
+
+# 0.5.21 — Fidelidade ao fluxo da Cursor (2026-10-06)
+
+Victor aprovou retirar as verificações adicionais do port para recuperar o comportamento upstream. O pin da Cursor permanece em `4e5b1cf` e Attack the Premise conserva a alteração do PR 94.
+
+- Shipping e os cinco consumidores voltam ao upstream com adaptações de ambiente. Saem T21–T26, Guarded operations e seus testes de política. A T27 também sai porque a seleção condicional da ferramenta de PR já existe na Cursor.
+- O reaproveitamento do Veredito usa o critério upstream de patch-id e a exceção por comparação de builds. Foram retiradas a identidade por bytes exatos, a auditoria adicional de inputs por lane e a autorização por arquivo para concluir restacks.
+- Why perde o gate de auditoria dos transcripts dos investigadores. O sintetizador mantém a conferência de citações. O gerador de paridade passa a cobrir os seis playbooks e cinco arquivos de Why, aceitando somente adaptações de plataforma.
+- Skills de fluxo entram por nome ou por chamada de um fluxo pstack ativo. Setup e ajuda continuam descobertos por pedidos comuns. Claude Code e Grok usam descrições que delimitam a entrada; Codex também recebe `allow_implicit_invocation: false`. O roteamento interno continua disponível.
+- A autorização permanente v3 acompanha os comandos upstream. A ferramenta mantém a confirmação no terminal, os backups e os holds do operador. Nenhuma configuração pessoal é alterada pela atualização.
+
+Verificação: passaram 574 testes Node, 74 testes Bun, typecheck, matriz e agentes gerados, colisões e paridade dos 11 arquivos com o pin da Cursor mais 36 substituições de plataforma. Os 58 testes de digest, referência e manifests também passaram após o último ajuste documental. A prova de invocação implícita, explícita e roteada no Claude Code não executou: as três tentativas foram recusadas pelo limite semanal da conta. Os metadados de ativação e a disponibilidade das skills para o roteador foram conferidos estaticamente.

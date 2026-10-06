@@ -1,6 +1,6 @@
 ---
 name: make-pr-easy-to-review
-description: Prepare PRs for review by cleaning noisy history, improving PR descriptions, and adding reviewer guidance without changing code behavior. Use for "make this easy to review", "tidy this PR", "clean up commits", or "annotate the diff".
+description: "Use only when the user explicitly names this skill or an active pstack workflow calls it. Clean PR history, descriptions, and reviewer guidance without changing behavior."
 ---
 
 # Make PR Easy to Review
