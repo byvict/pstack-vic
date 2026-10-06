@@ -1783,7 +1783,7 @@ Shipping recupera a exceção do passo 3 da Cursor no pin `4e5b1cf`. Quando só 
 A T25 concentra a regra; a T21 e os consumidores remetem a ela, inclusive na conclusão revisada de um restack. A rodada precisa de cobertura completa atual, com prova nova ou reaproveitamento justificado para cada lane. Os 17 blocos shell de operações protegidas permanecem idênticos. O ADR 0005 e a referência pública registram a exceção restaurada. Os seis playbooks continuam gerados do mesmo pin pelas substituições classificadas.
 
 Verificação local: `npm test` com 570 testes, Bun com 74 testes e typecheck, matriz, agentes gerados, colisões e diff check. A prova com repositório Git e builds locais cobre equivalência após mudança documental, ruído entre builds antigos, alteração funcional ocultada pelo patch-id, dependência da base, instrução em Markdown e execução sem build.
-# 0.5.11 — O setup grava no config home do harness (2026-10-05)
+# 0.5.13 — O setup grava no config home do harness (2026-10-05)
 
 O Claude Code lê a configuração do usuário de `CLAUDE_CONFIG_DIR`, e o Codex de `CODEX_HOME`, quando a variável está definida. O `/setup-pstack` gravava sempre em `~/.claude` e `~/.codex`, e o `authorize.ts` lia sempre o `settings.json` e o `config.toml` de lá. Esta versão traz a issue #120 do open como regras do `setup-pstack.ts`.
 
@@ -1821,7 +1821,7 @@ Além dos arquivos do plano, este PR muda `skills/update-clis/scripts/update-cli
 
 ## Verificação
 
-- `setup-pstack.test.ts`, `authorize.test.ts` e `update-clis.test.ts` passam com 108, 38 e 53 testes.
+- `setup-pstack.test.ts`, `authorize.test.ts` e `update-clis.test.ts` passam com 112, 38 e 53 testes.
 - Sempre que o script não para, o leitor do `CLAUDE.md` concorda com o do Claude Code 2.1.289, refeito a partir do binário sobre o marked 16.0.0, 16.1.2 e 16.2.0, em 80.000 variantes de 20.000 documentos gerados, com quebras de linha `\n`, `\r\n`, `\r` e misturadas, e nos arquivos Markdown de `~/Dev`.
 - Em 160.000 colocações do import nos dois homes, o Claude Code carrega exatamente o sheet do config home em todas as que o script grava.
 - `npm test`, `npm run test:bun`, `npm run matrix:check`, `npm run agents:check`, `npm run collision:check` e `git diff --check` passam.
