@@ -4,8 +4,8 @@ import { cliFor, PROVIDERS } from "./types.ts";
 
 /**
  * The environment for anything a test runs that could launch a provider CLI.
- * PATH holds only `fakeBins` and a directory with one link to this node (the
- * fakes start with `#!/usr/bin/env node`), and HOME is `home`,
+ * PATH holds only `fakeBins` and a directory with one link to this node (for
+ * the launcher's `exec node` and the `#!/usr/bin/env node` fakes), and HOME is `home`,
  * a temporary directory of the test. Nothing of the operator's PATH or HOME is
  * in it, so a fake that is missing or a refusal that regresses ends in a spawn
  * error, never in the real claude, codex, grok or gh. On the operator's Mac
