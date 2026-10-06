@@ -1873,7 +1873,7 @@ Victor aprovou retirar as verificações adicionais do port para recuperar o com
 
 Verificação: passaram 574 testes Node, 74 testes Bun, typecheck, matriz e agentes gerados, colisões e paridade dos 11 arquivos com o pin da Cursor mais 36 substituições de plataforma. Os 58 testes de digest, referência e manifests também passaram após o último ajuste documental. A prova de invocação implícita, explícita e roteada no Claude Code não executou: as três tentativas foram recusadas pelo limite semanal da conta. Os metadados de ativação e a disponibilidade das skills para o roteador foram conferidos estaticamente.
 
-# 0.5.20. Lista de eventos Claude e token completo do modelo Grok. 2026-10-06
+# 0.5.21. Lista de eventos Claude e token completo do modelo Grok. 2026-10-06
 
 O runner aceita tanto o objeto legado do Claude quanto uma lista de eventos. Usa o último evento `result`, preserva os metadados desse evento e rejeita `is_error` antes de exigir o texto final. A ausência de evento terminal tem seu próprio erro.
 
