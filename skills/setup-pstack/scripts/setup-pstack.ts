@@ -756,7 +756,7 @@ export async function runProbes(plan: Plan, options: ProbeOptions): Promise<Prob
   const runnerPairs = plan.pairs.filter((p) => p.route === "runner");
   for (const pair of runnerPairs) {
     const paths = probePaths(options.dir, pair.pair);
-    for (const path of [paths.output, paths.receipt]) {
+    for (const path of [paths.output, paths.receipt, `${paths.receipt}.stdout`, `${paths.receipt}.stderr`]) {
       if (existsSync(path)) fail(`${path} already exists; use a fresh run directory or remove the previous probe artifacts`);
     }
   }

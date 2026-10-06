@@ -831,6 +831,19 @@ describe("runProbes", () => {
       assert.match(result.detail, /marker/);
     }
   });
+
+  for (const stream of ["stdout", "stderr"]) {
+    it(`refuses a leftover ${stream} sidecar before running any lane`, async () => {
+      const plan = buildPlan({ parent: "claude", home, matrix });
+      savePlan(runDir, plan);
+      const leftover = join(runDir, `probe-grok@xhigh.receipt.json.${stream}`);
+      writeFileSync(leftover, "previous run");
+      await assert.rejects(runProbes(plan, { dir: runDir, env: fakeEnv() }), {
+        message: `${leftover} already exists; use a fresh run directory or remove the previous probe artifacts`,
+      });
+      assert.deepEqual(readdirSync(runDir).sort(), ["plan.json", `probe-grok@xhigh.receipt.json.${stream}`]);
+    });
+  }
 });
 
 describe("attestNative", () => {
