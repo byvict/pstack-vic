@@ -161,7 +161,6 @@ export function runProbeLane(lane: ProbeLane): Promise<LaneVerdict> {
   const mode = lane.mode ?? "read-only";
   writeFileSync(lane.promptPath, mode === "read-only" ? probePrompt(lane.marker) : writeProbePrompt(lane.marker), { mode: 0o600 });
   const args = [
-    RUNNER_LAUNCHER,
     "--parent", lane.parent,
     "--provider", lane.provider,
     "--model", lane.model,
@@ -174,8 +173,8 @@ export function runProbeLane(lane: ProbeLane): Promise<LaneVerdict> {
   ];
   if (lane.timeoutSeconds) args.push("--timeout", String(lane.timeoutSeconds));
   const [command, argv] = lane.wrap === undefined
-    ? [process.execPath, args]
-    : [lane.wrap.command, [...lane.wrap.args, process.execPath, ...args]];
+    ? [RUNNER_LAUNCHER, args]
+    : [lane.wrap.command, [...lane.wrap.args, RUNNER_LAUNCHER, ...args]];
   return new Promise((resolve) => {
     const child = spawn(command, argv, {
       cwd: lane.wrap?.cwd,

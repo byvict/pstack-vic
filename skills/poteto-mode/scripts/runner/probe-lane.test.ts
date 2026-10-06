@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runProbeLane, type ProbeLane } from "./probe-lane.ts";
+import { RUNNER_LAUNCHER, runProbeLane, type ProbeLane } from "./probe-lane.ts";
 import { clisOutsideFakes, isolatedEnv, isolateProcessEnv } from "./isolated-env.test-helper.ts";
 
 // Fake provider CLIs in the shapes the runner parses. A model turn echoes the
@@ -77,10 +77,12 @@ before(() => {
   restoreProcessEnv = isolateProcessEnv(join(root, "home"));
   for (const name of ["claude", "codex", "grok"]) write(join(bin, name), fakeCli);
   write(join(bin, "wrap"), fakeWrapper);
-  // macOS vets a fresh executable on its first exec; pay that once here.
+  // macOS vets a fresh executable on its first exec, and a checkout leaves
+  // the launcher fresh. Pay that once here.
   for (const name of ["claude", "codex", "grok", "wrap"]) {
     execFileSync(join(bin, name), name === "wrap" ? ["--", process.execPath, "--version"] : ["models"], { stdio: "ignore", env: laneEnv() });
   }
+  execFileSync(RUNNER_LAUNCHER, ["--help"], { stdio: "ignore", env: laneEnv() });
 });
 
 after(() => {

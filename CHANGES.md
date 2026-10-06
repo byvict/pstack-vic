@@ -1673,3 +1673,41 @@ Tudo em `skills/poteto-help/SKILL.md`. A regra foi trocar só o que dependia da 
 ## Verificação
 
 - `npm test`, `npm run matrix:check`, `npm run agents:check`, `npm run collision:check` e `git diff --check`: ver o PR.
+
+# 0.5.10 — O runner parte de um shell que descarta `NODE_OPTIONS` e `BUN_OPTIONS` (2026-10-05)
+
+O PR-C do programa de adaptações do digest de 2026-10-05 traz a correção da issue #25 do open-pstack. O `pstack-runner` era um script Node e herdava o `NODE_OPTIONS` de quem o chamava. Um preload `--require` ou `--import` rodava dentro do runner, antes do código dele, e uma variável que o preload definia chegava à CLI do provedor. O `BUN_OPTIONS` de quem chamava também chegava à CLI do provedor. O ponto de sync do open em `UPSTREAM.md` não muda.
+
+## Veredito
+
+| Commit do open | Veredito | Como entrou |
+| --- | --- | --- |
+| `141a84e` (#25) | adaptar | Entram o descarte de `BUN_OPTIONS` e `NODE_OPTIONS` antes do código do runner e os casos `node-options` (aqui `node-options-require`), `bun-options` e `combined`, reescritos em `node:test`. O shebang `env -S ... bun` fica de fora, porque o `0be4b21` o trocou. |
+| `0be4b21` (#25) | adaptar | O `pstack-runner` é o do open com `exec node` no lugar de `exec bun --no-env-file --config=/dev/null`. O `entry.ts` é o do open. Entram os casos `hostile-path` e `bare-name`, e o `startRunner` de `run.test.ts` executa o lançador direto, como o `0be4b21` fez no `run.test.ts` do open. |
+| `42a4b17` | adaptar | O `codex` falso lê o prompt inteiro antes de responder, o prompt de 100.000 linhas passa da capacidade do pipe, e cada caso confere o prompt capturado. Aqui o `codex` falso chama `/bin/cat`, porque o PATH do teste só tem os falsos e o `node`. |
+
+## O que muda
+
+- O `pstack-runner` é um script `/bin/sh` de quatro linhas. Ele zera `BUN_OPTIONS` e `NODE_OPTIONS`, acha o próprio diretório por `$0` e executa `node "$dir/entry.ts"`. O `entry.ts` tem as três linhas que o lançador antigo rodava e `export {}`.
+- O `runProbeLane` de `probe-lane.ts`, o `startRunner` de `run.test.ts` e o script `runner` do `package.json` executam o lançador direto, em vez de por `node`. `node pstack-runner` agora falha com `SyntaxError`, e nenhum outro arquivo do repositório roda o lançador por `node`.
+- O lançador executa o `node` que vem primeiro no PATH, como o shebang `#!/usr/bin/env node` da `main`. O `runProbeLane` usava o `process.execPath` e agora também segue o PATH.
+- O comentário de `isolatedEnv` dizia que os falsos e o lançador começam com `#!/usr/bin/env node`. Agora diz que o link para o `node` no PATH serve ao `exec node` do lançador e aos falsos que começam com `#!/usr/bin/env node`.
+- O `launcher.test.ts` roda o lançador real em seis casos: `node-options-require`, `node-options-import`, `bun-options`, `combined`, `hostile-path` e `bare-name`. O caso `node-options-import`, o `--import` do `combined` e a sexta linha que o `codex` falso grava, `PSTACK_SENTINEL`, são escrita nova, sem par no open. Cada caso confere que nenhum preload nem helper do PATH rodou, que uma variável herdada chegou ao `codex` falso, que `BUN_OPTIONS`, `NODE_OPTIONS` e `PSTACK_SENTINEL` não chegaram, que o prompt capturado é igual ao arquivo e que o recibo é `complete`.
+- Antes das lanes, o `launcher.test.ts`, o `startRunner` de `run.test.ts` e o `probe-lane.test.ts` executam o lançador com `--help`, e o `launcher.test.ts` executa também o `codex` falso. No macOS, a primeira execução de um arquivo recém-escrito é mais lenta que as seguintes.
+- O shell monta o ambiente que o `node` recebe, então o provedor não recebe o ambiente de quem chamou byte a byte. No `dash`, as variáveis cujo nome não é um nome de shell, como `A-B` e `X.Y`, não chegam ao provedor. O `bash` como `sh`, que é o `/bin/sh` do macOS, reescreve o texto de uma função exportada e passa `SHLVL=0` quando quem chamou não passa `SHLVL`. Os dois põem em `PWD` o diretório em que o lançador começou.
+- O relógio do `--timeout` começa cerca de 27 ms mais tarde que na `main`, porque o `startedAt` agora fica no `entry.ts`, que o Node carrega depois do `sh`. A medida é a mediana de 30 execuções alternadas, do início do processo ao `startedAt`. O `provider-dispatch.md` ainda diz que o relógio começa na entrada do wrapper, antes de carregar os módulos, e este PR não o muda.
+
+## O que ficou de fora
+
+- As flags do Bun `--no-env-file` e `--config=/dev/null`, os casos `dotenv` e `bunfig` do open e o `bunfig.toml` do `combined`. O Node não lê `.env` nem `bunfig.toml` do diretório e recusa `--env-file` dentro de `NODE_OPTIONS`.
+- O `npm run runner` não isola o próprio `npm`, que é um processo Node. Um `NODE_OPTIONS` exportado roda o preload dentro do `npm`, com `--require` ou `--import`, e uma variável que o preload define chega ao provedor.
+- O `update-clis.ts` não muda. Ele chega ao lançador só pelo `runProbeLane`.
+- O lançador acha o `entry.ts` pelo diretório de `$0`, sem `readlink`, como o do open. Um symlink para o lançador em outro diretório não acha o `entry.ts`. No `bash` como `sh`, `sh pstack-runner` achado pelo PATH a partir de outro diretório roda o `entry.ts` do diretório atual.
+- O `bash` como `sh` lê `SHELLOPTS` do ambiente antes da primeira linha do script, e as opções de shell de quem chamou valem no lançador. Com `SHELLOPTS=noexec`, o lançador sai com 0 sem rodar o runner, sem saída e sem recibo. O lançador do open faz o mesmo.
+
+## Verificação
+
+- `launcher.test.ts` passa nos 6 casos. Com o lançador da `main` no lugar, 5 dos 6 falham, e sem o `unset BUN_OPTIONS`, `bun-options` e `combined` falham.
+- `npm test`, `npm run test:bun`, `npm run matrix:check`, `npm run agents:check`, `npm run collision:check` e `git diff --check` passam.
+- No lançador real, `NODE_OPTIONS=--require=./preload.cjs pstack-runner --help` imprime o uso da `main` e sai com 0 sem rodar o preload, que roda com `node -e 0`. `/bin/dash pstack-runner --help`, `/bin/sh pstack-runner --help`, `sh pstack-runner --help` no diretório do runner e `npm run runner -- --help` imprimem o mesmo uso. O PID do lançador passa a ser o `node`, e um SIGTERM nele cancela a lane com recibo `cancelled`.
+- Cada frase desta seção, da linha do `NOTICE.md` e do PR tem uma prova em `~/Dev/Skills/pstack-vic-runs/2026-10-05-open-digest-adaptar/pr-c/claims-r4.tsv`, rodada no head do PR.

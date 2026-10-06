@@ -240,11 +240,20 @@ function collect(stream: NodeJS.ReadableStream | null): Promise<string> {
   });
 }
 
+let launcherWarmed = false;
+
 function startRunner(
   input: RunnerOptions,
   env: NodeJS.ProcessEnv = {}
 ): Runner {
-  const child = spawn(process.execPath, runnerArgs(input), {
+  const [launcher, ...args] = runnerArgs(input);
+  // A checkout leaves the launcher a fresh executable, which macOS vets on
+  // its first exec (see warm). Pay that before any test starts a deadline.
+  if (!launcherWarmed) {
+    execFileSync(launcher, ["--help"], { stdio: "ignore" });
+    launcherWarmed = true;
+  }
+  const child = spawn(launcher, args, {
     cwd: scratch,
     env: { ...process.env, ...env },
     stdio: ["ignore", "pipe", "pipe"],
