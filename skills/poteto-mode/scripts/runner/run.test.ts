@@ -884,7 +884,15 @@ describe("runLane", () => {
     "Available models: grok-4.7, feature is not supported", "modeling is not supported",
     "Available model: grok-4.7, feature is not supported", "model: grok-4.7; feature is not supported",
     "grok-4.7,gpt-6-sol is not supported", "grok-4.7:feature is not supported",
-    "other-model is not supported", "a.model is not supported", "invalid model-build"]) {
+    "other-model is not supported", "a.model is not supported", "invalid model-build",
+    "Invalid model: grok-4.6", "Invalid model   other-model", 'Invalid model: "other-model"',
+    "Invalid model: 'other-model'", "Invalid model: [other-model]",
+    "model not found: other-model", "model unknown: other-model", "model unavailable: other-model",
+    "model unsupported: other-model", "model not supported: other-model", "model invalid: other-model",
+    "model is not supported: other-model", "model not found   other-model",
+    "Invalid model: grok-4.7:feature", "Invalid model: grok-4.7,other-model", "invalid model.preview",
+    "model not supported with this account: other-model",
+    "model not supported with this account: grok-4.7:feature"]) {
     it(`keeps an unrelated refusal separate from the requested Grok id: ${message}`, async () => {
       process.env.FAKE_GROK_PREFLIGHT_OUTPUT = "You are logged in.\nAvailable models: grok-4.7";
       process.env.FAKE_GROK_PREFLIGHT_ERROR = message;
@@ -899,13 +907,63 @@ describe("runLane", () => {
     });
   }
 
+  for (const message of ["invalid model", "invalid model.", "Invalid model. Choose another.",
+    "model not found", "model not found.", "Invalid model: grok-4.7", "Invalid model   grok-4.7",
+    'Invalid model: "grok-4.7"', "Invalid model: 'grok-4.7'", "Invalid model: [grok-4.7]",
+    'model not found: "grok-4.7"', "model is not supported: grok-4.7",
+    "The requested model is not supported with this account.",
+    "model is not supported with this account: grok-4.7"]) {
+    it(`rejects a generic or qualified requested Grok refusal: ${message}`, async () => {
+      process.env.FAKE_GROK_PREFLIGHT_OUTPUT = "You are logged in.\nAvailable models: grok-4.7";
+      process.env.FAKE_GROK_PREFLIGHT_ERROR = message;
+      const modelStarted = join(scratch, "grok-qualified-refusal.started");
+      process.env.FAKE_MODEL_STARTED_PATH = modelStarted;
+      const input = { ...options("grok", "grok-qualified-refusal"), model: "grok-4.7" };
+      const result = await runLane(input);
+
+      assert.equal(result.exitCode, 69);
+      assert.equal(existsSync(modelStarted), false);
+      assert.equal(existsSync(input.outputPath), false);
+      matchObject(receipt(input.receiptPath), {
+        status: "unavailable-model", preflight: { status: "failed" },
+      });
+    });
+  }
+
   for (const provider of PROVIDERS) {
+    it(`binds qualified account-scoped model refusals during ${provider} execution`, async () => {
+      const model = options(provider).model;
+      for (const [index, { message, exitCode, status }] of [
+        { message: "The requested model is not supported with this account.", exitCode: 69, status: "unavailable-model" },
+        { message: `model is not supported with this account: ${model}`, exitCode: 69, status: "unavailable-model" },
+        { message: "model is not supported with this account: other-model", exitCode: 70, status: "child-failed" },
+        { message: `model is not supported with this account: ${model}:feature`, exitCode: 70, status: "child-failed" },
+        { message: "Authentication failed.\nThe requested model is not supported with this account.", exitCode: 77, status: "unauthenticated" },
+      ].entries()) {
+        writeFileSync(join(bin, cliOf(provider)), scriptedModel("", message, 1));
+        const input = options(provider, `account-scoped-model-${index}`);
+        const result = await runLane(input);
+
+        assert.equal(result.exitCode, exitCode, message);
+        assert.equal(existsSync(input.outputPath), false, message);
+        matchObject(receipt(input.receiptPath), {
+          status, exitCode: 1, preflight: { status: "passed" },
+        });
+      }
+    });
+
     it(`keeps unrelated model subjects as child failures during ${provider} execution`, async () => {
       const model = options(provider).model;
       const messages = [`Available models: ${model}, feature is not supported`, "modeling is not supported",
         `Available model: ${model}, feature is not supported`, `model: ${model}; feature is not supported`,
         `${model},gpt-6.1-sol is not supported`, `${model}:feature is not supported`,
-        "other-model is not supported", "a.model is not supported", "invalid model-build"];
+        "other-model is not supported", "a.model is not supported", "invalid model-build",
+        "Invalid model: other-model", "Invalid model   other-model", 'Invalid model: "other-model"',
+        "Invalid model: 'other-model'", "Invalid model: [other-model]",
+        "model not found: other-model", "model unknown: other-model", "model unavailable: other-model",
+        "model unsupported: other-model", "model not supported: other-model", "model invalid: other-model",
+        "model is not supported: other-model", "model not found   other-model",
+        `Invalid model: ${model}:feature`, `Invalid model: ${model},other-model`, "invalid model.preview"];
       for (const [index, message] of messages.entries()) {
         writeFileSync(join(bin, cliOf(provider)), scriptedModel("", message, 1));
         const input = options(provider, `unrelated-subject-${index}`);
@@ -919,13 +977,25 @@ describe("runLane", () => {
       }
     });
 
-    for (const label of ["compound comma", "compound colon", "ambiguous model label", "neighboring label token"]) {
+    for (const { label, diagnostic, exitCode, status } of [
+      { label: "compound comma", diagnostic: "<requested>,gpt-6.1-sol is not supported", exitCode: 77, status: "unauthenticated" },
+      { label: "compound colon", diagnostic: "<requested>:feature is not supported", exitCode: 77, status: "unauthenticated" },
+      { label: "ambiguous model label", diagnostic: "Available model: <requested>, feature is not supported", exitCode: 77, status: "unauthenticated" },
+      { label: "neighboring label token", diagnostic: "<requested>\nother-model is not supported", exitCode: 77, status: "unauthenticated" },
+      { label: "qualified neighboring id", diagnostic: "<requested>\nInvalid model: other-model", exitCode: 77, status: "unauthenticated" },
+      { label: "qualified neighboring prefix", diagnostic: "<requested>\nmodel not found: other-model", exitCode: 77, status: "unauthenticated" },
+      { label: "qualified quoted neighbor", diagnostic: '<requested>\nInvalid model: "other-model"', exitCode: 77, status: "unauthenticated" },
+      { label: "qualified compound colon", diagnostic: "Invalid model: <requested>:feature", exitCode: 77, status: "unauthenticated" },
+      { label: "qualified compound comma", diagnostic: "Invalid model: <requested>,other-model", exitCode: 77, status: "unauthenticated" },
+      { label: "punctuated generic", diagnostic: "<requested>\ninvalid model.", exitCode: 69, status: "unavailable-model" },
+      { label: "punctuated generic sentence", diagnostic: "<requested>\nInvalid model. Choose another.", exitCode: 69, status: "unavailable-model" },
+      { label: "qualified requested id", diagnostic: "Invalid model: <requested>", exitCode: 69, status: "unavailable-model" },
+      { label: "account-scoped qualified neighbor", diagnostic: "<requested>\nmodel not supported with this account: other-model", exitCode: 77, status: "unauthenticated" },
+      { label: "account-scoped generic", diagnostic: "<requested>\nThe requested model is not supported with this account.", exitCode: 69, status: "unavailable-model" },
+    ]) {
       it(`keeps ${label} separate during ${provider} failed preflight`, { timeout: GROK_RETRY_RUN_BUDGET_MS }, async () => {
         const input = options(provider, "unrelated-preflight-subject");
-        const message = label === "compound comma" ? `${input.model},gpt-6.1-sol is not supported`
-          : label === "compound colon" ? `${input.model}:feature is not supported`
-            : label === "ambiguous model label" ? `Available model: ${input.model}, feature is not supported`
-              : `${input.model}\nother-model is not supported`;
+        const message = diagnostic.replaceAll("<requested>", input.model);
         const modelStarted = join(scratch, "unrelated-preflight.started");
         process.env.FAKE_MODEL_STARTED_PATH = modelStarted;
         writeFileSync(join(bin, cliOf(provider)), fake.replace(
@@ -934,11 +1004,11 @@ describe("runLane", () => {
         ));
         const result = await runLane(input);
 
-        assert.equal(result.exitCode, 77);
+        assert.equal(result.exitCode, exitCode);
         assert.equal(existsSync(modelStarted), false);
         assert.equal(existsSync(input.outputPath), false);
         matchObject(receipt(input.receiptPath), {
-          status: "unauthenticated", preflight: { status: "failed" },
+          status, preflight: { status: "failed" },
         });
       });
     }
@@ -946,7 +1016,11 @@ describe("runLane", () => {
     it(`preserves explicit model refusal forms during ${provider} execution`, async () => {
       const model = options(provider).model;
       const messages = ["model not found", `model ${model} is not supported`, "invalid model",
-        `"${model}" is not supported`, `'${model}' is not supported`, `[${model}] is not supported`];
+        `"${model}" is not supported`, `'${model}' is not supported`, `[${model}] is not supported`,
+        "invalid model.", "Invalid model. Choose another.", "model not found.",
+        `Invalid model: ${model}`, `Invalid model   ${model}`, `Invalid model: "${model}"`,
+        `Invalid model: '${model}'`, `Invalid model: [${model}]`,
+        `model not found: "${model}"`, `model is not supported: ${model}`];
       for (const [index, message] of messages.entries()) {
         writeFileSync(join(bin, cliOf(provider)), scriptedModel("", message, 1));
         const input = options(provider, `explicit-model-form-${index}`);
