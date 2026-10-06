@@ -36,6 +36,7 @@ import {
   type LaneContext,
   type LaneFailure,
   type LaneOutcome,
+  type ModelStreams,
   type ParsedOutput,
   type PreflightRecord,
   type Provider,
@@ -82,15 +83,32 @@ function reserve(path: string): void {
   closeSync(descriptor);
 }
 
-function reserveOutputs(options: RunnerOptions): void {
-  if (options.outputPath === options.receiptPath) {
-    throw new UsageError("output and receipt paths must differ");
+function modelStreamPaths(receiptPath: string): { stdoutPath: string; stderrPath: string } {
+  return { stdoutPath: `${receiptPath}.stdout`, stderrPath: `${receiptPath}.stderr` };
+}
+
+function reserveOutputs(options: RunnerOptions): ModelStreams | null {
+  const streams = options.transport === "grok-acp" ? null : modelStreamPaths(options.receiptPath);
+  const paths = [options.outputPath, options.receiptPath, ...(streams === null ? [] : [streams.stdoutPath, streams.stderrPath])];
+  const resolved = paths.map((path) => resolve(path));
+  if (new Set(resolved).size !== paths.length || resolved.includes(resolve(options.promptPath))) {
+    throw new UsageError("prompt, output, receipt, and stream paths must be distinct");
   }
-  reserve(options.outputPath);
+  const created: string[] = [];
+  let stdout: number | null = null;
   try {
-    reserve(options.receiptPath);
+    for (const path of paths.slice(0, 2)) {
+      reserve(path);
+      created.push(path);
+    }
+    if (streams === null) return null;
+    stdout = openSync(streams.stdoutPath, "wx", 0o600);
+    created.push(streams.stdoutPath);
+    const stderr = openSync(streams.stderrPath, "wx", 0o600);
+    return { stdout, stderr };
   } catch (error) {
-    removeIfExists(options.outputPath);
+    if (stdout !== null) closeSync(stdout);
+    for (const path of created) removeIfExists(path);
     throw error;
   }
 }
@@ -318,6 +336,9 @@ function finish(
     cwd: options.cwd,
     promptPath: options.promptPath,
     outputPath: options.outputPath,
+    ...(options.transport === "grok-acp"
+      ? { stdoutPath: null, stderrPath: null }
+      : modelStreamPaths(options.receiptPath)),
   };
   const status: ReceiptStatus = terminal.kind === "complete" ? "complete" : terminal.status;
   const timing = {
@@ -691,7 +712,8 @@ async function runModel(
       context.prompt,
       context.deadlineAt,
       context.cancellation,
-      ev
+      ev,
+      context.streamFiles ?? undefined
     );
   } finally {
     if (staged !== null) rmSync(staged.directory, { recursive: true, force: true });
@@ -713,13 +735,15 @@ export async function runLane(
     return preparedLane(request, execution.command, execution.attempt, execution.environment, execution.sanitize, execution.acp);
   })();
   const cancellation = installRunCancellation();
+  let streamFiles: ModelStreams | null = null;
   try {
-    reserveOutputs(options);
+    streamFiles = reserveOutputs(options);
     try {
       const context: LaneContext = {
         prompt: readFileSync(options.promptPath, "utf8"),
         deadlineAt,
         cancellation,
+        streamFiles,
         wait: (delayMs) => waitFor(delayMs, deadlineAt, cancellation),
       };
       const outcome = await lane.run(context);
@@ -755,6 +779,10 @@ export async function runLane(
     }
   } finally {
     cancellation.dispose();
+    if (streamFiles !== null) {
+      closeSync(streamFiles.stdout);
+      closeSync(streamFiles.stderr);
+    }
   }
 }
 

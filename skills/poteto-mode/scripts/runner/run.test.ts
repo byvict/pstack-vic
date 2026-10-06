@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, describe, it } from "node:test";
+import { afterEach, beforeEach, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import {
+import fs, {
   chmodSync,
   existsSync,
   mkdtempSync,
@@ -11,6 +11,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { childEnvironment, evidence, findExecutable, runLane } from "./run.ts";
@@ -22,6 +23,11 @@ import { clisOutsideFakes, isolateProcessEnv } from "./isolated-env.test-helper.
 let scratch = "";
 let bin = "";
 let restoreProcessEnv: () => void = () => {};
+
+function streamPath(path: string | null): string {
+  assert.ok(path !== null, "expected a reserved stream artifact path");
+  return path;
+}
 
 const fake = `#!/usr/bin/env node
 import { appendFileSync, existsSync, readFileSync, renameSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
@@ -447,9 +453,111 @@ describe("issue78 terminal results", () => {
         assert.ok((saved.error?.evidence.length ?? 0) <= 4_000);
         assert.equal(existsSync(input.outputPath), false);
       }
+      assert.equal(saved.stdoutPath, `${input.receiptPath}.stdout`);
+      assert.equal(saved.stderrPath, `${input.receiptPath}.stderr`);
+      assert.deepEqual(readFileSync(streamPath(saved.stdoutPath)), Buffer.from(stdout));
+      assert.deepEqual(readFileSync(streamPath(saved.stderrPath)), Buffer.from(stderr));
+      assert.equal(statSync(streamPath(saved.stderrPath)).size, 6_401);
       assert.equal(saved.schemaVersion, 1);
+      for (const path of [saved.stdoutPath, saved.stderrPath, input.receiptPath]) {
+        assert.equal(statSync(streamPath(path)).mode & 0o777, 0o600);
+      }
     });
   }
+
+  for (const stream of ["stdout", "stderr"]) {
+    it(`rolls back reservations without overwriting an existing ${stream} sidecar`, async () => {
+      const input = options("grok");
+      const conflict = `${input.receiptPath}.${stream}`;
+      writeFileSync(conflict, "operator evidence");
+      await assert.rejects(runLane(input));
+      assert.equal(readFileSync(conflict, "utf8"), "operator evidence");
+      for (const path of [input.outputPath, input.receiptPath,
+        `${input.receiptPath}.${stream === "stdout" ? "stderr" : "stdout"}`]) {
+        assert.equal(existsSync(path), false, `${path} was left behind`);
+      }
+    });
+
+    it(`rejects a ${stream} sidecar colliding with the prompt or output`, async () => {
+      const input = options("grok");
+      const conflict = `${input.receiptPath}.${stream}`;
+      writeFileSync(conflict, "operator prompt");
+      await assert.rejects(runLane({ ...input, promptPath: conflict }), /must be distinct/);
+      assert.equal(readFileSync(conflict, "utf8"), "operator prompt");
+      rmSync(conflict);
+      await assert.rejects(runLane({ ...input, outputPath: conflict }), /must be distinct/);
+      for (const path of [input.outputPath, input.receiptPath,
+        `${input.receiptPath}.stdout`, `${input.receiptPath}.stderr`]) {
+        assert.equal(existsSync(path), false, `${path} was left behind`);
+      }
+    });
+  }
+
+  it("retains complete streams when writes are partial", async () => {
+    const input = options("grok");
+    const stdout = JSON.stringify({ type: "result", subtype: "success", is_error: false,
+      result: "GROK_OK", modelUsage: { "grok-4.6-build": {} } }) + "\n";
+    const stderr = "complete stderr despite partial writes\n";
+    writeGrok(scriptedModel(stdout, stderr, 0));
+    const originalWrite = fs.writeSync;
+    let partialWrites = 0;
+    const write = mock.method(fs, "writeSync", (...args: unknown[]) => {
+      const [descriptor, data, offset, length] = args;
+      if (typeof descriptor !== "number" || !(data instanceof Uint8Array)
+        || typeof offset !== "number" || typeof length !== "number") {
+        return Reflect.apply(originalWrite, fs, args);
+      }
+      partialWrites++;
+      return originalWrite(descriptor, data, offset, Math.min(length, 7));
+    });
+    syncBuiltinESMExports();
+    try {
+      const result = await runLane(input);
+      assert.equal(result.exitCode, 0);
+      assert.ok(partialWrites > 1);
+      assert.deepEqual(readFileSync(streamPath(result.receipt.stdoutPath)), Buffer.from(stdout));
+      assert.deepEqual(readFileSync(streamPath(result.receipt.stderrPath)), Buffer.from(stderr));
+    } finally {
+      write.mock.restore();
+      syncBuiltinESMExports();
+    }
+  });
+
+  it("terminalizes a sidecar write failure without waiting for the child", async () => {
+    const input = options("grok");
+    writeGrok(fake.replace("const modelIndex =",
+      'writeSync(1, "stream data"); await sleep(10_000);\nconst modelIndex ='));
+    const originalWrite = fs.writeSync;
+    const write = mock.method(fs, "writeSync", (...args: unknown[]) => {
+      if (!(args[1] instanceof Uint8Array)) return Reflect.apply(originalWrite, fs, args);
+      throw new Error("sidecar storage unavailable");
+    });
+    syncBuiltinESMExports();
+    const started = Date.now();
+    try {
+      const result = await runLane(input);
+      assert.equal(result.exitCode, 70);
+      assert.equal(result.receipt.status, "child-failed");
+      assert.ok(result.receipt.error?.evidence.includes("sidecar storage unavailable"));
+      assert.ok(Date.now() - started < 10_000, "the run waited for the child's 10 s sleep");
+      assert.equal(existsSync(input.outputPath), false);
+      assert.equal(existsSync(streamPath(result.receipt.stdoutPath)), true);
+      assert.equal(existsSync(streamPath(result.receipt.stderrPath)), true);
+    } finally {
+      write.mock.restore();
+      syncBuiltinESMExports();
+    }
+  });
+
+  it("retains undecodable stderr bytes rather than re-encoding captured text", async () => {
+    const input = options("grok");
+    const bytes = [0, 255, 195, 169, 13, 10];
+    writeGrok(fake.replace("const modelIndex =",
+      `writeSync(2, Buffer.from(${JSON.stringify(bytes)}));\nconst modelIndex =`));
+    const result = await runLane(input);
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(readFileSync(streamPath(result.receipt.stderrPath)), Buffer.from(bytes));
+  });
 
   for (const exitCode of [0, 1]) {
     it(`keeps malformed terminal data distinct after child exit ${exitCode}`, async () => {
@@ -464,6 +572,7 @@ describe("issue78 terminal results", () => {
         sessionId: null, error: { message: exitCode === 0
           ? "grok result did not contain a valid terminal status" : "child exited with status 1" },
       });
+      assert.ok(readFileSync(streamPath(result.receipt.stdoutPath), "utf8").endsWith(stdout));
       assert.equal(existsSync(input.outputPath), false);
     });
   }
@@ -480,6 +589,8 @@ describe("issue78 terminal results", () => {
           status: exitCode === 0 ? "malformed-output" : "child-failed",
           exitCode, reportedModel: null, sessionId: null,
         });
+        assert.equal(readFileSync(streamPath(result.receipt.stdoutPath), "utf8"), stdout);
+        assert.equal(readFileSync(streamPath(result.receipt.stderrPath), "utf8"), stderr);
         assert.equal(existsSync(input.outputPath), false);
       });
     }
@@ -499,6 +610,7 @@ describe("issue78 terminal results", () => {
       modelEvidence: null, sessionId: null, usage: null, costUsd: null,
       error: { message: "API unavailable" },
     });
+    assert.ok(readFileSync(streamPath(result.receipt.stdoutPath), "utf8").includes("api_error"));
     assert.equal(existsSync(input.outputPath), false);
   });
 
@@ -509,6 +621,7 @@ describe("issue78 terminal results", () => {
     assert.equal(result.exitCode, 65);
     matchObject(result.receipt, { status: "malformed-output", modelVerified: false });
     assert.equal(result.receipt.error?.message, "requested model grok-4.6 was not reported by grok");
+    assert.ok(readFileSync(streamPath(result.receipt.stdoutPath), "utf8").includes("grok-unexpected"));
     assert.equal(existsSync(input.outputPath), false);
   });
 });
@@ -534,6 +647,12 @@ describe("runLane", () => {
         modelEvidence: provider === "codex" ? "pinned-argv" : "provider-report",
         preflight: { status: "passed" },
       });
+      const saved = receipt(input.receiptPath);
+      assert.ok(readFileSync(streamPath(saved.stdoutPath), "utf8").includes(provider.toUpperCase()));
+      assert.deepEqual(readFileSync(streamPath(saved.stderrPath)), Buffer.alloc(0));
+      for (const path of [saved.stdoutPath, saved.stderrPath]) {
+        assert.equal(statSync(streamPath(path)).mode & 0o777, 0o600);
+      }
       if (provider === "claude") {
         assert.equal(receipt(input.receiptPath).reportedModel, "claude-fable-9-9");
       }

@@ -131,6 +131,8 @@ export interface RunnerReceipt {
   readonly cwd: string;
   readonly promptPath: string;
   readonly outputPath: string;
+  readonly stdoutPath: string | null;
+  readonly stderrPath: string | null;
   readonly startedAt: string;
   readonly completedAt: string;
   readonly elapsedMs: number;
@@ -159,11 +161,18 @@ export interface RunCancellation {
 
 export type WaitOutcome = "ready" | "cancelled" | "timed-out";
 
+/** Open descriptors of the reserved `<receipt>.stdout` and `<receipt>.stderr` sidecars. */
+export interface ModelStreams {
+  readonly stdout: number;
+  readonly stderr: number;
+}
+
 /** The shared runtime a lane runs inside. The lane factory has already closed over its options. */
 export interface LaneContext {
   readonly prompt: string;
   readonly deadlineAt: number | null;
   readonly cancellation: RunCancellation;
+  readonly streamFiles: ModelStreams | null;
   /**
    * Sleep at most `delayMs`, waking early on the latch or the lane deadline,
    * re-checking both after the wake. `wait(0)` is the checkpoint before an
