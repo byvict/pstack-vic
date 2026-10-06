@@ -246,8 +246,8 @@ async function withChild<T>(args: {
   if (args.evidence !== undefined) { args.evidence.exitCode = null; args.evidence.signal = null; }
   const spawned = spawnChild(args.executable, args.spec, args.cwd, args.env);
   const { child } = spawned;
-  const stdoutCapture = captureStream(child.stdout, args.streamFiles?.stdoutFd);
-  const stderrCapture = captureStream(child.stderr, args.streamFiles?.stderrFd);
+  const stdoutCapture = captureStream(child.stdout, args.streamFiles?.stdout);
+  const stderrCapture = captureStream(child.stderr, args.streamFiles?.stderr);
   const streams = Promise.all([stdoutCapture.result, stderrCapture.result]);
   streams.catch(() => undefined);
   let deadlineTimer: ReturnType<typeof setTimeout> | null = null;

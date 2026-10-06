@@ -161,8 +161,8 @@ export interface RunCancellation {
 export type WaitOutcome = "ready" | "cancelled" | "timed-out";
 
 export interface ModelStreams {
-  readonly stdoutFd: number;
-  readonly stderrFd: number;
+  readonly stdout: number;
+  readonly stderr: number;
 }
 
 /** The shared runtime a lane runs inside. The lane factory has already closed over its options. */
@@ -202,7 +202,7 @@ export type LaneOutcome =
     readonly kind: "failed";
     readonly status: LaneFailure;
     readonly error: ReceiptError;
-    readonly providerReport?: ProviderMetadata;
+    readonly metadata?: ProviderMetadata;
   };
 
 /** One lane, prepared before reservation, run after it. */

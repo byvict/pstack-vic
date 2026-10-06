@@ -95,19 +95,19 @@ function reserveOutputs(options: RunnerOptions): ModelStreams | null {
     throw new UsageError("prompt, output, receipt, and stream paths must be distinct");
   }
   const created: string[] = [];
-  let stdoutFd: number | null = null;
+  let stdout: number | null = null;
   try {
     for (const path of paths.slice(0, 2)) {
       reserve(path);
       created.push(path);
     }
     if (streams === null) return null;
-    stdoutFd = openSync(streams.stdoutPath, "wx", 0o600);
+    stdout = openSync(streams.stdoutPath, "wx", 0o600);
     created.push(streams.stdoutPath);
-    const stderrFd = openSync(streams.stderrPath, "wx", 0o600);
-    return { stdoutFd, stderrFd };
+    const stderr = openSync(streams.stderrPath, "wx", 0o600);
+    return { stdout, stderr };
   } catch (error) {
-    if (stdoutFd !== null) closeSync(stdoutFd);
+    if (stdout !== null) closeSync(stdout);
     for (const path of created) removeIfExists(path);
     throw error;
   }
@@ -355,12 +355,12 @@ function finish(
       error: null,
     }
     : {
-      ...(terminal.providerReport === undefined
+      ...(terminal.metadata === undefined
         ? { reportedModel: null, modelVerified: false, modelEvidence: null }
-        : modelProof(options.provider, options.model, terminal.providerReport.reportedModel)),
-      sessionId: terminal.providerReport?.sessionId ?? null,
-      usage: terminal.providerReport?.usage ?? null,
-      costUsd: terminal.providerReport?.costUsd ?? null,
+        : modelProof(options.provider, options.model, terminal.metadata.reportedModel)),
+      sessionId: terminal.metadata?.sessionId ?? null,
+      usage: terminal.metadata?.usage ?? null,
+      costUsd: terminal.metadata?.costUsd ?? null,
       error: terminal.error,
     };
   const receipt: RunnerReceipt = {
@@ -674,7 +674,7 @@ async function runCliAttempt(
           ? rawFailureEvidence
           : `${providerFailure.message}\n${rawFailureEvidence}`),
       },
-      providerReport: providerFailure?.metadata,
+      metadata: providerFailure?.metadata,
     };
   }
 
@@ -780,8 +780,8 @@ export async function runLane(
   } finally {
     cancellation.dispose();
     if (streamFiles !== null) {
-      closeSync(streamFiles.stdoutFd);
-      closeSync(streamFiles.stderrFd);
+      closeSync(streamFiles.stdout);
+      closeSync(streamFiles.stderr);
     }
   }
 }
