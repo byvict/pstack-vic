@@ -2,7 +2,7 @@
 
 pstack-vic é um port autoral do [pstack](https://github.com/cursor/plugins/tree/main/pstack) de Lauren Tan ([@poteto](https://x.com/poteto)) para Claude Code e Codex. Uma única árvore de skills serve os dois pais. Os modelos de cada papel vêm de uma matriz como dado (`model-matrix.json`), não de constantes espalhadas pelas skills.
 
-Conteúdo sincronizado com Cursor pstack **0.15.5** (`12d587d`) e com open-pstack **1.4.1** (`de67e6b`). O contrato de sync está em [`UPSTREAM.md`](../UPSTREAM.md), a proveniência de cada arquivo em [`NOTICE.md`](../NOTICE.md) e o veredito de cada mudança em [`CHANGES.md`](../CHANGES.md).
+Conteúdo sincronizado com Cursor pstack **0.15.10** (`4e5b1cf`) e com open-pstack **1.4.1** (`de67e6b`). O contrato de sync está em [`UPSTREAM.md`](../UPSTREAM.md), a proveniência de cada arquivo em [`NOTICE.md`](../NOTICE.md) e o veredito de cada mudança em [`CHANGES.md`](../CHANGES.md).
 
 > if you want to go fast, go deep first.
 
@@ -24,7 +24,7 @@ No shell, `claude plugin marketplace add byvict/pstack-vic` e `claude plugin ins
 ### Codex
 
 ```shell
-codex plugin marketplace add byvict/pstack-vic --ref v0.5.7
+codex plugin marketplace add byvict/pstack-vic --ref v0.5.8
 codex plugin add pstack@pstack-vic
 ```
 
@@ -127,7 +127,7 @@ Grok Build é o terceiro pai. O [mapa de ferramentas Grok](../skills/poteto-mode
 
 O fluxo raiz → owner → helper exige `[subagents] max_depth = 2` ou maior no `~/.grok/config.toml` e uma sessão reiniciada. O setup exige os IDs dos dois níveis e o marcador observado antes de gravar a configuração.
 
-O Grok CLI 1.0.46 anuncia `/goal` no protocolo que o T3 usa. O autopilot arma esse objetivo na própria sessão raiz e usa um monitor para emitir o tick de auditoria a cada 30 minutos. O scheduler executa filhos destacados e não substitui a auditoria da raiz. Uma sessão encerrada precisa ser retomada pelo operador, com o objetivo e os handles reconciliados.
+Numa raiz Grok o autopilot usa um monitor (`grok-audit-ticker.ts`) para emitir o Tick de auditoria a cada hora. O scheduler do Grok executa filhos destacados e não substitui a auditoria da raiz. Uma sessão encerrada precisa ser retomada pelo operador, com os handles reconciliados.
 
 ## Dependências
 
@@ -196,7 +196,7 @@ A Raiz não começa por conta própria. A execução só começa com o seu "go" 
    ```
 
    Troque `<versão>` pela versão instalada, que `claude plugin list` mostra. A segunda linha mostra o código de saída da primeira: 0 é autorizado, 1 não. Com 1, o JSON que o comando imprime diz o motivo e traz o comando que concede a autorização. Sem ela, o modo automático do Claude Code nega o merge quando o Dono chega nele. Nenhum playbook roda essa conferência. Ela existe aqui e no passo 10 do `/setup-pstack`. Você também pode pedir à Raiz que rode o `check` e mostre o resultado junto com o protocolo.
-6. Dê o "go". A Raiz arma um `/goal` com o objetivo completo do programa. O `/goal` é o objetivo da sessão e vale de um turno para o outro até a fila acabar. No Claude Code a Raiz o propõe pela ferramenta `ProposeGoal`, e o Claude Code pode pedir a sua aprovação com uma tecla. Na versão 2.1.285 essa ferramenta depende de um recurso que a Anthropic ainda libera aos poucos, só existe numa sessão interativa no seu Mac e aceita um objetivo de até 500 caracteres. Neste Mac, em 2026-10-01, esse recurso estava desligado. Quando a ferramenta falta, ou o objetivo é mais longo, a Raiz escreve a linha `/goal <objetivo>` exata para você digitar. Um `/goal` digitado aceita até 4000 caracteres. Depois ela cria um Dono por PR.
+6. Dê o "go". A Raiz arma o Tick (no Claude Code, um `/loop 1h`; no Codex e na raiz Grok, ver abaixo) e cria um Dono por PR.
 
 Para um trabalho de várias fases, peça antes um plano. O playbook [Multi-phase plan](../skills/poteto-mode/playbooks/multi-phase-plan.md) escreve o plano como uma lista de itens com caixas de marcar, com uma seção por PR, e o plano diz qual playbook vai executá-lo. A sessão roda o verificador do plano (`check-plan.mjs`), entrega o caminho do arquivo e para. A execução também só começa com o seu "go".
 
@@ -244,11 +244,11 @@ Mesmo numa lane nativa do Claude Code, o `verify` pode faltar. Você sempre pode
 
 A Raiz junta os resultados num Veredito. Sem a lane ao vivo, o Veredito não é limpo. Sem Veredito limpo, não há merge. Os achados provados voltam ao Dono num só pedido de conserto. Para cada achado de comportamento, a Raiz pede um teste vermelho, isto é, um teste que falha enquanto o defeito existe. Onde nenhum teste mostra o defeito, ela pede um recibo de reprodução. O head novo ganha Enxame e Veredito novos. A exceção são os resultados que continuam válidos pela auditoria de patch exato e inputs de cada lane do playbook [Shipping](../skills/poteto-mode/playbooks/shipping.md).
 
-### O que a Raiz faz a cada 30 minutos
+### O que a Raiz faz a cada hora
 
-A cada 30 minutos, mais ou menos, a Raiz audita todos os Donos. Essa auditoria se chama Tick. Em cada Tick ela faz isto:
+A cada hora a Raiz audita todos os Donos. Essa auditoria se chama Tick. Em cada Tick ela faz isto:
 
-1. Relê o playbook, direto do plugin instalado, e relê o `/goal` armado. Confere a operação contra os dois e corrige o desvio no próprio Tick.
+1. Relê o playbook, direto do plugin instalado. Confere a operação contra ele e corrige o desvio no próprio Tick.
 2. Sonda cada Dono, para saber se ele está vivo e em que estado está, e recolhe as trilhas de decisão.
 3. Conta como progresso só o que deixou efeito: commits, pushes, mudanças no PR ou nos checks e relatórios gravados.
 4. Trata como travada a lane que dá erro, ou que passa do tempo esperado sem deixar efeito. Ela derruba essa lane e põe outra no lugar na hora, sem esperar resposta.
@@ -257,7 +257,7 @@ A cada 30 minutos, mais ou menos, a Raiz audita todos os Donos. Essa auditoria s
 
 O Tick só termina quando não sobra trabalho delegado, mesmo depois do último merge.
 
-No Claude Code a Raiz arma o Tick como um `/loop` de verdade, em modo dinâmico. O `/loop` é o comando que chama a sessão de novo, e no modo dinâmico a própria sessão marca a próxima chamada. A cadência nunca fica por conta da memória da sessão. O Claude Code encerra qualquer `/loop` depois de 7 dias. Um programa mais longo que isso precisa de um Tick armado de novo.
+No Claude Code a Raiz arma o Tick como `/loop 1h`, um `/loop` de intervalo fixo. O `/loop` é o comando que chama a sessão de novo, a cada hora, com o prompt do Tick. A cadência nunca fica por conta da memória da sessão. Um `/loop` de intervalo fixo volta quando a sessão é retomada com `--resume` ou `--continue` (medido em 2026-10-05 no Claude Code 2.1.289; um `/loop` sem intervalo não volta). O Claude Code encerra qualquer `/loop` depois de 7 dias. Um programa mais longo que isso precisa de um Tick armado de novo. Na raiz Grok, o Tick vem do monitor ([Grok como raiz](#grok-como-raiz-no-t3-code)).
 
 Num programa que roda a partir de um plano, o Tick é silencioso. A Raiz só escreve no chat quando a auditoria achou uma mudança que nenhuma mensagem anterior relatou: um PR aberto, um head Code-ready, uma Rodada aberta ou fechada, um Veredito, um merge, um agente travado e o que foi feito, um bloqueio que entrou ou saiu, ou uma decisão que só você pode tomar. Sem novidade, o Tick termina sem texto. Nos dois casos a Raiz registra o Tick na trilha de decisões dela.
 
@@ -266,8 +266,7 @@ Num programa que roda a partir de um plano, o Tick é silencioso. A Raiz só esc
 Sua parte num programa é esta:
 
 - **Dá o "go".** Depois deixa a sessão aberta até o último merge e a resposta final da Raiz.
-- **Digita o `/goal` quando a Raiz pede.** No Claude Code, quando a sessão não tem a ferramenta `ProposeGoal` (neste Mac, em 2026-10-01, não tinha) ou o objetivo passa de 500 caracteres, a Raiz escreve a linha `/goal <objetivo>` exata e você a digita ([Como um programa começa](#como-um-programa-começa), passo 6).
-- **Manda o Tick, no Codex.** Onde nenhuma tarefa agendada do Codex chama a sessão de volta, você manda o prompt do Tick a cada 30 minutos ([Limites no Codex](#limites-no-codex)).
+- **Manda o Tick, no Codex.** Onde nenhuma tarefa agendada do Codex chama a sessão de volta, você manda o prompt do Tick a cada hora ([Limites no Codex](#limites-no-codex)).
 - **Clica no merge dos seus itens.** O Dono leva um item seu até o Merge-ready e para ali. Quem revisa e clica no merge é você, e nenhum Dono mergeia um item seu. Num programa com plano, um PR que muda uma interação também espera você. As capturas de tela e um vídeo vão para o chat, e você revisa antes do merge.
 - **Aprova o que a sua autorização não cobre.** Alguns limites o CI só deixa apertar, como um gate ou um orçamento fixado. Subir um limite desses pede o aval da Raiz (*countersign*), que ela só dá depois da prova de um verificador. Quando a sua autorização ou as suas ordens permanentes, que são as instruções que você deu para o programa todo, cobrem aprovações, o aval da Raiz é a aprovação, e o Dono a registra apontando para ele. Quando não cobrem, a aprovação continua sendo sua. A Raiz também nunca dá nem contorna uma aprovação que o GitHub exige. Absorver um valor que já entrou na `main` não conta como subir limite.
 - **Manda parar quando quiser.** Um "para" seu chega na hora a todos os Donos como ordem de não escrever mais nada. Eles seguram o trabalho até você liberar.
@@ -292,15 +291,14 @@ Até a 0.4.19 o plugin tinha um fluxo próprio, em que um robô no Mac conferia 
 - **PR aberto fora de um programa espera.** Ou você mergeia, ou um programa o adota como item da fila ([PR aberto fora de um programa](#pr-aberto-fora-de-um-programa)).
 - **O GitHub só exige o CI.** Os checks `verdict` e `hold` saíram das regras, e um rótulo no PR não trava mais nada. O que segura um merge é o Veredito da Raiz, dentro da sessão. Para ficar com um PR, diga isso na sessão.
 - **A versão sai em dois passos.** O CI cria a tag. Trocar o plugin nos dois pais é um comando seu no Mac ([Publicar uma versão](#publicar-uma-versão)).
-- **No Codex não há relógio interno.** Você mesmo pede o Tick a cada 30 minutos. O Codex também precisa de `multi_agent` ligado para ter Donos e de `goals` ligado para armar o `/goal` ([Limites no Codex](#limites-no-codex)).
+- **No Codex não há relógio interno.** Você mesmo pede o Tick a cada hora. O Codex também precisa de `multi_agent` ligado para ter Donos ([Limites no Codex](#limites-no-codex)).
 
 ### Limites no Codex
 
-No Codex o programa segue os mesmos playbooks. Mudam cinco coisas, que estão em [`codex-tools.md`](../skills/poteto-mode/references/codex-tools.md):
+No Codex o programa segue os mesmos playbooks. Mudam quatro coisas, que estão em [`codex-tools.md`](../skills/poteto-mode/references/codex-tools.md):
 
-- **Não há `/loop`.** O Codex não tem um `/loop` que chame a sessão de volta. Onde nenhuma tarefa agendada do Codex faz isso, quem dá a cadência do Tick é você. A Raiz avisa isso quando declara o protocolo. Você manda o prompt do Tick a cada 30 minutos, e ela roda um Tick inteiro a cada envio.
+- **Não há `/loop`.** O Codex não tem um `/loop` que chame a sessão de volta. Onde nenhuma tarefa agendada do Codex faz isso, quem dá a cadência do Tick é você. A Raiz avisa isso quando declara o protocolo. Você manda o prompt do Tick a cada hora, e ela roda um Tick inteiro a cada envio.
 - **Os Donos precisam de `multi_agent`.** No Codex o Dono é um `spawn_agent`, que é a ferramenta de criar subagentes. Ela só funciona com `multi_agent = true` em `~/.codex/config.toml` ([Instalação, Codex](#codex)). Sem isso não há Donos.
-- **O `/goal` precisa do recurso `goals`.** No Codex a Raiz arma o `/goal` com a ferramenta `create_goal`. Ela só existe com `goals = true` em `[features]` no `~/.codex/config.toml` e numa sessão que o Codex guarda.
 - **A Raiz cria o worktree antes.** O `spawn_agent` não cria worktree. A Raiz cria um com `git worktree add` e passa o caminho ao Dono.
 - **Não há `run` nem `verify`.** A lane ao vivo roda o app pelo shell. Para uma tela, ela usa a automação que tiver ou entrega a você uma checagem manual concreta.
 
@@ -361,7 +359,9 @@ Nomes curtos; no Claude Code cada uma aparece com o prefixo do plugin (`/pstack:
 | `interrogate` | vários modelos tentando quebrar um design ou diff, com lente de qualidade de código |
 | `automate-me` | rascunhar sua própria skill `-mode` a partir dos seus transcripts |
 | `reflect` | capturar as lições de uma tarefa longa como edição de skill |
+| `correct` | achar os erros que os agentes repetem no repo e travar cada um no nível mais alto que funciona: arquitetura, depois tipos, lint e CI, depois testes, docs por último |
 | `tdd` | corrigir bug escrevendo o teste que falha antes da correção |
+| `benchmark-checklist` | conferir um número de performance (limitador, ajuste, erros, repetição, relevância) antes de reportar ou agir sobre ele |
 | `typescript-best-practices` | aterrar a disciplina de tipos em sintaxe TypeScript |
 | `teach` | entender de verdade uma mudança ou subsistema: `how` + `why` numa explicação só |
 | `technical-writing` | docs, RFCs, readmes, descrições de PR e commits num padrão em camadas |
@@ -389,7 +389,7 @@ Dentro do `poteto-mode`, pedidos de status de PR vão para o playbook Babysit, n
 
 ## Princípios
 
-Vinte e três skills de um princípio cada. `poteto-mode` indexa todas inline e lê a folha completa de cada princípio que aplica. Carregam `user-invocable: false`: ficam fora do menu `/`, o modelo continua podendo lê-las.
+Vinte e quatro skills de um princípio cada. `poteto-mode` indexa todas inline e lê a folha completa de cada princípio que aplica. Carregam `user-invocable: false`: ficam fora do menu `/`, o modelo continua podendo lê-las.
 
 | princípio | grupo | regra |
 | --- | --- | --- |
@@ -413,6 +413,7 @@ Vinte e três skills de um princípio cada. `poteto-mode` indexa todas inline e 
 | `principle-fix-root-causes` | verification | reproduzir, perguntar por quê até a causa, corrigir lá |
 | `principle-sequence-verifiable-units` | verification | unidades pequenas que terminam em estado verificável, em ordem que se prova |
 | `principle-test-behavior-not-implementation` | verification | chamar o código como o usuário e afirmar o resultado observável |
+| `principle-explain-the-number` | verification | antes de confiar num número medido, achar o que o limita e descartar que mediu outra coisa |
 | `principle-guard-the-context-window` | delegation | volume vai para subagents; só resumos na thread principal |
 | `principle-never-block-on-the-human` | delegation | agir, apresentar, deixar corrigir depois; confirmação só para o irreversível |
 | `principle-encode-lessons-in-structure` | meta | codificar a regra como lint, flag, check ou script, não como mais texto |

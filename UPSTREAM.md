@@ -13,14 +13,14 @@ Os dois remotes têm push desabilitado (`no_push`). Este repo só recebe.
 
 | | `cursor` | `open` |
 | --- | --- | --- |
-| Commit | `12d587dfb20741cafc376c42c696c5f6e2a64487` | `de67e6b40511814171e5e4c8ad7af3b79f07c9ee` |
-| Versão upstream | pstack `0.15.5` | open-pstack `1.4.1` (= Cursor pstack `0.15.1`, `f8abedd`) |
-| Data do sync | 2026-09-23, a data do commit. O ponto avançou para ele em 2026-10-01, na 0.5.1. | 2026-09-17 |
+| Commit | `4e5b1cf2ccb0ea3716f08c8ee0a5856b5ab93536` | `de67e6b40511814171e5e4c8ad7af3b79f07c9ee` |
+| Versão upstream | pstack `0.15.10` | open-pstack `1.4.1` (= Cursor pstack `0.15.1`, `f8abedd`) |
+| Data do sync | 2026-10-04, a data do commit. O ponto avançou para ele em 2026-10-05, na 0.5.8. | 2026-09-17 |
 | Commit equivalente aqui | n/a (os seis arquivos do autopilot entram por reconstrução a partir do pin mais `skills/poteto-mode/references/upstream-substitutions.json`) | n/a (entra por cópia auditada; o que já foi copiado está em `NOTICE.md`) |
 
-O commit `12d587d` (PR 422 de `cursor/plugins`) é o último de `cursor/main` que tocou `pstack/`. Em 2026-09-30 o tip `2eb7ed4` não tinha nada mais novo nesse path, e `git log 12d587d..cursor/main -- pstack` saía vazio.
+O commit `4e5b1cf` (PR 502 de `cursor/plugins`, pstack 0.15.10) é o último de `cursor/main` que tocou `pstack/`. Em 2026-10-05 `git log 4e5b1cf..cursor/main -- pstack` saía vazio.
 
-O histórico git deste repo continua sendo o split feito em `5bf2b15` (pstack `0.15.2`, sync de 2026-09-17). O tip do split é `91e5b82513c42d3713fe4741aa0dae29c8fa240b`, e a árvore dele é idêntica a `5bf2b15:pstack` (verificado com `git rev-parse <tip>^{tree}` vs `git rev-parse 5bf2b15^{tree}:pstack`). Os quatro commits de `5bf2b15..12d587d` que tocaram `pstack/` (`70b2dc8`, `b42effe`, `b0b9c7a`, `12d587d`) não entraram por merge do split. As partes sem autopilot foram julgadas na 0.4.18, hunk a hunk (o `b42effe` ficou todo de fora, e os hunks que só mudam modelo padrão também). As partes de autopilot entraram na 0.5.1 por reconstrução. Seis playbooks (`autopilot-full`, `autopilot-stack`, `babysit`, `opening-a-pr`, `shipping` e `multi-phase-plan`) são o texto da Cursor em `12d587d` mais as trocas classificadas de `skills/poteto-mode/references/upstream-substitutions.json`. Na 0.5.2, além de `platform` para harness, a tabela admite `safety`, com motivo e fonte na exceção aprovada do ADR 0005. O veredito de cada hunk está em `CHANGES.md` (seções 0.4.18 e 0.5.1).
+O histórico git deste repo continua sendo o split feito em `5bf2b15` (pstack `0.15.2`, sync de 2026-09-17). O tip do split é `91e5b82513c42d3713fe4741aa0dae29c8fa240b`, e a árvore dele é idêntica a `5bf2b15:pstack` (verificado com `git rev-parse <tip>^{tree}` vs `git rev-parse 5bf2b15^{tree}:pstack`). Os quatro commits de `5bf2b15..12d587d` que tocaram `pstack/` (`70b2dc8`, `b42effe`, `b0b9c7a`, `12d587d`) não entraram por merge do split. As partes sem autopilot foram julgadas na 0.4.18, hunk a hunk (o `b42effe` ficou todo de fora, e os hunks que só mudam modelo padrão também). As partes de autopilot entraram na 0.5.1 por reconstrução. Os cinco commits de `12d587d..4e5b1cf` (pstack 0.15.6 a 0.15.10) foram julgados no digest de 2026-10-05. Quatro deles (`23e4138`, `9511e60`, `a586282`, `e43c7ee`) entraram na 0.5.8 por `git am -p2 --3way` sobre a linha do split, restritos aos arquivos do port e com a autoria da Cursor; quatro conflitos foram resolvidos à mão (`agents/poteto-agent.md`, `skills/poteto-mode/SKILL.md`, `playbooks/perf-issue.md`, `scripts/check-plan.mjs`). O quinto, `4e5b1cf` (`/poteto-help`), tem veredito adaptar e ainda não entrou. Seis playbooks (`autopilot-full`, `autopilot-stack`, `babysit`, `opening-a-pr`, `shipping` e `multi-phase-plan`) são o texto da Cursor em `4e5b1cf` mais as trocas classificadas de `skills/poteto-mode/references/upstream-substitutions.json`. Na 0.5.2, além de `platform` para harness, a tabela admite `safety`, com motivo e fonte na exceção aprovada do ADR 0005. O veredito de cada hunk está em `CHANGES.md` (seções 0.4.18 e 0.5.1).
 
 A célula Commit da coluna `cursor` é também o pin de `scripts/upstream-parity.ts`. O `check` dele, que roda no `npm test`, refaz os seis playbooks a partir desse commit e compara com o repositório.
 
@@ -39,8 +39,8 @@ Cursor (só commits que tocaram `pstack/` depois do ponto de sync):
 
 ```shell
 git fetch cursor main
-git log --oneline 12d587dfb20741cafc376c42c696c5f6e2a64487..cursor/main -- pstack
-git diff --stat 12d587dfb20741cafc376c42c696c5f6e2a64487..cursor/main -- pstack
+git log --oneline 4e5b1cf2ccb0ea3716f08c8ee0a5856b5ab93536..cursor/main -- pstack
+git diff --stat 4e5b1cf2ccb0ea3716f08c8ee0a5856b5ab93536..cursor/main -- pstack
 ```
 
 open-pstack (todos os commits depois do ponto de sync):

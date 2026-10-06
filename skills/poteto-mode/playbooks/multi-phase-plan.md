@@ -34,15 +34,14 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
 ### Arm the program
 
 - [ ] State the protocol and this plan to the operator, then stop. Start execution only on the operator's explicit go.
-- [ ] On the operator's go, arm a `/goal` with this exact text. "<The plan path, the PR ids in order, the verification rule, who merges, and the done condition.>"
 - [ ] Read these from the installed plugin at program start. Re-read them at every tick.
   - [ ] `skills/poteto-mode/playbooks/<execution playbook>.md`
   - [ ] `skills/swarm/SKILL.md`
   - [ ] `<driver skill path>`
   - [ ] `skills/poteto-mode/playbooks/opening-a-pr.md`
   - [ ] `skills/<each other leaf skill the program uses>`
-- [ ] Arm the 30-minute audit tick as a real `/loop` in dynamic mode (on Codex, the cadence `../references/codex-tools.md` names). Never leave the cadence to memory.
-- [ ] Use this tick prompt, verbatim. "Re-read the execution playbook from the installed plugin and the armed /goal. Audit the operation against both and fix drift in this tick. Probe every active lane and judge progress by side effects only. Stand down a stuck lane and dispatch its replacement now. Then post a short status message to the operator in chat only when the audit found a tracked change that no earlier status message reported, such as a PR opened, a code-ready head, a round launched or closed, a verdict, a merge, a stuck agent and the action taken, a blocker added or cleared, or a decision only the operator can make. Name every such change and nothing else. Do not repeat a table, the merged list, or an unchanged blocker. If the audit found none, end the turn with no reply text. Either way, log this tick's row in your decision trail. The row names the items reported, or none."
+- [ ] On the operator's go, arm the audit tick as `/loop 1h` with the tick prompt below (on Codex or on a Grok root, the cadence `../references/codex-tools.md` or `../references/grok-tools.md` names). Never leave the cadence to memory.
+- [ ] Use this tick prompt, verbatim. "Re-read the execution playbook from the installed plugin. Audit the operation against it and fix drift in this tick. Probe every active lane and judge progress by side effects only. Stand down a stuck lane and dispatch its replacement now. Then post a short status message to the operator in chat only when the audit found a tracked change that no earlier status message reported, such as a PR opened, a code-ready head, a round launched or closed, a verdict, a merge, a stuck agent and the action taken, a blocker added or cleared, or a decision only the operator can make. Name every such change and nothing else. Do not repeat a table, the merged list, or an unchanged blocker. If the audit found none, end the turn with no reply text. Either way, log this tick's row in your decision trail. The row names the items reported, or none."
 - [ ] On the operator's hold or stand-down, send every owner a zero-writes order at once. Report any pending request so an authorized actor can explicitly withdraw it and read both queue and auto-merge states back absent. Accepted server work can outlive the chat; the zero-writes hold itself authorizes no mutation.
 
 ### Spawn owners
@@ -57,7 +56,7 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
 ### PR mechanics, for every PR
 
 - [ ] Read Guarded operations in `playbooks/shipping.md` before the first operation. Record the repository, PR, node ID, branch, validated fetch and push URLs, captured remote and local heads, published and verdict heads, and current and verdict bases. Use `gh` with explicit `--repo <owner/name>`. Refuse unsupported Origin mutations.
-- [ ] Open the PR ready, never draft, with the complete Guarded operations Create block. A stack child targets its parent branch.
+- [ ] Open the PR ready, never draft, per **Opening a PR**. Use the complete Guarded operations Create block. A stack child targets its parent branch.
 - [ ] Run the repo's lint and typecheck once before the PR-facing push. Use the Guarded operations First publication block for an absent branch. Before later fix commits, capture the actual remote SHA and use the later-wave block with hooks on.
 - [ ] Run `/deslop` before each commit and `/no-comments` before review.
 - [ ] Triage every Bugbot and security-reviewer comment per `../references/bugbot-triage.md`.
