@@ -10,10 +10,10 @@
       "source": {
         "source": "github",
         "repo": "byvict/pstack-vic",
-        "ref": "v0.5.12"
+        "ref": "v0.5.13"
       },
       "description": "if you want to go fast, go deep first. pstack helps you write less, but higher quality code. rigorous agent workflows you can parallelize with confidence.",
-      "version": "0.5.12",
+      "version": "0.5.13",
       "author": {
         "name": "byvict"
       },

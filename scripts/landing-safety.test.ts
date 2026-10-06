@@ -634,7 +634,7 @@ describe("generated Shipping recipes on disposable Git repositories", () => {
       assert.match(text.split("\n").slice(0, 7).join("\n"), /Before the first PR operation, read the Guarded operations section/);
     }
     assert.match(shipping, /Stable patch-id is a diagnostic, never permission to reuse evidence/);
-    assert.match(shipping, /A changed patch, changed relevant input, or uncertain impact requires a rerun/);
+    assert.match(shipping, /A changed patch outside its build-output exception, a changed relevant input, or uncertain impact requires a rerun/);
     assert.match(shipping, /Live lanes without reproducible build output rerun/);
     assert.match(shipping, /old parent tip to the old child tip/);
     assert.match(shipping, /same canonical patch command/);
