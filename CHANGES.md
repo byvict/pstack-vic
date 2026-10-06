@@ -1872,3 +1872,15 @@ Victor aprovou retirar as verificações adicionais do port para recuperar o com
 - A autorização permanente v3 acompanha os comandos upstream. A ferramenta mantém a confirmação no terminal, os backups e os holds do operador. Nenhuma configuração pessoal é alterada pela atualização.
 
 Verificação: passaram 574 testes Node, 74 testes Bun, typecheck, matriz e agentes gerados, colisões e paridade dos 11 arquivos com o pin da Cursor mais 36 substituições de plataforma. Os 58 testes de digest, referência e manifests também passaram após o último ajuste documental. A prova de invocação implícita, explícita e roteada no Claude Code não executou: as três tentativas foram recusadas pelo limite semanal da conta. Os metadados de ativação e a disponibilidade das skills para o roteador foram conferidos estaticamente.
+
+# 0.5.19. Lista de eventos Claude e token completo do modelo Grok. 2026-10-06
+
+O runner aceita tanto o objeto legado do Claude quanto uma lista de eventos. Usa o último evento `result`, preserva os metadados desse evento e rejeita `is_error` antes de exigir o texto final. A ausência de evento terminal tem seu próprio erro.
+
+O preflight do Grok exige o identificador do modelo como token completo, limitado por caracteres fora de `[A-Za-z0-9_.-]`. Uma listagem que contém só um modelo vizinho não inicia a execução. Uma recusa explícita de autenticação ou modelo vence uma listagem com exit 0. `not authenticated` segue a repetição existente de uma tentativa. O classificador compartilhado exige recusas de autenticação explícitas. `Authentication successful` e `Sign in successful` não impedem um preflight válido. Em falhas de execução, rótulos ambíguos de autenticação passam de `unauthenticated` (77) para `child-failed` (70).
+
+Cópia auditada de `20af5b22e359a622b60b2702521b6e0acf3b7d96` e `277029a694c0077532400e97f1ae7e1293c22b8c` do open-pstack, issue #58. O parser e o matcher preservam o desenho upstream. Os testes usam `node:test` no lugar de `bun:test`. A cláusula de autenticação por `XAI_API_KEY` e seus testes ficam de fora por decisão do operador. Effort, permissões, preload e ponto de sync permanecem como no trunk.
+
+A recusa que contém só o identificador pedido, como `grok-4.7 is not supported` em stderr, também bloqueia a execução. Os três callers fornecem o modelo ao classificador privado; ele reutiliza o matcher de token completo em uma expressão de recusa da mesma linha. Um identificador vizinho ou uma recusa de outro recurso não fornece essa prova. Essa é uma correção própria do port após reprodução pública das duas falhas, além da cópia upstream.
+
+As regressões cobrem o último resultado e seus metadados, erro antes do texto, evento ausente, texto ausente, tokens vizinhos, recusa de modelo com exit 0, prosa positiva de autenticação, prioridade de recusa e falhas de execução dos três provedores. Os contratos de contato das CLIs registram as duas formas do resultado Claude e o token completo do Grok.

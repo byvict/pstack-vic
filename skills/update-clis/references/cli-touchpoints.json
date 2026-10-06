@@ -297,7 +297,7 @@
       "id": "grok.preflight",
       "cli": "grok",
       "kind": "lane",
-      "contract": "`grok models` exits 0 and prints \"logged in\" and the model id; one retry after 5 s",
+      "contract": "`grok models` exits 0 and prints \"logged in\" and the model id as a whole token, without an explicit authentication or model refusal; one retry after 5 s",
       "pointers": [
         { "file": "skills/poteto-mode/scripts/runner/commands.ts", "anchor": "args: [\"models\"]" },
         { "file": "skills/poteto-mode/scripts/runner/run.ts", "anchor": "const GROK_PREFLIGHT_RETRY_DELAY_MS" }
@@ -393,7 +393,7 @@
       "id": "claude.result-json",
       "cli": "claude",
       "kind": "lane",
-      "contract": "`--output-format json`: `result`, `is_error`, `modelUsage`, `session_id`, `usage`, `total_cost_usd`",
+      "contract": "`--output-format json`: an object, or a list of events whose last `type: result` carries the fields `result`, `is_error`, `modelUsage`, `session_id`, `usage`, `total_cost_usd`",
       "pointers": [{ "file": "skills/poteto-mode/scripts/runner/parse-output.ts", "anchor": "function parseClaude" }],
       "coveredBy": ["read", "write", "seatbelt"],
       "measuredOn": "2.1.281"
