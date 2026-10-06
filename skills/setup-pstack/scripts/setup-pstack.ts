@@ -146,8 +146,6 @@ export function ledgerPathFor(parent: string, home: string = homedir(), env: Con
   return locate(parent, home, env).ledgerPath;
 }
 
-// --- Claude Code imports ---------------------------------------------------------
-
 // Claude Code 2.1.289 strips front matter, lexes CLAUDE.md with marked 16 (gfm
 // off), and takes `@path` from text tokens and from what an HTML comment block
 // leaves.
