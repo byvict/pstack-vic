@@ -267,7 +267,7 @@
       "id": "grok.failure-result",
       "cli": "grok",
       "kind": "lane",
-      "contract": "a `type: result` event with `is_error: true` or a `subtype` other than `success` carries the reason in `errors` (strings) and `stop_reason`; `stop_reason` or `subtype` `cancelled` or `canceled` marks a provider cancellation (exit 130), anything else is `child-failed` (exit 70), also after exit 1. Taken from the headless guide shipped with 1.0.46 and tested with a fake CLI; the probe lanes pass only on `complete`, so none of them exercises it",
+      "contract": "a `type: result` event with `is_error: true` or a `subtype` other than `success` carries the reason in `errors` (strings) and `stop_reason`; `stop_reason` or `subtype` `cancelled` or `canceled`, or a reason that starts with `User cancelled the execution` or `PermissionCancelled`, marks a provider cancellation (exit 130), anything else is `child-failed` (exit 70), also after exit 1 and whatever the reason names. The headless guide shipped with 1.0.46 documents `errors` on the error subtypes, `stop_reason` with `cancelled` among its values, and exit 1 on error, and lists the subtypes `error_max_turns`, `error_during_execution` and `error_max_structured_output_retries`; the `api_error` subtype, the `canceled` spelling and the two reason prefixes come from the open's parser (issue #78) and are tested only with a fake CLI. The probe lanes pass only on `complete`, so none of them exercises it",
       "pointers": [{ "file": "skills/poteto-mode/scripts/runner/parse-output.ts", "anchor": "export class ProviderResultError" }],
       "coveredBy": [],
       "measuredOn": "1.0.46"
