@@ -1738,7 +1738,7 @@ O PR-A do programa de adaptações do digest de 2026-10-05 traz cinco commits da
 | `72019f4` (#78) | adaptar | Entram os casos `issue78` de `parse-output.test.ts` e de `run.test.ts`, reescritos em `node:test`. Os `grok` falsos escrevem com `writeSync`, porque no macOS um `process.stdout.write` num pipe seguido de `process.exit` perde bytes. O `writeGrok` executa cada falso uma vez antes do teste, porque no macOS a primeira execução de um arquivo recém-escrito é mais lenta que as seguintes. |
 | `bdd51f6` (#78) | adaptar | Entram `ProviderResultError` e o `parseGrok` do open. Aqui a classe declara os campos, porque o Node só remove os tipos e recusa parameter properties. A falha tipada vai pelo `LaneOutcome` até `finish`, que monta o receipt neste runner. |
 | `19d6d5b` (#78) | adaptar | Entram `reserveOutputs`, o `captureStream` com descritor e `stdoutPath`/`stderrPath`. Aqui o `captureStream` de `child.ts` grava no handler de `data` de um `Readable` do Node. Nos testes, `mock.method(fs, "writeSync")` com `syncBuiltinESMExports` entra no lugar do `spyOn` do Bun. |
-| `21e134f` (#78) | adaptar | O parágrafo dos caminhos de `provider-dispatch.md` adapta o do open à rota CLI. O de dropouts é o do open com as duas passagens daqui sobre a política de pool, com `after a zero exit` na frase de `malformed-output`/65 e com uma frase a mais sobre a saída diferente de zero, porque o `ef6c5c4` mudou esse caso depois do `21e134f`. |
+| `21e134f` (#78) | adaptar | O parágrafo dos caminhos de `provider-dispatch.md` adapta o do open à rota CLI. O de dropouts é o do open com as duas passagens daqui sobre a política de pool, com o qualificador `CLI` de `non-zero CLI child exit` preservado da 0.5.11, com `after a zero exit` na frase de `malformed-output`/65 e com uma frase a mais sobre a saída diferente de zero, porque o `ef6c5c4` mudou esse caso depois do `21e134f`. |
 | `ef6c5c4` (#78) | adaptar | Entra a condição do open: a lane falha com uma falha tipada ou com uma saída diferente de zero. Entram os casos de terminal malformado ou ausente depois de saída 0 e 1. |
 
 ## O que muda
@@ -1764,7 +1764,7 @@ O PR-A do programa de adaptações do digest de 2026-10-05 traz cinco commits da
 ## Fora dos arquivos do plano
 
 - `README.md`: o `--ref v0.5.12`, que `scripts/manifests.test.ts` confere com a versão.
-- `skills/setup-pstack/scripts/setup-pstack.ts` e o seu teste: uma linha no pré-check de `runProbes` e dois casos.
+- `skills/setup-pstack/scripts/setup-pstack.ts` e o seu teste: o pré-check de `runProbes` recusa entradas existentes nos caminhos de saída, receipt e sidecars, inclusive links simbólicos sem alvo. Os testes dos sidecars conferem a recusa antes de chamar os provedores e a preservação das entradas.
 - `skills/update-clis/SKILL.md`: uma linha no passo 10.
 - `skills/poteto-mode/scripts/runner/child.ts` e `grok-acp.test.ts`: a captura segue a supervisão extraída na 0.5.11. O ACP não grava streams crus e mantém `stdoutPath` e `stderrPath` nulos. O teste de credenciais verifica esses campos e a ausência de sidecars.
 
