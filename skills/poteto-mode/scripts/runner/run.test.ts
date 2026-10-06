@@ -440,6 +440,7 @@ describe("issue78 terminal results", () => {
         : scenario.startsWith("api-error") ? 70 : 130);
       assert.equal(saved.exitCode, scenario.endsWith("nonzero") ? 1 : 0);
       matchObject(saved, {
+        signal: null,
         reportedModel: "grok-4.6-build",
         modelVerified: true,
         modelEvidence: "provider-report",
@@ -612,6 +613,30 @@ describe("issue78 terminal results", () => {
     });
     assert.ok(readFileSync(streamPath(result.receipt.stdoutPath), "utf8").includes("api_error"));
     assert.equal(existsSync(input.outputPath), false);
+  });
+
+  it("keeps launcher cancellation ahead of a typed Grok result", async () => {
+    const input = options("grok", "typed-then-cancelled");
+    const started = join(scratch, "typed-then-cancelled.started");
+    const stdout = JSON.stringify({ type: "result", subtype: "api_error", is_error: true,
+      errors: ["API unavailable"], session_id: "terminal-session", modelUsage: { "grok-4.6-build": {} } }) + "\n";
+    writeGrok(fake.replace("const modelIndex =",
+      `writeSync(1, ${JSON.stringify(stdout)}); publishPid(process.env.FAKE_STARTED_PATH, process.pid); await sleep(5_000);\nconst modelIndex =`));
+    const runner = startRunner(input, { FAKE_STARTED_PATH: started });
+    await waitFor(started);
+    await sleep(200);
+    runner.child.kill("SIGTERM");
+
+    assert.equal(await exitWithin(runner, RUN_BUDGET_MS), 130);
+    const saved = receipt(input.receiptPath);
+    matchObject(saved, {
+      status: "cancelled",
+      signal: "SIGTERM",
+      reportedModel: null,
+      sessionId: null,
+      error: { message: "launcher received SIGTERM; signal was sent to child" },
+    });
+    assert.equal(readFileSync(streamPath(saved.stdoutPath), "utf8"), stdout);
   });
 
   it("retains strict model verification for successful Grok results", async () => {
