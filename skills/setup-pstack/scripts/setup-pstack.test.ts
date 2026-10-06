@@ -1290,7 +1290,7 @@ describe("the Claude sheet import", () => {
       const state = loadState({ parent: "claude", home, env, matrix });
       assert.deepEqual(state.source, { kind: "first-run" });
       assert.equal(state.missingImport, null);
-      assert.deepEqual(state.rows.find((row) => row.role === "hillclimb")?.lanes, ["claude:claude-opus-5-5@xhigh"]);
+      assert.deepEqual(state.rows, []);
 
       const plan = await planAndProbe("claude", { env });
       writeSheet(plan, runDir, { home, env });
