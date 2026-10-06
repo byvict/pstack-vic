@@ -1673,3 +1673,35 @@ Tudo em `skills/poteto-help/SKILL.md`. A regra foi trocar só o que dependia da 
 ## Verificação
 
 - `npm test`, `npm run matrix:check`, `npm run agents:check`, `npm run collision:check` e `git diff --check`: ver o PR.
+
+# 0.5.10 — O runner parte de um shell que descarta `NODE_OPTIONS` (2026-10-05)
+
+O PR-C do programa de adaptações do digest de 2026-10-05 traz a correção da issue #25 do open-pstack. O `pstack-runner` era um script Node e herdava o `NODE_OPTIONS` de quem o chamava. Um `--require` ou `--import` do projeto rodava dentro do runner antes do código dele, e um `--import` podia mudar o ambiente que o runner passa para a CLI do provedor. O ponto de sync do open em `UPSTREAM.md` não muda. Ele avança num PR posterior, depois dos vereditos restantes do digest.
+
+## Veredito
+
+| Commit do open | Veredito | Como entrou |
+| --- | --- | --- |
+| `141a84e` (shebang que isola a partida, casos de isolamento) | adaptar | Entram a regra de zerar `NODE_OPTIONS` antes do código do runner e os casos de teste. O shebang `env -S ... bun` fica de fora, porque o `0be4b21` o trocou pelo lançador POSIX. |
+| `0be4b21` (lançador POSIX e `entry.ts`) | adaptar | O `pstack-runner` é a cópia do open com duas linhas trocadas: `unset NODE_OPTIONS`, sem `BUN_OPTIONS`, e `exec node "$dir/entry.ts" "$@"`, sem `bun --no-env-file --config=/dev/null`. O `entry.ts` é idêntico ao do open. Os casos `hostile-path` e `bare-name` foram reescritos em `node:test`. |
+| `42a4b17` (o `codex` falso esvazia o stdin) | adaptar | O `codex` falso lê o prompt inteiro com `/bin/cat >` antes de responder, e o prompt tem 100.000 linhas, acima do buffer do pipe. O `cat` vai pelo caminho absoluto porque o PATH da lane só tem os falsos e o `node`. |
+
+## O que muda
+
+- O `pstack-runner` é um script `/bin/sh` de quatro linhas. Ele zera `NODE_OPTIONS`, acha o próprio diretório por `$0` só com builtins do shell e executa `exec node "$dir/entry.ts" "$@"`. O `entry.ts` tem as três linhas que o lançador antigo rodava.
+- Os chamadores que rodavam o lançador como script Node passam a executá-lo direto: `runProbeLane` de `probe-lane.ts` (o probe do `setup-pstack` e as lanes de modelo do `update-clis`), também sob o `codex sandbox`; o `startRunner` de `run.test.ts`; e o script `runner` do `package.json`. A busca no repositório inteiro por `pstack-runner`, `process.execPath` e `node .*pstack-runner` achou só esses três. O comentário de `isolated-env.test-helper.ts` deixa de dizer que o lançador começa com `#!/usr/bin/env node`. Ele diz agora que o lançador roda `exec node`, que é o motivo de o `node` continuar no PATH dos testes.
+- O `launcher.test.ts` roda o lançador real em cinco casos: `--require`, `--import` (o preload define `PSTACK_SENTINEL`), os dois juntos com `.env` e `.env.local` no diretório, `env`, `dirname` e `readlink` hostis no começo do PATH, e o nome nu por `/bin/sh` no diretório do runner. Cada caso confere que nenhum preload rodou, que uma variável herdada chegou ao `codex`, que o `NODE_OPTIONS` chegou como `unset`, que o prompt capturado é igual ao arquivo e que o recibo é `complete`.
+
+## O que ficou de fora
+
+- As flags do Bun e o `BUN_OPTIONS`. O Node não lê `.env` nem `bunfig.toml` do projeto: no Apêndice A do plano, um `.env` no diretório não chegou ao `process.env`, e o Node recusa `--env-file` dentro de `NODE_OPTIONS`.
+- Os casos `dotenv`, `bunfig` e `bun-options` do open, que testam o Bun. O `.env` e o `.env.local` ficam no caso `combined`, para o teste falhar se um Node futuro passar a lê-los.
+- O `update-clis.ts` não muda. O plano mandava trocar a linha 926, mas ela roda `node --test scripts/manifests.test.ts` (a lane do manifest), não o lançador. As lanes de modelo do `update-clis` chegam ao lançador por `runProbeLane`.
+- Um symlink para o lançador em outro diretório não acha o `entry.ts`. O diretório vem de `$0`, sem `readlink`, para que só builtins rodem antes do `exec`, como no open. Nenhum chamador daqui usa symlink.
+- O lançador executa o primeiro `node` do PATH, como o shebang `#!/usr/bin/env node` já fazia. O `runProbeLane` usava o `process.execPath` e agora segue o PATH, como os outros chamadores.
+
+## Verificação
+
+- `launcher.test.ts` passa nos 5 casos. Com o lançador da `main`, 4 dos 5 falham: o `NODE_OPTIONS` chega ao `codex`, e o `/bin/sh` não lê o lançador JavaScript. O `hostile-path` passa na `main`, porque o shebang antigo chama `/usr/bin/env` pelo caminho absoluto.
+- `npm test` passa 477 de 477 testes (a `main` tem 472). Também passam `npm run test:bun` (74 testes e o `tsc`), `matrix:check`, `agents:check`, `collision:check` e `git diff --check`. Os testes de cancelamento de `run.test.ts` mandam o sinal para o lançador shell e passam, então o `exec` não deixa shell entre o sinal e o Node.
+- No lançador real, `NODE_OPTIONS=--require=./preload.cjs pstack-runner --help` imprime o uso e sai com 0 sem rodar o preload, que roda com `node -e 0`. `/bin/dash`, `/bin/sh`, `sh pstack-runner` no diretório do runner e `npm run runner -- --help` imprimem o mesmo uso da `main`. `env`, `dirname` e `readlink` hostis no PATH não rodam. O PID do lançador vira `node`, e um SIGTERM nele cancela a lane com recibo `cancelled`. O script da prova e o relatório ficam em `~/Dev/Skills/pstack-vic-runs/2026-10-05-open-digest-adaptar/pr-c/`.
