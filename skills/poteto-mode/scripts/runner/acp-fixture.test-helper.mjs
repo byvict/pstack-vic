@@ -46,11 +46,12 @@ const reply = (id, result) => send({ jsonrpc: "2.0", id, result });
 const update = (sessionUpdate, fields = {}, streamStartMs = 1, method = "session/update") => send({
   jsonrpc: "2.0", method, params: { sessionId, update: { sessionUpdate, ...fields }, _meta: { streamStartMs } },
 });
-const catalog = () => {
+const catalog = (additional = []) => {
   let tools = ["run_terminal_command", "read_file", "search_replace", "list_dir", "grep"];
   if (/^  - use_tool$/m.test(profile.split("disallowedTools:")[0])) tools.push("search_tool", "use_tool");
   if (scenario === "extra-tools") tools.push("spawn_subagent");
   if (scenario === "missing-tools") tools.pop();
+  tools.push(...additional);
   return update("available_commands_update", { _meta: { tools } });
 };
 const keeper = setInterval(() => {}, 1_000);
@@ -89,11 +90,23 @@ input.on("line", async (line) => {
       await reply(id, { _meta: { model: { Ok: params.modelId } } }); return;
     case "session/prompt": {
       log({ kind: "prompt", text: params.prompt[0].text });
+      if (scenario === "reload-replies") {
+        await reply("skills-reload", { result: {} });
+        await reply("workflows-reload", { result: {} });
+      }
+      if (scenario === "unknown-string-id") { await reply("unrecognized-reload", { result: {} }); return; }
+      if (scenario === "reload-error") { await send({ jsonrpc: "2.0", id: "skills-reload", error: { code: -32000 } }); return; }
+      if (scenario === "reload-invalid-result") { await reply("skills-reload", { result: "invalid" }); return; }
       if (scenario === "server-request") await send({ jsonrpc: "2.0", id: "host-request", method: "fs/read_text_file", params: { path: "/forbidden" } });
       if (scenario === "permission-request") { await send({ jsonrpc: "2.0", id: "permission", method: "session/request_permission", params: {} }); return; }
       await update("agent_message_chunk", { content: { type: "text", text: "Earlier narration" } }, 1);
       await update("response_completed", {}, 1, "_x.ai/session_notification");
       await update("tool_call", { toolCallId: "tool-1" }, 1);
+      if (scenario === "mcp-expansion") {
+        await catalog(["t3-code__preview_status", "t3-code__preview_click", "t3-code__preview_evaluate", ...(process.env.FAKE_MCP_TOOL ? [process.env.FAKE_MCP_TOOL] : [])]);
+        log({ kind: "catalog-expanded" });
+      }
+      if (scenario === "reload-replies") await reply("skills-reload", { result: {} });
       await update("agent_thought_chunk", { content: { type: "text", text: "Private thought" } }, 2);
       if (scenario === "drift") { await update("available_commands_update", { _meta: { tools: ["spawn_subagent"] } }); return; }
       if (scenario !== "empty-final" && scenario !== "narration-only") {

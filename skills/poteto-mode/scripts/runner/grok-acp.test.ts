@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, it } from "node:test";
+import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -9,24 +9,31 @@ import type { RunnerReceipt } from "./types.ts";
 
 let scratch = "";
 let bin = "";
+let fixtureRoot = "";
 let restore = () => {};
 const launcher = join(import.meta.dirname, "pstack-runner");
 
-beforeEach(() => {
-  scratch = mkdtempSync(join(tmpdir(), "pstack-acp-test-"));
-  bin = join(scratch, "bin");
+before(() => {
+  fixtureRoot = mkdtempSync(join(tmpdir(), "pstack-acp-fixture-"));
+  bin = join(fixtureRoot, "bin");
   mkdirSync(bin);
   copyFileSync(join(import.meta.dirname, "acp-fixture.test-helper.mjs"), join(bin, "grok"));
   chmodSync(join(bin, "grok"), 0o755);
+  execFileSync(join(bin, "grok"), ["--version"], { env: isolatedEnv(fixtureRoot, [bin]), stdio: "ignore" });
+  execFileSync(launcher, ["--help"], { env: isolatedEnv(fixtureRoot, [bin]), stdio: "ignore" });
+});
+after(() => { rmSync(fixtureRoot, { recursive: true, force: true }); });
+
+beforeEach(() => {
+  scratch = mkdtempSync(join(tmpdir(), "pstack-acp-test-"));
   restore = isolateProcessEnv(scratch, [bin]);
   writeFileSync(join(scratch, "prompt.md"), "Complete the assigned fixture task.");
   writeFileSync(join(scratch, "mcp.json"), JSON.stringify({ schemaVersion: 1, urlEnv: "PSTACK_T3_MCP_URL", bearerTokenEnv: "T3_MCP_BEARER_TOKEN", previewTabId: "tab_fixture" }));
-  execFileSync(join(bin, "grok"), ["--version"], { env: isolatedEnv(scratch, [bin]), stdio: "ignore" });
 });
 afterEach(() => { restore(); rmSync(scratch, { recursive: true, force: true }); });
 
 function args(extra: readonly string[] = []): string[] {
-  return [launcher, "--parent", "codex", "--provider", "grok", "--model", "grok-4.7", "--effort", "xhigh", "--transport", "grok-acp", "--mode", "full-access",
+  return ["--parent", "codex", "--provider", "grok", "--model", "grok-4.7", "--effort", "xhigh", "--transport", "grok-acp", "--mode", "full-access",
     "--prompt", join(scratch, "prompt.md"), "--cwd", scratch, "--output", join(scratch, "out.md"), "--receipt", join(scratch, "receipt.json"), ...extra];
 }
 
@@ -67,7 +74,7 @@ async function launch(options: {
   readonly env?: Readonly<Record<string, string>>;
   readonly cancelStage?: string;
 } = {}): Promise<{ readonly code: number | null; readonly stdout: string; readonly stderr: string; readonly receipt: RunnerReceipt | null }> {
-  const child = spawn(process.execPath, args(options.extra), { env: isolatedEnv(scratch, [bin], {
+  const child = spawn(launcher, args(options.extra), { env: isolatedEnv(scratch, [bin], {
     FAKE_LOG: join(scratch, "events.jsonl"), FAKE_CASE: options.scenario ?? "happy", FAKE_READY: join(scratch, "ready"),
     ...(options.cancelStage === undefined ? {} : { FAKE_HANG_STAGE: options.cancelStage }), ...options.env,
   }), stdio: ["ignore", "pipe", "pipe"] });
@@ -79,7 +86,7 @@ async function launch(options: {
   if (options.cancelStage !== undefined) poll = setInterval(() => {
     if (existsSync(join(scratch, "ready"))) { child.kill("SIGINT"); if (poll !== null) clearInterval(poll); }
   }, 10);
-  const watchdog = setTimeout(() => child.kill("SIGKILL"), 12_000);
+  const watchdog = setTimeout(() => child.kill("SIGKILL"), 30_000);
   const code = await new Promise<number | null>((resolve, reject) => { child.once("error", reject); child.once("close", resolve); });
   clearTimeout(watchdog);
   if (poll !== null) clearInterval(poll);
@@ -131,6 +138,31 @@ describe("Grok ACP through the real runner launcher", () => {
     assert.match(events().find((event) => event.kind === "prompt")?.text ?? "", /assigned preview tab tab_fixture/);
   });
 
+  it("accepts late MCP tool expansion alongside the exact builtin catalog and records ambient names", async () => {
+    const result = await launch({ scenario: "mcp-expansion", extra: attachmentArgs(), env: { ...attachmentEnv, FAKE_MCP_TOOL: "trusted-other__read_file" } });
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(readFileSync(join(scratch, "out.md"), "utf8"), "FINAL_OK");
+    assert.deepEqual(result.receipt?.acp?.effectiveTools, ["run_terminal_command", "read_file", "search_replace", "list_dir", "grep", "search_tool", "use_tool", "t3-code__preview_status", "t3-code__preview_click", "t3-code__preview_evaluate", "trusted-other__read_file"]);
+    assert.equal(events().filter((event) => event.method === "session/prompt").length, 1);
+    assert.ok(events().some((event) => event.kind === "catalog-expanded"));
+  });
+
+  it("rejects late MCP tool expansion on a host-only task", async () => {
+    const result = await launch({ scenario: "mcp-expansion" });
+    assert.equal(result.receipt?.status, "child-failed");
+    assert.equal(existsSync(join(scratch, "out.md")), false);
+  });
+
+  for (const tool of ["spawn_subagent", "web_search", "t3-code__", "__preview_status", "t3-code__preview status", "t3-code__preview__status"]) {
+    it(`rejects forbidden builtin or malformed MCP name ${tool} after expansion`, async () => {
+      const result = await launch({ scenario: "mcp-expansion", extra: attachmentArgs(), env: { ...attachmentEnv, FAKE_MCP_TOOL: tool } });
+      assert.notEqual(result.code, 0);
+      assert.ok(result.receipt);
+      assert.equal(existsSync(join(scratch, "out.md")), false);
+      assert.equal(events().filter((event) => event.method === "session/prompt").length, 1);
+    });
+  }
+
   for (const scenario of ["no-catalog", "extra-tools", "missing-tools", "protocol", "malformed", "unknown-id", "duplicate-id", "early-eof", "early-exit", "rpc-initialize", "rpc-authenticate", "rpc-session\/set_model"]) {
     it(`rejects ${scenario} before inference with a receipt and no output`, async () => {
       const result = await launch({ scenario });
@@ -141,7 +173,7 @@ describe("Grok ACP through the real runner launcher", () => {
     });
   }
 
-  for (const scenario of ["drift", "permission-request", "wrong-model", "echo-only", "zero-calls", "non-end-turn", "empty-final", "narration-only"]) {
+  for (const scenario of ["drift", "permission-request", "wrong-model", "echo-only", "zero-calls", "non-end-turn", "empty-final", "narration-only", "unknown-string-id", "reload-error", "reload-invalid-result"]) {
     it(`rejects ${scenario} after prompting without publishing old narration`, async () => {
       const result = await launch({ scenario });
       assert.notEqual(result.code, 0);
@@ -151,7 +183,7 @@ describe("Grok ACP through the real runner launcher", () => {
     });
   }
 
-  for (const scenario of ["split-frames", "auxiliary-model", "server-request", "close-error", "held-pipes"]) {
+  for (const scenario of ["split-frames", "auxiliary-model", "server-request", "reload-replies", "close-error", "held-pipes"]) {
     it(`completes ${scenario} and reaps the direct server`, async () => {
       const result = await launch({ scenario });
       assert.equal(result.code, 0, result.stderr);
@@ -182,6 +214,8 @@ describe("Grok ACP through the real runner launcher", () => {
       const result = await launch({ extra: ["--timeout", "0.8"], env: { FAKE_HANG_STAGE: phase } });
       assert.equal(result.code, 124, result.stderr);
       assert.equal(result.receipt?.status, "timed-out");
+      assert.equal(existsSync(join(scratch, "ready")), true, `deadline elapsed before reaching ${phase}`);
+      assert.equal(result.receipt?.acp?.stage, phase === "initialize" ? "initialize" : phase === "session/prompt" ? "prompt" : "shutdown");
       assert.equal(existsSync(join(scratch, "out.md")), false);
     });
   }

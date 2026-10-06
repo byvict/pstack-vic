@@ -92,8 +92,20 @@ function resolveServers(attachment: T3Attachment | null, source: NodeJS.ProcessE
   })()];
 }
 
+type CatalogTool =
+  | { readonly kind: "builtin"; readonly name: string }
+  | { readonly kind: "mcp"; readonly name: string };
+
+function decodeCatalogTool(value: unknown): CatalogTool {
+  const name = nonempty(value, "tool name");
+  if (!name.includes("__")) return { kind: "builtin", name };
+  const parts = name.split("__");
+  if (parts.length !== 2 || parts.some((part) => !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(part))) throw new AcpError("malformed-output", "invalid ACP namespaced MCP tool name");
+  return { kind: "mcp", name };
+}
+
 type SessionEvent =
-  | { readonly kind: "catalog"; readonly sessionId: string; readonly tools: readonly string[] }
+  | { readonly kind: "catalog"; readonly sessionId: string; readonly tools: readonly CatalogTool[] }
   | { readonly kind: "text"; readonly sessionId: string; readonly streamStart: number; readonly text: string }
   | { readonly kind: "generation-complete"; readonly sessionId: string }
   | { readonly kind: "tool"; readonly sessionId: string }
@@ -102,6 +114,7 @@ type SessionEvent =
 type RpcEnvelope =
   | { readonly kind: "reply"; readonly id: number; readonly result: unknown }
   | { readonly kind: "error"; readonly id: number; readonly code: number }
+  | { readonly kind: "reload-status" }
   | { readonly kind: "request"; readonly id: string | number; readonly method: string }
   | { readonly kind: "event"; readonly event: SessionEvent };
 
@@ -114,8 +127,8 @@ function decodeEvent(method: string, params: unknown): SessionEvent {
   switch (type) {
     case "available_commands_update": {
       const tools = record(update._meta).tools;
-      if (!Array.isArray(tools) || tools.some((tool: unknown) => typeof tool !== "string")) throw new AcpError("malformed-output", "invalid effective tool catalog");
-      return { kind: "catalog", sessionId, tools: tools.map((tool: unknown) => nonempty(tool, "tool name")) };
+      if (!Array.isArray(tools)) throw new AcpError("malformed-output", "invalid effective tool catalog");
+      return { kind: "catalog", sessionId, tools: tools.map((tool: unknown) => decodeCatalogTool(tool)) };
     }
     case "agent_message_chunk": {
       const content = record(update.content);
@@ -143,6 +156,13 @@ function decodeEnvelope(value: unknown): RpcEnvelope {
       return { kind: "request", id: data.id, method: data.method };
     }
     return { kind: "event", event: decodeEvent(data.method, data.params) };
+  }
+  if (data.id === "skills-reload" || data.id === "workflows-reload") {
+    if (Object.keys(data).sort().join(",") !== "id,jsonrpc,result") throw new AcpError("malformed-output", "invalid ACP reload status envelope");
+    const result = record(data.result);
+    if (Object.keys(result).join(",") !== "result") throw new AcpError("malformed-output", "invalid ACP reload status result");
+    record(result.result);
+    return { kind: "reload-status" };
   }
   if (typeof data.id !== "number" || !Number.isSafeInteger(data.id)) throw new AcpError("malformed-output", "invalid ACP reply ID");
   if (("result" in data) === ("error" in data)) throw new AcpError("malformed-output", "ACP reply requires one result or error");
@@ -199,6 +219,7 @@ class AcpRpc {
 
   private accept(envelope: RpcEnvelope): void {
     switch (envelope.kind) {
+      case "reload-status": return;
       case "event": this.receive(envelope.event); return;
       case "request": {
         this.io.write(`${JSON.stringify({ jsonrpc: "2.0", id: envelope.id, error: { code: -32601, message: "Client request unsupported" } })}\n`).catch(() => this.fail(new AcpError("child-failed", "ACP client response write failed")));
@@ -293,14 +314,16 @@ export function grokAcpExecution(request: GrokAcpRequest, source: NodeJS.Process
       writeFileSync(profilePath, grokAcpProfile(servers.length > 0), { encoding: "utf8", mode: 0o600 });
       const invocation = grokAcpCommand(profilePath);
       context.evidence.argv = [context.executable, ...invocation.args];
-      const catalogs = new Map<string, readonly string[]>();
+      const catalogs = new Map<string, readonly CatalogTool[]>();
       let sessionId: string | null = null;
       let currentGeneration: { readonly streamStart: number; text: string } | null = null;
       let finalText = "";
-      const expected = [...grokAcpTools(servers.length > 0)].sort();
-      const checkCatalog = (tools: readonly string[]): void => {
-        acp.effectiveTools = tools.map(sanitize);
-        if (tools.length !== expected.length || [...tools].sort().some((tool, index) => tool !== expected[index])) throw new AcpError("child-failed", "ACP effective tool catalog does not match the assigned profile");
+      const expectedBuiltins = [...grokAcpTools(servers.length > 0)].sort();
+      const checkCatalog = (tools: readonly CatalogTool[]): void => {
+        const names = tools.map((tool) => tool.name);
+        acp.effectiveTools = names.map(sanitize);
+        const builtins = tools.filter((tool) => tool.kind === "builtin").map((tool) => tool.name).sort();
+        if (new Set(names).size !== names.length || builtins.length !== expectedBuiltins.length || builtins.some((tool, index) => tool !== expectedBuiltins[index]) || (servers.length === 0 && tools.some((tool) => tool.kind === "mcp"))) throw new AcpError("child-failed", "ACP effective tool catalog does not match the assigned profile");
       };
       const result = await runInteractiveChild({
         executable: context.executable, spec: invocation, cwd: request.cwd, env: staged.env, context, evidence: context.evidence,
