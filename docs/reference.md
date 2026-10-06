@@ -24,7 +24,7 @@ No shell, `claude plugin marketplace add byvict/pstack-vic` e `claude plugin ins
 ### Codex
 
 ```shell
-codex plugin marketplace add byvict/pstack-vic --ref v0.5.8
+codex plugin marketplace add byvict/pstack-vic --ref v0.5.9
 codex plugin add pstack@pstack-vic
 ```
 
@@ -90,7 +90,7 @@ Cada passo confere o que já foi feito, então rodar o script duas vezes não es
 ├── .github/dependabot.yml            # Dependabot: sobe as actions fixadas por SHA num PR semanal agrupado (prefixo ci), só com versões publicadas há 7 dias ou mais
 ├── model-matrix.json                 # famílias, efforts, pais, rota por pai, papéis (dado canônico)
 ├── scripts/                          # loader/validação da matriz, render dos blocos gerados, gerador de agents, digest semanal dos upstreams, upstream-parity.ts (a guarda dos seis playbooks do autopilot), release.ts (troca o plugin nos dois pais depois do merge), testes (inclui manifests.test.ts)
-├── skills/                           # 55 skills compartilhadas por Claude Code e Codex
+├── skills/                           # 59 skills compartilhadas por Claude Code e Codex
 │   ├── poteto-mode/agents/           # openai.yaml: no Codex, poteto-mode só por invocação explícita
 │   ├── poteto-mode/references/       # provider-dispatch.md (rota e papéis), codex-tools.md (mapa de tools), bugbot-triage.md, upstream-substitutions.json (as trocas classificadas dos seis playbooks do autopilot)
 │   ├── poteto-mode/scripts/          # runner externo (Node 24, com probe-lane.ts, a sonda de uma lane), watch-pr, orch, check-plan.mjs, worktree-audit.sh
@@ -351,6 +351,7 @@ Nomes curtos; no Claude Code cada uma aparece com o prefixo do plugin (`/pstack:
 | skill | quando usar |
 | --- | --- |
 | `poteto-mode` | ponto de entrada de qualquer tarefa não trivial: escolhe um playbook e roteia para as outras skills |
+| `poteto-help` | guia de uso: como instalar, configurar e usar o pstack, qual skill, playbook ou princípio serve para uma situação e o que fazer quando uma execução dá errado; entrega um prompt pronto e o link do arquivo, sem começar o trabalho |
 | `how` | entender como um subsistema funciona |
 | `why` | evidência de por que algo foi construído assim, em paralelo pelos MCPs disponíveis |
 | `architect` | assentar tipos e forma de módulo antes de código que cruza fronteira de função |

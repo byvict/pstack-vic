@@ -1635,3 +1635,41 @@ Contra `4e5b1cf`, cinco pares deixavam de achar o texto: T13 nos três playbooks
 - `node scripts/upstream-parity.ts check` com a tabela nova contra `4e5b1cf`: 0 problemas de tabela (os seis arquivos foram regerados com `--write`).
 - `npm test`, `npm run matrix:check`, `npm run agents:check`, `npm run collision:check` e `git diff --check`: ver o PR.
 - A medição do `/loop` no `--resume` está na seção 4a de `cursor-investigacao.md`.
+
+# 0.5.9 — `/poteto-help` adaptado para os três pais (2026-10-05)
+
+O quinto commit do digest de 2026-10-05, `4e5b1cf` (pstack 0.15.10, PR 502 da Cursor), cria a skill `/poteto-help`: um guia de uso que responde como instalar, configurar e usar o pstack, qual skill, playbook ou princípio serve para uma situação e o que fazer quando uma execução dá errado, e entrega um prompt pronto em vez de começar o trabalho. A 0.5.8 deixou esse commit para um PR próprio, porque 22 das 148 linhas falavam de coisas da Cursor. Esta versão aplica o veredito `adaptar`. O ponto de sync de `UPSTREAM.md` não muda: já estava em `4e5b1cf`, então `node scripts/upstream-parity.ts --write` não roda.
+
+## Veredito
+
+| Commit | Veredito | Como entrou |
+| --- | --- | --- |
+| `4e5b1cf` (0.15.10, `/poteto-help`) | adaptar | `git am -p2 --3way` só de `skills/poteto-help/SKILL.md`, com a autoria da Cursor; em seguida um commit nosso reescreve o que dependia da Cursor. `README.md` e `docs/guide/*` do commit ficam de fora (excluídos na fase 5). |
+
+## O que foi reescrito
+
+Tudo em `skills/poteto-help/SKILL.md`. A regra foi trocar só o que dependia da Cursor e deixar o resto como a Lauren escreveu. Contra o arquivo da Cursor, 34 linhas entram e 31 saem.
+
+- **Nomes e link público.** Uma frase no começo diz que as skills aparecem como `/pstack:poteto-help` no Claude Code e `pstack:poteto-help` no Codex, e que a skill escreve os nomes curtos. A cópia pública dos arquivos passa a ser `https://github.com/byvict/pstack-vic/blob/main/`.
+- **Sinal de setup.** O arquivo que mostra se `/setup-pstack` rodou é o sheet de cada pai: `~/.claude/pstack-models.md`, `~/.codex/pstack-models.md` e `~/.grok/pstack-models.md`. Sai `~/.cursor/rules/pstack-models.mdc`.
+- **Instalação.** `/add-plugin pstack` vira os comandos do README: `/plugin marketplace add byvict/pstack-vic` e `/plugin install pstack@pstack-vic` no Claude Code; `codex plugin marketplace add byvict/pstack-vic --ref vX.Y.Z` e `codex plugin add pstack@pstack-vic` no Codex, com a tag no README, para a skill não envelhecer a cada versão; o Grok Build descobre o plugin instalado no Claude Code. O `/setup-pstack` passa a ser descrito como ele é aqui: modelo e effort por papel, descritor provider-qualified, probe de cada família nova, sheet incluído do `CLAUDE.md` ou espelhado no `AGENTS.md`, válido para sessões novas. Saem "reasoning budget" e "writes a rule".
+- **Quais skills carregam sozinhas.** A frase da Cursor "Only `/setup-pstack` and `/poteto-help` load from the user's words" é falsa aqui. Pela decisão 1, só `poteto-mode` e `automate-me` carregam `disable-model-invocation: true`; as outras skills de fluxo entram quando o usuário as digita, quando o modelo casa o pedido com a description, ou quando o `poteto-mode` as chama; os `principle-*` ficam fora do menu `/` e continuam legíveis. Corrigido em *Get set up* e na tabela de problemas.
+- **O port.** O parágrafo "pstack is built for Cursor" vira um parágrafo sobre os três pais (Claude Code, Codex, Grok Build), uma árvore só de skills, e os mapas `codex-tools.md`, `grok-tools.md` e `provider-dispatch.md`.
+- **Como `/poteto-mode` entra e fica.** Custom Modes não existem. No Claude Code `/pstack:poteto-mode` carrega a skill no contexto da sessão, onde ela fica, mas nada a reaplica a cada turno e uma sessão longa pode resumi-la; no Codex o usuário pede `pstack:poteto-mode` pelo nome; em todo pai, cada tarefa nova começa com `/poteto-mode` de novo. Saem as três balas sobre Enter, Option+Enter e Agents Window, e o link para a doc da Cursor. A frase do "new task" fica: é um pedido ao modelo que carregou a skill, não um recurso da Cursor.
+- **Tabela de skills.** `swarm` sem "as cloud agents" (subagentes em segundo plano, um worktree por escritor); `setup-pstack` com "model and effort" em vez de "reasoning budget"; a linha do `make-bot-ui` sai (fase 5); entram nove linhas para as skills que só existem aqui (`babysit`, `fix-ci`, `fix-merge-conflicts`, `get-pr-comments`, `make-pr-easy-to-review`, `deslop`, `thermo-nuclear-code-quality-review`, `what-did-i-get-done`, `update-clis`), com a frase de cada uma traduzida da tabela Skills de `docs/reference.md`. As linhas de `correct` e `benchmark-checklist` ficam.
+- **Not in pstack.** `/deslop` deixa de estar fora, porque é daqui. `control-cli`/`control-ui` viram `run` e `verify`, embutidos do Claude Code, com os mapas do Codex e do Grok. `/loop` é embutido do Claude Code; o Codex não tem e o `/loop` do Grok roda um subagente destacado em vez de chamar a sessão de volta (`grok-tools.md`). `/create-skill` vira `skill-creator`.
+- **Playbooks e princípios.** "Cursor's own skill" vira a skill standalone `babysit` daqui; "Cursor's Plan Mode" vira o plan mode do Claude Code; a frase "Typing `/principle-<name>` still loads one" vira a regra real: fora do menu no Claude Code (`user-invocable: false`), carregável pelo nome, visível no menu do Codex.
+- **Tabela de problemas.** A linha do modo que para de valer manda começar cada tarefa com `/poteto-mode`; a do modelo fala em sheet e sessões novas; a dos agentes paralelos troca "cloud agents" por worktree (`isolation: "worktree"` no Claude Code, `git worktree add` no Codex); a do `/loop` vale só para o Claude Code e aponta para `docs/reference.md#autopilot`.
+- **Links do guia.** As páginas de `docs/guide/` (fora na fase 5) viram as seções de `docs/reference.md` (`#instalação`, `#skills`, `#princípios`, `#autopilot`, `#o-que-ficou-de-fora`) e o `README.md`. A página 10 (pitfalls e receitas) não tem equivalente aqui; a skill aponta para *O que ficou de fora*, que linka o guia original.
+- **Frontmatter.** O da Cursor já não traz `disable-model-invocation`; fica como está, e a skill carrega quando o usuário pergunta como usar o pstack.
+
+## Fora da skill
+
+- `docs/reference.md`: linha `poteto-help` na tabela Skills (`scripts/reference.test.ts` exige uma linha por skill instalada) e a contagem do layout (`skills/`: 59; dizia 55 desde antes da 0.5.8).
+- `NOTICE.md`: linha de proveniência da skill, com o que é escrita nova, e a frase da introdução deixa de dizer que o `4e5b1cf` não entrou. A mesma frase em `UPSTREAM.md`.
+- Versão 0.5.9 nos quatro manifests e no `--ref` do README e da referência.
+- Conferência: `grep -rn 'cursor\|Cursor\|docs/guide\|make-bot-ui\|Custom Mode\|cloud agent' skills/poteto-help/SKILL.md` não acha nada; os 40 links relativos da skill resolvem; as cinco âncoras batem com títulos de `docs/reference.md`.
+
+## Verificação
+
+- `npm test`, `npm run matrix:check`, `npm run agents:check`, `npm run collision:check` e `git diff --check`: ver o PR.
