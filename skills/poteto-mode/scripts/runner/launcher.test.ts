@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -51,6 +51,9 @@ beforeEach(() => {
   bin = join(scratch, "bin");
   mkdirSync(bin);
   executable(join(bin, "codex"), fakeCodex);
+  // macOS checks a newly written executable on its first exec, which took
+  // 1.2 s with two other test suites running. Pay that outside the timed run.
+  execFileSync(join(bin, "codex"), ["login"], { stdio: "ignore" });
   restoreProcessEnv = isolateProcessEnv(join(scratch, "home"), [bin]);
 });
 
