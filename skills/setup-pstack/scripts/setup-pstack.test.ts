@@ -1371,8 +1371,6 @@ describe("loadState sources", () => {
 describe("imports that a line scan reads differently from Claude Code", () => {
   const elsewhere = (): string => put(join(home, "dotfiles", "pstack-models.md"), sheetWithHighHillclimb());
   const claudeMd = (text: string): string => put(join(home, ".claude", "CLAUDE.md"), text);
-  const hidden = (path: string): string =>
-    `inconsistent state: Claude Code would not load @~/.claude/pstack-models.md written into ${path} (the file ends inside a code block, an HTML block or a comment); add that line yourself at the top of the file, then run setup again`;
   const unsure = (path: string, line: number, reason: string): string =>
     `inconsistent state: ${path} line ${line} mentions an import of pstack-models.md that this script cannot read the way Claude Code does (${reason}); move the import to the top of the file as a line of its own, or remove the mention`;
 
@@ -1425,8 +1423,14 @@ describe("imports that a line scan reads differently from Claude Code", () => {
     await appended("---\nnote: @~/dotfiles/pstack-models.md\n---\nBody\n");
   });
 
-  it("stops when an unclosed HTML comment would hide the appended import", () => {
-    stops("<!-- @~/dotfiles/pstack-models.md\n", hidden(join(home, ".claude", "CLAUDE.md")));
+  it("puts the import at the top, followed by a blank line, when an unclosed HTML comment would hide it at the end", async () => {
+    await appended("<!-- @~/dotfiles/pstack-models.md\n", "@~/.claude/pstack-models.md\n\n<!-- @~/dotfiles/pstack-models.md\n");
+  });
+
+  it("puts a top import after the front matter and after a byte order mark", async () => {
+    await appended("---\ntitle: x\n---\n<!-- off\n", "---\ntitle: x\n---\n@~/.claude/pstack-models.md\n\n<!-- off\n");
+    rmSync(join(home, ".claude"), { recursive: true });
+    await appended("﻿\n<!-- off\n", "﻿@~/.claude/pstack-models.md\n\n\n<!-- off\n");
   });
 
   it("skips an import in an HTML block and appends one after a blank line, which ends the block", async () => {

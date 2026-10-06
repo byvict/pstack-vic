@@ -474,10 +474,15 @@ function lexerBreaks(raw: string, body: number): { readonly text: string; readon
   return { text, rawOffset: (at) => at + pairs.filter((pair) => pair < at).length };
 }
 
-function scanSheetImports(raw: string): ImportScan {
+/** The length of a byte order mark, and where Claude Code's lexer starts: after the front matter, or at 0. */
+function bodyOffsets(raw: string): { readonly bom: number; readonly body: number } {
   const bom = raw.charCodeAt(0) === 0xfeff ? 1 : 0;
   const frontMatter = raw.indexOf("---", bom + 3) < 0 ? null : FRONT_MATTER_RE.exec(raw.slice(bom));
-  const body = frontMatter === null ? 0 : bom + frontMatter[0].length;
+  return { bom, body: frontMatter === null ? 0 : bom + frontMatter[0].length };
+}
+
+function scanSheetImports(raw: string): ImportScan {
+  const { body } = bodyOffsets(raw);
   const { text, rawOffset } = lexerBreaks(raw, body);
   const mentions: number[] = [];
   for (let at = text.indexOf("@", body); at >= 0; at = text.indexOf("@", at + 1)) {
@@ -518,16 +523,18 @@ function placeImport(where: Location, text: string): { readonly current: SheetIm
   const current = scan.imports[0] ?? null;
   const include = includeLineFor(where);
   const separator = text.length === 0 || text.endsWith("\n") ? "" : "\n";
+  const { bom, body } = bodyOffsets(text);
+  const top = Math.max(bom, body);
   const layouts = current === null
-    ? [`${text}${separator}${include}\n`, `${text}${separator}\n${include}\n`]
+    ? [`${text}${separator}${include}\n`, `${text}${separator}\n${include}\n`, `${text.slice(0, top)}${include}\n\n${text.slice(top)}`]
     : [`${text.slice(0, current.start)}${include}${text.slice(current.end)}`];
-  let detail = "the file ends inside a code block, an HTML block or a comment";
+  let detail = "a code block, an HTML block or a comment hides it";
   for (const rendered of layouts) {
     const after = scanSheetImports(rendered);
     if (after.unsure.length === 0 && after.imports.length === 1 && importTarget(after.imports[0].target, where) === where.sheetPath) return { current, rendered };
     if (after.unsure.length > 0) detail = after.unsure[0].reason;
   }
-  fail(`inconsistent state: Claude Code would not load ${include} written into ${path} (${detail}); add that line yourself at the top of the file, then run setup again`);
+  fail(`inconsistent state: Claude Code would not load ${include} written into ${path} (${detail}); put the import where Claude Code loads it yourself, then run setup again`);
 }
 
 interface Block {
