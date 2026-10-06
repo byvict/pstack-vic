@@ -76,7 +76,7 @@ Investigate source control through git and `gh`. Record access failures as gaps.
 
 Account for all seven categories in the coverage map, including sources that are unavailable or skipped. Update the map from observed consumption at the gate in Step 4.
 
-Launch all matching investigators in one fan-out phase so they run concurrently. Don't ask one agent to cover multiple MCPs. Route each through your configured `why investigators` role with the assigned MCP available. Investigators still do not write files; that is a posture even when the MCP-capable execution mode is not mechanically read-only.
+Schedule all matching investigators under the [native lifecycle rules](../poteto-mode/references/native-lifecycle.md), including capacity for the later synthesizer. Keep a separate assignment for each MCP. Route each through your configured `why investigators` role with the assigned MCP available. Investigators still do not write files; that is a posture even when the MCP-capable execution mode is not mechanically read-only.
 
 Each investigator gets:
 1. The base prompt from `references/investigator-prompt.md`
