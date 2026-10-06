@@ -92,6 +92,11 @@ if (name === "grok" && args[0] === "models") {
   if (process.env.FAKE_GROK_PREFLIGHT_LOG_PATH) {
     appendFileSync(process.env.FAKE_GROK_PREFLIGHT_LOG_PATH, "attempt\\n");
   }
+  if (process.env.FAKE_GROK_PREFLIGHT_OUTPUT !== undefined) {
+    out(process.env.FAKE_GROK_PREFLIGHT_OUTPUT);
+    if (process.env.FAKE_GROK_PREFLIGHT_ERROR) err(process.env.FAKE_GROK_PREFLIGHT_ERROR);
+    process.exit(0);
+  }
   const transientMarker = process.env.FAKE_GROK_TRANSIENT_UNAUTH_PATH;
   if (transientMarker && !existsSync(transientMarker)) {
     publishPid(transientMarker, process.pid);
@@ -366,6 +371,8 @@ const FAKE_ENV = [
   "FAKE_MODEL_EXITING_PATH",
   "FAKE_REMOVE_EXECUTABLE_AFTER_PREFLIGHT",
   "FAKE_GROK_UNAUTH",
+  "FAKE_GROK_PREFLIGHT_OUTPUT",
+  "FAKE_GROK_PREFLIGHT_ERROR",
   "FAKE_GROK_TRANSIENT_UNAUTH_PATH",
   "FAKE_GROK_PREFLIGHT_LOG_PATH",
   "FAKE_GROK_MISSING_MODEL",
@@ -751,6 +758,91 @@ describe("runLane", () => {
       reportedModel: null,
       modelVerified: false,
       modelEvidence: null,
+    });
+  });
+
+  it("executes Grok after an exact model token bounded by punctuation", async () => {
+    process.env.FAKE_GROK_PREFLIGHT_OUTPUT = "You are logged in.\nAvailable models: [grok-4.7] (default)";
+    const input = { ...options("grok", "grok-exact-token"), model: "grok-4.7" };
+    const result = await runLane(input);
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(readFileSync(input.outputPath, "utf8"), "GROK_OK");
+    matchObject(receipt(input.receiptPath), {
+      status: "complete", reportedModel: "grok-4.7",
+      preflight: { status: "passed", evidence: "authenticated; model grok-4.7 available" },
+    });
+  });
+
+  for (const listed of ["grok-4.70", "xgrok-4.7", "grok-4.7-build", "grok-4x7", "grok-4.7_build", "grok-4.7.preview"]) {
+    it(`does not accept neighboring Grok model token ${listed}`, async () => {
+      process.env.FAKE_GROK_PREFLIGHT_OUTPUT = `You are logged in.\nAvailable models: ${listed}`;
+      const preflightLog = join(scratch, "grok-neighbor.log");
+      const modelStarted = join(scratch, "grok-neighbor.started");
+      process.env.FAKE_GROK_PREFLIGHT_LOG_PATH = preflightLog;
+      process.env.FAKE_MODEL_STARTED_PATH = modelStarted;
+      const input = { ...options("grok", "grok-neighbor"), model: "grok-4.7" };
+      const result = await runLane(input);
+
+      assert.equal(result.exitCode, 69);
+      assert.equal(readFileSync(preflightLog, "utf8"), "attempt\n");
+      assert.equal(existsSync(modelStarted), false);
+      assert.equal(existsSync(input.outputPath), false);
+      matchObject(receipt(input.receiptPath), {
+        status: "unavailable-model", preflight: { status: "failed" },
+      });
+    });
+  }
+
+  it("rejects an explicitly unsupported Grok model despite a zero-exit exact listing", async () => {
+    process.env.FAKE_GROK_PREFLIGHT_OUTPUT = "You are logged in.\nAvailable models: grok-4.7";
+    process.env.FAKE_GROK_PREFLIGHT_ERROR = "model grok-4.7 is not supported";
+    const modelStarted = join(scratch, "grok-unsupported.started");
+    process.env.FAKE_MODEL_STARTED_PATH = modelStarted;
+    const input = { ...options("grok", "grok-unsupported"), model: "grok-4.7" };
+    const result = await runLane(input);
+
+    assert.equal(result.exitCode, 69);
+    assert.equal(existsSync(modelStarted), false);
+    matchObject(receipt(input.receiptPath), {
+      status: "unavailable-model", preflight: { status: "failed" },
+    });
+    assert.ok(receipt(input.receiptPath).preflight.evidence.includes("not supported"));
+  });
+
+  it("retries explicit not-authenticated Grok output before failing closed", { timeout: GROK_RETRY_RUN_BUDGET_MS }, async () => {
+    process.env.FAKE_GROK_PREFLIGHT_OUTPUT = "You are logged in.\nAvailable models: grok-4.7";
+    process.env.FAKE_GROK_PREFLIGHT_ERROR = "You are not authenticated.";
+    const preflightLog = join(scratch, "grok-not-authenticated.log");
+    const modelStarted = join(scratch, "grok-not-authenticated.started");
+    process.env.FAKE_GROK_PREFLIGHT_LOG_PATH = preflightLog;
+    process.env.FAKE_MODEL_STARTED_PATH = modelStarted;
+    const input = { ...options("grok", "grok-not-authenticated"), model: "grok-4.7" };
+    const result = await runLane(input);
+
+    assert.equal(result.exitCode, 77);
+    assert.equal(readFileSync(preflightLog, "utf8"), "attempt\nattempt\n");
+    assert.equal(existsSync(modelStarted), false);
+    matchObject(receipt(input.receiptPath), {
+      status: "unauthenticated", preflight: { status: "failed" },
+    });
+    assert.ok(receipt(input.receiptPath).preflight.evidence.includes("attempt 2 failed"));
+  });
+
+  it("requires logged-in words for an API-key-only Grok listing", { timeout: GROK_RETRY_RUN_BUDGET_MS }, async () => {
+    process.env.FAKE_GROK_PREFLIGHT_OUTPUT = "You are using XAI_API_KEY.\nAvailable models: grok-4.7";
+    const preflightLog = join(scratch, "grok-api-key-only.log");
+    const modelStarted = join(scratch, "grok-api-key-only.started");
+    process.env.FAKE_GROK_PREFLIGHT_LOG_PATH = preflightLog;
+    process.env.FAKE_MODEL_STARTED_PATH = modelStarted;
+    const input = { ...options("grok", "grok-api-key-only"), model: "grok-4.7" };
+    const result = await runLane(input);
+
+    assert.equal(result.exitCode, 77);
+    assert.equal(readFileSync(preflightLog, "utf8"), "attempt\nattempt\n");
+    assert.equal(existsSync(modelStarted), false);
+    matchObject(receipt(input.receiptPath), {
+      status: "unauthenticated", preflight: { status: "failed" },
     });
   });
 
