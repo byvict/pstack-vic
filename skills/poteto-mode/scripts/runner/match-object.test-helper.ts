@@ -16,7 +16,7 @@ export function matchObject(
   assert.ok(isRecord(actual), `${path || "value"} is not an object: ${JSON.stringify(actual)}`);
   for (const [key, want] of Object.entries(expected)) {
     const where = path ? `${path}.${key}` : key;
-    const got = actual[key];
+    const got: unknown = actual[key];
     if (isRecord(want)) {
       matchObject(got, want, where);
     } else {

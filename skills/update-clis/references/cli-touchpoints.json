@@ -120,6 +120,114 @@
       "measuredOn": "0.155.1"
     },
     {
+      "id": "grok.acp-argv",
+      "cli": "grok",
+      "kind": "lane",
+      "contract": "`grok --sandbox off agent --always-approve --no-leader --agent-profile <private YAML-list profile> stdio`; no global --tools or --no-subagents claim for ACP",
+      "pointers": [
+        {
+          "file": "skills/poteto-mode/scripts/runner/commands.ts",
+          "anchor": "export function grokAcpCommand"
+        }
+      ],
+      "coveredBy": [],
+      "measuredOn": "1.0.46"
+    },
+    {
+      "id": "grok.acp-policy",
+      "cli": "grok",
+      "kind": "lane",
+      "contract": "ACP agent-profile tools and disallowedTools are YAML lists. Profile input run_terminal_cmd becomes advertised run_terminal_command. Before one prompt and on catalog changes, available_commands_update._meta.tools must contain exactly five host builtins or seven with a T3 attachment. With attachment, configured-and-forwarded MCPs may expand the catalog with server__tool names; each segment starts with a letter or digit and contains only letters, digits, underscores, dots or hyphens. All names are recorded; duplicates, malformed names and unknown builtins fail. Host-only admits no MCP names. GROK_SUBAGENTS=0 and [subagents] enabled=false disable recursive agents; shell_environment_policy inherit=core remains staged.",
+      "pointers": [
+        {
+          "file": "skills/poteto-mode/scripts/runner/commands.ts",
+          "anchor": "export function grokAcpProfile"
+        },
+        {
+          "file": "skills/poteto-mode/scripts/runner/grok-acp.ts",
+          "anchor": "ACP effective tool catalog"
+        },
+        {
+          "file": "skills/poteto-mode/scripts/runner/commands.ts",
+          "anchor": "export function grokAcpOverlay"
+        }
+      ],
+      "coveredBy": [],
+      "measuredOn": "1.0.46"
+    },
+    {
+      "id": "grok.acp-rpc",
+      "cli": "grok",
+      "kind": "lane",
+      "contract": "ACP protocolVersion 1 and clientType extension; authenticate cached_token; session/new; session/set_model with exact modelId and _meta.reasoningEffort; exactly one session/prompt. The measured skills-reload/workflows-reload status envelopes carry nested result objects and do not resolve pending requests or prove model use; unknown or duplicate reply IDs fail. Unsupported client requests get -32601 and perform no host operation.",
+      "pointers": [
+        {
+          "file": "skills/poteto-mode/scripts/runner/grok-acp.ts",
+          "anchor": "class AcpRpc"
+        },
+        {
+          "file": "skills/poteto-mode/scripts/runner/grok-acp.ts",
+          "anchor": "clientType: \"extension\""
+        }
+      ],
+      "coveredBy": [],
+      "measuredOn": "1.0.46"
+    },
+    {
+      "id": "grok.acp-t3",
+      "cli": "grok",
+      "kind": "lane",
+      "contract": "Optional versioned T3 attachment binds urlEnv, bearerTokenEnv and previewTabId. HTTP(S) loopback endpoint has no default port, userinfo, query or fragment. Authorization header is resolved only in memory; referenced variables are removed from child env; secrets and escaped values are redacted before output or evidence. Full access admits configured-and-forwarded Grok integrations and hooks.",
+      "pointers": [
+        {
+          "file": "skills/poteto-mode/scripts/runner/grok-acp.ts",
+          "anchor": "export function readT3Attachment"
+        },
+        {
+          "file": "skills/poteto-mode/scripts/runner/grok-acp.ts",
+          "anchor": "function secretRedactor"
+        }
+      ],
+      "coveredBy": [],
+      "measuredOn": "1.0.46"
+    },
+    {
+      "id": "grok.acp-result",
+      "cli": "grok",
+      "kind": "lane",
+      "contract": "session/update agent_message_chunk groups by streamStartMs. _x.ai/session_notification response_completed completes a generation. Tool activity invalidates narration. Terminal stopReason end_turn, nonempty final generation and _meta.usage.modelUsage prove the served model through shared modelFromUsage. CamelCase cumulative token fields normalize; unverified costUsdTicks stays null.",
+      "pointers": [
+        {
+          "file": "skills/poteto-mode/scripts/runner/grok-acp.ts",
+          "anchor": "function terminalOutput"
+        },
+        {
+          "file": "skills/poteto-mode/scripts/runner/grok-acp.ts",
+          "anchor": "case \"response_completed\""
+        }
+      ],
+      "coveredBy": [],
+      "measuredOn": "1.0.46"
+    },
+    {
+      "id": "grok.acp-shutdown",
+      "cli": "grok",
+      "kind": "lane",
+      "contract": "session/close gets one second of cleanup grace after accepted end_turn. Closed, RPC error or expired close grace are ACP receipt evidence. Close stdin, EOF grace, actual SIGTERM/SIGKILL and direct-child reap retain real exit status, including complete conversation with exit143. Cancellation and the absolute optional deadline remain authoritative through cleanup.",
+      "pointers": [
+        {
+          "file": "skills/poteto-mode/scripts/runner/grok-acp.ts",
+          "anchor": "acp.closeOutcome = await Promise.race"
+        },
+        {
+          "file": "skills/poteto-mode/scripts/runner/child.ts",
+          "anchor": "async function withChild"
+        }
+      ],
+      "coveredBy": [],
+      "measuredOn": "1.0.46"
+    },
+    {
       "id": "grok.argv",
       "cli": "grok",
       "kind": "lane",
@@ -296,7 +404,7 @@
       "kind": "lane",
       "contract": "a nested `claude -p` starts as a fresh session once the parent's identity variables (`CLAUDECODE`, `CLAUDE_CODE_*`) are gone; `CLAUDE_CODE_OAUTH_TOKEN` is a credential, not identity, and outranks the keychain login (`auth status` reports `authMethod: oauth_token`)",
       "pointers": [
-        { "file": "skills/poteto-mode/scripts/runner/run.ts", "anchor": "const CLAUDE_IDENTITY" },
+        { "file": "skills/poteto-mode/scripts/runner/child.ts", "anchor": "const CLAUDE_IDENTITY" },
         { "file": "skills/poteto-mode/scripts/runner/probe-lane.ts", "anchor": "const CLAUDE_CODE_IDENTITY" },
         { "file": "skills/poteto-mode/scripts/runner/probe-lane.ts", "anchor": "const LANE_CREDENTIAL" }
       ],

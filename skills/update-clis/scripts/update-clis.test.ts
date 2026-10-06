@@ -19,7 +19,7 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
 import { loadMatrix, PLUGIN_ROOT } from "../../../scripts/model-matrix.ts";
-import { invocationCommand, preflightCommand } from "../../poteto-mode/scripts/runner/commands.ts";
+import { grokAcpCommand, invocationCommand, preflightCommand } from "../../poteto-mode/scripts/runner/commands.ts";
 import { ACCESS_MODES } from "../../poteto-mode/scripts/runner/types.ts";
 import { clisOutsideFakes, isolatedEnv, isolateProcessEnv } from "../../poteto-mode/scripts/runner/isolated-env.test-helper.ts";
 import {
@@ -887,6 +887,7 @@ describe("cli-touchpoints.json", () => {
       const parent = matrix.parents.claude && matrix.routes.claude[provider] === "runner" ? "claude" : "codex";
       const envs: NodeJS.ProcessEnv[] = cli === "grok" ? [{}, { CODEX_SANDBOX: "seatbelt" }] : [{}];
       const argvs: string[][] = [[...preflightCommand(provider).args]];
+      if (cli === "grok") argvs.push([...grokAcpCommand("/private/lane-profile.md").args]);
       for (const mode of ACCESS_MODES) {
         for (const env of envs) {
           const options = {

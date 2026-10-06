@@ -99,7 +99,7 @@ describe("runner CLI parsing", () => {
   // CLI is looked up.
   it("refuses the retired --mode unsandboxed, --repo, and --pr with exit 64 and the reason", async () => {
     const refused: ReadonlyArray<readonly [string[], RegExp]> = [
-      [["--mode", "unsandboxed"], /^error: mode must be one of: read-only, isolated-write\n/],
+      [["--mode", "unsandboxed"], /^error: mode must be one of: read-only, isolated-write, full-access\n/],
       [["--repo", "acme/app"], /^error: Unknown option '--repo'/],
       [["--pr", "7"], /^error: Unknown option '--pr'/],
     ];
