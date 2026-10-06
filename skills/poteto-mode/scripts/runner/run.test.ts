@@ -175,8 +175,8 @@ function makeExecutable(provider: Provider): void {
 // up to 4.7 s with every core busy, against ~0.1 s for a repeat exec (measured
 // 2026-09-24). Every test writes new fakes, so a test whose deadline must
 // outlast a fake's startup execs the fake once before starting the run.
-function warm(provider: Provider): void {
-  execFileSync(join(bin, cliOf(provider)), [], { env: { PATH: process.env.PATH }, stdio: "ignore" });
+function warm(provider: Provider, args: readonly string[] = []): void {
+  execFileSync(join(bin, cliOf(provider)), args, { env: { PATH: process.env.PATH }, stdio: "ignore" });
 }
 
 function options(provider: Provider, suffix: string = provider): RunnerOptions {
@@ -404,8 +404,11 @@ function scriptedModel(
   );
 }
 
+// The scripts change only the model path, where they sleep, exit nonzero or
+// publish markers, so the warm exec takes the preflight branch, which exits first.
 function writeGrok(script: string): void {
   writeFileSync(join(bin, cliOf("grok")), script);
+  warm("grok", ["models"]);
 }
 
 describe("issue78 terminal results", () => {
@@ -526,7 +529,7 @@ describe("issue78 terminal results", () => {
   it("terminalizes a sidecar write failure without waiting for the child", async () => {
     const input = options("grok");
     writeGrok(fake.replace("const modelIndex =",
-      'writeSync(1, "stream data"); await sleep(10_000);\nconst modelIndex ='));
+      'writeSync(1, "stream data"); await sleep(60_000);\nconst modelIndex ='));
     const originalWrite = fs.writeSync;
     const write = mock.method(fs, "writeSync", (...args: unknown[]) => {
       if (!(args[1] instanceof Uint8Array)) return Reflect.apply(originalWrite, fs, args);
@@ -539,7 +542,7 @@ describe("issue78 terminal results", () => {
       assert.equal(result.exitCode, 70);
       assert.equal(result.receipt.status, "child-failed");
       assert.ok(result.receipt.error?.evidence.includes("sidecar storage unavailable"));
-      assert.ok(Date.now() - started < 10_000, "the run waited for the child's 10 s sleep");
+      assert.ok(Date.now() - started < 30_000, "the run waited for the child's 60 s sleep");
       assert.equal(existsSync(input.outputPath), false);
       assert.equal(existsSync(streamPath(result.receipt.stdoutPath)), true);
       assert.equal(existsSync(streamPath(result.receipt.stderrPath)), true);
