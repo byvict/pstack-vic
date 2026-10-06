@@ -58,10 +58,10 @@ Skills name roles by the labels below, the same labels `/setup-pstack` writes to
 | `hardest tasks` | Implements the hardest changes: cross-cutting design, subtle concurrency or algorithms, vague intent, or a precise multi-step sequence. | `claude:fable@max` | `codex:gpt-6-astra@max` | `grok:grok-4.7@xhigh` |
 | `how explorer` | Reads a subsystem in read-only mode and reports how it works, with file and line evidence. | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
 | `how explainer` | Turns the explorers' findings into the explanation the how skill delivers. | `claude:fable@max` | `codex:gpt-6-astra@max` | `grok:grok-4.7@xhigh` |
-| `why investigators` | Investigate why something was built this way across git history, tickets, and the parent's MCP sources; needs the parent's MCPs, so it stays on an alias. | `inherit-parent` | `inherit-parent` | `inherit-parent` |
-| `why synthesizer` | Merges the why investigators' findings into one answer; same MCP constraint, stays on an alias. | `inherit-parent` | `inherit-parent` | `inherit-parent` |
-| `reflect tooling` | Reads transcripts and skills to find lessons after a long task with the parent's tools; stays on an alias for the MCP reason. | `inherit-parent` | `inherit-parent` | `inherit-parent` |
-| `reflect judgment, divergent, synthesizer` | Judges, dissents on, and synthesizes the lessons the reflect skill captures; stays on an alias for the MCP reason. | `inherit-parent` | `inherit-parent` | `inherit-parent` |
+| `why investigators` | Investigate why something was built this way across git history, tickets, and the parent's MCP sources. | `claude:claude-opus-5-5@xhigh` | `codex:gpt-6-sol@xhigh` | `grok:grok-4.7@xhigh` |
+| `why synthesizer` | Merges the why investigators' findings into one answer and spot-verifies citations through the relevant MCPs. | `claude:claude-opus-5-5@max` | `codex:gpt-6-astra@max` | `grok:grok-4.7@xhigh` |
+| `reflect tooling` | Reads transcripts and skills to find tooling lessons, querying the relevant MCPs for context. | `claude:claude-opus-5-5@max` | `codex:gpt-6-sol@max` | `grok:grok-4.7@xhigh` |
+| `reflect judgment, divergent, synthesizer` | Judges, dissents on, and synthesizes the lessons the reflect skill captures, with MCP access for context and citation checks. | `claude:claude-opus-5-5@max` | `codex:gpt-6-astra@max` | `grok:grok-4.7@xhigh` |
 | `arena runners` | Each lane attempts the same task in parallel; the arena picks a base and grafts the strongest parts of the others. One lane per entry. | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` |
 | `arena cross-judge pool` | Judges the arena candidates; the arena picks a provider different from the parent and the base candidate when possible. | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` |
 | `swarm workers` | Default worker for every swarm lane: coverage matrices, races, gauntlets, exploration partitions. | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
@@ -69,9 +69,11 @@ Skills name roles by the labels below, the same labels `/setup-pstack` writes to
 | `interrogate reviewers` | Each lane reviews the diff adversarially from its own angle; a different provider per lane widens the blind spots covered. | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` |
 | `trail reviewer pool` | Reviews the decision trail of a finished run; one lane runs, the first entry whose provider wrote none of the work. | `claude:claude-opus-5-5@xhigh`, `codex:gpt-6.1-sol@xhigh`, `grok:grok-4.7@xhigh` | `claude:claude-opus-5-5@xhigh`, `codex:gpt-6.1-sol@xhigh`, `grok:grok-4.7@xhigh` | `claude:claude-opus-5-5@xhigh`, `codex:gpt-6.1-sol@xhigh`, `grok:grok-4.7@xhigh` |
 
-A list is a panel: one lane per entry, in this order. A row whose label ends in `pool` is the exception: one lane runs, picked by the Cross-family selection rule below. A role whose parent columns differ takes a family native to each parent: the frontier family for the frontier solo roles, the code family for the four authoring rows. Aliases run on the parent model through its native subagent primitive.
+A list is a panel: one lane per entry, in this order. A row whose label ends in `pool` is the exception: one lane runs, picked by the Cross-family selection rule below. A role whose parent columns differ takes a family native to each parent. Why and Reflect adapt the pinned upstream defaults as described below. Aliases run on the parent model through its native subagent primitive.
 
 <!-- role-defaults:end -->
+
+Why and Reflect follow the upstream pin in [UPSTREAM.md](../../../UPSTREAM.md), currently Cursor pstack 0.15.10 at `4e5b1cf`: Why investigators use Grok 4.7 at `xhigh`, Why synthesis and Reflect judgment use Opus 5.5 at `max`, and Reflect tooling uses Sol at `max`. Keep those choices where native, using the port's existing Sol revision mapping. Otherwise adapt investigation and tooling to the native code family and synthesis and judgment to the native frontier family. Grok 4.7 supports at most `xhigh`, so its native defaults use that effort for all four roles. These adaptations seed first-run sheets only; configured models and efforts take precedence.
 
 A lane's effort is its own. Two roles, or two lanes of one panel, may name the same family at different efforts (`bug-fix: codex:gpt-6-sol@xhigh` next to `hillclimb: codex:gpt-6-sol@high`). The parent dispatches each descriptor as written, through the agent or runner flags of that effort, and `/setup-pstack` probes a family only the first time a parent uses it (a new provider or model), never for an effort change. A family has no effort of its own; the Default effort column above seeds first-run lanes only.
 
@@ -135,6 +137,12 @@ Native dispatch avoids a second CLI startup and its base context.
 
 Do not send a same-provider descriptor to the external runner. It rejects that call because the native route is cheaper and already available.
 
+## MCP-dependent tasks
+
+Preserve the configured model and effort when a task needs MCP tools. A same-provider descriptor uses native dispatch with the required MCPs available; `inherit-parent` and `auto` are optional model choices, not MCP requirements. Model selection and task context are separate: pass the routed skill's required prompts, grounding paths, transcript or digest, and evidence to the agent.
+
+Choose an execution mode that retains the required tools. When a platform's read-only or Ask mode strips MCPs, use its MCP-capable agent mode and instruct the agent not to write. If the assigned runtime cannot access a required source, record the access gap under the calling skill's coverage or dropout policy and preserve the selected model. A successful tool call and its result establish source access; a tool listing alone does not.
+
 ## External lanes
 
 The launcher lives at `skills/poteto-mode/scripts/runner/pstack-runner` under the installed plugin. The parent writes the complete candidate prompt to a unique file, creates a unique output directory or worktree, and invokes the launcher directly. Do not put another agent in front of it.
@@ -153,7 +161,7 @@ pstack-runner \
   [--timeout <seconds>]
 ```
 
-Pass arguments as an argv array or quote every path. Never interpolate prompt text into a shell command. The launcher preflights the assigned CLI and authentication, invokes the model exactly once, disables recursive agents and ambient skill dispatch where the CLI supports it, restricts the built-in tool surface, and records the exact provider/model/effort flags. The default CLI route does not receive the parent's MCP surface. Keep MCP-dependent Why and Reflect roles on `inherit-parent` or `auto` unless the parent explicitly assigns a supported Grok ACP task below. The launcher never falls back.
+Pass arguments as an argv array or quote every path. Never interpolate prompt text into a shell command. The launcher preflights the assigned CLI and authentication, invokes the model exactly once, disables recursive agents and ambient skill dispatch where the CLI supports it, restricts the built-in tool surface, and records the exact provider/model/effort flags. The default CLI route does not receive the parent's MCP surface. Follow [MCP-dependent tasks](#mcp-dependent-tasks) for Why and Reflect. A supported Grok ACP task below requires an explicit parent assignment. The launcher never falls back.
 
 ### Explicit Grok ACP tasks
 

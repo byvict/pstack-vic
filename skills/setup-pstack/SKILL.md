@@ -68,7 +68,7 @@ A panel role (a list) gets one question instead of two: the current lanes as the
 
 A pool role (`arena cross-judge pool`, `trail reviewer pool`) gets the same single question with a different explanation: one lane runs, and the order of the list is the order of preference. For `trail reviewer pool`, say that the lane that runs is the first entry from a provider that wrote none of the work, that this parent's own provider never qualifies, and that the row therefore needs at least one other provider and takes no alias. Two other providers keep a reviewer available when a lane of one of them wrote.
 
-Each lane keeps the effort written in its descriptor, so `bug-fix: codex:gpt-6-sol@xhigh` next to `hillclimb: codex:gpt-6-sol@high` is a valid map; there is no per-family effort question. A role that brings a family into the map carries that family's effort in its answer. Why and Reflect roles need the parent's live MCP surface, so recommend `inherit-parent` or `auto` for them in the question.
+Each lane keeps the effort written in its descriptor, so `bug-fix: codex:gpt-6-sol@xhigh` next to `hillclimb: codex:gpt-6-sol@high` is a valid map; there is no per-family effort question. A role that brings a family into the map carries that family's effort in its answer. For Why and Reflect, recommend the native default for this parent and explain the [MCP-dependent tasks](../poteto-mode/references/provider-dispatch.md#mcp-dependent-tasks) rule. Preserve explicit model choices and optional aliases.
 
 ### 4. Collect the changes
 
@@ -107,7 +107,7 @@ On Grok, also attest `--pair owner-nesting` with the fresh `owner.marker`, exact
 
 ### 7. Confirm and commit
 
-Show any model migrations as original and normalized descriptors. Show the route table for this parent and every rendered row from `plan.json`. Say which families were probed in step 6 and which were already verified (`verified`). Say when `inherit-parent` or `auto` reduces a panel's provider diversity. Why and Reflect require the parent's live MCP surface; keep their roles on `inherit-parent` or `auto`, because the bounded external runner deliberately omits ambient MCPs. For panel roles, one lane runs per entry and the list length is the fan-out count. `arena cross-judge pool` is a list from which Arena chooses a provider different from the parent and base candidate when possible. `trail reviewer pool` is a list from which one lane reviews a run's decision trail: the first entry from a provider that wrote none of the work, and no lane at all when every entry is from a provider that wrote. Show every `warnings` line of the plan. `swarm workers` is the default for every worker unless a race explicitly assigns another descriptor.
+Show any model migrations as original and normalized descriptors. Show the route table for this parent and every rendered row from `plan.json`. Say which families were probed in step 6 and which were already verified (`verified`). Say when `inherit-parent` or `auto` reduces a panel's provider diversity. For Why and Reflect, show how the configured descriptor follows the central MCP-dependent task rule, including any unavailable source access. For panel roles, one lane runs per entry and the list length is the fan-out count. `arena cross-judge pool` is a list from which Arena chooses a provider different from the parent and base candidate when possible. `trail reviewer pool` is a list from which one lane reviews a run's decision trail: the first entry from a provider that wrote none of the work, and no lane at all when every entry is from a provider that wrote. Show every `warnings` line of the plan. `swarm workers` is the default for every worker unless a race explicitly assigns another descriptor.
 
 Ask for confirmation. After the operator confirms:
 
@@ -165,7 +165,7 @@ No playbook runs this check. Without the entry, auto mode denies the merge when 
 
 ## First-run role maps
 
-The maps below are rendered from `model-matrix.json` by `scripts/render-model-matrix.ts`, one per parent because the frontier solo roles take the parent's native frontier family and the four authoring rows take its native code family. They only seed the plan on a first run; selected efforts and explicit role changes always replace their values before writing. Never paste one as the result.
+The maps below are rendered from `model-matrix.json` by `scripts/render-model-matrix.ts`, with native defaults per parent for authoring, frontier solo, Why and Reflect roles. They only seed the plan on a first run; selected efforts and explicit role changes always replace their values before writing. Never paste one as the result.
 
 <!-- role-sheet:begin -->
 
@@ -184,10 +184,10 @@ judgment and prose: claude:fable@max
 hardest tasks: claude:fable@max
 how explorer: grok:grok-4.6@xhigh
 how explainer: claude:fable@max
-why investigators: inherit-parent
-why synthesizer: inherit-parent
-reflect tooling: inherit-parent
-reflect judgment, divergent, synthesizer: inherit-parent
+why investigators: claude:claude-opus-5-5@xhigh
+why synthesizer: claude:claude-opus-5-5@max
+reflect tooling: claude:claude-opus-5-5@max
+reflect judgment, divergent, synthesizer: claude:claude-opus-5-5@max
 arena runners: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:claude-opus-5-5@xhigh
 arena cross-judge pool: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:claude-opus-5-5@xhigh
 swarm workers: grok:grok-4.6@xhigh
@@ -211,10 +211,10 @@ judgment and prose: codex:gpt-6-astra@max
 hardest tasks: codex:gpt-6-astra@max
 how explorer: grok:grok-4.6@xhigh
 how explainer: codex:gpt-6-astra@max
-why investigators: inherit-parent
-why synthesizer: inherit-parent
-reflect tooling: inherit-parent
-reflect judgment, divergent, synthesizer: inherit-parent
+why investigators: codex:gpt-6-sol@xhigh
+why synthesizer: codex:gpt-6-astra@max
+reflect tooling: codex:gpt-6-sol@max
+reflect judgment, divergent, synthesizer: codex:gpt-6-astra@max
 arena runners: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:claude-opus-5-5@xhigh
 arena cross-judge pool: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:claude-opus-5-5@xhigh
 swarm workers: grok:grok-4.6@xhigh
@@ -238,10 +238,10 @@ judgment and prose: grok:grok-4.7@xhigh
 hardest tasks: grok:grok-4.7@xhigh
 how explorer: grok:grok-4.6@xhigh
 how explainer: grok:grok-4.7@xhigh
-why investigators: inherit-parent
-why synthesizer: inherit-parent
-reflect tooling: inherit-parent
-reflect judgment, divergent, synthesizer: inherit-parent
+why investigators: grok:grok-4.7@xhigh
+why synthesizer: grok:grok-4.7@xhigh
+reflect tooling: grok:grok-4.7@xhigh
+reflect judgment, divergent, synthesizer: grok:grok-4.7@xhigh
 arena runners: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:claude-opus-5-5@xhigh
 arena cross-judge pool: claude:fable@max, codex:gpt-6-astra@max, grok:grok-4.6@xhigh, claude:claude-opus-5-5@xhigh
 swarm workers: grok:grok-4.6@xhigh

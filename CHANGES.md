@@ -1828,3 +1828,11 @@ Além dos arquivos do plano, este PR muda `skills/update-clis/scripts/update-cli
 - Em 160.000 colocações do import nos dois homes, o Claude Code carrega exatamente o sheet do config home em todas as que o script grava.
 - `npm test`, `npm run test:bun`, `npm run matrix:check`, `npm run agents:check`, `npm run collision:check` e `git diff --check` passam.
 - Cada frase desta seção, das duas linhas do `NOTICE.md`, do PR e da prosa mudada tem uma prova em `~/Dev/Skills/pstack-vic-runs/2026-10-05-open-digest-adaptar/pr-f/claims-r3.tsv`, rodada no head do PR.
+
+# 0.5.15. Modelos nativos explícitos em Why e Reflect. 2026-10-06
+
+Os quatro papéis deixam de exigir `inherit-parent` por causa de MCP. A regra central de `provider-dispatch.md` preserva o modelo e o esforço configurados e exige um modo de execução com acesso às fontes necessárias. Os aliases continuam escolhas voluntárias. Why, Reflect, poteto-mode e setup-pstack remetem a essa regra.
+
+A matriz adapta os defaults de Why e Reflect da Cursor em `4e5b1cf`, pstack 0.15.10, sem avançar o pin. Preserva Opus 5.5 em `max` na síntese e no julgamento sob Claude, Grok 4.7 em `xhigh` nos investigadores sob Grok e a migração de Sol já adotada pelo port no tooling sob Codex. Nas demais células usa os modelos nativos de código ou julgamento. Grok 4.7 fica em `xhigh`, seu maior esforço admitido. As tabelas e os exemplos de setup são gerados da matriz. Prompts, referências de contexto e verificação de consumo das fontes permanecem intactos.
+
+Verificação local: 642 testes Node, 74 testes Bun e typecheck, matriz e agentes gerados, colisões e paridade dos seis playbooks com o pin. Dois agentes Codex novos, com Sol 6.1 explícito em `xhigh` e `max`, leram um turno deste chat pelo MCP do Codex. A conferência dos registros do host vinculou cada chamada e resultado ao agente e confirmou modelo e esforço configurados; não mede o esforço interno aplicado pelo provedor. As tentativas de leitura no Linear falharam com `UNAUTHORIZED` nos agentes e na raiz. Essa fonte requer reautenticação. Não houve prova live de MCP em Claude ou Grok.
