@@ -32,7 +32,7 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import {
   agentName,
   crossFamilyRowProblem,
@@ -62,36 +62,172 @@ function fail(message: string): never {
 
 // --- Paths -----------------------------------------------------------------
 
-/** Per-parent home-relative locations of the sheet and the parent integration file. */
-const TARGETS: Readonly<Record<string, { readonly dir: string; readonly integration: string }>> = {
-  claude: { dir: ".claude", integration: "CLAUDE.md" },
-  codex: { dir: ".codex", integration: "AGENTS.md" },
-  grok: { dir: ".grok", integration: "AGENTS.md" },
+/** The variables a caller hands in. Only the command line passes process.env; `{}` means none is set. */
+export type ConfigEnv = Readonly<Record<string, string | undefined>>;
+
+interface Target {
+  /** The config home under `home` when no variable redirects it. */
+  readonly dir: string;
+  /** The variable the harness reads its config home from; Grok documents none. */
+  readonly variable: string | null;
+  readonly integration: string;
+  /** How the sheet reaches the parent: a CLAUDE.md `@` import, or a bounded block mirrored into AGENTS.md. */
+  readonly kind: "import" | "block";
+}
+
+const TARGETS: Readonly<Record<string, Target>> = {
+  claude: { dir: ".claude", variable: "CLAUDE_CONFIG_DIR", integration: "CLAUDE.md", kind: "import" },
+  codex: { dir: ".codex", variable: "CODEX_HOME", integration: "AGENTS.md", kind: "block" },
+  grok: { dir: ".grok", variable: null, integration: "AGENTS.md", kind: "block" },
 };
 
 export const SHEET_FILE = "pstack-models.md";
 export const LEDGER_FILE = "pstack-probes.json";
 export const CLAUDE_INCLUDE_LINE = "@~/.claude/pstack-models.md";
+const CLAUDE_RELATIVE_INCLUDE_LINE = `@./${SHEET_FILE}`;
 export const CODEX_BLOCK_BEGIN = "<!-- pstack:models:begin -->";
 export const CODEX_BLOCK_END = "<!-- pstack:models:end -->";
 
-function targetFor(parent: string): { readonly dir: string; readonly integration: string } {
+function targetFor(parent: string): Target {
   const target = TARGETS[parent];
   if (!target) fail(`unknown parent ${JSON.stringify(parent)}; expected one of ${Object.keys(TARGETS).join(", ")}`);
   return target;
 }
 
-export function sheetPathFor(parent: string, home: string = homedir()): string {
-  return join(home, targetFor(parent).dir, SHEET_FILE);
-}
-
-export function integrationPathFor(parent: string, home: string = homedir()): string {
+/**
+ * The directory the parent harness reads its user files from: a non-empty
+ * CLAUDE_CONFIG_DIR (Claude) or CODEX_HOME (Codex), else `<home>/.claude`,
+ * `<home>/.codex`, `<home>/.grok`. A value that is not absolute (relative,
+ * a literal `~`, blank) is refused: the harness resolved it against a working
+ * directory this script cannot see.
+ */
+export function configHomeFor(parent: string, home: string = homedir(), env: ConfigEnv = {}): string {
   const target = targetFor(parent);
-  return join(home, target.dir, target.integration);
+  const value = target.variable === null ? undefined : env[target.variable];
+  if (value === undefined || value === "") return resolve(home, target.dir);
+  if (!isAbsolute(value)) fail(`${target.variable} must be an absolute path or empty; got ${JSON.stringify(value)}`);
+  return resolve(value);
 }
 
-export function ledgerPathFor(parent: string, home: string = homedir()): string {
-  return join(home, targetFor(parent).dir, LEDGER_FILE);
+/** Every file one parent's setup reads or writes, resolved once from (parent, home, env). */
+interface Location {
+  readonly parent: string;
+  /** What `~` in an import means, and the base of the default config homes. */
+  readonly home: string;
+  readonly configHome: string;
+  readonly sheetPath: string;
+  readonly integrationPath: string;
+  readonly ledgerPath: string;
+  readonly kind: Target["kind"];
+}
+
+function locate(parent: string, home: string, env: ConfigEnv): Location {
+  const target = targetFor(parent);
+  const configHome = configHomeFor(parent, home, env);
+  return {
+    parent,
+    home,
+    configHome,
+    sheetPath: join(configHome, SHEET_FILE),
+    integrationPath: join(configHome, target.integration),
+    ledgerPath: join(configHome, LEDGER_FILE),
+    kind: target.kind,
+  };
+}
+
+export function sheetPathFor(parent: string, home: string = homedir(), env: ConfigEnv = {}): string {
+  return locate(parent, home, env).sheetPath;
+}
+
+export function integrationPathFor(parent: string, home: string = homedir(), env: ConfigEnv = {}): string {
+  return locate(parent, home, env).integrationPath;
+}
+
+export function ledgerPathFor(parent: string, home: string = homedir(), env: ConfigEnv = {}): string {
+  return locate(parent, home, env).ledgerPath;
+}
+
+// --- The sheet in the parent integration -----------------------------------------
+
+/** One `@` import whose target's basename is pstack-models.md; [start, end) spans `@` and the path. */
+interface SheetImport {
+  readonly line: number;
+  readonly start: number;
+  readonly end: number;
+  /** The path as Claude Code reads it, `\ ` unescaped. */
+  readonly target: string;
+}
+
+const FENCE_RE = /^\s*(`{3,}|~{3,})/;
+const CODE_SPAN_RE = /(?<!`)(`+)(?!`)(.*?[^`])\1(?!`)/g;
+const IMPORT_RE = /(^|\s)@((?:\\ |\S)+)/g;
+
+/**
+ * The imports of a file named pstack-models.md, by Claude Code's documented
+ * rule: `@` at the start of a line or after whitespace (a list item counts), a
+ * path that ends at the first unescaped space, and nothing inside a fenced
+ * block, a code span, or quotes.
+ */
+function findSheetImports(text: string): SheetImport[] {
+  const found: SheetImport[] = [];
+  let fence: string | null = null;
+  let offset = 0;
+  text.split("\n").forEach((line, index) => {
+    const run = FENCE_RE.exec(line)?.[1] ?? null;
+    if (fence !== null) {
+      if (run !== null && run[0] === fence[0] && run.length >= fence.length && line.trim() === run) fence = null;
+    } else if (run !== null) {
+      fence = run;
+    } else {
+      const masked = line.replace(CODE_SPAN_RE, (span) => "x".repeat(span.length));
+      for (const match of masked.matchAll(IMPORT_RE)) {
+        const path = match[2];
+        const target = path.replaceAll("\\ ", " ");
+        if (/^["']/.test(path) || basename(target) !== SHEET_FILE) continue;
+        const start = offset + match.index + match[1].length;
+        found.push({ line: index + 1, start, end: start + 1 + path.length, target });
+      }
+    }
+    offset += line.length + 1;
+  });
+  return found;
+}
+
+function tooManyImports(path: string, imports: readonly SheetImport[]): never {
+  fail(`inconsistent state: ${path} imports ${SHEET_FILE} ${imports.length} times (lines ${imports.map((i) => i.line).join(", ")}); keep exactly one import`);
+}
+
+/** `~/…` against the home, an absolute path as written, anything else against the importing file's directory. */
+function importTarget(path: string, where: Location): string {
+  if (path === "~" || path.startsWith("~/")) return resolve(where.home, path.slice(2));
+  return resolve(dirname(where.integrationPath), path);
+}
+
+/** The import `write` renders: the legacy line in the default home, a sibling import in a redirected one. */
+function includeLineFor(where: Location): string {
+  return where.configHome === resolve(where.home, TARGETS.claude.dir) ? CLAUDE_INCLUDE_LINE : CLAUDE_RELATIVE_INCLUDE_LINE;
+}
+
+interface Block {
+  readonly start: number;
+  /** Just past the end marker. */
+  readonly end: number;
+  /** The mirrored sheet bytes between the markers. */
+  readonly sheet: string;
+}
+
+/** The one pstack:models block, or null when the file has no markers; a missing, repeated or reversed marker stops. */
+function findBlock(text: string, path: string): Block | null {
+  const begins = text.split(CODEX_BLOCK_BEGIN).length - 1;
+  const ends = text.split(CODEX_BLOCK_END).length - 1;
+  if (begins === 0 && ends === 0) return null;
+  if (begins !== 1 || ends !== 1) {
+    fail(`${path} has ${begins} begin and ${ends} end markers; expected exactly one pstack:models block`);
+  }
+  const start = text.indexOf(CODEX_BLOCK_BEGIN);
+  const stop = text.indexOf(CODEX_BLOCK_END);
+  if (stop < start) fail(`${path} pstack:models markers are reversed`);
+  return { start, end: stop + CODEX_BLOCK_END.length, sheet: text.slice(start + CODEX_BLOCK_BEGIN.length, stop).replace(/^\n/, "") };
 }
 
 // --- Sheet parsing -----------------------------------------------------------
@@ -214,11 +350,26 @@ export interface Migration {
   readonly to: string;
 }
 
+/** Where the rows of a state came from. */
+export type SheetSource =
+  | { readonly kind: "sheet"; readonly path: string }
+  /** Claude: the sheet the config home's CLAUDE.md imports from elsewhere, such as a copied profile's `~/.claude`. */
+  | { readonly kind: "import"; readonly path: string }
+  /** Codex or Grok, sheet missing: the block mirrored into this AGENTS.md. */
+  | { readonly kind: "block"; readonly path: string }
+  | { readonly kind: "first-run" };
+
 export interface State {
   readonly parent: string;
+  readonly configHome: string;
+  /** Where `write` puts the sheet, whatever the source. */
   readonly sheetPath: string;
   readonly integrationPath: string;
+  /** The file at sheetPath exists, which is the case exactly when the source is that sheet. */
   readonly exists: boolean;
+  readonly source: SheetSource;
+  /** The target of CLAUDE.md's sheet import when no file is there; otherwise null. */
+  readonly missingImport: string | null;
   /** Normalized rows in sheet order (first run: empty). */
   readonly rows: readonly SheetRow[];
   readonly migrations: readonly Migration[];
@@ -228,6 +379,78 @@ export interface State {
 
 function readIfExists(path: string): string | null {
   return existsSync(path) ? readFileSync(path, "utf8") : null;
+}
+
+/** parseSheet, with the file it read named in any error. */
+function parseFrom(text: string, path: string, matrix: ModelMatrix): SheetRow[] {
+  try {
+    return parseSheet(text, matrix);
+  } catch (error) {
+    if (error instanceof SetupError) fail(`${path}: ${error.message}`);
+    throw error;
+  }
+}
+
+/** Roles whose lanes differ between two raw parses: row order and prose ignored, lane order kept. */
+function differingRoles(a: readonly SheetRow[], b: readonly SheetRow[]): string[] {
+  const lanes = (rows: readonly SheetRow[]) => new Map(rows.map((r) => [r.role, r.lanes.join(", ")]));
+  const left = lanes(a);
+  const right = lanes(b);
+  return [...new Set([...left.keys(), ...right.keys()])].filter((role) => left.get(role) !== right.get(role));
+}
+
+type LoadedSource = Exclude<SheetSource, { kind: "first-run" }>;
+
+interface Loaded {
+  readonly source: LoadedSource;
+  readonly text: string;
+}
+
+function describeSource(source: LoadedSource, where: Location): string {
+  if (source.kind === "import") return `${source.path} (imported by ${where.integrationPath})`;
+  if (source.kind === "block") return `the pstack:models block of ${source.path}`;
+  return source.path;
+}
+
+/**
+ * Pick the configuration to load before anything is normalized (open-pstack
+ * #120): the config home's sheet, and the CLAUDE.md import target or the
+ * AGENTS.md block. One survives: use it. Two agree: use the sheet. Two differ:
+ * stop, naming both, without merging them. None: null, the first-run map.
+ */
+function selectSource(where: Location, matrix: ModelMatrix): { readonly loaded: Loaded | null; readonly missingImport: string | null } {
+  const sheet = snapshotOf(where.sheetPath, "sheet");
+  const integration = snapshotOf(where.integrationPath, "integration file") ?? "";
+  const found: Loaded[] = sheet === null ? [] : [{ source: { kind: "sheet", path: where.sheetPath }, text: sheet }];
+  let missingImport: string | null = null;
+  if (where.kind === "import") {
+    const imports = findSheetImports(integration);
+    if (imports.length > 1) tooManyImports(where.integrationPath, imports);
+    if (imports.length === 1) {
+      const target = importTarget(imports[0].target, where);
+      const text = target === where.sheetPath ? sheet : snapshotOf(target, "imported sheet");
+      if (text === null) missingImport = target;
+      else if (target !== where.sheetPath) found.push({ source: { kind: "import", path: target }, text });
+    }
+  } else {
+    const block = findBlock(integration, where.integrationPath);
+    if (block !== null) found.push({ source: { kind: "block", path: where.integrationPath }, text: block.sheet });
+  }
+  const [first, second] = found;
+  if (first === undefined) return { loaded: null, missingImport };
+  if (second !== undefined) {
+    const roles = differingRoles(
+      parseFrom(first.text, describeSource(first.source, where), matrix),
+      parseFrom(second.text, describeSource(second.source, where), matrix)
+    );
+    if (roles.length > 0) {
+      const keep = second.source.kind === "block"
+        ? "delete the sheet to recover the block, or remove the block to keep the sheet"
+        : `delete the sheet to carry the imported one over, or change the import to ${CLAUDE_RELATIVE_INCLUDE_LINE} to keep the sheet`;
+      fail(`inconsistent state: ${describeSource(first.source, where)} and ${describeSource(second.source, where)} assign different lanes to ${roles.join(", ")}; ${keep}`);
+    }
+  }
+  return { loaded: first, missingImport };
 }
 
 /** Normalize every lane of every row, collecting migrations. */
@@ -281,19 +504,28 @@ function familyEfforts(rows: readonly SheetRow[], matrix: ModelMatrix): Record<s
 export interface StateInput {
   readonly parent: string;
   readonly home?: string;
+  /** The variables that move a config home. Omitted: none is set, so the defaults under `home` apply. */
+  readonly env?: ConfigEnv;
   readonly matrix?: ModelMatrix;
 }
 
-/** Read the parent's sheet (if any), normalize it, and derive the efforts in use per family. */
+/** Select the parent's configuration, normalize it, and derive the efforts in use per family. */
 export function loadState(input: StateInput): State {
   const matrix = input.matrix ?? loadMatrix();
-  const home = input.home ?? homedir();
   const parent = input.parent;
   if (!(parent in matrix.parents)) fail(`unknown parent ${JSON.stringify(parent)}; expected one of ${Object.keys(matrix.parents).join(", ")}`);
-  const sheetPath = sheetPathFor(parent, home);
-  const integrationPath = integrationPathFor(parent, home);
-  const text = readIfExists(sheetPath);
-  if (text === null) {
+  const where = locate(parent, input.home ?? homedir(), input.env ?? {});
+  const { loaded, missingImport } = selectSource(where, matrix);
+  const located = {
+    parent,
+    configHome: where.configHome,
+    sheetPath: where.sheetPath,
+    integrationPath: where.integrationPath,
+    exists: loaded?.source.kind === "sheet",
+    source: loaded?.source ?? { kind: "first-run" as const },
+    missingImport,
+  };
+  if (loaded === null) {
     const defaults = matrix.roles.map((r) => ({ role: r.role, lanes: roleDefault(matrix, r.role, parent) }));
     const efforts = familyEfforts(defaults, matrix);
     for (const family of matrix.families) {
@@ -302,11 +534,10 @@ export function loadState(input: StateInput): State {
         efforts[family.family] = { status: "unassigned", efforts: [family.defaultEffort], rows: [] };
       }
     }
-    return { parent, sheetPath, integrationPath, exists: false, rows: [], migrations: [], efforts };
+    return { ...located, rows: [], migrations: [], efforts };
   }
-  const { rows, migrations } = normalizeRows(parseSheet(text, matrix), matrix);
-  const efforts = familyEfforts(rows, matrix);
-  return { parent, sheetPath, integrationPath, exists: true, rows, migrations, efforts };
+  const { rows, migrations } = normalizeRows(parseFrom(loaded.text, describeSource(loaded.source, where), matrix), matrix);
+  return { ...located, rows, migrations, efforts: familyEfforts(rows, matrix) };
 }
 
 // --- Probe ledger ------------------------------------------------------------
@@ -472,7 +703,8 @@ function nativeProbeFor(matrix: ModelMatrix, parent: string, family: Family, eff
 export function buildPlan(input: PlanInput): Plan {
   const matrix = input.matrix ?? loadMatrix();
   const home = input.home ?? homedir();
-  const state = loadState({ parent: input.parent, home, matrix });
+  const env = input.env ?? {};
+  const state = loadState({ parent: input.parent, home, env, matrix });
   const parent = state.parent;
 
   // 1. Role map: loaded rows overlay the complete documented role list.
@@ -533,7 +765,7 @@ export function buildPlan(input: PlanInput): Plan {
   }
 
   const sheet = renderSheetDocument(rows.map((r) => `${r.role}: ${r.lanes.join(", ")}`).join("\n"));
-  const ledgerPath = ledgerPathFor(parent, home);
+  const ledgerPath = ledgerPathFor(parent, home, env);
   const ledger = parseLedger(snapshotOf(ledgerPath, "probe ledger"), ledgerPath);
   const finalEfforts = familyEfforts(rows, matrix);
   const efforts: Record<string, readonly string[]> = {};
@@ -569,7 +801,7 @@ export function buildPlan(input: PlanInput): Plan {
     sheetPath: state.sheetPath,
     integrationPath: state.integrationPath,
     ledgerPath,
-    firstRun: !state.exists,
+    firstRun: state.source.kind === "first-run",
     efforts,
     rows,
     sheet,
@@ -606,7 +838,7 @@ export interface PickResult extends CrossFamilyPick {
  */
 export function pickLane(input: PickInput): PickResult {
   const matrix = input.matrix ?? loadMatrix();
-  const state = loadState({ parent: input.parent, home: input.home, matrix });
+  const state = loadState({ parent: input.parent, home: input.home, env: input.env, matrix });
   const role = roleNamed(matrix, input.role);
   if (!role) fail(`unknown role ${JSON.stringify(input.role)}`);
   const row = state.rows.find((r) => r.role === role.role);
@@ -900,34 +1132,26 @@ export function verifyProbes(plan: Plan, dir: string): { readonly ok: boolean; r
 
 // --- Write -----------------------------------------------------------------
 
-/** The parent integration text after this sheet is wired in; throws on inconsistent state. */
-export function renderIntegration(parent: string, current: string | null, sheet: string): string {
-  if (parent === "claude") {
-    const text = current ?? "";
-    const count = text.split("\n").filter((line) => line.trim() === CLAUDE_INCLUDE_LINE).length;
-    if (count > 1) fail(`${CLAUDE_INCLUDE_LINE} appears ${count} times in CLAUDE.md; keep exactly one include`);
-    if (count === 1) return text;
-    return `${text}${text.length === 0 || text.endsWith("\n") ? "" : "\n"}${CLAUDE_INCLUDE_LINE}\n`;
+/**
+ * The parent integration text after this sheet is wired in; throws on
+ * inconsistent state. Claude: zero sheet imports appends one, one is replaced
+ * in place (only its `@path`), more stop. Codex and Grok: the block is
+ * appended, or replaced whole.
+ */
+function renderIntegration(where: Location, current: string | null, sheet: string): string {
+  const text = current ?? "";
+  const separator = text.length === 0 || text.endsWith("\n") ? "" : "\n";
+  if (where.kind === "import") {
+    const imports = findSheetImports(text);
+    if (imports.length > 1) tooManyImports(where.integrationPath, imports);
+    const include = includeLineFor(where);
+    if (imports.length === 0) return `${text}${separator}${include}\n`;
+    return `${text.slice(0, imports[0].start)}${include}${text.slice(imports[0].end)}`;
   }
-  if (parent === "codex" || parent === "grok") {
-    const text = current ?? "";
-    const block = `${CODEX_BLOCK_BEGIN}\n${sheet}${CODEX_BLOCK_END}\n`;
-    const begins = text.split(CODEX_BLOCK_BEGIN).length - 1;
-    const ends = text.split(CODEX_BLOCK_END).length - 1;
-    if (begins === 0 && ends === 0) {
-      return `${text}${text.length === 0 || text.endsWith("\n") ? "" : "\n"}${block}`;
-    }
-    if (begins !== 1 || ends !== 1) {
-      fail(`AGENTS.md has ${begins} begin and ${ends} end markers; expected exactly one pstack:models block`);
-    }
-    const start = text.indexOf(CODEX_BLOCK_BEGIN);
-    const stop = text.indexOf(CODEX_BLOCK_END);
-    if (stop < start) fail("AGENTS.md pstack:models markers are reversed");
-    const afterEnd = stop + CODEX_BLOCK_END.length;
-    const rest = text.slice(afterEnd).replace(/^\n/, "");
-    return `${text.slice(0, start)}${block}${rest}`;
-  }
-  fail(`no integration shape for parent ${parent}`);
+  const block = `${CODEX_BLOCK_BEGIN}\n${sheet}${CODEX_BLOCK_END}\n`;
+  const found = findBlock(text, where.integrationPath);
+  if (found === null) return `${text}${separator}${block}`;
+  return `${text.slice(0, found.start)}${block}${text.slice(found.end).replace(/^\n/, "")}`;
 }
 
 export type WriteOutcome = "created" | "updated" | "unchanged";
@@ -960,16 +1184,19 @@ function snapshotOf(path: string, label: string): string | null {
 }
 
 /**
- * Commit the plan: verify its probes, render the integration and the ledger,
- * compare with the current bytes, and only then write sheet, integration, and
- * ledger, read each back, and restore every snapshot on any failure. The ledger
- * gains one entry per family this plan probed. An unchanged rerun touches nothing.
+ * Commit the plan: check that it was made for the config home this write
+ * resolves, verify its probes, render the integration and the ledger, compare
+ * with the current bytes, and only then write sheet, integration, and ledger,
+ * read each back, and restore every snapshot on any failure. The ledger gains
+ * one entry per family this plan probed. An unchanged rerun touches nothing.
  */
-export function writeSheet(plan: Plan, dir: string, options: { readonly home?: string } = {}): WriteResult {
-  const home = options.home ?? homedir();
-  const sheetPath = sheetPathFor(plan.parent, home);
-  const integrationPath = integrationPathFor(plan.parent, home);
-  const ledgerPath = ledgerPathFor(plan.parent, home);
+export function writeSheet(plan: Plan, dir: string, options: { readonly home?: string; readonly env?: ConfigEnv } = {}): WriteResult {
+  const where = locate(plan.parent, options.home ?? homedir(), options.env ?? {});
+  const { sheetPath, integrationPath, ledgerPath } = where;
+  if (plan.sheetPath !== sheetPath || plan.integrationPath !== integrationPath || plan.ledgerPath !== ledgerPath) {
+    const variable = targetFor(plan.parent).variable;
+    fail(`${join(dir, PLAN_FILE)} was made for the config home ${dirname(plan.sheetPath)}, but this write resolves ${where.configHome}; run write with the --home${variable === null ? "" : ` and ${variable}`} that plan used, or run plan again`);
+  }
 
   const probes = verifyProbes(plan, dir);
   if (!probes.ok) {
@@ -979,7 +1206,7 @@ export function writeSheet(plan: Plan, dir: string, options: { readonly home?: s
   const sheetBefore = snapshotOf(sheetPath, "sheet");
   const integrationBefore = snapshotOf(integrationPath, "integration file");
   const ledgerBefore = snapshotOf(ledgerPath, "probe ledger");
-  const integrationAfter = renderIntegration(plan.parent, integrationBefore, plan.sheet);
+  const integrationAfter = renderIntegration(where, integrationBefore, plan.sheet);
   const ledgerAfter = recordProbes(ledgerBefore, ledgerPath, plan, dir);
 
   const targets = [
@@ -1047,12 +1274,17 @@ const USAGE = `Usage: setup-pstack <state|plan|probe|attest|write|pick> [options
          operator's order. The parent's own provider always counts as a writer; name every
          other provider that wrote with --executor. Exit 1 when no lane is eligible.
 
+The sheet, the ledger and the integration live in the parent's config home: a non-empty
+CLAUDE_CONFIG_DIR (claude) or CODEX_HOME (codex), else <home>/.claude, <home>/.codex, <home>/.grok.
+
 Exit codes: 0 ok, 1 a probe failed, the write was refused, or no lane is eligible, 64 usage.
 `;
 
 interface Io {
   readonly stdout: (value: string) => void;
   readonly stderr: (value: string) => void;
+  /** The default Io is the real process and carries process.env; an Io without env sets no variable. */
+  readonly env?: ConfigEnv;
 }
 
 class CliUsageError extends Error {}
@@ -1082,6 +1314,7 @@ function parseRoleChanges(values: readonly string[] | undefined): Record<string,
 export async function main(argv: readonly string[], io: Io = {
   stdout: (v) => process.stdout.write(v),
   stderr: (v) => process.stderr.write(v),
+  env: process.env,
 }): Promise<number> {
   try {
     const { parseArgs } = await import("node:util");
@@ -1116,6 +1349,7 @@ export async function main(argv: readonly string[], io: Io = {
     const [command, ...rest] = parsed.positionals;
     if (rest.length > 0) usage(`unexpected arguments: ${rest.join(" ")}`);
     const home = typeof parsed.values.home === "string" ? parsed.values.home : homedir();
+    const env = io.env ?? {};
     const requireParent = (): string => {
       const parent = parsed.values.parent;
       if (typeof parent !== "string") usage("--parent is required");
@@ -1130,13 +1364,14 @@ export async function main(argv: readonly string[], io: Io = {
 
     switch (command) {
       case "state": {
-        emit(loadState({ parent: requireParent(), home }));
+        emit(loadState({ parent: requireParent(), home, env }));
         return 0;
       }
       case "plan": {
         const plan = buildPlan({
           parent: requireParent(),
           home,
+          env,
           efforts: parseAssignments(parsed.values.effort as string[] | undefined, "--effort"),
           roles: parseRoleChanges(parsed.values.role as string[] | undefined),
         });
@@ -1175,7 +1410,7 @@ export async function main(argv: readonly string[], io: Io = {
       case "write": {
         const dir = requireDir();
         const plan = loadPlan(dir);
-        emit(writeSheet(plan, dir, { home }));
+        emit(writeSheet(plan, dir, { home, env }));
         return 0;
       }
       case "pick": {
@@ -1185,7 +1420,7 @@ export async function main(argv: readonly string[], io: Io = {
           .flatMap((value) => value.split(","))
           .map((value) => value.trim())
           .filter((value) => value.length > 0);
-        const result = pickLane({ parent: requireParent(), home, role: role[0], executors });
+        const result = pickLane({ parent: requireParent(), home, env, role: role[0], executors });
         emit(result);
         return result.chosen === null ? 1 : 0;
       }
