@@ -279,7 +279,7 @@ function listVerdict(line: string, at: number, contentStart: number): Verdict {
   const before = content[i - 1] ?? "";
   if (before === "" || /\s/.test(before)) {
     const target = pathTarget(run);
-    if (target !== null) return { kind: "loaded", target, run };
+    if (target !== null && (basename(target) === SHEET_FILE || !PATH_MARKUP_RE.test(target))) return { kind: "loaded", target, run };
     return PATH_MARKUP_RE.test(run.split("#")[0]) ? unsure(MARKUP) : SKIPPED;
   }
   return TOKEN_ENDS.has(before) || content[i - 2] === "\\" ? unsure(MARKUP) : SKIPPED;

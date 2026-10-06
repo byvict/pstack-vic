@@ -1823,7 +1823,7 @@ Além dos arquivos do plano, este PR muda `skills/update-clis/scripts/update-cli
 
 ## Verificação
 
-- `setup-pstack.test.ts`, `authorize.test.ts` e `update-clis.test.ts` passam com 128, 38 e 53 testes.
+- `setup-pstack.test.ts`, `authorize.test.ts` e `update-clis.test.ts` passam com 130, 38 e 53 testes.
 - Sempre que o script não para, o leitor do `CLAUDE.md` concorda com o do Claude Code 2.1.289, refeito a partir do binário sobre o marked 16.0.0, 16.1.2 e 16.2.0, em 80.000 variantes de 20.000 documentos gerados, com quebras de linha `\n`, `\r\n`, `\r` e misturadas, e nos arquivos Markdown de `~/Dev`.
 - Em 160.000 colocações do import nos dois homes, o Claude Code carrega exatamente o sheet do config home em todas as que o script grava.
 - `npm test`, `npm run test:bun`, `npm run matrix:check`, `npm run agents:check`, `npm run collision:check` e `git diff --check` passam.
