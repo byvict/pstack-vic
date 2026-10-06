@@ -779,7 +779,9 @@ describe("runLane", () => {
     it(`keeps explicit model-execution authentication failures for ${provider}`, async () => {
       const messages = ["Not logged in.", "You are not authenticated.", "Unauthenticated.",
         "Authentication failed.", "Authentication required.", "Authentication is required.",
-        "Please sign in.", "Sign in required.", "Sign-in required.", "Login required."];
+        "Please sign in.", "Sign in required.", "Sign-in required.", "Login required.",
+        "Sign in failed.", "Sign-in failed.", "Sign in failure.", "Sign-in failure.",
+        "Please sign-in.", "Must sign-in.", "Need to sign-in."];
       for (const [index, message] of messages.entries()) {
         writeFileSync(join(bin, cliOf(provider)), scriptedModel("", `${message}\nmodel unavailable`, 1));
         const input = options(provider, `auth-error-${index}`);
@@ -878,7 +880,10 @@ describe("runLane", () => {
     });
   }
 
-  for (const message of ["grok-4.70 is not supported", "feature is not supported"]) {
+  for (const message of ["grok-4.70 is not supported", "feature is not supported",
+    "Available models: grok-4.7, feature is not supported", "modeling is not supported",
+    "Available model: grok-4.7, feature is not supported", "model: grok-4.7; feature is not supported",
+    "grok-4.7,gpt-6-sol is not supported", "grok-4.7:feature is not supported"]) {
     it(`keeps an unrelated refusal separate from the requested Grok id: ${message}`, async () => {
       process.env.FAKE_GROK_PREFLIGHT_OUTPUT = "You are logged in.\nAvailable models: grok-4.7";
       process.env.FAKE_GROK_PREFLIGHT_ERROR = message;
@@ -894,6 +899,64 @@ describe("runLane", () => {
   }
 
   for (const provider of PROVIDERS) {
+    it(`keeps unrelated model subjects as child failures during ${provider} execution`, async () => {
+      const model = options(provider).model;
+      const messages = [`Available models: ${model}, feature is not supported`, "modeling is not supported",
+        `Available model: ${model}, feature is not supported`, `model: ${model}; feature is not supported`,
+        `${model},gpt-6.1-sol is not supported`, `${model}:feature is not supported`];
+      for (const [index, message] of messages.entries()) {
+        writeFileSync(join(bin, cliOf(provider)), scriptedModel("", message, 1));
+        const input = options(provider, `unrelated-subject-${index}`);
+        const result = await runLane(input);
+
+        assert.equal(result.exitCode, 70, message);
+        assert.equal(existsSync(input.outputPath), false, message);
+        matchObject(receipt(input.receiptPath), {
+          status: "child-failed", exitCode: 1, preflight: { status: "passed" },
+        });
+      }
+    });
+
+    for (const label of ["compound comma", "compound colon", "ambiguous model label"]) {
+      it(`keeps ${label} separate during ${provider} failed preflight`, { timeout: GROK_RETRY_RUN_BUDGET_MS }, async () => {
+        const input = options(provider, "unrelated-preflight-subject");
+        const message = label === "compound comma" ? `${input.model},gpt-6.1-sol is not supported`
+          : label === "compound colon" ? `${input.model}:feature is not supported`
+            : `Available model: ${input.model}, feature is not supported`;
+        const modelStarted = join(scratch, "unrelated-preflight.started");
+        process.env.FAKE_MODEL_STARTED_PATH = modelStarted;
+        writeFileSync(join(bin, cliOf(provider)), fake.replace(
+          'if (name === "claude" && args[0] === "auth") {',
+          `if (isPreflight) { err(${JSON.stringify(message)}); process.exit(1); }\nif (name === "claude" && args[0] === "auth") {`
+        ));
+        const result = await runLane(input);
+
+        assert.equal(result.exitCode, 77);
+        assert.equal(existsSync(modelStarted), false);
+        assert.equal(existsSync(input.outputPath), false);
+        matchObject(receipt(input.receiptPath), {
+          status: "unauthenticated", preflight: { status: "failed" },
+        });
+      });
+    }
+
+    it(`preserves explicit model refusal forms during ${provider} execution`, async () => {
+      const model = options(provider).model;
+      const messages = ["model not found", `model ${model} is not supported`, "invalid model",
+        `"${model}" is not supported`, `'${model}' is not supported`, `[${model}] is not supported`];
+      for (const [index, message] of messages.entries()) {
+        writeFileSync(join(bin, cliOf(provider)), scriptedModel("", message, 1));
+        const input = options(provider, `explicit-model-form-${index}`);
+        const result = await runLane(input);
+
+        assert.equal(result.exitCode, 69, message);
+        assert.equal(existsSync(input.outputPath), false, message);
+        matchObject(receipt(input.receiptPath), {
+          status: "unavailable-model", exitCode: 1, preflight: { status: "passed" },
+        });
+      }
+    });
+
     it(`classifies a requested-id model refusal during ${provider} execution`, async () => {
       const input = options(provider, "requested-model-refusal");
       writeFileSync(join(bin, cliOf(provider)), scriptedModel("", `${input.model} is not supported`, 1));

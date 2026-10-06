@@ -218,15 +218,16 @@ function successfulPreflightEvidence(provider: Provider, model: string): string 
 function unavailableStatus(value: string, requestedModel: string): LaneFailure {
   if (
     /\b(not logged in|not authenticated|unauthenticated|login required)\b/i.test(value) ||
-    /\b(authentication(?: is)?[ -](failed|failure|required|error)|(?:please|must|need to) sign in|sign[ -]in required|sign in to (continue|proceed))\b/i.test(value)
+    /\b(authentication(?: is)?[ -](failed|failure|required|error)|(?:please|must|need to) sign[ -]in|sign[ -]in (failed|failure|required)|sign in to (continue|proceed))\b/i.test(value)
   ) {
     return "unauthenticated";
   }
-  if (/model.{0,40}(not found|unknown|unavailable|unsupported|not supported|invalid)|invalid.{0,20}model/i.test(value)) {
+  if (/\b(model[ \t]+(?:is[ \t]+)?(not found|unknown|unavailable|unsupported|not supported|invalid)|invalid[ \t]+model)\b/i.test(value)) {
     return "unavailable-model";
   }
-  for (const refusal of value.matchAll(/(?:^|[ \t])(\S+)[ \t]+(?:is[ \t]+)?(not found|unknown|unavailable|unsupported|not supported|invalid)\b/gim)) {
-    if (grokModelAvailable(refusal[1], requestedModel)) return "unavailable-model";
+  for (const refusal of value.matchAll(/(?:^|[ \t])(?:model[ \t]*:[ \t]*)?(?:"([A-Za-z0-9_.-]+)"|'([A-Za-z0-9_.-]+)'|\[([A-Za-z0-9_.-]+)\]|([A-Za-z0-9_.-]+))[ \t]+(?:is[ \t]+)?(not found|unknown|unavailable|unsupported|not supported|invalid)\b/gim)) {
+    const subject = refusal[1] ?? refusal[2] ?? refusal[3] ?? refusal[4];
+    if (grokModelAvailable(subject, requestedModel)) return "unavailable-model";
   }
   return "child-failed";
 }
