@@ -36,7 +36,6 @@ export const ALLOW_ENTRY = `${MARKER}: the operator who wrote this entry is the 
 
 const BUILT_IN_RULES = "$defaults";
 
-/** The file each parent keeps its approval settings in, inside its config home. */
 const SETTINGS_FILES: Readonly<Record<string, string>> = {
   claude: "settings.json",
   codex: "config.toml",
@@ -97,11 +96,6 @@ function shellQuote(word: string): string {
   return /^[A-Za-z0-9_\/.:@%+=-]+$/.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`;
 }
 
-/**
- * The command the operator runs on a terminal of their own. It pins the config
- * home of `file`, so apply writes the file check read whatever that terminal
- * exports.
- */
 function grantCommand(file: string): string {
   return ["/usr/bin/env", `CLAUDE_CONFIG_DIR=${dirname(file)}`, process.execPath, fileURLToPath(import.meta.url), "apply", "--parent", "claude"]
     .map(shellQuote)
@@ -183,7 +177,6 @@ export interface Io {
   readonly stdout: (value: string) => void;
   readonly stderr: (value: string) => void;
   readonly askOnTerminal?: (question: string) => Promise<string>;
-  /** The default Io is the real process and carries process.env; an Io without env sets no variable. */
   readonly env?: ConfigEnv;
 }
 

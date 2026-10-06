@@ -1140,12 +1140,9 @@ describe("writeSheet", () => {
   });
 });
 
-// --- Config homes ----------------------------------------------------------------
-
 import { configHomeFor } from "./setup-pstack.ts";
 
-/** The Claude first-run sheet with one customized row: an effort change, so no new family needs a probe. */
-function customizedSheet(): string {
+function sheetWithHighHillclimb(): string {
   return firstRunSheet("claude").replace("hillclimb: claude:claude-opus-5-5@xhigh", "hillclimb: claude:claude-opus-5-5@high");
 }
 
@@ -1258,7 +1255,7 @@ describe("the Claude sheet import", () => {
   it("carries a copied profile's imported sheet into the redirected home and replaces the one import in place", async () => {
     const cfg = join(home, "cfg");
     const env = { CLAUDE_CONFIG_DIR: cfg };
-    const imported = put(join(home, ".claude", "pstack-models.md"), customizedSheet());
+    const imported = put(join(home, ".claude", "pstack-models.md"), sheetWithHighHillclimb());
     put(join(cfg, "CLAUDE.md"), "# work profile\n@~/.claude/pstack-models.md\nKeep this.\n");
     const state = loadState({ parent: "claude", home, env, matrix });
     assert.deepEqual(state.source, { kind: "import", path: imported });
@@ -1271,12 +1268,12 @@ describe("the Claude sheet import", () => {
     writeSheet(plan, runDir, { home, env });
     assert.match(readFileSync(join(cfg, "pstack-models.md"), "utf8"), /^hillclimb: claude:claude-opus-5-5@high$/m);
     assert.equal(readFileSync(join(cfg, "CLAUDE.md"), "utf8"), "# work profile\n@./pstack-models.md\nKeep this.\n");
-    assert.equal(readFileSync(imported, "utf8"), customizedSheet(), "the imported sheet is only read");
+    assert.equal(readFileSync(imported, "utf8"), sheetWithHighHillclimb(), "the imported sheet is only read");
     assert.deepEqual(loadState({ parent: "claude", home, env, matrix }).source, { kind: "sheet", path: join(cfg, "pstack-models.md") });
   });
 
   it("replaces an import that names the sheet elsewhere with the legacy line, inside its list item", async () => {
-    const elsewhere = put(join(home, "dotfiles", "pstack-models.md"), customizedSheet());
+    const elsewhere = put(join(home, "dotfiles", "pstack-models.md"), sheetWithHighHillclimb());
     const integration = put(join(home, ".claude", "CLAUDE.md"), `# mine\n- models: @${elsewhere}\n`);
     assert.deepEqual(loadState({ parent: "claude", home, matrix }).source, { kind: "import", path: elsewhere });
     const plan = await planAndProbe("claude");
@@ -1286,13 +1283,13 @@ describe("the Claude sheet import", () => {
   });
 
   it("resolves a relative import with an escaped space against the CLAUDE.md directory", () => {
-    const spaced = put(join(home, ".claude", "My Sheets", "pstack-models.md"), customizedSheet());
+    const spaced = put(join(home, ".claude", "My Sheets", "pstack-models.md"), sheetWithHighHillclimb());
     put(join(home, ".claude", "CLAUDE.md"), "@./My\\ Sheets/pstack-models.md\n");
     assert.deepEqual(loadState({ parent: "claude", home, matrix }).source, { kind: "import", path: spaced });
   });
 
-  it("ignores a mention in a fenced block, a code span or quotes, and appends the one import", async () => {
-    const mentions = "```text\n@~/.claude/pstack-models.md\n```\nLoad it with `@~/.claude/pstack-models.md`.\nNot this: @\"~/x/pstack-models.md\"\n";
+  it("ignores a mention in a fenced block, a code span, an HTML comment or quotes, and appends the one import", async () => {
+    const mentions = "```text\n@~/.claude/pstack-models.md\n```\nLoad it with `@~/.claude/pstack-models.md`.\n<!-- off for now:\n@~/.claude/pstack-models.md -->\nNot this: @\"~/x/pstack-models.md\"\n";
     const integration = put(join(home, ".claude", "CLAUDE.md"), mentions);
     assert.deepEqual(loadState({ parent: "claude", home, matrix }).source, { kind: "first-run" });
     const plan = await planAndProbe("claude");
@@ -1307,7 +1304,7 @@ describe("loadState sources", () => {
     const missing = loadState({ parent: "claude", home, matrix });
     assert.deepEqual([missing.source, missing.missingImport, missing.exists], [{ kind: "first-run" }, join(home, "gone", "pstack-models.md"), false]);
     assert.equal(missing.efforts.grok.status, "unassigned");
-    putSheet("claude", customizedSheet());
+    putSheet("claude", sheetWithHighHillclimb());
     const kept = loadState({ parent: "claude", home, matrix });
     assert.deepEqual([kept.source, kept.missingImport, kept.exists], [{ kind: "sheet", path: sheetPathFor("claude", home) }, join(home, "gone", "pstack-models.md"), true]);
   });
@@ -1315,14 +1312,14 @@ describe("loadState sources", () => {
   it("stops when the config home's sheet and the imported sheet differ, and uses the sheet when they agree", () => {
     const cfg = join(home, "cfg");
     const env = { CLAUDE_CONFIG_DIR: cfg };
-    const imported = put(join(home, ".claude", "pstack-models.md"), customizedSheet());
+    const imported = put(join(home, ".claude", "pstack-models.md"), sheetWithHighHillclimb());
     const integration = put(join(cfg, "CLAUDE.md"), "@~/.claude/pstack-models.md\n");
     const sheet = put(join(cfg, "pstack-models.md"), firstRunSheet("claude"));
     assert.throws(
       () => loadState({ parent: "claude", home, env, matrix }),
       { message: `inconsistent state: ${sheet} and ${imported} (imported by ${integration}) assign different lanes to hillclimb; delete the sheet to carry the imported one over, or change the import to @./pstack-models.md to keep the sheet` }
     );
-    writeFileSync(sheet, `${customizedSheet()}\nA note the operator kept.\n`);
+    writeFileSync(sheet, `${sheetWithHighHillclimb()}\nA note the operator kept.\n`);
     assert.deepEqual(loadState({ parent: "claude", home, env, matrix }).source, { kind: "sheet", path: sheet });
   });
 
