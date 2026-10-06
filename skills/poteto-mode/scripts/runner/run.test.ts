@@ -240,11 +240,19 @@ function collect(stream: NodeJS.ReadableStream | null): Promise<string> {
   });
 }
 
+let launcherWarmed = false;
+
 function startRunner(
   input: RunnerOptions,
   env: NodeJS.ProcessEnv = {}
 ): Runner {
   const [launcher, ...args] = runnerArgs(input);
+  // After a checkout the launcher is a fresh executable too (see warm), so
+  // its first exec happens here, before any test starts a deadline.
+  if (!launcherWarmed) {
+    execFileSync(launcher, ["--help"], { stdio: "ignore" });
+    launcherWarmed = true;
+  }
   const child = spawn(launcher, args, {
     cwd: scratch,
     env: { ...process.env, ...env },
