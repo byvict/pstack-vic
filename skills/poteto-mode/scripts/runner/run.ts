@@ -216,11 +216,11 @@ function successfulPreflightEvidence(provider: Provider, model: string): string 
 }
 
 function unavailableStatus(value: string, requestedModel: string): LaneFailure {
-  if (
-    /\b(not logged in|not authenticated|unauthenticated|login required)\b/i.test(value) ||
-    /\b(authentication(?: is)?[ -](failed|failure|required|error)|(?:please|must|need to) sign[ -]in|sign[ -]in (failed|failure|required)|sign in to (continue|proceed))\b/i.test(value)
-  ) {
+  if (/\b(not logged in|not authenticated|unauthenticated|login required)\b/i.test(value)) {
     return "unauthenticated";
+  }
+  for (const [diagnostic] of value.matchAll(/\b(no (?:authentication required|sign[ -]in required)|authentication(?: is)?[ -](failed|failure|required|error)|(?:please|must|need to) sign[ -]in|sign[ -]in (failed|failure|required)|sign in to (continue|proceed))\b/gi)) {
+    if (!/^no /i.test(diagnostic)) return "unauthenticated";
   }
   type Claim = { readonly end: number; readonly kind: "refusal" | "opaque" };
   const predicate = "(?:not found|unknown|unavailable|unsupported|not supported|invalid)";
