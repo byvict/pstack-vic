@@ -99,7 +99,7 @@ Before deciding whether probes can be skipped, read [Host and parent prerequisit
 If access is blocked or cannot be established, name the affected families and the missing access. Offer two paths:
 
 1. Restart the parent with the needed permissions. Stop this setup without writing.
-2. Move the affected roles to allowed native families through the operator's named changes. Return to steps 3 through 5 to validate the complete map and its efforts. `inherit-parent` and `auto` remain native. Report reduced provider diversity and any pool-validation failure.
+2. Move the affected roles to allowed native families through the operator's named changes. Return to steps 3 through 5 to validate the complete map and its efforts. `inherit-parent` and `auto` remain native. Report reduced provider diversity and any pool-validation failure. If no revised map satisfies the pool rules, use the restart path.
 
 Keep the active configuration unchanged if Grok refuses because the host cannot enforce its bounded sandbox. The linked subsection distinguishes upstream Linux requirements from local macOS observations.
 
