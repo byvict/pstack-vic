@@ -1,8 +1,10 @@
 # pstack-vic — referência técnica
 
-pstack-vic é um port autoral do [pstack](https://github.com/cursor/plugins/tree/main/pstack) de Lauren Tan ([@poteto](https://x.com/poteto)) para Claude Code e Codex. Uma única árvore de skills serve os dois pais. Os modelos de cada papel vêm de uma matriz como dado (`model-matrix.json`), não de constantes espalhadas pelas skills.
+pstack-vic é um port autoral do [pstack](https://github.com/cursor/plugins/tree/main/pstack) de Lauren Tan ([@poteto](https://x.com/poteto)) para Claude Code, Codex e Grok Build. Uma única árvore de skills serve os três pais. Os modelos de cada papel vêm de uma matriz como dado (`model-matrix.json`), não de constantes espalhadas pelas skills.
 
-Conteúdo sincronizado com Cursor pstack **0.15.10** (`4e5b1cf`) e com open-pstack **1.4.1** (`de67e6b`). O contrato de sync está em [`UPSTREAM.md`](../UPSTREAM.md), a proveniência de cada arquivo em [`NOTICE.md`](../NOTICE.md) e o veredito de cada mudança em [`CHANGES.md`](../CHANGES.md).
+Esta referência concentra configuração, ferramentas e contratos. O [guia de uso](guide/README.md) ensina os fluxos com exemplos; o [README](../README.md) apresenta o projeto e o início rápido.
+
+Skills e playbooks sincronizados com Cursor pstack **0.15.10** (`4e5b1cf`) e com open-pstack **1.4.1** (`de67e6b`). O guia tem [origem e atualização próprias](../UPSTREAM.md#guia-de-uso). O contrato de sync está em [`UPSTREAM.md`](../UPSTREAM.md), a proveniência de cada arquivo em [`NOTICE.md`](../NOTICE.md) e o veredito de cada mudança em [`CHANGES.md`](../CHANGES.md).
 
 > if you want to go fast, go deep first.
 
@@ -101,7 +103,8 @@ Cada passo confere o que já foi feito, então rodar o script duas vezes não es
 ├── agents/                           # poteto-agent, comment-sicko e, gerados da matriz, as lanes nativas pstack-<família>-<effort> e os Donos pstack-owner-<família>-<effort>
 ├── hooks/                            # hooks.json e agent-guard.mjs: a trava que recusa os agentes embutidos do Claude Code quando um agente do pstack os chama
 ├── assets/                           # logo
-├── docs/reference.md                 # esta referência
+├── docs/guide/                       # guia de uso adaptado, dez capítulos e ilustrações
+├── docs/reference.md                 # esta referência técnica
 ├── docs/adr/                         # decisões registradas (ADRs); o 0005 aposenta o fluxo antigo
 ├── docs/arquivo/                     # documentos do fluxo antigo, só história
 ├── CONTEXT.md                        # glossário do autopilot (Raiz, Dono, Enxame, Veredito, Rodada, Tick)
@@ -206,7 +209,7 @@ A Raiz não começa por conta própria. A execução só começa com o seu "go" 
    Troque `<versão>` pela versão instalada, que `claude plugin list` mostra. A segunda linha mostra o código de saída da primeira: 0 é autorizado, 1 não. Com 1, o JSON que o comando imprime diz o motivo e traz o comando que concede a autorização. Sem ela, o modo automático do Claude Code nega o merge quando o Dono chega nele. Nenhum playbook roda essa conferência. Ela existe aqui e no passo 10 do `/setup-pstack`. Você também pode pedir à Raiz que rode o `check` e mostre o resultado junto com o protocolo.
 6. Dê o "go". A Raiz arma o Tick (no Claude Code, um `/loop 1h`; no Codex e na raiz Grok, ver abaixo) e cria um Dono por PR.
 
-Para um trabalho de várias fases, peça antes um plano. O playbook [Multi-phase plan](../skills/poteto-mode/playbooks/multi-phase-plan.md) escreve o plano como uma lista de itens com caixas de marcar, com uma seção por PR, e o plano diz qual playbook vai executá-lo. A sessão roda o verificador do plano (`check-plan.mjs`), entrega o caminho do arquivo e para. A execução também só começa com o seu "go".
+Para um trabalho de várias fases, resolva o desenho com protótipos antes de pedir o plano, como ensina o [guia de design](guide/04-design.md#escreva-o-plano-depois-de-estabelecer-o-desenho). O playbook [Multi-phase plan](../skills/poteto-mode/playbooks/multi-phase-plan.md) escreve o plano como uma lista de itens com caixas de marcar, com uma seção por PR, e o plano diz qual playbook vai executá-lo. A sessão roda o verificador do plano (`check-plan.mjs`), entrega o caminho do arquivo e para. A execução também só começa com o seu "go".
 
 ### O que o Dono faz
 
@@ -473,7 +476,6 @@ O teste de paridade lê o commit da Cursor anotado em `UPSTREAM.md`, e esse comm
 
 - **`skills/make-bot-ui`** — construída sobre rotinas, webhooks e UI da Cursor; não há mapeamento comum Claude Code / Codex.
 - **`automations/benny/`** — pacote dormente de automações Slack sobre o runtime de eventos da Cursor. Não registrava skills nem no original.
-- **`docs/guide/`** — tutorial de dez capítulos que ensina pstack pela UI da Cursor, sticky mode e cloud agents (2,3 MB de imagens). Leia no original em [cursor/plugins/pstack/docs/guide](https://github.com/cursor/plugins/tree/main/pstack/docs/guide); os conceitos mapeiam pela tabela de substituições de `CHANGES.md`.
 - **Sticky mode** — frontmatter `mode`/`icon`/`color`/`reminder` só da Cursor. Fica o opt-in: `poteto-mode` só entra por comando do usuário, como no original.
 - **Resto do `cursor-team-kit`** — `control-cli`/`control-ui` viraram `run`/`verify`; `verify-this` e `check-compiler-errors` duplicam built-ins; `loop-on-ci`, `review-and-ship`, `weekly-review` sobrepõem `babysit`, `fix-ci`, `make-pr-easy-to-review` e `what-did-i-get-done`; `pr-review-canvas` é UI da Cursor.
 - **`README.md` da Cursor** — substituído por um README do port; o original está no histórico (`git show 91e5b82:README.md`) e no upstream.
