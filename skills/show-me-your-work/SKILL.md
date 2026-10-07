@@ -63,9 +63,11 @@ Correct the log, not the story. The audit never edits or removes a row, even an 
 
 ## Cross-model review of the trail
 
-Before handing back, launch one reviewer lane from the `trail reviewer pool` role, on a provider that wrote none of the work. Self-review is not a substitute. The reviewer reads the audit trail and the run's transcript, then flags what the user should pay attention to. Not a redo of the work, a scan for what's suboptimal or risky.
+Before handing back, launch one fresh, read-only reviewer lane from the `trail reviewer pool` role, on a provider different from the top-level session's provider. Self-review is not a substitute. The reviewer reads the audit trail and the run's transcript, then flags what the user should pay attention to. Not a redo of the work, a scan for what's suboptimal or risky.
 
-Pick and dispatch the lane per the Cross-family selection section of [`provider-dispatch.md`](../poteto-mode/references/provider-dispatch.md). The script picks, not you. The executors are this session's provider plus the provider of every write lane whose output is in the result. The brief names the trail and the transcript by path. Log the pick as a row, with the lane's receipt as evidence. A run that is itself a subagent does not launch the reviewer: it returns its trail and its transcript path with its report, and the top-level session launches one reviewer per trail.
+The top-level session runs `node <plugin>/skills/setup-pstack/scripts/setup-pstack.ts pick --parent <parent> --role "trail reviewer pool"`, using its own parent, even for a child's trail. The script selects the first eligible entry in the operator's order. Other providers that authored parts of the result remain eligible; use a fresh reviewer context, not a resumed writer. For this role, this section owns eligibility and completion; use [`provider-dispatch.md`](../poteto-mode/references/provider-dispatch.md) for transport and receipt evidence. The integration contract is recorded in [ADR 0007](../../docs/adr/0007-revisor-da-trilha-de-outra-familia-da-raiz.md).
+
+The brief names the trail and the transcript by path. Log the pick as a row, with the lane's receipt as evidence. If the chosen lane drops out, retain the evidence and try the next entry of `eligible`, with its configured model and effort. A run that is itself a subagent returns its trail and transcript path with its report; the top-level session launches one reviewer per trail.
 
 - Decisions logged with weak or absent evidence.
 - Verification steps skipped or claimed without proof in the transcript.
@@ -74,7 +76,7 @@ Pick and dispatch the lane per the Cross-family selection section of [`provider-
 
 Every reply for a run that produced a trail ends with an "Attention" section. Lead with the reviewer's model on its own line (`reviewed by <model>`), then list each flag pointing to specific rows or moments. "No flags" is a valid value. The model name is not. Take the name from the lane's receipt, as provider-dispatch says, never from the reviewer's own words.
 
-When the pool yields no lane, the trail is not reviewed. Lead with `not reviewed: no cross-family reviewer` instead. Then name the executors, and say why each entry of the row was skipped or dropped out, with the receipt of each dropout. A launch that the harness refuses is a dropout with no receipt, such as Claude Code's auto mode refusing to send the transcript to another provider. Quote the refusal and do not work around it. Never name a lane on an executor's provider, or this session, as the reviewer.
+When no eligible lane completes, the review remains outstanding. Report `review pending: no cross-family reviewer completed`, name the root provider, and explain each skipped entry or dropout with its evidence. Return the available artifacts as incomplete work; resume the review when the configuration or execution obstacle is resolved. An empty pool or exhausted attempts do not waive the review. A launch refused by the harness is a dropout with no receipt: quote the refusal and respect it. Keep the configured pool; the swarm fallback does not apply. A lane on the root's provider and the root itself cannot satisfy this review.
 
 ## Reviewing the trail
 

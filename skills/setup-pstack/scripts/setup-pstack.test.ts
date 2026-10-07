@@ -601,11 +601,9 @@ describe("buildPlan", () => {
     assert.deepEqual(fixed.warnings, []);
   });
 
-  it("warns when the trail reviewer pool names one provider besides the parent's", () => {
+  it("accepts one provider besides the root without a coauthor-exhaustion warning", () => {
     const plan = buildPlan({ parent: "claude", home, matrix, roles: { "trail reviewer pool": ["claude:claude-opus-5-5@xhigh", "grok:grok-4.7@xhigh"] } });
-    assert.deepEqual(plan.warnings, [
-      'role "trail reviewer pool" names one provider besides claude (grok): a run in which a grok lane wrote has no eligible lane',
-    ]);
+    assert.deepEqual(plan.warnings, []);
     assert.deepEqual(buildPlan({ parent: "codex", home, matrix }).warnings, []);
   });
 
@@ -725,14 +723,28 @@ describe("swarm fallback", () => {
 });
 
 describe("pickLane", () => {
-  it("excludes a Grok root and its implementation providers from the reviewer pool", () => {
+  it("excludes the Grok root but keeps another provider that implemented the work", () => {
     const result = pickLane({ parent: "grok", home, matrix, role: "trail reviewer pool", executors: ["claude"] });
-    assert.deepEqual(result.executors, ["grok", "claude"]);
-    assert.equal(result.chosen?.descriptor, "codex:gpt-6.1-sol@xhigh");
+    assert.deepEqual(result.executors, ["grok"]);
+    assert.equal(result.chosen?.descriptor, "claude:claude-opus-5-5@xhigh");
     assert.equal(result.chosen?.route, "runner");
-    assert.deepEqual(result.eligible.map((lane) => lane.provider), ["codex"]);
+    assert.deepEqual(result.eligible.map((lane) => lane.provider), ["claude", "codex"]);
   });
   const pick = (parent: string, executors: string[] = []) => pickLane({ parent, home, matrix, role: "trail reviewer pool", executors });
+
+  it("still selects a reviewer for every root when all three providers wrote", () => {
+    for (const [parent, descriptor, eligible] of [
+      ["claude", "codex:gpt-6.1-sol@xhigh", ["codex", "grok"]],
+      ["codex", "claude:claude-opus-5-5@xhigh", ["claude", "grok"]],
+      ["grok", "claude:claude-opus-5-5@xhigh", ["claude", "codex"]],
+    ] as const) {
+      const result = pick(parent, ["claude", "codex", "grok"]);
+      assert.equal(result.chosen?.descriptor, descriptor);
+      assert.deepEqual(result.eligible.map((lane) => lane.provider), eligible);
+      assert.deepEqual(result.executors, [parent]);
+      assert.equal(result.chosen?.route, "runner");
+    }
+  });
 
   it("without the row in the sheet uses the role-table default and says so", () => {
     putSheet("claude", "bug-fix: claude:claude-opus-5-5@xhigh\n");
@@ -750,7 +762,7 @@ describe("pickLane", () => {
     assert.equal(result.source, "sheet");
     assert.deepEqual(result.eligible.map((l) => l.descriptor), ["grok:grok-4.7@high", "codex:gpt-6.1-sol@xhigh"]);
     assert.deepEqual(result.chosen, { descriptor: "grok:grok-4.7@high", provider: "grok", model: "grok-4.7", effort: "high", route: "runner" });
-    assert.equal(pick("claude", ["grok"]).chosen?.descriptor, "codex:gpt-6.1-sol@xhigh");
+    assert.equal(pick("claude", ["grok"]).chosen?.descriptor, "grok:grok-4.7@high");
   });
 
   it("normalizes a legacy descriptor before it compares providers", () => {
@@ -771,7 +783,7 @@ describe("pickLane", () => {
     ]);
   });
 
-  it("serves the arena pool with the same rule, and refuses an unknown role, executor, or an effort the family lacks", () => {
+  it("preserves Arena author exclusions, and refuses an unknown role, executor, or an effort the family lacks", () => {
     const arena = pickLane({ parent: "claude", home, matrix, role: "arena cross-judge pool", executors: ["codex"] });
     assert.equal(arena.chosen?.descriptor, "grok:grok-4.6@xhigh");
     assert.throws(() => pickLane({ parent: "claude", home, matrix, role: "trail reviewers" }), /unknown role "trail reviewers"/);
@@ -2429,15 +2441,15 @@ describe("command line", () => {
     assert.equal(grokWrote.code, 0, grokWrote.stderr);
     assert.equal(JSON.parse(grokWrote.stdout).chosen.descriptor, "claude:claude-opus-5-5@xhigh");
 
-    const none = cli(["pick", "--parent", "claude", "--home", home, "--role", "trail reviewer pool", "--executor", "codex", "--executor", "grok"], noCliEnv());
-    assert.equal(none.code, 1);
-    const empty = JSON.parse(none.stdout);
-    assert.equal(empty.chosen, null);
-    assert.deepEqual(empty.eligible, []);
-    assert.equal(empty.skipped.length, 3);
+    const allWrote = cli(["pick", "--parent", "claude", "--home", home, "--role", "trail reviewer pool", "--executor", "codex", "--executor", "grok"], noCliEnv());
+    assert.equal(allWrote.code, 0, allWrote.stderr);
+    const reviewed = JSON.parse(allWrote.stdout);
+    assert.equal(reviewed.chosen.descriptor, "codex:gpt-6.1-sol@xhigh");
+    assert.deepEqual(reviewed.eligible.map((lane: { provider: string }) => lane.provider), ["codex", "grok"]);
+    assert.equal(reviewed.skipped.length, 1);
     assert.deepEqual(
       JSON.parse(cli(["pick", "--parent", "claude", "--home", home, "--role", "trail reviewer pool", "--executor", "codex,grok"], noCliEnv()).stdout).executors,
-      ["claude", "codex", "grok"]
+      ["claude"]
     );
 
     assert.equal(cli(["pick", "--parent", "claude", "--home", home], noCliEnv()).code, 64);
@@ -2445,6 +2457,11 @@ describe("command line", () => {
     assert.equal(unknown.code, 1);
     assert.match(unknown.stderr, /unknown provider "cursor"/);
     assert.equal(existsSync(join(home, ".claude")), false, "pick writes nothing");
+    putSheet("claude", "trail reviewer pool: claude:claude-opus-5-5@xhigh\n");
+    const none = cli(["pick", "--parent", "claude", "--home", home, "--role", "trail reviewer pool"], noCliEnv());
+    assert.equal(none.code, 1);
+    assert.equal(JSON.parse(none.stdout).chosen, null);
+    assert.deepEqual(JSON.parse(none.stdout).eligible, []);
   });
 
   it("probe refuses a plan.json from the previous schema", () => {

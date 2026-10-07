@@ -56,8 +56,9 @@ export interface Role {
   readonly description: string;
   readonly default: RoleDefault;
   /**
-   * `cross-family`: the list is a pool from which one lane runs, the first
-   * entry whose provider wrote none of the work. Absent: one lane per entry.
+   * `cross-family`: one lane from an ordered pool, outside the root's provider.
+   * Trail review excludes only the root and needs a fresh context; other roles
+   * retain their own exclusions and fallbacks. Absent: one lane per entry.
    */
   readonly selection?: RoleSelection;
 }
