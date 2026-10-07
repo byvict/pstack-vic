@@ -40,6 +40,10 @@ Este port mantém a prosa da Cursor onde ela não depende da Cursor e substitui 
 - [`NOTICE.md`](NOTICE.md) — proveniência de cada arquivo copiado e o que é escrita nova.
 - [`CHANGES.md`](CHANGES.md) — veredito por hunk e por skill de cada fase do port.
 
+## Verificar mudanças neste repositório
+
+`npm run verify -- doctor` lista as receitas de contratos, smoke real do runner, timeout interno e concorrência. A [skill local de verificação](.claude/skills/verify-pstack-vic/SKILL.md) descreve a seleção de checks, os recibos por fase e a captura de todos os comandos antes de qualquer parse. Provas em árvore suja precisam de `--working-tree` e ficam identificadas pelo digest; a execução padrão exige um commit limpo. O verificador não publica resultados nem substitui revisão e Shipping.
+
 ## Licença
 
 MIT. Ver [`LICENSE`](LICENSE), [`LICENSE-open-pstack`](LICENSE-open-pstack) e [`LICENSE-cursor-team-kit`](LICENSE-cursor-team-kit).

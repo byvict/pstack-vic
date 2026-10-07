@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "module": "nodenext",
+    "noEmit": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "esnext",
+    "types": ["node"],
+    "typeRoots": ["../../skills/poteto-mode/scripts/node_modules/@types"],
+    "verbatimModuleSyntax": true
+  },
+  "include": ["*.ts", "../../skills/poteto-mode/scripts/runner/run.ts", "../../skills/poteto-mode/scripts/runner/grok-acp.ts"]
+}

@@ -63,6 +63,7 @@ jobs:
         env:
           CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1
       - run: npm run test:bun
+      - run: npm run verify:typecheck
       - run: npm run matrix:check
       - run: npm run agents:check
       - run: npm run collision:check

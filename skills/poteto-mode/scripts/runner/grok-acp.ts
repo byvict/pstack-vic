@@ -1,4 +1,4 @@
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { runInteractiveChild, stageOverlay, type InteractiveIo } from "./child.ts";
 import { grokAcpCommand, grokAcpOverlay, grokAcpProfile, grokAcpTools } from "./commands.ts";
@@ -108,7 +108,7 @@ type SessionEvent =
   | { readonly kind: "catalog"; readonly sessionId: string; readonly tools: readonly CatalogTool[] }
   | { readonly kind: "text"; readonly sessionId: string; readonly streamStart: number; readonly text: string }
   | { readonly kind: "generation-complete"; readonly sessionId: string }
-  | { readonly kind: "tool"; readonly sessionId: string }
+  | { readonly kind: "tool"; readonly sessionId: string; readonly update: Record<string, unknown> }
   | { readonly kind: "ignored" };
 
 type RpcEnvelope =
@@ -141,7 +141,10 @@ function decodeEvent(method: string, params: unknown): SessionEvent {
     case "response_completed": return { kind: "generation-complete", sessionId };
     case "tool_call":
     case "tool_call_update":
-    case "tool_call_delta_chunk": return { kind: "tool", sessionId };
+    case "tool_call_delta_chunk": return { kind: "tool", sessionId, update: Object.fromEntries(
+      (type === "tool_call_delta_chunk" ? ["sessionUpdate", "toolCallId"] : ["sessionUpdate", "toolCallId", "title", "kind", "status", "rawInput", "rawOutput", "content"])
+        .filter((key) => key in update).map((key) => [key, update[key]])
+    ) };
     default: return { kind: "ignored" };
   }
 }
@@ -185,10 +188,12 @@ class AcpRpc {
   private readonly onData: (chunk: Buffer) => void;
   private readonly onEnd: () => void;
   private readonly onError: () => void;
+  private readonly trace: (value: Record<string, unknown>) => void;
 
-  constructor(io: InteractiveIo, receive: (event: SessionEvent) => void) {
+  constructor(io: InteractiveIo, receive: (event: SessionEvent) => void, trace: (value: Record<string, unknown>) => void) {
     this.io = io;
     this.receive = receive;
+    this.trace = trace;
     this.onData = (chunk) => {
       this.buffer += this.decoder.decode(chunk, { stream: true });
       let newline = this.buffer.indexOf("\n");
@@ -222,6 +227,7 @@ class AcpRpc {
       case "reload-status": return;
       case "event": this.receive(envelope.event); return;
       case "request": {
+        this.trace({ kind: "server-request", id: envelope.id, method: envelope.method });
         this.io.write(`${JSON.stringify({ jsonrpc: "2.0", id: envelope.id, error: { code: -32601, message: "Client request unsupported" } })}\n`).catch(() => this.fail(new AcpError("child-failed", "ACP client response write failed")));
         if (envelope.method === "session/request_permission") this.fail(new AcpError("child-failed", "unexpected ACP permission request"));
         return;
@@ -230,6 +236,7 @@ class AcpRpc {
       case "error": {
         const request = this.pending.get(envelope.id);
         if (request === undefined) throw new AcpError("malformed-output", "unknown or duplicate ACP reply ID");
+        this.trace({ kind: envelope.kind, id: envelope.id, method: request.method, ...(envelope.kind === "error" ? { code: envelope.code } : {}) });
         this.pending.delete(envelope.id);
         if (envelope.kind === "error") request.reject(new AcpError(request.method === "authenticate" ? "unauthenticated" : request.method === "session/set_model" ? "unavailable-model" : "child-failed", `${request.method} RPC error ${envelope.code}`));
         else request.resolve(envelope.result);
@@ -241,6 +248,7 @@ class AcpRpc {
   async request(method: string, params: unknown): Promise<unknown> {
     if (this.failure !== null) throw this.failure;
     const id = ++this.sequence;
+    this.trace({ kind: "request", id, method });
     const result = new Promise<unknown>((resolve, reject) => this.pending.set(id, { method, resolve, reject }));
     result.catch(() => undefined);
     try { await this.io.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`); }
@@ -301,13 +309,33 @@ export function grokAcpExecution(request: GrokAcpRequest, source: NodeJS.Process
   let servers: readonly HttpMcpServer[];
   try { servers = resolveServers(request.t3, source); } catch (error) { throw new UsageError(sanitize(error instanceof AcpError ? error.message : "invalid T3 MCP references")); }
   const acp: AcpDetail = {
+    eventsPath: `${request.receiptPath}.events.jsonl`,
     stage: "preflight", sessionId: null, stopReason: null, observedModels: [], effectiveTools: [], shutdownIntent: null,
     grokSandbox: "off", mcpScope: request.t3 === null ? "none" : "configured-and-forwarded", attachment: request.t3, closeOutcome: null,
   };
   const command = grokAcpCommand("<private-agent-profile>");
   const attempt: PreparedAttempt = async (context): Promise<LaneOutcome> => {
     let directory: string | null = null;
+    // Deliberately omit outbound params, assistant thoughts, and raw RPC frames.
+    // Known T3 credentials are redacted on complete events, before the first write.
+    const safeValue = (value: unknown): unknown => {
+      if (typeof value === "string") return sanitize(value);
+      if (Array.isArray(value)) return value.map(safeValue);
+      if (value !== null && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [sanitize(key), safeValue(item)]));
+      return value;
+    };
+    const trace = (value: Record<string, unknown>): void => {
+      if (context.acpEvents === undefined) throw new Error("ACP events were not reserved");
+      const bytes = Buffer.from(JSON.stringify(safeValue({ at: new Date().toISOString(), stage: acp.stage, ...value })) + "\n");
+      let offset = 0;
+      while (offset < bytes.length) {
+        const written = writeSync(context.acpEvents, bytes, offset, bytes.length - offset);
+        if (written <= 0) throw new Error("ACP event write made no progress");
+        offset += written;
+      }
+    };
     try {
+      trace({ kind: "start" });
       const staged = stageOverlay(context.environment, grokAcpOverlay());
       directory = staged.directory;
       const profilePath = join(directory, "lane-profile.md");
@@ -331,13 +359,14 @@ export function grokAcpExecution(request: GrokAcpRequest, source: NodeJS.Process
           const rpc = new AcpRpc(io, (event) => {
             if (event.kind === "ignored") return;
             if (event.kind === "catalog") {
+              trace({ kind: "catalog", sessionId: event.sessionId, tools: event.tools });
               catalogs.set(event.sessionId, event.tools);
               if (event.sessionId === sessionId) checkCatalog(event.tools);
               return;
             }
             if (event.sessionId !== sessionId || acp.stage !== "prompt") return;
             switch (event.kind) {
-              case "tool": currentGeneration = null; finalText = ""; return;
+              case "tool": trace({ kind: "tool", sessionId: event.sessionId, update: event.update }); currentGeneration = null; finalText = ""; return;
               case "text":
                 if (currentGeneration === null || currentGeneration.streamStart !== event.streamStart) {
                   currentGeneration = { streamStart: event.streamStart, text: "" };
@@ -349,7 +378,7 @@ export function grokAcpExecution(request: GrokAcpRequest, source: NodeJS.Process
                 if (currentGeneration !== null) finalText = currentGeneration.text;
                 return;
             }
-          });
+          }, trace);
           try {
             acp.stage = "initialize";
             const initialize = record(await rpc.request("initialize", { protocolVersion: 1, clientInfo: { name: "pstack-runner", version: "1" }, clientCapabilities: {}, _meta: { clientType: "extension" } }));
@@ -405,6 +434,7 @@ export function grokAcpExecution(request: GrokAcpRequest, source: NodeJS.Process
       context.evidence.exitCode = result.exitCode;
       context.evidence.signal = result.signal;
       acp.observedModels = acp.observedModels.map(sanitize);
+      trace({ kind: "process-exit", exitCode: result.exitCode, signal: result.signal, timedOut: result.timedOut, cancelledBy: result.cancelledBy, stderr: result.stderr });
       if (acp.stopReason !== null) acp.stopReason = sanitize(acp.stopReason);
       if (result.cancelledBy !== null || result.timedOut) {
         const status = result.cancelledBy !== null ? "cancelled" : "timed-out";
@@ -423,7 +453,7 @@ export function grokAcpExecution(request: GrokAcpRequest, source: NodeJS.Process
     } catch (error) {
       acp.shutdownIntent = "failure";
       acp.observedModels = acp.observedModels.map(sanitize);
-      return { kind: "failed", status: error instanceof AcpError ? error.status : "child-failed", error: { message: sanitize(error instanceof AcpError ? error.message : "ACP launcher failed"), evidence: "" } };
+      return { kind: "failed", status: error instanceof AcpError ? error.status : "child-failed", error: { message: sanitize(error instanceof Error ? error.message : "ACP launcher failed"), evidence: "" } };
     } finally { if (directory !== null) rmSync(directory, { recursive: true, force: true }); }
   };
   return { command, environment, sanitize, acp, attempt };

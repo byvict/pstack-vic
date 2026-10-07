@@ -17,6 +17,8 @@
     "collision:check": "bash tests/skill-collision-repro.sh",
     "upstream:digest": "node scripts/upstream-digest.ts",
     "runner": "skills/poteto-mode/scripts/runner/pstack-runner",
+    "verify": "node scripts/verify/cli.ts",
+    "verify:typecheck": "skills/poteto-mode/scripts/node_modules/.bin/tsc --project scripts/verify/tsconfig.json",
     "setup-pstack": "node skills/setup-pstack/scripts/setup-pstack.ts",
     "update-clis": "node skills/update-clis/scripts/update-clis.ts"
   }

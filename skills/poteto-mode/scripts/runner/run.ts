@@ -86,9 +86,9 @@ function modelStreamPaths(receiptPath: string): { stdoutPath: string; stderrPath
   return { stdoutPath: `${receiptPath}.stdout`, stderrPath: `${receiptPath}.stderr` };
 }
 
-function reserveOutputs(options: RunnerOptions): ModelStreams | null {
+function reserveOutputs(options: RunnerOptions): { streams: ModelStreams | null; acpEvents?: number } {
   const streams = options.transport === "grok-acp" ? null : modelStreamPaths(options.receiptPath);
-  const paths = [options.outputPath, options.receiptPath, ...(streams === null ? [] : [streams.stdoutPath, streams.stderrPath])];
+  const paths = [options.outputPath, options.receiptPath, ...(streams === null ? [`${options.receiptPath}.events.jsonl`] : [streams.stdoutPath, streams.stderrPath])];
   const resolved = paths.map((path) => resolve(path));
   if (new Set(resolved).size !== paths.length || resolved.includes(resolve(options.promptPath))) {
     throw new UsageError("prompt, output, receipt, and stream paths must be distinct");
@@ -100,11 +100,11 @@ function reserveOutputs(options: RunnerOptions): ModelStreams | null {
       reserve(path);
       created.push(path);
     }
-    if (streams === null) return null;
+    if (streams === null) return { streams: null, acpEvents: openSync(paths[2], "wx", 0o600) };
     stdout = openSync(streams.stdoutPath, "wx", 0o600);
     created.push(streams.stdoutPath);
     const stderr = openSync(streams.stderrPath, "wx", 0o600);
-    return { stdout, stderr };
+    return { streams: { stdout, stderr } };
   } catch (error) {
     if (stdout !== null) closeSync(stdout);
     for (const path of created) removeIfExists(path);
@@ -789,14 +789,18 @@ export async function runLane(
   })();
   const cancellation = installRunCancellation();
   let streamFiles: ModelStreams | null = null;
+  let acpEvents: number | undefined;
   try {
-    streamFiles = reserveOutputs(options);
+    const reserved = reserveOutputs(options);
+    streamFiles = reserved.streams;
+    acpEvents = reserved.acpEvents;
     try {
       const context: LaneContext = {
         prompt: readFileSync(options.promptPath, "utf8"),
         deadlineAt,
         cancellation,
         streamFiles,
+        acpEvents,
         wait: (delayMs) => waitFor(delayMs, deadlineAt, cancellation),
       };
       const outcome = await lane.run(context);
@@ -832,6 +836,7 @@ export async function runLane(
     }
   } finally {
     cancellation.dispose();
+    if (acpEvents !== undefined) closeSync(acpEvents);
     if (streamFiles !== null) {
       closeSync(streamFiles.stdout);
       closeSync(streamFiles.stderr);
