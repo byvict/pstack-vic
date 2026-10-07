@@ -178,6 +178,11 @@ async function waitFor(
   }
 }
 
+function grokModelAvailable(value: string, model: string): boolean {
+  const escaped = model.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^A-Za-z0-9_.-])${escaped}($|[^A-Za-z0-9_.-])`).test(value);
+}
+
 function preflightPassed(provider: Provider, model: string, result: ProcessResult): boolean {
   if (result.exitCode !== 0 || result.timedOut) return false;
   const combined = `${result.stdout}\n${result.stderr}`;
@@ -197,7 +202,8 @@ function preflightPassed(provider: Provider, model: string, result: ProcessResul
     case "codex":
       return /logged in/i.test(combined);
     case "grok":
-      return /logged in/i.test(combined) && combined.includes(model);
+      return unavailableStatus(combined, model) === "child-failed" &&
+        /\blogged in\b/i.test(combined) && grokModelAvailable(combined, model);
     default:
       return false;
   }
@@ -209,12 +215,64 @@ function successfulPreflightEvidence(provider: Provider, model: string): string 
     : "authenticated";
 }
 
-function unavailableStatus(value: string): LaneFailure {
-  if (/not logged in|unauthenticated|authentication|sign in|login required/i.test(value)) {
+function unavailableStatus(value: string, requestedModel: string): LaneFailure {
+  if (/\b(not logged in|not authenticated|unauthenticated|login required)\b/i.test(value)) {
     return "unauthenticated";
   }
-  if (/model.{0,40}(not found|unknown|unavailable|unsupported|not supported|invalid)|invalid.{0,20}model/i.test(value)) {
-    return "unavailable-model";
+  for (const [diagnostic] of value.matchAll(/\b(no (?:authentication required|sign[ -]in required)|authentication(?: is)?[ -](failed|failure|required|error)|(?:please|must|need to) sign[ -]in|sign[ -]in (failed|failure|required)|sign in to (continue|proceed))\b/gi)) {
+    if (!/^no /i.test(diagnostic)) return "unauthenticated";
+  }
+  type Claim = { readonly end: number; readonly kind: "refusal" | "opaque" };
+  const predicate = "(?:not found|unknown|unavailable|unsupported|not supported|invalid)";
+  const atom = String.raw`(?:"([A-Za-z0-9_.-]+)"|'([A-Za-z0-9_.-]+)'|\[([A-Za-z0-9_.-]+)\]|([A-Za-z0-9_.-]+))`;
+  const prefix = new RegExp(String.raw`(?:model[ \t]+(?:is[ \t]+)?${predicate}\b|invalid[ \t]+model(?=$|[^A-Za-z0-9_.-]|\.(?=$|[^A-Za-z0-9_.-])))(?:[ \t]+with[ \t]+this[ \t]+account\b)?`, "iy");
+  const direct = new RegExp(String.raw`(?:model[ \t]*:[ \t]*)?${atom}[ \t]+(?:is[ \t]+)?${predicate}\b`, "iy");
+  const qualifiedTail = new RegExp(String.raw`^(?:[ \t]*:[ \t]*|[ \t]+)${atom}[ \t]*(?:[.!?][ \t]*)?$`);
+
+  function claimAt(line: string, at: number): Claim | null {
+    if (at === 0 || /[^A-Za-z0-9_.-]/.test(line[at - 1])) {
+      prefix.lastIndex = at;
+      const head = prefix.exec(line);
+      if (head !== null) {
+        const end = line.length;
+        const tail = line.slice(prefix.lastIndex);
+        const qualified = qualifiedTail.exec(tail);
+        if (qualified !== null) {
+          const id = qualified[1] ?? qualified[2] ?? qualified[3] ?? qualified[4];
+          return { end, kind: grokModelAvailable(id, requestedModel) ? "refusal" : "opaque" };
+        }
+        return {
+          end,
+          kind: /^[ \t]*(?:$|[.!?](?=$|[ \t]))/.test(tail) ? "refusal" : "opaque",
+        };
+      }
+    }
+    if (at === 0 || /[ \t]/.test(line[at - 1])) {
+      direct.lastIndex = at;
+      const refusal = direct.exec(line);
+      if (refusal !== null) {
+        const id = refusal[1] ?? refusal[2] ?? refusal[3] ?? refusal[4];
+        if (grokModelAvailable(id, requestedModel)) {
+          return { end: direct.lastIndex, kind: "refusal" };
+        }
+      }
+    }
+    return null;
+  }
+
+  for (const line of value.split(/\r\n|[\n\r\u2028\u2029]/)) {
+    let cursor = 0;
+    while (cursor < line.length) {
+      const claim = claimAt(line, cursor);
+      if (claim === null) {
+        cursor += 1;
+        continue;
+      }
+      cursor = claim.end;
+      if (claim.kind === "refusal") {
+        return "unavailable-model";
+      }
+    }
   }
   return "child-failed";
 }
@@ -222,11 +280,12 @@ function unavailableStatus(value: string): LaneFailure {
 function preflightFailureStatus(
   provider: Provider,
   model: string,
-  value: string
+  result: ProcessResult
 ): LaneFailure {
-  const status = unavailableStatus(value);
+  const value = `${result.stdout}\n${result.stderr}`;
+  const status = unavailableStatus(value, model);
   if (status !== "child-failed") return status;
-  return cliFor(provider) === "grok" && !value.includes(model)
+  return cliFor(provider) === "grok" && !grokModelAvailable(value, model)
     ? "unavailable-model"
     : "unauthenticated";
 }
@@ -539,7 +598,7 @@ async function runPreparedLane(
     !passed &&
     preflightResult.cancelledBy === null &&
     !preflightResult.timedOut &&
-    preflightFailureStatus(options.provider, options.model, rawPreflightEvidence) ===
+    preflightFailureStatus(options.provider, options.model, preflightResult) ===
       "unauthenticated"
   ) {
     ev.preflight = {
@@ -596,7 +655,7 @@ async function runPreparedLane(
       ? "cancelled"
       : preflightResult.timedOut
         ? "timed-out"
-        : preflightFailureStatus(options.provider, options.model, rawPreflightEvidence);
+        : preflightFailureStatus(options.provider, options.model, preflightResult);
     return {
       kind: "failed",
       status,
@@ -652,7 +711,7 @@ async function runCliAttempt(
       ? "cancelled"
       : result.timedOut
         ? "timed-out"
-        : providerFailure?.status ?? unavailableStatus(rawFailureEvidence);
+        : providerFailure?.status ?? unavailableStatus(rawFailureEvidence, options.model);
     return {
       kind: "failed",
       status,

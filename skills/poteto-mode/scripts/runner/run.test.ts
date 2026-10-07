@@ -14,7 +14,7 @@ import fs, {
 import { syncBuiltinESMExports } from "node:module";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { childEnvironment, evidence, findExecutable, runLane } from "./run.ts";
+import { childEnvironment, evidence, findExecutable, runLane, type RunResult } from "./run.ts";
 import { main } from "./cli.ts";
 import { cliFor, PROVIDERS, type Provider, type RunnerOptions, type RunnerReceipt } from "./types.ts";
 import { matchObject } from "./match-object.test-helper.ts";
@@ -91,6 +91,11 @@ if (name === "codex" && args[0] === "login") {
 if (name === "grok" && args[0] === "models") {
   if (process.env.FAKE_GROK_PREFLIGHT_LOG_PATH) {
     appendFileSync(process.env.FAKE_GROK_PREFLIGHT_LOG_PATH, "attempt\\n");
+  }
+  if (process.env.FAKE_GROK_PREFLIGHT_OUTPUT !== undefined) {
+    out(process.env.FAKE_GROK_PREFLIGHT_OUTPUT);
+    if (process.env.FAKE_GROK_PREFLIGHT_ERROR) err(process.env.FAKE_GROK_PREFLIGHT_ERROR);
+    process.exit(0);
   }
   const transientMarker = process.env.FAKE_GROK_TRANSIENT_UNAUTH_PATH;
   if (transientMarker && !existsSync(transientMarker)) {
@@ -366,6 +371,8 @@ const FAKE_ENV = [
   "FAKE_MODEL_EXITING_PATH",
   "FAKE_REMOVE_EXECUTABLE_AFTER_PREFLIGHT",
   "FAKE_GROK_UNAUTH",
+  "FAKE_GROK_PREFLIGHT_OUTPUT",
+  "FAKE_GROK_PREFLIGHT_ERROR",
   "FAKE_GROK_TRANSIENT_UNAUTH_PATH",
   "FAKE_GROK_PREFLIGHT_LOG_PATH",
   "FAKE_GROK_MISSING_MODEL",
@@ -661,6 +668,204 @@ describe("issue78 terminal results", () => {
   });
 });
 
+describe("R2 neutral auth-required", () => {
+  type Site = { provider: Provider; stage: "success" | "preflight-failure" | "model-failure" };
+  type Expected = { exitCode: number; status: "complete" | "unauthenticated" | "unavailable-model" | "child-failed"; attempts: number };
+  const sites: Site[] = [
+    { provider: "grok", stage: "success" },
+    ...PROVIDERS.flatMap((provider): Site[] => [
+      { provider, stage: "preflight-failure" },
+      { provider, stage: "model-failure" },
+    ]),
+  ];
+  const neutral = ["No authentication required", "No sign-in required", "No sign in required"];
+
+  function neutralOutcome(site: Site): Expected {
+    if (site.stage === "success") return { exitCode: 0, status: "complete", attempts: 1 };
+    if (site.stage === "model-failure") return { exitCode: 70, status: "child-failed", attempts: 1 };
+    return { exitCode: 77, status: "unauthenticated", attempts: site.provider === "grok" ? 2 : 1 };
+  }
+
+  async function check(site: Site, diagnostic: string, expected: Expected, listing?: string): Promise<RunResult> {
+    const input = options(site.provider, "r2-diagnostic");
+    const calls = join(scratch, "r2-invocations.log");
+    const preflightOut = listing ?? (site.provider === "grok"
+      ? `You are logged in.\nAvailable models: ${input.model}`
+      : site.provider === "claude" ? '{"loggedIn":true}' : "Logged in using ChatGPT");
+    const preflightErr = site.stage === "model-failure" ? "" : diagnostic;
+    const preflightExit = site.stage === "preflight-failure" ? 1 : 0;
+    const stdout = site.stage === "model-failure" ? "" : JSON.stringify({
+      type: "result", subtype: "success", is_error: false, result: "R2_OK",
+      modelUsage: { [input.model]: {} },
+    }) + "\n";
+    const stderr = site.stage === "model-failure" ? diagnostic : "";
+    writeFileSync(join(bin, cliOf(site.provider)), `#!${process.execPath}
+import { appendFileSync, writeSync } from "node:fs";
+const args = process.argv.slice(2);
+if (["models", "auth", "login"].includes(args[0])) {
+  appendFileSync(${JSON.stringify(calls)}, "preflight\\n");
+  writeSync(1, ${JSON.stringify(preflightOut)});
+  writeSync(2, ${JSON.stringify(preflightErr)});
+  process.exit(${preflightExit});
+}
+appendFileSync(${JSON.stringify(calls)}, "model=" + args[args.indexOf("--model") + 1] + "\\n");
+writeSync(1, ${JSON.stringify(stdout)});
+writeSync(2, ${JSON.stringify(stderr)});
+process.exit(${site.stage === "model-failure" ? 1 : 0});
+`);
+    const result = await runLane(input);
+    assert.equal(result.exitCode, expected.exitCode, diagnostic);
+    assert.equal(result.receipt.status, expected.status, diagnostic);
+    const started = site.stage === "model-failure" || expected.status === "complete";
+    assert.equal(readFileSync(calls, "utf8"),
+      "preflight\n".repeat(expected.attempts) + (started ? `model=${input.model}\n` : ""));
+    assert.equal(result.receipt.preflight.status, started ? "passed" : "failed");
+    assert.equal(result.receipt.exitCode, site.stage === "model-failure" || preflightExit === 1 ? 1 : 0);
+    assert.equal(result.receipt.argv[result.receipt.argv.indexOf("--model") + 1], input.model);
+    assert.deepEqual(result.receipt.preflight.argv, [join(bin, cliOf(site.provider)),
+      ...(site.provider === "grok" ? ["models"] : site.provider === "claude" ? ["auth", "status", "--json"] : ["login", "status"])]);
+    assert.equal(existsSync(input.outputPath), expected.status === "complete");
+    if (expected.status === "complete") assert.equal(readFileSync(input.outputPath, "utf8"), "R2_OK");
+    assert.equal(readFileSync(streamPath(result.receipt.stdoutPath), "utf8"), started ? stdout : "");
+    assert.equal(readFileSync(streamPath(result.receipt.stderrPath), "utf8"), started ? stderr : "");
+    assert.equal(receipt(input.receiptPath).status, expected.status);
+    assert.ok(result.receipt.preflight.evidence.length <= 4_000);
+    assert.ok((result.receipt.error?.evidence.length ?? 0) <= 4_000);
+    if (site.stage === "model-failure") {
+      if (diagnostic.length <= 4_000) assert.equal(result.receipt.error?.evidence, diagnostic.trim());
+      else assert.ok(result.receipt.error?.evidence.includes("\n[…]\n"));
+      assert.equal(result.receipt.error?.message, "child exited with status 1");
+    } else if (!started) {
+      const emitted = `${preflightOut}\n${preflightErr}`.trim();
+      const preserved = expected.attempts === 2
+        ? `attempt 1 failed:\n${emitted}\n\nattempt 2 failed:\n${emitted}` : emitted;
+      if (emitted.length <= 1_900) assert.equal(result.receipt.preflight.evidence, preserved);
+      else {
+        assert.ok(result.receipt.preflight.evidence.includes("\n[…]\n"));
+        assert.ok(result.receipt.preflight.evidence.startsWith(expected.attempts === 2 ? "attempt 1 failed:\n" : emitted.slice(0, 1_000)));
+        assert.equal(result.receipt.preflight.evidence.includes("attempt 2 failed"), expected.attempts === 2);
+      }
+      assert.equal(result.receipt.error?.evidence, result.receipt.preflight.evidence);
+      assert.equal(result.receipt.error?.message, "authentication or model preflight failed");
+    }
+    return result;
+  }
+
+  describe("R2 evidence window", () => {
+    function cutNeutral(message: string): string {
+      const clause = `${message}.`;
+      return `${"x".repeat(2_000)}\n${clause}\n${"z".repeat(2_997 - clause.length)}`;
+    }
+
+    for (const site of sites) {
+      const model = options(site.provider).model;
+      const label = `${site.provider} ${site.stage}`;
+      const refusal = `${model} is not supported`;
+      for (const message of neutral) {
+        for (const competingRefusal of [false, true]) {
+          it(`complete neutral clause at cut ${label}: ${message}, refusal ${competingRefusal}`, { timeout: GROK_RETRY_RUN_BUDGET_MS }, async () => {
+            const diagnostic = `${competingRefusal ? `${refusal}\n` : ""}${cutNeutral(message)}`;
+            const result = await check(site, diagnostic, competingRefusal
+              ? { exitCode: 69, status: "unavailable-model", attempts: 1 } : neutralOutcome(site));
+            assert.ok(diagnostic.includes(`${message}.`));
+            if (result.receipt.error !== null) assert.equal(result.receipt.error.evidence.includes("No "), false);
+          });
+        }
+      }
+
+      it(`owns opaque qualifier across cut ${label}`, { timeout: GROK_RETRY_RUN_BUDGET_MS }, async () => {
+        const diagnostic = `${"x".repeat(1_200)} Invalid model: ]${"y".repeat(1_900)} ${refusal}${" z".repeat(1_400)}`;
+        const result = await check(site, diagnostic, neutralOutcome(site));
+        if (result.receipt.error !== null) assert.equal(result.receipt.error.evidence.includes("Invalid model:"), false);
+      });
+
+      it(`auth in dropped middle wins over independent refusal ${label}`, { timeout: GROK_RETRY_RUN_BUDGET_MS }, async () => {
+        const diagnostic = `${refusal}\n${"x".repeat(1_200)}\nYou are not authenticated.\n${"z".repeat(4_000)}`;
+        const result = await check(site, diagnostic, { exitCode: 77, status: "unauthenticated",
+          attempts: site.provider === "grok" && site.stage !== "model-failure" ? 2 : 1 });
+        assert.equal(result.receipt.error?.evidence.includes("You are not authenticated"), false);
+      });
+
+      it(`requested refusal in dropped middle remains unavailable ${label}`, async () => {
+        const diagnostic = `${"x".repeat(1_200)}\n${refusal}\n${"z".repeat(4_000)}`;
+        const result = await check(site, diagnostic, { exitCode: 69, status: "unavailable-model", attempts: 1 });
+        assert.equal(result.receipt.error?.evidence.includes("is not supported"), false);
+      });
+    }
+
+    for (const stage of ["success", "preflight-failure"] as const) {
+      for (const message of neutral) {
+        it(`neutral cut with missing Grok token ${stage}: ${message}`, async () => {
+          await check({ provider: "grok", stage }, cutNeutral(message),
+            { exitCode: 69, status: "unavailable-model", attempts: 1 },
+            "You are logged in.\nAvailable models: grok-5");
+        });
+      }
+    }
+  });
+
+  for (const site of sites) {
+    const label = `${site.provider} ${site.stage}`;
+    const authOutcome: Expected = { exitCode: 77, status: "unauthenticated",
+      attempts: site.provider === "grok" && site.stage !== "model-failure" ? 2 : 1 };
+    const modelOutcome: Expected = { exitCode: 69, status: "unavailable-model", attempts: 1 };
+    const model = options(site.provider).model;
+    const refusal = `${model} is not supported`;
+
+    for (const message of neutral) {
+      it(`neutral only ${label}: ${message}`, { timeout: GROK_RETRY_RUN_BUDGET_MS }, async () => {
+        await check(site, message, neutralOutcome(site));
+      });
+    }
+
+    for (const [index, separator] of [" ", "\n", "\r", "\r\n", "\u2028", "\u2029"].entries()) {
+      const message = neutral[index % neutral.length];
+      const auth = ["authentication required", "sign-in required", "sign in required",
+        "Sign-in failed", "You are not authenticated", "Not logged in"][index];
+      for (const [order, diagnostic] of [
+        ["before", `${auth} ${refusal}${separator}${message}`],
+        ["after", `${message}${separator}${auth} ${refusal}`],
+      ]) {
+        it(`auth ${order} neutral ${label} separator ${index}`, { timeout: GROK_RETRY_RUN_BUDGET_MS }, async () => {
+          await check(site, diagnostic, authOutcome);
+        });
+      }
+      for (const [order, diagnostic] of [
+        ["before", `${refusal}${separator}${message}`],
+        ["after", `${message}${separator}${refusal}`],
+      ]) {
+        it(`refusal ${order} neutral ${label} separator ${index}`, async () => {
+          await check(site, diagnostic, modelOutcome);
+        });
+      }
+    }
+
+    for (const [index, scenario] of [
+      { diagnostic: `Invalid model: "other-model ${neutral[0]} ${refusal}"`, expected: neutralOutcome(site) },
+      { diagnostic: `Invalid model: "other-model authentication required ${neutral[0]} ${refusal}"`, expected: authOutcome },
+      { diagnostic: `Invalid model: "other-model ${neutral[1]} sign-in required ${refusal}"`, expected: authOutcome },
+      { diagnostic: `${refusal} Invalid model: "other-model ${neutral[2]}"`, expected: modelOutcome },
+      { diagnostic: `Invalid model: "other-model ${neutral[2]}"\n${refusal}`, expected: modelOutcome },
+    ].entries()) {
+      it(`opaque tail ${label} case ${index}`, { timeout: GROK_RETRY_RUN_BUDGET_MS }, async () => {
+        await check(site, scenario.diagnostic, scenario.expected);
+      });
+    }
+
+    for (const message of ["Authentication successful", "Sign-in successful", "Sign in successful", ""]) {
+      it(`positive or empty diagnostic ${label}: ${JSON.stringify(message)}`, { timeout: GROK_RETRY_RUN_BUDGET_MS }, async () => {
+        await check(site, message, neutralOutcome(site));
+      });
+    }
+
+    for (const message of ["No authentication failed", "No authentication is required", "No  sign in required"]) {
+      it(`keeps existing grammar ${label}: ${message}`, { timeout: GROK_RETRY_RUN_BUDGET_MS }, async () => {
+        await check(site, message, authOutcome);
+      });
+    }
+  }
+});
+
 describe("runLane", () => {
   it("drives every matrix cli provider through the fake binaries", () => {
     assert.deepEqual(PROVIDERS, ["claude", "codex", "grok"]);
@@ -751,6 +956,568 @@ describe("runLane", () => {
       reportedModel: null,
       modelVerified: false,
       modelEvidence: null,
+    });
+  });
+
+  for (const message of ["Authentication successful.", "Sign in successful."]) {
+    it(`accepts positive authentication prose: ${message}`, async () => {
+      process.env.FAKE_GROK_PREFLIGHT_OUTPUT = `${message}\nYou are logged in.\nAvailable models: grok-4.7`;
+      const input = { ...options("grok", "grok-positive-auth"), model: "grok-4.7" };
+      const result = await runLane(input);
+
+      assert.equal(result.exitCode, 0);
+      assert.equal(readFileSync(input.outputPath, "utf8"), "GROK_OK");
+      matchObject(receipt(input.receiptPath), {
+        status: "complete", preflight: { status: "passed" },
+      });
+    });
+  }
+
+  for (const provider of PROVIDERS) {
+    it(`keeps explicit model-execution authentication failures for ${provider}`, async () => {
+      const messages = ["Not logged in.", "You are not authenticated.", "Unauthenticated.",
+        "Authentication failed.", "Authentication required.", "Authentication is required.",
+        "Please sign in.", "Sign in required.", "Sign-in required.", "Login required.",
+        "Sign in failed.", "Sign-in failed.", "Sign in failure.", "Sign-in failure.",
+        "Please sign-in.", "Must sign-in.", "Need to sign-in."];
+      for (const [index, message] of messages.entries()) {
+        writeFileSync(join(bin, cliOf(provider)), scriptedModel("", `${message}\nmodel unavailable`, 1));
+        const input = options(provider, `auth-error-${index}`);
+        const result = await runLane(input);
+
+        assert.equal(result.exitCode, 77, message);
+        assert.equal(existsSync(input.outputPath), false, message);
+        matchObject(receipt(input.receiptPath), {
+          status: "unauthenticated", exitCode: 1, preflight: { status: "passed" },
+        });
+      }
+    });
+
+    it(`keeps ambiguous authentication labels as child failures for ${provider}`, async () => {
+      for (const [index, message] of ["authentication status unavailable", "sign in status unavailable",
+        "Authentication successful. Sign in successful."].entries()) {
+        writeFileSync(join(bin, cliOf(provider)), scriptedModel("", message, 1));
+        const input = options(provider, `ambiguous-auth-${index}`);
+        const result = await runLane(input);
+
+        assert.equal(result.exitCode, 70, message);
+        assert.equal(existsSync(input.outputPath), false, message);
+        matchObject(receipt(input.receiptPath), {
+          status: "child-failed", exitCode: 1, preflight: { status: "passed" },
+        });
+      }
+    });
+  }
+
+  it("retries an explicit authentication requirement before a model refusal", { timeout: GROK_RETRY_RUN_BUDGET_MS }, async () => {
+    process.env.FAKE_GROK_PREFLIGHT_OUTPUT = "You are logged in.\nAvailable models: grok-4.7";
+    process.env.FAKE_GROK_PREFLIGHT_ERROR = "Authentication required.\nmodel grok-4.7 is not supported";
+    const preflightLog = join(scratch, "grok-auth-required.log");
+    const modelStarted = join(scratch, "grok-auth-required.started");
+    process.env.FAKE_GROK_PREFLIGHT_LOG_PATH = preflightLog;
+    process.env.FAKE_MODEL_STARTED_PATH = modelStarted;
+    const input = { ...options("grok", "grok-auth-required"), model: "grok-4.7" };
+    const result = await runLane(input);
+
+    assert.equal(result.exitCode, 77);
+    assert.equal(readFileSync(preflightLog, "utf8"), "attempt\nattempt\n");
+    assert.equal(existsSync(modelStarted), false);
+    matchObject(receipt(input.receiptPath), {
+      status: "unauthenticated", preflight: { status: "failed" },
+    });
+  });
+
+  it("executes Grok after an exact model token bounded by punctuation", async () => {
+    process.env.FAKE_GROK_PREFLIGHT_OUTPUT = "You are logged in.\nAvailable models: [grok-4.7] (default)";
+    const input = { ...options("grok", "grok-exact-token"), model: "grok-4.7" };
+    const result = await runLane(input);
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(readFileSync(input.outputPath, "utf8"), "GROK_OK");
+    matchObject(receipt(input.receiptPath), {
+      status: "complete", reportedModel: "grok-4.7",
+      preflight: { status: "passed", evidence: "authenticated; model grok-4.7 available" },
+    });
+  });
+
+  for (const listed of ["grok-4.70", "xgrok-4.7", "grok-4.7-build", "grok-4x7", "grok-4.7_build", "grok-4.7.preview"]) {
+    it(`does not accept neighboring Grok model token ${listed}`, async () => {
+      process.env.FAKE_GROK_PREFLIGHT_OUTPUT = `You are logged in.\nAvailable models: ${listed}`;
+      const preflightLog = join(scratch, "grok-neighbor.log");
+      const modelStarted = join(scratch, "grok-neighbor.started");
+      process.env.FAKE_GROK_PREFLIGHT_LOG_PATH = preflightLog;
+      process.env.FAKE_MODEL_STARTED_PATH = modelStarted;
+      const input = { ...options("grok", "grok-neighbor"), model: "grok-4.7" };
+      const result = await runLane(input);
+
+      assert.equal(result.exitCode, 69);
+      assert.equal(readFileSync(preflightLog, "utf8"), "attempt\n");
+      assert.equal(existsSync(modelStarted), false);
+      assert.equal(existsSync(input.outputPath), false);
+      matchObject(receipt(input.receiptPath), {
+        status: "unavailable-model", preflight: { status: "failed" },
+      });
+    });
+  }
+
+  for (const listed of ["grok-4.6", "grok-4.7"]) {
+    it(`rejects a requested-model refusal without a model label after listing ${listed}`, async () => {
+      process.env.FAKE_GROK_PREFLIGHT_OUTPUT = `You are logged in.\nAvailable models: ${listed}`;
+      process.env.FAKE_GROK_PREFLIGHT_ERROR = "grok-4.7 is not supported";
+      const modelStarted = join(scratch, "grok-unlabeled-refusal.started");
+      process.env.FAKE_MODEL_STARTED_PATH = modelStarted;
+      const input = { ...options("grok", "grok-unlabeled-refusal"), model: "grok-4.7" };
+      const result = await runLane(input);
+
+      assert.equal(result.exitCode, 69);
+      assert.equal(existsSync(modelStarted), false);
+      assert.equal(existsSync(input.outputPath), false);
+      matchObject(receipt(input.receiptPath), {
+        status: "unavailable-model", preflight: { status: "failed" },
+      });
+    });
+  }
+
+  for (const message of ["grok-4.70 is not supported", "feature is not supported",
+    "Available models: grok-4.7, feature is not supported", "modeling is not supported",
+    "Available model: grok-4.7, feature is not supported", "model: grok-4.7; feature is not supported",
+    "grok-4.7,gpt-6-sol is not supported", "grok-4.7:feature is not supported",
+    "other-model is not supported", "a.model is not supported", "invalid model-build",
+    "Invalid model: grok-4.6", "Invalid model   other-model", 'Invalid model: "other-model"',
+    "Invalid model: 'other-model'", "Invalid model: [other-model]",
+    "model not found: other-model", "model unknown: other-model", "model unavailable: other-model",
+    "model unsupported: other-model", "model not supported: other-model", "model invalid: other-model",
+    "model is not supported: other-model", "model not found   other-model",
+    "Invalid model: grok-4.7:feature", "Invalid model: grok-4.7,other-model", "invalid model.preview",
+    "model not supported with this account: other-model",
+    "model not supported with this account: grok-4.7:feature"]) {
+    it(`keeps an unrelated refusal separate from the requested Grok id: ${message}`, async () => {
+      process.env.FAKE_GROK_PREFLIGHT_OUTPUT = "You are logged in.\nAvailable models: grok-4.7";
+      process.env.FAKE_GROK_PREFLIGHT_ERROR = message;
+      const input = { ...options("grok", "grok-unrelated-refusal"), model: "grok-4.7" };
+      const result = await runLane(input);
+
+      assert.equal(result.exitCode, 0);
+      assert.equal(readFileSync(input.outputPath, "utf8"), "GROK_OK");
+      matchObject(receipt(input.receiptPath), {
+        status: "complete", preflight: { status: "passed" },
+      });
+    });
+  }
+
+  for (const message of ["invalid model", "invalid model.", "Invalid model. Choose another.",
+    "model not found", "model not found.", "Invalid model: grok-4.7", "Invalid model   grok-4.7",
+    'Invalid model: "grok-4.7"', "Invalid model: 'grok-4.7'", "Invalid model: [grok-4.7]",
+    'model not found: "grok-4.7"', "model is not supported: grok-4.7",
+    "The requested model is not supported with this account.",
+    "model is not supported with this account: grok-4.7"]) {
+    it(`rejects a generic or qualified requested Grok refusal: ${message}`, async () => {
+      process.env.FAKE_GROK_PREFLIGHT_OUTPUT = "You are logged in.\nAvailable models: grok-4.7";
+      process.env.FAKE_GROK_PREFLIGHT_ERROR = message;
+      const modelStarted = join(scratch, "grok-qualified-refusal.started");
+      process.env.FAKE_MODEL_STARTED_PATH = modelStarted;
+      const input = { ...options("grok", "grok-qualified-refusal"), model: "grok-4.7" };
+      const result = await runLane(input);
+
+      assert.equal(result.exitCode, 69);
+      assert.equal(existsSync(modelStarted), false);
+      assert.equal(existsSync(input.outputPath), false);
+      matchObject(receipt(input.receiptPath), {
+        status: "unavailable-model", preflight: { status: "failed" },
+      });
+    });
+  }
+
+  for (const provider of PROVIDERS) {
+    it(`binds qualified account-scoped model refusals during ${provider} execution`, async () => {
+      const model = options(provider).model;
+      for (const [index, { message, exitCode, status }] of [
+        { message: "The requested model is not supported with this account.", exitCode: 69, status: "unavailable-model" },
+        { message: `model is not supported with this account: ${model}`, exitCode: 69, status: "unavailable-model" },
+        { message: "model is not supported with this account: other-model", exitCode: 70, status: "child-failed" },
+        { message: `model is not supported with this account: ${model}:feature`, exitCode: 70, status: "child-failed" },
+        { message: "Authentication failed.\nThe requested model is not supported with this account.", exitCode: 77, status: "unauthenticated" },
+      ].entries()) {
+        writeFileSync(join(bin, cliOf(provider)), scriptedModel("", message, 1));
+        const input = options(provider, `account-scoped-model-${index}`);
+        const result = await runLane(input);
+
+        assert.equal(result.exitCode, exitCode, message);
+        assert.equal(existsSync(input.outputPath), false, message);
+        matchObject(receipt(input.receiptPath), {
+          status, exitCode: 1, preflight: { status: "passed" },
+        });
+      }
+    });
+
+    it(`keeps unrelated model subjects as child failures during ${provider} execution`, async () => {
+      const model = options(provider).model;
+      const messages = [`Available models: ${model}, feature is not supported`, "modeling is not supported",
+        `Available model: ${model}, feature is not supported`, `model: ${model}; feature is not supported`,
+        `${model},gpt-6.1-sol is not supported`, `${model}:feature is not supported`,
+        "other-model is not supported", "a.model is not supported", "invalid model-build",
+        "Invalid model: other-model", "Invalid model   other-model", 'Invalid model: "other-model"',
+        "Invalid model: 'other-model'", "Invalid model: [other-model]",
+        "model not found: other-model", "model unknown: other-model", "model unavailable: other-model",
+        "model unsupported: other-model", "model not supported: other-model", "model invalid: other-model",
+        "model is not supported: other-model", "model not found   other-model",
+        `Invalid model: ${model}:feature`, `Invalid model: ${model},other-model`, "invalid model.preview"];
+      for (const [index, message] of messages.entries()) {
+        writeFileSync(join(bin, cliOf(provider)), scriptedModel("", message, 1));
+        const input = options(provider, `unrelated-subject-${index}`);
+        const result = await runLane(input);
+
+        assert.equal(result.exitCode, 70, message);
+        assert.equal(existsSync(input.outputPath), false, message);
+        matchObject(receipt(input.receiptPath), {
+          status: "child-failed", exitCode: 1, preflight: { status: "passed" },
+        });
+      }
+    });
+
+    for (const { label, diagnostic, exitCode, status } of [
+      { label: "compound comma", diagnostic: "<requested>,gpt-6.1-sol is not supported", exitCode: 77, status: "unauthenticated" },
+      { label: "compound colon", diagnostic: "<requested>:feature is not supported", exitCode: 77, status: "unauthenticated" },
+      { label: "ambiguous model label", diagnostic: "Available model: <requested>, feature is not supported", exitCode: 77, status: "unauthenticated" },
+      { label: "neighboring label token", diagnostic: "<requested>\nother-model is not supported", exitCode: 77, status: "unauthenticated" },
+      { label: "qualified neighboring id", diagnostic: "<requested>\nInvalid model: other-model", exitCode: 77, status: "unauthenticated" },
+      { label: "qualified neighboring prefix", diagnostic: "<requested>\nmodel not found: other-model", exitCode: 77, status: "unauthenticated" },
+      { label: "qualified quoted neighbor", diagnostic: '<requested>\nInvalid model: "other-model"', exitCode: 77, status: "unauthenticated" },
+      { label: "qualified compound colon", diagnostic: "Invalid model: <requested>:feature", exitCode: 77, status: "unauthenticated" },
+      { label: "qualified compound comma", diagnostic: "Invalid model: <requested>,other-model", exitCode: 77, status: "unauthenticated" },
+      { label: "punctuated generic", diagnostic: "<requested>\ninvalid model.", exitCode: 69, status: "unavailable-model" },
+      { label: "punctuated generic sentence", diagnostic: "<requested>\nInvalid model. Choose another.", exitCode: 69, status: "unavailable-model" },
+      { label: "qualified requested id", diagnostic: "Invalid model: <requested>", exitCode: 69, status: "unavailable-model" },
+      { label: "account-scoped qualified neighbor", diagnostic: "<requested>\nmodel not supported with this account: other-model", exitCode: 77, status: "unauthenticated" },
+      { label: "account-scoped generic", diagnostic: "<requested>\nThe requested model is not supported with this account.", exitCode: 69, status: "unavailable-model" },
+    ]) {
+      it(`keeps ${label} separate during ${provider} failed preflight`, { timeout: GROK_RETRY_RUN_BUDGET_MS }, async () => {
+        const input = options(provider, "unrelated-preflight-subject");
+        const message = diagnostic.replaceAll("<requested>", input.model);
+        const modelStarted = join(scratch, "unrelated-preflight.started");
+        process.env.FAKE_MODEL_STARTED_PATH = modelStarted;
+        writeFileSync(join(bin, cliOf(provider)), fake.replace(
+          'if (name === "claude" && args[0] === "auth") {',
+          `if (isPreflight) { err(${JSON.stringify(message)}); process.exit(1); }\nif (name === "claude" && args[0] === "auth") {`
+        ));
+        const result = await runLane(input);
+
+        assert.equal(result.exitCode, exitCode);
+        assert.equal(existsSync(modelStarted), false);
+        assert.equal(existsSync(input.outputPath), false);
+        matchObject(receipt(input.receiptPath), {
+          status, preflight: { status: "failed" },
+        });
+      });
+    }
+
+    it(`preserves explicit model refusal forms during ${provider} execution`, async () => {
+      const model = options(provider).model;
+      const messages = ["model not found", `model ${model} is not supported`, "invalid model",
+        `"${model}" is not supported`, `'${model}' is not supported`, `[${model}] is not supported`,
+        "invalid model.", "Invalid model. Choose another.", "model not found.",
+        `Invalid model: ${model}`, `Invalid model   ${model}`, `Invalid model: "${model}"`,
+        `Invalid model: '${model}'`, `Invalid model: [${model}]`,
+        `model not found: "${model}"`, `model is not supported: ${model}`];
+      for (const [index, message] of messages.entries()) {
+        writeFileSync(join(bin, cliOf(provider)), scriptedModel("", message, 1));
+        const input = options(provider, `explicit-model-form-${index}`);
+        const result = await runLane(input);
+
+        assert.equal(result.exitCode, 69, message);
+        assert.equal(existsSync(input.outputPath), false, message);
+        matchObject(receipt(input.receiptPath), {
+          status: "unavailable-model", exitCode: 1, preflight: { status: "passed" },
+        });
+      }
+    });
+
+    it(`classifies a requested-id model refusal during ${provider} execution`, async () => {
+      const input = options(provider, "requested-model-refusal");
+      writeFileSync(join(bin, cliOf(provider)), scriptedModel("", `${input.model} is not supported`, 1));
+      const result = await runLane(input);
+
+      assert.equal(result.exitCode, 69);
+      matchObject(receipt(input.receiptPath), {
+        status: "unavailable-model", exitCode: 1, preflight: { status: "passed" },
+      });
+    });
+
+    it(`keeps a refusal without the requested id as a child failure during ${provider} execution`, async () => {
+      writeFileSync(join(bin, cliOf(provider)), scriptedModel("", "feature is not supported", 1));
+      const input = options(provider, "unrelated-model-refusal");
+      const result = await runLane(input);
+
+      assert.equal(result.exitCode, 70);
+      matchObject(receipt(input.receiptPath), {
+        status: "child-failed", exitCode: 1, preflight: { status: "passed" },
+      });
+    });
+  }
+
+  const incompleteQualifiedSubjects = [
+    'Invalid model: <requested>, other-model', 'Invalid model: <requested>"other-model',
+    "Invalid model: <requested>]other-model", "Invalid model: <requested>'other-model",
+    'Invalid model: "<requested>', 'Invalid model: [<requested>', 'Invalid model "other-model',
+    'model is not supported with this account: <requested>, other-model',
+    'model is not supported with this account: <requested>"other-model',
+    'model is not supported with this account "other-model',
+    'Invalid model: <requested>.', 'Invalid model: <requested>. Choose another.',
+    'model not found: <requested>. Choose another.',
+    'model is not supported with this account: <requested>. Choose another.',
+  ];
+
+  for (const diagnostic of incompleteQualifiedSubjects) {
+    it(`requires a complete qualified subject before vetoing a Grok listing: ${diagnostic}`, async () => {
+      process.env.FAKE_GROK_PREFLIGHT_OUTPUT = "You are logged in.\nAvailable models: grok-4.7";
+      process.env.FAKE_GROK_PREFLIGHT_ERROR = diagnostic.replaceAll("<requested>", "grok-4.7");
+      const input = { ...options("grok", "complete-qualified-subject"), model: "grok-4.7" };
+      const result = await runLane(input);
+
+      assert.equal(result.exitCode, 0);
+      assert.equal(readFileSync(input.outputPath, "utf8"), "GROK_OK");
+      matchObject(receipt(input.receiptPath), {
+        status: "complete", preflight: { status: "passed" },
+      });
+    });
+  }
+
+  for (const provider of PROVIDERS) {
+    for (const diagnostic of incompleteQualifiedSubjects) {
+      it(`requires a complete qualified subject during ${provider} failed preflight: ${diagnostic}`, { timeout: GROK_RETRY_RUN_BUDGET_MS }, async () => {
+        const input = options(provider, "complete-qualified-preflight");
+        const message = `${input.model}\n${diagnostic.replaceAll("<requested>", input.model)}`;
+        const modelStarted = join(scratch, "complete-qualified.started");
+        process.env.FAKE_MODEL_STARTED_PATH = modelStarted;
+        writeFileSync(join(bin, cliOf(provider)), fake.replace(
+          'if (name === "claude" && args[0] === "auth") {',
+          `if (isPreflight) { err(${JSON.stringify(message)}); process.exit(1); }\nif (name === "claude" && args[0] === "auth") {`
+        ));
+        const result = await runLane(input);
+
+        assert.equal(result.exitCode, 77);
+        assert.equal(existsSync(modelStarted), false);
+        assert.equal(existsSync(input.outputPath), false);
+        matchObject(receipt(input.receiptPath), {
+          status: "unauthenticated", preflight: { status: "failed" },
+        });
+      });
+
+      it(`requires a complete qualified subject during ${provider} execution: ${diagnostic}`, async () => {
+        const input = options(provider, "complete-qualified-model");
+        writeFileSync(join(bin, cliOf(provider)), scriptedModel("", diagnostic.replaceAll("<requested>", input.model), 1));
+        const result = await runLane(input);
+
+        assert.equal(result.exitCode, 70);
+        assert.equal(existsSync(input.outputPath), false);
+        matchObject(receipt(input.receiptPath), {
+          status: "child-failed", exitCode: 1, preflight: { status: "passed" },
+        });
+      });
+    }
+
+    it(`retains paired punctuation and whitespace outside a complete qualified subject during ${provider} execution`, async () => {
+      const model = options(provider).model;
+      for (const [index, message] of [`Invalid model: "${model}".`, `Invalid model: [${model}]!`,
+        `Invalid model: ${model} .`, `model is not supported with this account: '${model}'?`].entries()) {
+        writeFileSync(join(bin, cliOf(provider)), scriptedModel("", message, 1));
+        const input = options(provider, `complete-qualified-control-${index}`);
+        const result = await runLane(input);
+
+        assert.equal(result.exitCode, 69, message);
+        matchObject(receipt(input.receiptPath), {
+          status: "unavailable-model", exitCode: 1, preflight: { status: "passed" },
+        });
+      }
+    });
+  }
+
+  const opaqueDiagnostics: readonly [string, string][] = [
+    ["logger opaque bare", "ERROR Invalid model: \"other-model <requested> is not supported\""],
+    ["logger opaque quoted", "\"ERROR\" Invalid model: \"other-model <requested> is not supported\""],
+    ["logger opaque bracketed", "[ERROR] Invalid model: \"other-model <requested> is not supported\""],
+    ["unrelated direct", "[other-model] invalid"],
+    ["unrelated logger prefix", "[ERROR] Invalid model: other-model"],
+    ["quoted inner generic", 'Invalid model: "other-model model not found. Choose another."'],
+    ["comma inner generic", "Invalid model: other-model, model not found."],
+    ["comma inner generic at end", "Invalid model: other-model, model not found"],
+    ["account inner generic", 'model is not supported with this account: "other-model model not found. Choose another."'],
+    ["quoted inner direct", 'Invalid model: "other-model <requested> is not supported"'],
+    ["positive inner prose", 'Invalid model: "other-model feature is supported"'],
+    ["first closing bracket", "Invalid model: ] model not found"],
+    ["first closing parenthesis", "Invalid model: ) <requested> is not supported"],
+    ["first colon", "Invalid model: : model not found"],
+    ["invalid head then predicate", "invalid model is not supported"],
+    ["model predicate then comma", "model not found, <requested> is not supported"],
+    ["invalid head then comma", "Invalid model, <requested> is not supported"],
+    ["closed other id then direct", 'Invalid model: "other-model" <requested> is not supported'],
+    ["predicate dot suffix", "model not found.preview <requested> is not supported"],
+    ["literal dot subject", "Invalid model ."],
+  ];
+  const independentDiagnostics: [string, string][] = [
+    ["logger requested bare", "ERROR Invalid model: <requested>"],
+    ["logger requested quoted", "\"ERROR\" Invalid model: <requested>"],
+    ["logger requested bracketed", "[ERROR] Invalid model: <requested>"],
+    ["requested direct overlapping prefix", "<requested> invalid model: other-model"],
+    ["requested direct before logger", "<requested> is not supported; [ERROR] Invalid model: \"other-model <requested> is not supported\""],
+    ["earlier direct", '<requested> is not supported; Invalid model: "other-model model not found."'],
+    ["later direct", 'Invalid model: "other-model model not found."\n<requested> is not supported'],
+    ["later generic", 'Invalid model: "other-model model not found."\nmodel not found'],
+  ];
+  for (const [label, boundary] of [["CR", "\r"], ["CRLF", "\r\n"],
+    ["line separator", "\u2028"], ["paragraph separator", "\u2029"]]) {
+    independentDiagnostics.push(
+      [`qualified before ${label}`, `Invalid model: <requested>${boundary}Unrelated feature is supported.`],
+      [`later direct after ${label}`, `Invalid model: "other-model model not found."${boundary}<requested> is not supported`],
+      [`later generic after ${label}`, `Invalid model: "other-model model not found."${boundary}model not found`],
+    );
+  }
+  const authDiagnostics: readonly [string, string][] = [
+    ["auth inside rejected tail", 'Invalid model: "other-model Not authenticated. model not found."'],
+  ];
+  const diagnosticModels = { claude: "claude-opus-5-5", codex: "gpt-6.1-sol", grok: "grok-4.7" };
+  for (const expected of [
+    { cases: opaqueDiagnostics, successExit: 0, successStatus: "complete", preflightExit: 77,
+      preflightStatus: "unauthenticated", modelExit: 70, modelStatus: "child-failed" },
+    { cases: independentDiagnostics, successExit: 69, successStatus: "unavailable-model", preflightExit: 69,
+      preflightStatus: "unavailable-model", modelExit: 69, modelStatus: "unavailable-model" },
+    { cases: authDiagnostics, successExit: 77, successStatus: "unauthenticated", preflightExit: 77,
+      preflightStatus: "unauthenticated", modelExit: 77, modelStatus: "unauthenticated" },
+  ] as const) {
+    for (const [label, diagnostic] of expected.cases) {
+      it(`owns ${label} during Grok successful preflight`, { timeout: GROK_RETRY_RUN_BUDGET_MS }, async () => {
+        const input = { ...options("grok", "owned-success"), model: diagnosticModels.grok };
+        const started = join(scratch, "owned-success.started");
+        const attempts = join(scratch, "owned-success.attempts");
+        process.env.FAKE_MODEL_STARTED_PATH = started;
+        process.env.FAKE_GROK_PREFLIGHT_LOG_PATH = attempts;
+        process.env.FAKE_GROK_PREFLIGHT_OUTPUT = `You are logged in.\nAvailable models: ${input.model}`;
+        process.env.FAKE_GROK_PREFLIGHT_ERROR = diagnostic.replaceAll("<requested>", input.model);
+        const result = await runLane(input);
+
+        assert.equal(result.exitCode, expected.successExit);
+        assert.equal(existsSync(started), expected.successExit === 0);
+        assert.equal(existsSync(input.outputPath), expected.successExit === 0);
+        if (expected.successExit === 0) assert.equal(readFileSync(input.outputPath, "utf8"), "GROK_OK");
+        assert.equal(readFileSync(attempts, "utf8"), "attempt\n".repeat(expected.successExit === 77 ? 2 : 1));
+        matchObject(receipt(input.receiptPath), {
+          model: input.model, status: expected.successStatus, exitCode: 0,
+          preflight: { status: expected.successExit === 0 ? "passed" : "failed" },
+        });
+      });
+
+      for (const provider of PROVIDERS) {
+        it(`owns ${label} during ${provider} failed preflight`, { timeout: GROK_RETRY_RUN_BUDGET_MS }, async () => {
+          const input = { ...options(provider, "owned-preflight"), model: diagnosticModels[provider] };
+          const message = `${input.model}\n${diagnostic.replaceAll("<requested>", input.model)}`;
+          const started = join(scratch, "owned-preflight.started");
+          const attempts = join(scratch, "owned-preflight.attempts");
+          process.env.FAKE_MODEL_STARTED_PATH = started;
+          writeFileSync(join(bin, cliOf(provider)), fake.replace(
+            'if (name === "claude" && args[0] === "auth") {',
+            `if (isPreflight) { appendFileSync(${JSON.stringify(attempts)}, "attempt\\n"); err(${JSON.stringify(message)}); process.exit(1); }\nif (name === "claude" && args[0] === "auth") {`
+          ));
+          const result = await runLane(input);
+
+          assert.equal(result.exitCode, expected.preflightExit);
+          assert.equal(existsSync(started), false);
+          assert.equal(existsSync(input.outputPath), false);
+          assert.equal(readFileSync(attempts, "utf8"), "attempt\n".repeat(provider === "grok" && expected.preflightExit === 77 ? 2 : 1));
+          matchObject(receipt(input.receiptPath), {
+            model: input.model, status: expected.preflightStatus, exitCode: 1, preflight: { status: "failed" },
+          });
+        });
+
+        it(`owns ${label} during ${provider} execution`, async () => {
+          const input = { ...options(provider, "owned-model"), model: diagnosticModels[provider] };
+          const started = join(scratch, "owned-model.started");
+          const attempts = join(scratch, "owned-model.attempts");
+          process.env.FAKE_MODEL_STARTED_PATH = started;
+          process.env.FAKE_GROK_PREFLIGHT_OUTPUT = `You are logged in.\nAvailable models: ${input.model}`;
+          writeFileSync(join(bin, cliOf(provider)), scriptedModel("", diagnostic.replaceAll("<requested>", input.model), 1).replace(
+            'if (name === "claude" && args[0] === "auth") {',
+            `if (isPreflight) appendFileSync(${JSON.stringify(attempts)}, "attempt\\n");\nif (name === "claude" && args[0] === "auth") {`
+          ));
+          const result = await runLane(input);
+
+          assert.equal(result.exitCode, expected.modelExit);
+          assert.equal(existsSync(started), true);
+          assert.equal(existsSync(input.outputPath), false);
+          assert.equal(readFileSync(attempts, "utf8"), "attempt\n");
+          matchObject(receipt(input.receiptPath), {
+            model: input.model, status: expected.modelStatus, exitCode: 1, preflight: { status: "passed" },
+          });
+        });
+      }
+    }
+  }
+
+  it("rejects an explicitly unsupported Grok model despite a zero-exit exact listing", async () => {
+    process.env.FAKE_GROK_PREFLIGHT_OUTPUT = "You are logged in.\nAvailable models: grok-4.7";
+    process.env.FAKE_GROK_PREFLIGHT_ERROR = "model grok-4.7 is not supported";
+    const modelStarted = join(scratch, "grok-unsupported.started");
+    process.env.FAKE_MODEL_STARTED_PATH = modelStarted;
+    const input = { ...options("grok", "grok-unsupported"), model: "grok-4.7" };
+    const result = await runLane(input);
+
+    assert.equal(result.exitCode, 69);
+    assert.equal(existsSync(modelStarted), false);
+    matchObject(receipt(input.receiptPath), {
+      status: "unavailable-model", preflight: { status: "failed" },
+    });
+    assert.ok(receipt(input.receiptPath).preflight.evidence.includes("not supported"));
+  });
+
+  it("retries explicit not-authenticated Grok output before failing closed", { timeout: GROK_RETRY_RUN_BUDGET_MS }, async () => {
+    process.env.FAKE_GROK_PREFLIGHT_OUTPUT = "You are logged in.\nAvailable models: grok-4.7";
+    process.env.FAKE_GROK_PREFLIGHT_ERROR = "You are not authenticated.";
+    const preflightLog = join(scratch, "grok-not-authenticated.log");
+    const modelStarted = join(scratch, "grok-not-authenticated.started");
+    process.env.FAKE_GROK_PREFLIGHT_LOG_PATH = preflightLog;
+    process.env.FAKE_MODEL_STARTED_PATH = modelStarted;
+    const input = { ...options("grok", "grok-not-authenticated"), model: "grok-4.7" };
+    const result = await runLane(input);
+
+    assert.equal(result.exitCode, 77);
+    assert.equal(readFileSync(preflightLog, "utf8"), "attempt\nattempt\n");
+    assert.equal(existsSync(modelStarted), false);
+    matchObject(receipt(input.receiptPath), {
+      status: "unauthenticated", preflight: { status: "failed" },
+    });
+    assert.ok(receipt(input.receiptPath).preflight.evidence.includes("attempt 2 failed"));
+  });
+
+  it("rejects glued logged-in words in a Grok listing", { timeout: GROK_RETRY_RUN_BUDGET_MS }, async () => {
+    process.env.FAKE_GROK_PREFLIGHT_OUTPUT = "You are logged into.\nAvailable models: grok-4.7";
+    const preflightLog = join(scratch, "grok-glued-login.log");
+    const modelStarted = join(scratch, "grok-glued-login.started");
+    process.env.FAKE_GROK_PREFLIGHT_LOG_PATH = preflightLog;
+    process.env.FAKE_MODEL_STARTED_PATH = modelStarted;
+    const input = { ...options("grok", "grok-glued-login"), model: "grok-4.7" };
+    const result = await runLane(input);
+
+    assert.equal(result.exitCode, 77);
+    assert.equal(readFileSync(preflightLog, "utf8"), "attempt\nattempt\n");
+    assert.equal(existsSync(modelStarted), false);
+    matchObject(receipt(input.receiptPath), {
+      status: "unauthenticated", preflight: { status: "failed" },
+    });
+  });
+
+  it("requires logged-in words for an API-key-only Grok listing", { timeout: GROK_RETRY_RUN_BUDGET_MS }, async () => {
+    process.env.FAKE_GROK_PREFLIGHT_OUTPUT = "You are using XAI_API_KEY.\nAvailable models: grok-4.7";
+    const preflightLog = join(scratch, "grok-api-key-only.log");
+    const modelStarted = join(scratch, "grok-api-key-only.started");
+    process.env.FAKE_GROK_PREFLIGHT_LOG_PATH = preflightLog;
+    process.env.FAKE_MODEL_STARTED_PATH = modelStarted;
+    const input = { ...options("grok", "grok-api-key-only"), model: "grok-4.7" };
+    const result = await runLane(input);
+
+    assert.equal(result.exitCode, 77);
+    assert.equal(readFileSync(preflightLog, "utf8"), "attempt\nattempt\n");
+    assert.equal(existsSync(modelStarted), false);
+    matchObject(receipt(input.receiptPath), {
+      status: "unauthenticated", preflight: { status: "failed" },
     });
   });
 
