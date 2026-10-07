@@ -1961,4 +1961,4 @@ A admissão de escrita é código novo do port. Depois dos snapshots e do render
 
 A seção Host and parent prerequisites mantém a orientação de seatbelt e os caminhos de estado do Grok. A exigência Linux de Landlock e `bwrap`, inclusive nas sessões Claude cloud afetadas, vem do upstream citado, separada das observações locais no macOS. O ponto de sync do open permanece em `de67e6b`. O PR preserva as mudanças entregues em A, B, C, F, G, #94 e #95.
 
-Verificação desta unidade inicial: documentação e os seis carriers de versão preparados. As provas de implementação, revisão e gates serão vinculadas ao head final antes do veredito independente.
+Verificação focada: 52 testes passaram no Node, sem falhas, cancelamentos ou skips. Os controles cobrem a pista final e suas exclusões, o mapa completo e o ambiente atual, a admissão sem mutações, os links pendentes e cíclicos, o destino de symlink somente leitura e o rollback após falhas tardias. A revisão e os sete gates serão vinculados ao head final antes do veredito independente.

@@ -23,6 +23,7 @@ import { clisOutsideFakes, isolateProcessEnv } from "./isolated-env.test-helper.
 let scratch = "";
 let bin = "";
 let restoreProcessEnv: () => void = () => {};
+let previousNetworkMarker: string | undefined;
 
 function streamPath(path: string | null): string {
   assert.ok(path !== null, "expected a reserved stream artifact path");
@@ -379,6 +380,8 @@ const FAKE_ENV = [
   "FAKE_DESCENDANT_HOLDS_PIPES_MS",
   "FAKE_DESCENDANT_PID_PATH",
   "FAKE_SELF_SIGNAL",
+  "FAKE_CASE",
+  "FAKE_LOG",
   "FAKE_GROK_CONFIG_RECORD_PATH",
 ] as const;
 
@@ -397,11 +400,15 @@ beforeEach(() => {
   writeFileSync(join(scratch, "prompt.md"), "Return the marker.");
   for (const provider of PROVIDERS) makeExecutable(provider);
   restoreProcessEnv = isolateProcessEnv(join(scratch, "home"), [bin]);
+  previousNetworkMarker = process.env.CODEX_SANDBOX_NETWORK_DISABLED;
+  delete process.env.CODEX_SANDBOX_NETWORK_DISABLED;
   clearFakeEnv();
 });
 
 afterEach(() => {
   restoreProcessEnv();
+  if (previousNetworkMarker === undefined) delete process.env.CODEX_SANDBOX_NETWORK_DISABLED;
+  else process.env.CODEX_SANDBOX_NETWORK_DISABLED = previousNetworkMarker;
   clearFakeEnv();
   rmSync(scratch, { recursive: true, force: true });
 });
@@ -425,6 +432,172 @@ function writeGrok(script: string): void {
   writeFileSync(join(bin, cliOf("grok")), script);
   warm("grok", GROK_PREFLIGHT_ARGS);
 }
+
+describe("Codex parent network hint", () => {
+  const hint = "likely cause: Codex parent sandbox has network disabled; see provider-dispatch.md#host-and-parent-prerequisites";
+
+  it("decorates an untyped CLI failure and scrubs the marker from the child", async () => {
+    process.env.CODEX_SANDBOX_NETWORK_DISABLED = "1";
+    const childEnv = join(scratch, "child-env.json");
+    writeFileSync(join(bin, "claude"), scriptedModel("", "ENOTFOUND api.anthropic.com\n", 1).replace(
+      "const args =",
+      `writeFileSync(${JSON.stringify(childEnv)}, JSON.stringify({ marker: process.env.CODEX_SANDBOX_NETWORK_DISABLED ?? null }));\nconst args =`
+    ));
+    const input = options("claude");
+    const result = await runLane(input);
+    assert.equal(result.exitCode, 70);
+    matchObject(result.receipt, {
+      schemaVersion: 1, status: "child-failed", exitCode: 1, signal: null,
+      parent: "codex", provider: "claude", model: "fable", effort: "max",
+      preflight: { status: "passed" },
+      error: { message: `child exited with status 1; ${hint}`, evidence: `${hint}\nENOTFOUND api.anthropic.com` },
+    });
+    assert.equal(result.receipt.argv[0], join(bin, "claude"));
+    assert.deepEqual(JSON.parse(readFileSync(childEnv, "utf8")), { marker: null });
+    assert.equal(readFileSync(streamPath(result.receipt.stderrPath), "utf8"), "ENOTFOUND api.anthropic.com\n");
+    assert.equal(readFileSync(streamPath(result.receipt.stdoutPath), "utf8"), "");
+    assert.equal(existsSync(input.outputPath), false);
+  });
+
+  for (const marker of [undefined, "0", "true"]) {
+    it(`leaves a plain failure unchanged with marker ${String(marker)}`, async () => {
+      if (marker !== undefined) process.env.CODEX_SANDBOX_NETWORK_DISABLED = marker;
+      writeGrok(scriptedModel("", "ENOTFOUND grok.com\n", 1));
+      const result = await runLane(options("grok"));
+      assert.equal(result.exitCode, 70);
+      assert.deepEqual(result.receipt.error, { message: "child exited with status 1", evidence: "ENOTFOUND grok.com" });
+    });
+  }
+
+  it("leaves a Claude parent's failure unchanged with marker 1", async () => {
+    process.env.CODEX_SANDBOX_NETWORK_DISABLED = "1";
+    writeGrok(scriptedModel("", "ENOTFOUND grok.com\n", 1));
+    const result = await runLane({ ...options("grok"), parent: "claude" });
+    assert.equal(result.receipt.status, "child-failed");
+    assert.deepEqual(result.receipt.error, { message: "child exited with status 1", evidence: "ENOTFOUND grok.com" });
+  });
+
+  it("prefixes the hint before bounding evidence and preserves both raw streams", async () => {
+    process.env.CODEX_SANDBOX_NETWORK_DISABLED = "1";
+    const stdout = "provider startup\n" + "x".repeat(6_000) + "\nuseful terminal tail\n";
+    const stderr = "ENOTFOUND grok.com\n";
+    writeGrok(scriptedModel(stdout, stderr, 1));
+    const result = await runLane(options("grok"));
+    assert.equal(result.receipt.error?.message, `child exited with status 1; ${hint}`);
+    assert.equal(result.receipt.error?.evidence.length, 4_000);
+    assert.ok(result.receipt.error?.evidence.startsWith(`${hint}\n${stderr}`));
+    assert.ok(result.receipt.error?.evidence.endsWith("useful terminal tail"));
+    assert.equal(readFileSync(streamPath(result.receipt.stdoutPath), "utf8"), stdout);
+    assert.equal(readFileSync(streamPath(result.receipt.stderrPath), "utf8"), stderr);
+  });
+
+  for (const subtype of ["api_error", "error_during_execution", "cancelled"]) {
+    for (const exitCode of [0, 1]) {
+      it(`preserves the typed ${subtype} reason after exit ${exitCode}`, async () => {
+        process.env.CODEX_SANDBOX_NETWORK_DISABLED = "1";
+        const reason = subtype === "cancelled" ? "User cancelled the execution" : "provider permission refused";
+        const stdout = JSON.stringify({ type: "result", subtype, is_error: true, errors: [reason],
+          session_id: "failed-session", modelUsage: { "grok-4.6-build": {} } }) + "\n";
+        writeGrok(scriptedModel(stdout, "ENOTFOUND grok.com\n", exitCode));
+        const result = await runLane(options("grok"));
+        assert.equal(result.exitCode, subtype === "cancelled" ? 130 : 70);
+        matchObject(result.receipt, { status: subtype === "cancelled" ? "cancelled" : "child-failed",
+          exitCode, sessionId: "failed-session", reportedModel: "grok-4.6-build", modelVerified: true });
+        assert.equal(result.receipt.error?.message, reason);
+        assert.ok(result.receipt.error?.evidence.startsWith(reason));
+        assert.doesNotMatch(result.receipt.error?.evidence ?? "", /Codex parent sandbox/);
+      });
+    }
+  }
+
+  for (const provider of ["claude", "grok"] as const) {
+    it(`keeps successful ${provider} lanes complete under marker 1`, async () => {
+      process.env.CODEX_SANDBOX_NETWORK_DISABLED = "1";
+      const result = await runLane(options(provider));
+      assert.equal(result.exitCode, 0);
+      assert.equal(result.receipt.status, "complete");
+      assert.equal(result.receipt.error, null);
+      assert.equal(readFileSync(result.receipt.outputPath, "utf8").trim(), provider === "claude" ? "CLAUDE_OK" : "GROK_OK");
+    });
+  }
+
+  for (const [diagnostic, status, exitCode] of [
+    ["Invalid model: grok-4.6", "unavailable-model", 69],
+    ["Authentication failed", "unauthenticated", 77],
+    ["model not found: opaque, tail Authentication failed", "unauthenticated", 77],
+  ] as const) {
+    it(`keeps ${status} authoritative for ${diagnostic}`, async () => {
+      process.env.CODEX_SANDBOX_NETWORK_DISABLED = "1";
+      writeGrok(scriptedModel("", diagnostic + "\n", 1));
+      const result = await runLane(options("grok"));
+      assert.equal(result.exitCode, exitCode);
+      assert.equal(result.receipt.status, status);
+      assert.deepEqual(result.receipt.error, { message: "child exited with status 1", evidence: diagnostic });
+    });
+  }
+
+  it("keeps an explicit timeout free of the hint", async () => {
+    process.env.CODEX_SANDBOX_NETWORK_DISABLED = "1";
+    warm("claude", ["auth", "status"]);
+    process.env.FAKE_MODEL_DELAY_MS = "10000";
+    const result = await runLane({ ...options("claude"), timeoutMs: 1_000 });
+    assert.equal(result.exitCode, 124);
+    assert.equal(result.receipt.status, "timed-out");
+    assert.doesNotMatch(JSON.stringify(result.receipt.error), /Codex parent sandbox/);
+  });
+
+  it("uses the marker captured before preparation even if the parent environment changes", async () => {
+    writeGrok(scriptedModel("", "ENOTFOUND grok.com\n", 1));
+    for (const marker of ["1", "0"]) {
+      process.env.CODEX_SANDBOX_NETWORK_DISABLED = marker;
+      const pending = runLane(options("grok", `captured-${marker}`));
+      process.env.CODEX_SANDBOX_NETWORK_DISABLED = marker === "1" ? "0" : "1";
+      const result = await pending;
+      assert.equal(result.receipt.status, "child-failed");
+      assert.equal(result.receipt.error?.message, marker === "1" ? `child exited with status 1; ${hint}` : "child exited with status 1");
+    }
+  });
+
+  it("keeps a literal ACP child failure free of the CLI hint", async () => {
+    process.env.CODEX_SANDBOX_NETWORK_DISABLED = "1";
+    process.env.FAKE_CASE = "mcp-expansion";
+    const eventPath = join(scratch, "acp-events.jsonl");
+    process.env.FAKE_LOG = eventPath;
+    writeFileSync(join(bin, "grok"), readFileSync(join(import.meta.dirname, "acp-fixture.test-helper.mjs")));
+    const input = { ...options("grok", "hint-acp"), model: "grok-4.7", mode: "full-access", transport: "grok-acp" } as const;
+    const result = await runLane(input);
+    assert.equal(result.exitCode, 70);
+    matchObject(result.receipt, {
+      status: "child-failed", preflight: { status: "passed" },
+      error: { message: "ACP effective tool catalog does not match the assigned profile" },
+      acp: { shutdownIntent: "failure" },
+    });
+    assert.doesNotMatch(result.receipt.error?.evidence ?? "", /likely cause|Codex parent sandbox/);
+    assert.equal(existsSync(input.outputPath), false);
+    const events = readFileSync(eventPath, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    const started = events.find((event) => event.kind === "started");
+    assert.ok(started);
+    assert.equal(existsSync(started.profilePath), false);
+    assert.equal(existsSync(started.overlayPath), false);
+    assert.throws(() => process.kill(started.pid, 0), /ESRCH/);
+  });
+
+  it("keeps preflight, unavailable CLI and malformed output free of the hint", async () => {
+    process.env.CODEX_SANDBOX_NETWORK_DISABLED = "1";
+    process.env.FAKE_GROK_MISSING_MODEL = "1";
+    const preflight = await runLane(options("grok", "hint-preflight"));
+    assert.equal(preflight.receipt.status, "unavailable-model");
+    assert.doesNotMatch(JSON.stringify(preflight.receipt.error), /Codex parent sandbox/);
+    writeFileSync(join(bin, "claude"), scriptedModel("invalid output\n", "", 0));
+    const malformed = await runLane(options("claude", "hint-malformed"));
+    assert.equal(malformed.receipt.status, "malformed-output");
+    assert.doesNotMatch(JSON.stringify(malformed.receipt.error), /Codex parent sandbox/);
+    rmSync(join(bin, "claude"));
+    const missing = await runLane(options("claude", "hint-missing"));
+    assert.equal(missing.receipt.status, "unavailable-cli");
+    assert.doesNotMatch(JSON.stringify(missing.receipt.error), /Codex parent sandbox/);
+  });
+});
 
 describe("issue78 terminal results", () => {
   for (const scenario of ["cancel-zero", "cancel-nonzero", "api-error", "api-error-nonzero", "success-streams"]) {
@@ -542,6 +715,7 @@ describe("issue78 terminal results", () => {
   });
 
   it("terminalizes a sidecar write failure without waiting for the child", async () => {
+    process.env.CODEX_SANDBOX_NETWORK_DISABLED = "1";
     const input = options("grok");
     writeGrok(fake.replace("const modelIndex =",
       'writeSync(1, "stream data"); await sleep(60_000);\nconst modelIndex ='));
@@ -557,6 +731,7 @@ describe("issue78 terminal results", () => {
       assert.equal(result.exitCode, 70);
       assert.equal(result.receipt.status, "child-failed");
       assert.ok(result.receipt.error?.evidence.includes("sidecar storage unavailable"));
+      assert.doesNotMatch(JSON.stringify(result.receipt.error), /Codex parent sandbox/);
       assert.ok(Date.now() - started < 30_000, "the run waited for the child's 60 s sleep");
       assert.equal(existsSync(input.outputPath), false);
       assert.equal(existsSync(streamPath(result.receipt.stdoutPath)), true);
@@ -633,6 +808,7 @@ describe("issue78 terminal results", () => {
   });
 
   it("keeps launcher cancellation ahead of a typed Grok result", async () => {
+    process.env.CODEX_SANDBOX_NETWORK_DISABLED = "1";
     const input = options("grok", "typed-then-cancelled");
     const started = join(scratch, "typed-then-cancelled.started");
     const stdout = JSON.stringify({ type: "result", subtype: "api_error", is_error: true,
@@ -654,6 +830,7 @@ describe("issue78 terminal results", () => {
       error: { message: "launcher received SIGTERM; signal was sent to child" },
     });
     assert.equal(readFileSync(streamPath(saved.stdoutPath), "utf8"), stdout);
+    assert.doesNotMatch(JSON.stringify(saved.error), /Codex parent sandbox/);
   });
 
   it("retains strict model verification for successful Grok results", async () => {

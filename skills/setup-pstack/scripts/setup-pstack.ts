@@ -31,7 +31,7 @@
 // Node 24, type stripping, no dependencies: erasable TypeScript only.
 
 import { randomBytes } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { accessSync, constants as fsConstants, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, statSync, unlinkSync, writeFileSync, type Stats } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import {
@@ -1031,6 +1031,15 @@ function nativeProbeFor(matrix: ModelMatrix, parent: string, family: Family, eff
   fail(`no native probe shape for primitive ${primitive}`);
 }
 
+function externalNetworkWarning(parent: string, env: ConfigEnv, selected: Readonly<Record<string, EffortState>>, matrix: ModelMatrix): string | null {
+  if (parent !== "codex" || env.CODEX_SANDBOX_NETWORK_DISABLED !== "1") return null;
+  const external = matrix.families.filter((family) => selected[family.family].status !== "outside-map"
+    && routeFor(matrix, parent, family.provider) === "runner");
+  if (external.length === 0) return null;
+  const names = external.map((family) => `${family.family[0].toUpperCase()}${family.family.slice(1)} (${family.provider}:${family.model})`);
+  return `Codex parent sandbox has network disabled (CODEX_SANDBOX_NETWORK_DISABLED=1); cannot probe external families: ${names.join(", ")}; restart the parent with the needed permission or move affected roles to allowed native families; see provider-dispatch.md#host-and-parent-prerequisites`;
+}
+
 /**
  * Build the in-memory render for one parent: the role map (defaults on a first
  * run, the normalized loaded sheet on a rerun, missing documented roles filled
@@ -1119,6 +1128,8 @@ export function buildPlan(input: PlanInput): Plan {
   const ledgerPath = ledgerPathFor(parent, home, env);
   const ledger = parseLedger(snapshotOf(ledgerPath, "probe ledger"), ledgerPath);
   const finalEfforts = familyEfforts(rows, matrix);
+  const networkWarning = externalNetworkWarning(parent, env, finalEfforts, matrix);
+  if (networkWarning !== null) warnings.push(networkWarning);
   const efforts: Record<string, readonly string[]> = {};
   const pairs: ProbePair[] = [];
   const verified: VerifiedFamily[] = [];
@@ -1264,6 +1275,8 @@ export interface ProbeOptions {
   readonly timeoutSeconds?: number | null;
 }
 
+type ResolvedProbeOptions = ProbeOptions & { readonly env: ConfigEnv };
+
 function probePaths(dir: string, pair: string): { prompt: string; output: string; receipt: string } {
   return {
     prompt: join(dir, `probe-${pair}.prompt.md`),
@@ -1280,7 +1293,7 @@ function probeLabel(pair: ProbePair): string {
   return `${pair.pair} (${pair.descriptor})`;
 }
 
-async function runLane(pair: ProbePair, plan: Plan, options: ProbeOptions): Promise<ExternalProbeResult> {
+async function runLane(pair: ProbePair, plan: Plan, options: ResolvedProbeOptions): Promise<ExternalProbeResult> {
   const paths = probePaths(options.dir, pair.pair);
   const verdict = await runProbeLane({
     parent: plan.parent,
@@ -1292,7 +1305,7 @@ async function runLane(pair: ProbePair, plan: Plan, options: ProbeOptions): Prom
     promptPath: paths.prompt,
     outputPath: paths.output,
     receiptPath: paths.receipt,
-    env: options.env ?? process.env,
+    env: options.env,
     timeoutSeconds: options.timeoutSeconds,
   });
   return {
@@ -1335,6 +1348,11 @@ function nativeStatus(
  * listed with the prompt to send and whether `attest` has recorded them.
  */
 export async function runProbes(plan: Plan, options: ProbeOptions): Promise<ProbeSummary> {
+  const env = options.env ?? process.env;
+  const matrix = loadMatrix();
+  const networkWarning = externalNetworkWarning(plan.parent, env, familyEfforts(plan.rows, matrix), matrix);
+  if (networkWarning !== null) fail(networkWarning);
+  const resolvedOptions: ResolvedProbeOptions = { dir: options.dir, timeoutSeconds: options.timeoutSeconds, env };
   mkdirSync(options.dir, { recursive: true });
   const runnerPairs = plan.pairs.filter((p) => p.route === "runner");
   for (const pair of runnerPairs) {
@@ -1349,7 +1367,7 @@ export async function runProbes(plan: Plan, options: ProbeOptions): Promise<Prob
       fail(`${path} already exists; use a fresh run directory or remove the previous probe artifacts`);
     }
   }
-  const external = await Promise.all(runnerPairs.map((pair) => runLane(pair, plan, options)));
+  const external = await Promise.all(runnerPairs.map((pair) => runLane(pair, plan, resolvedOptions)));
   const native = plan.pairs.flatMap((p) => (p.native === null ? [] : [nativeStatus(plan, options.dir, p, p.native)]));
   const owner = plan.ownerProbe === null ? null : {
     ...plan.ownerProbe,
@@ -1517,9 +1535,61 @@ function restore(path: string, snapshot: string | null): void {
 
 /** Current bytes of a target, null when absent; a non-file at the path is inconsistent state. */
 function snapshotOf(path: string, label: string): string | null {
-  if (!existsSync(path)) return null;
-  if (!statSync(path).isFile()) fail(`${label} ${path} exists but is not a regular file; resolve it before writing`);
-  return readFileSync(path, "utf8");
+  try {
+    const info = statIfExists(path);
+    if (info === null) return null;
+    if (!info.isFile()) fail(`${label} ${path} exists but is not a regular file; resolve it before writing`);
+    return readFileSync(path, "utf8");
+  } catch (error) {
+    if (error instanceof SetupError) throw error;
+    fail(`${label} ${path} could not be read (${error instanceof Error ? error.message : String(error)})`);
+  }
+}
+
+function statIfExists(path: string): Stats | null {
+  let entry: Stats;
+  try {
+    entry = lstatSync(path);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+    throw error;
+  }
+  return entry.isSymbolicLink() ? statSync(path) : entry;
+}
+
+interface WriteTarget {
+  readonly label: "sheet" | "parent integration" | "probe ledger";
+  readonly path: string;
+  readonly before: string | null;
+  readonly after: string | null;
+}
+
+function assertSetupTargetsWritable(targets: readonly WriteTarget[]): void {
+  if (targets.every((target) => target.before === target.after)) return;
+  for (const target of targets) {
+    if (target.label === "probe ledger" && target.before === target.after) continue;
+    let checked = target.path;
+    try {
+      const current = statIfExists(checked);
+      if (current !== null) {
+        if (!current.isFile()) throw new Error("not a regular file");
+        accessSync(checked, fsConstants.W_OK);
+        continue;
+      }
+      checked = dirname(checked);
+      let ancestor = statIfExists(checked);
+      while (ancestor === null) {
+        const parent = dirname(checked);
+        if (parent === checked) throw new Error("no existing parent directory");
+        checked = parent;
+        ancestor = statIfExists(checked);
+      }
+      if (!ancestor.isDirectory()) throw new Error("not a directory");
+      accessSync(checked, fsConstants.W_OK | fsConstants.X_OK);
+    } catch (error) {
+      fail(`${target.label} ${target.path} is not writable (checked ${checked}: ${error instanceof Error ? error.message : String(error)})`);
+    }
+  }
 }
 
 export function writeSheet(plan: Plan, dir: string, options: { readonly home?: string; readonly env?: ConfigEnv } = {}): WriteResult {
@@ -1541,10 +1611,10 @@ export function writeSheet(plan: Plan, dir: string, options: { readonly home?: s
   const integrationAfter = renderIntegration(where, integrationBefore, plan.sheet);
   const ledgerAfter = recordProbes(ledgerBefore, ledgerPath, plan, dir);
 
-  const targets = [
-    { path: sheetPath, before: sheetBefore, after: plan.sheet },
-    { path: integrationPath, before: integrationBefore, after: integrationAfter },
-    { path: ledgerPath, before: ledgerBefore, after: ledgerAfter },
+  const targets: readonly WriteTarget[] = [
+    { label: "sheet", path: sheetPath, before: sheetBefore, after: plan.sheet },
+    { label: "parent integration", path: integrationPath, before: integrationBefore, after: integrationAfter },
+    { label: "probe ledger", path: ledgerPath, before: ledgerBefore, after: ledgerAfter },
   ];
   const outcome = (before: string | null, after: string | null): WriteOutcome =>
     before === after ? "unchanged" : before === null ? "created" : "updated";
@@ -1557,6 +1627,7 @@ export function writeSheet(plan: Plan, dir: string, options: { readonly home?: s
     ledger: outcome(ledgerBefore, ledgerAfter),
   };
 
+  assertSetupTargetsWritable(targets);
   try {
     for (const { path, before, after } of targets) {
       if (after === null || after === before) continue;
@@ -1729,7 +1800,7 @@ export async function main(argv: readonly string[], io: Io = {
           usage("--timeout must be a number greater than zero");
         }
         const plan = loadPlan(dir);
-        const summary = await runProbes(plan, { dir, timeoutSeconds });
+        const summary = await runProbes(plan, { dir, timeoutSeconds, env });
         emit(summary);
         return summary.externalOk ? 0 : 1;
       }
