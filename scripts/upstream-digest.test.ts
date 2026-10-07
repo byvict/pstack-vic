@@ -193,6 +193,35 @@ describe("upstream-digest: fixture repository", () => {
     rmSync(fx.repo, { recursive: true, force: true });
   });
 
+  it("leaves guide-only changes from either upstream for review", () => {
+    const guide = buildFixture();
+    try {
+      for (const spec of UPSTREAMS) {
+        sh(guide.repo, "checkout", "-q", "-b", `guide-${spec.name}`, spec.ref);
+        const head = commit(guide.repo, "docs: improve planning guide", {
+          [`${spec.prefix}docs/guide/04-design.md`]: "Prototype before planning.\n",
+        });
+        sh(guide.repo, "update-ref", `refs/remotes/${spec.ref}`, head);
+      }
+      sh(guide.repo, "checkout", "-q", "main");
+      const result = spawnSync(process.execPath, [SCRIPT, "--repo", guide.repo, "--no-fetch", "--json"], {
+        encoding: "utf8",
+      });
+      assert.equal(result.status, 0, result.stderr);
+      const digest: Digest = JSON.parse(result.stdout);
+      for (const name of ["cursor", "open"] as const) {
+        const change = upstream(digest, name).commits.at(-1)!;
+        assert.equal(change.subject, "docs: improve planning guide");
+        assert.equal(change.verdict, "");
+        assert.deepEqual(change.files.map((file) => [file.localPath, file.excluded, file.missingLocally]), [
+          ["docs/guide/04-design.md", false, true],
+        ]);
+      }
+    } finally {
+      rmSync(guide.repo, { recursive: true, force: true });
+    }
+  });
+
   it("lists cursor commits that touched pstack/, in order, with mapped files and excluded paths", () => {
     const digest = buildDigest({ repo: fx.repo, date: "2026-09-18" });
     const cursor = upstream(digest, "cursor");
@@ -219,11 +248,11 @@ describe("upstream-digest: fixture repository", () => {
     assert.deepEqual(
       c3.files.map((f) => [f.localPath, f.status, f.excluded]),
       [
-        ["docs/guide/01.md", "A", true],
+        ["docs/guide/01.md", "A", false],
         ["skills/make-bot-ui/SKILL.md", "A", true],
       ],
     );
-    assert.equal(c3.verdict, NAO_APLICA, "a commit touching only excluded paths is pre-filled");
+    assert.equal(c3.verdict, "", "guide changes need review even beside excluded paths");
     assert.equal(bump.verdict, NAO_APLICA);
     assert.deepEqual(bump.files.map((f) => f.localPath), [".cursor-plugin/plugin.json"]);
   });
@@ -270,7 +299,7 @@ describe("upstream-digest: fixture repository", () => {
         "m",
       ),
     );
-    assert.match(md, new RegExp(`^\\| \`${fx.cursor.c3.slice(0, 7)}\` .* \\| ${NAO_APLICA} \\|$`, "m"));
+    assert.match(md, new RegExp(`^\\| \`${fx.cursor.c3.slice(0, 7)}\` .* \\|  \\|$`, "m"));
     assert.match(md, /`scripts\/upstream-audit\.py \(fora do plugin\)`/);
     assert.match(md, /`skills\/fresh\/SKILL\.md \(novo, ausente aqui\)`/);
     assert.match(md, /`skills\/gone\/SKILL\.md \(removido\)`/);

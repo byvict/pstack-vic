@@ -1969,3 +1969,12 @@ Verificação focada: 52 testes passaram no Node, sem falhas, cancelamentos ou s
 Adapta o verificador local do open-pstack em `1b03678171f6f400ae2cc9dc4e7a4a6a13e4bb43` para Node 24 e a raiz deste port. `npm run verify` classifica mudanças, executa receitas nomeadas e conserva streams e recibos desde a preparação, antes de interpretar resultados. Tentativas usam diretórios novos; o verificador acompanha os grupos de processos que cria e recusa atribuir a prova a uma fonte alterada durante a execução.
 
 O runner ACP acrescenta `<receipt>.events.jsonl`, com tempos, argumentos/resultados de ferramentas e remoção do token conhecido do T3. As receitas de diagnóstico preservam também os eventos nativos do Grok CLI, verificam o método executado e medem concorrência externa. A reprodução local com Grok 1.0.46 confirmou o corte perto de 300 segundos tanto em ACP quanto em CLI para pedidos de 450 segundos; as verificações longas passam pelo handle persistente do host. Não há reutilização de prova entre heads nem mudança das exigências de Shipping. A origem e as adaptações estão em `NOTICE.md`.
+
+
+# Guia de uso adaptado — 2026-10-07
+
+A decisão da fase 5 sobre `docs/guide/` é superada. O guia volta em português, adaptado dos dez capítulos e do índice da Cursor em `df581122cde17e6e27686b5a448bde23e4ad4318` (pstack 0.15.15, incluindo os PRs 508 e 511). As seis ilustrações são preservadas sem alteração. A atribuição MIT fica em `NOTICE.md`, e `UPSTREAM.md` registra a origem específica do guia sem avançar os pins gerais.
+
+O README continua como entrada curta; o guia ensina por exemplos; `docs/reference.md` concentra configuração e contratos. `poteto-help` encaminha perguntas de uso para os capítulos e mantém os detalhes de configuração na referência. Entram os ensinamentos do PR 508 sobre protótipos antes do plano, README/tutorial como alvo de uma API e revisão adversarial do código produzido. Os mecanismos específicos da Cursor são adaptados aos ambientes do port, sem prometer Custom Mode, VMs de cloud subagents ou continuidade local com a máquina suspensa. Benny e make-bot-ui continuam ausentes.
+
+O digest deixa de excluir `docs/guide/` nos dois upstreams, inclusive quando um commit só altera o guia. O teste de colisão deixa de proibir esse diretório e continua recusando os recursos exclusivos que permanecem fora. Uma regressão de CLI com repositórios de fixture confere o veredito em branco para mudanças exclusivas do guia; o caso misto com conteúdo excluído também exige julgamento.

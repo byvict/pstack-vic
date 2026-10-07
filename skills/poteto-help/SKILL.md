@@ -9,7 +9,7 @@ Answer the user's question about pstack, hand them a prompt they can send, and l
 
 A message that asks for work, such as "use pstack to fix this bug", is not a help question. Read [`poteto-mode`](../poteto-mode/SKILL.md), do the work under it, and mention once that each new task starts with `/poteto-mode` again.
 
-This file maps questions to the skills and reference pages that hold the answers. Those files own the details. Read the file you route to before you quote it, and trust it when it disagrees with this map. The links here point into the installed plugin, which the user may not be able to open, so give the user the file's public copy: `https://github.com/byvict/pstack-vic/blob/main/` followed by its path. This file writes short skill names. On Claude Code each one appears with the plugin prefix, as in `/pstack:poteto-help` and `/pstack:poteto-mode`; on Codex it is `pstack:poteto-help`, asked for by name.
+This file maps questions to the skills, guide and reference pages that hold the answers. Those files own the details. Read the file you route to before you quote it, and trust it when it disagrees with this map. For learning a workflow, use the [guide](../../docs/guide/README.md); for configuration and tool contracts, use the [technical reference](../../docs/reference.md). The links here point into the installed plugin, which the user may not be able to open, so give the user the file's public copy: `https://github.com/byvict/pstack-vic/blob/main/` followed by its path. This file writes short skill names. On Claude Code each one appears with the plugin prefix, as in `/pstack:poteto-help` and `/pstack:poteto-mode`; on Codex it is `pstack:poteto-help`, asked for by name.
 
 ## Find out what they need
 
@@ -32,7 +32,7 @@ Check the state that changes the answer, and mention it only when it does:
 2. Run [`/setup-pstack`](../setup-pstack/SKILL.md) once on each parent. It picks a model and an effort for each role, as a provider-qualified descriptor such as `claude:claude-opus-5-5@xhigh`, probes each new family, and writes a sheet that `~/.claude/CLAUDE.md` includes on Claude Code and that `~/.codex/AGENTS.md` or `~/.grok/AGENTS.md` mirrors on Codex and Grok Build. The sheet applies to new sessions.
 3. Start a real task with `/poteto-mode`, a goal, and a check that can pass or fail.
 
-Workflow skills run when the user explicitly names them or an active pstack workflow calls them. Only `/setup-pstack` and `/poteto-help` load from an ordinary request. Claude Code and Grok keep workflow leaves callable by the router, with this boundary in their descriptions. Codex also disables implicit discovery through each workflow's `agents/openai.yaml`; the router reads the named skill file. The [README](../../README.md) and the [reference](../../docs/reference.md#instalação) have the details.
+Workflow skills run when the user explicitly names them or an active pstack workflow calls them. Only `/setup-pstack` and `/poteto-help` load from an ordinary request. Claude Code and Grok keep workflow leaves callable by the router, with this boundary in their descriptions. Codex also disables implicit discovery through each workflow's `agents/openai.yaml`; the router reads the named skill file. The [setup guide](../../docs/guide/01-setup.md) walks through a first task; the [reference](../../docs/reference.md#instalação) has the installation details.
 
 If cost is the worry, say where the tokens go and how to spend fewer. pstack spends extra tokens on subagents and review panels. Rerun `/setup-pstack` and pick a lower effort or cheaper models. A role set to `auto` or `inherit-parent` runs on the session's model, which saves tokens when the session runs on a cheaper model. A shorter panel list runs fewer subagents, one for each entry. Save `/poteto-mode` for work that needs rigor.
 
@@ -40,7 +40,7 @@ This is a port of pstack for three parents: Claude Code, Codex and Grok Build. O
 
 ## Start a task with `/poteto-mode`
 
-`/poteto-mode` matches the task to a playbook, copies the playbook's steps into the todo list, and runs the other skills as the steps need them. A step it skips stays in the list as `skip: <reason>`. A good prompt states the goal and how to tell it's done. It doesn't list skills, because a hand-written sequence tends to drop or reorder steps the playbook would keep. The [README](../../README.md) has an example.
+`/poteto-mode` matches the task to a playbook, copies the playbook's steps into the todo list, and runs the other skills as the steps need them. A step it skips stays in the list as `skip: <reason>`. A good prompt states the goal and how to tell it's done. It doesn't list skills, because a hand-written sequence tends to drop or reorder steps the playbook would keep. The [task guide](../../docs/guide/02-poteto-mode.md) shows how to prompt, follow up and isolate parallel work.
 
 `/poteto-mode` enters only when the user types it. On Claude Code, `/pstack:poteto-mode` loads the skill into the session's context. It stays there, but nothing re-applies it each turn, and a long session can summarize it away. On Codex, the user asks for `pstack:poteto-mode` by name. On every parent, start each new task with `/poteto-mode` again. Mid-chat, "new task" makes the mode match a fresh playbook. `/poteto-mode` already uses `poteto-agent` for the subagents its playbook steps spawn. To get the same style from a subagent of your own, spawn it with `subagent_type: "poteto-agent"`.
 
@@ -117,9 +117,9 @@ Playbooks are step lists inside `/poteto-mode`, not skills, so they have no slas
 
 Without `/poteto-mode`, a phrase such as "babysit this pr" can start the standalone [`babysit`](../babysit/SKILL.md) skill instead, which watches one PR. The Playbooks section of [`poteto-mode`](../poteto-mode/SKILL.md) lists every playbook and when it applies. The [Autopilot section](../../docs/reference.md#autopilot) of the reference covers opening, watching, and landing PRs, inside a program and outside one.
 
-pstack has no planning skill. Claude Code's plan mode works alongside it. For work that spans phases or stacked PRs, asking `/poteto-mode` for a plan runs the [Multi-phase plan playbook](../poteto-mode/playbooks/multi-phase-plan.md), which writes the plan and doesn't implement it. For a design question, the Prototype playbook or `/architect` settles it in code first.
+pstack has no planning skill. Claude Code's plan mode works alongside it. For work that spans phases or stacked PRs, asking `/poteto-mode` for a plan runs the [Multi-phase plan playbook](../poteto-mode/playbooks/multi-phase-plan.md), which writes the plan and doesn't implement it. For a design question, the Prototype playbook or `/architect` settles it in code first. The [design guide](../../docs/guide/04-design.md) explains prototypes, reviewing the resulting diff, and writing the plan after the design settles.
 
-Principles are one-rule skills that `/poteto-mode` reads and cites in its replies. The user rarely invokes one. They steer with the names instead, as in "apply prove it works. show me the real output." They stay off Claude Code's `/` menu (`user-invocable: false`), but asking for one by name still loads it on demand, and on Codex they appear in the menu. The [Princípios section](../../docs/reference.md#princípios) of the reference lists them.
+Principles are one-rule skills that `/poteto-mode` reads and cites in its replies. The user rarely invokes one. They steer with the names instead, as in "apply prove it works. show me the real output." They stay off Claude Code's `/` menu (`user-invocable: false`), but asking for one by name still loads it on demand, and on Codex they appear in the menu. The [principles guide](../../docs/guide/08-principles.md) shows how to steer; the [reference](../../docs/reference.md#princípios) lists the installed leaves.
 
 ## Fix a run that went wrong
 
@@ -134,7 +134,7 @@ Principles are one-rule skills that `/poteto-mode` reads and cites in its replie
 | An overnight run moved but finished nothing | On Claude Code, `/loop` needs a check that can pass or fail, not a duration. See the [Autopilot section](../../docs/reference.md#autopilot). |
 | The reply claims success from a green build | Ask for the real command, flow, stored value, or profile. That's the prove-it-works principle. |
 
-The [O que ficou de fora section](../../docs/reference.md#o-que-ficou-de-fora) of the reference lists what this port leaves out and links the original guide, which has more pitfalls and the recipes worth copying.
+Use the [recipes and pitfalls](../../docs/guide/10-recipes-and-pitfalls.md) for copyable prompts, the [verification guide](../../docs/guide/06-verify-and-ship.md) for proof and PR delivery, and the [autonomy guide](../../docs/guide/07-overnight.md) for unattended work. The [reference](../../docs/reference.md#o-que-ficou-de-fora) lists upstream features this port leaves out.
 
 ## Make pstack my own
 
@@ -143,7 +143,7 @@ The [O que ficou de fora section](../../docs/reference.md#o-que-ficou-de-fora) o
 - `/poteto-mode write a skill for <workflow>` runs the authoring playbook. The eval playbook tests a skill change blind.
 - Fix a misbehaving skill in its own PR, not inside the feature work where it went wrong.
 
-The [Skills section](../../docs/reference.md#skills) of the reference has one line per skill.
+The [customization guide](../../docs/guide/09-make-it-yours.md) explains personal modes, recurring corrections and skill evaluation. The [Skills section](../../docs/reference.md#skills) of the reference has one line per installed skill.
 
 ## Reply
 

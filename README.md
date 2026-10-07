@@ -33,6 +33,7 @@ Este port mantém a prosa da Cursor onde ela não depende da Cursor e substitui 
 
 ## Documentos
 
+- [Guia de uso](docs/guide/README.md) — dez capítulos com exemplos e receitas para Claude Code, Codex e Grok Build. Comece por ele para aprender a formular tarefas, comparar protótipos, planejar e verificar entregas.
 - [`docs/reference.md`](docs/reference.md) — instalação, layout, dependências, o [autopilot](docs/reference.md#autopilot), todas as skills, subagents, o que ficou de fora.
 - [`CONTEXT.md`](CONTEXT.md) — o glossário do autopilot, com Raiz, Dono, Enxame, Veredito, Rodada, Tick e os outros termos de um programa.
 - [`docs/adr/`](docs/adr/) — as decisões registradas. O [ADR 0005](docs/adr/0005-autopilot-substitui-converge.md) aposenta o converge, supera os ADRs 0001 a 0004 e registra o que entrou no lugar.

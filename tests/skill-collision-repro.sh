@@ -237,7 +237,7 @@ else
 fi
 
 excluded_bad=""
-for excluded in "$repo/skills/make-bot-ui" "$repo/automations/benny" "$repo/docs/guide"; do
+for excluded in "$repo/skills/make-bot-ui" "$repo/automations/benny"; do
   if [ -e "$excluded" ]; then
     excluded_bad="${excluded_bad}${excluded}"$'\n'
   fi
