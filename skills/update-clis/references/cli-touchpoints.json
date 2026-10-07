@@ -8,6 +8,24 @@
   ],
   "touchpoints": [
     {
+      "id": "codex.local-queue-wake",
+      "cli": "codex",
+      "kind": "harness",
+      "contract": "CLI 0.161.0 queue accepts messages for unloaded threads without starting them. A persisted thread loaded in the same local app-server consumes thread/queue/add after turn completion. Unix control sockets require WebSocket Upgrade. Client event IDs, queue/list and queue/delete support finite wake deduplication and cancellation; queued is not execution proof.",
+      "pointers": [
+        {
+          "file": "skills/poteto-mode/references/codex-local-wake.md",
+          "anchor": "Codex CLI 0.161.0"
+        },
+        {
+          "file": "skills/poteto-mode/scripts/codex-wake.ts",
+          "anchor": "thread/queue/add"
+        }
+      ],
+      "coveredBy": [],
+      "measuredOn": "0.161.0"
+    },
+    {
       "id": "codex.exec-argv",
       "cli": "codex",
       "kind": "lane",

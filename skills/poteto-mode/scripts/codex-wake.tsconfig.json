@@ -1,0 +1,5 @@
+{
+  "extends": "./watch-pr/tsconfig.json",
+  "compilerOptions": { "types": ["node"], "erasableSyntaxOnly": true },
+  "include": ["codex-wake.ts", "../../../scripts/codex-wake.test.ts"]
+}

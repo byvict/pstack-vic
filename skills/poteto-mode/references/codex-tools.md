@@ -83,7 +83,7 @@ Some triggers name skills that ship with Claude Code, not pstack. They do not ex
 | `run` (drive a CLI/TUI to see a change work) | Run the app yourself via `shell` and observe the real output. |
 | `verify` (drive a UI to confirm a fix) | Drive the UI with whatever automation you have, or hand the user a concrete manual check. Do not claim done without observing the artifact. |
 | `skill-creator` (Anthropic's SKILL.md authoring skill) | Follow your platform's skill-authoring guidance; the `writing-skills` skill if present. Keep `name` + `description` frontmatter and progressive disclosure. |
-| `loop` (recurring/self-paced re-invocation, used by `babysit`, `shipping`, and the hourly audit tick of the autopilot playbooks, `/loop 1h`) | Codex has no `loop` skill. Re-run the step yourself on a cadence, or use a Codex scheduled task if available. For the hourly audit tick, where no scheduled task re-prompts the session, the cadence is the operator's re-prompt. When you state the protocol, tell the operator to send the tick prompt every hour, and run one full tick on each prompt. |
+| `loop` (recurring/self-paced re-invocation, used by `babysit`, `shipping`, and the hourly audit tick of the autopilot playbooks, `/loop 1h`) | Preserve the upstream payload and cadence using a host scheduled task or the [local CLI wake adapter](codex-local-wake.md) for a persisted thread loaded in a running local host. The local controller must have socket access; ephemeral/unloaded sessions and a worker sandbox without that access cannot arm it. Each event is finite; explicitly rearm only while the program needs another tick. Without either mechanism, tell the operator to send the tick prompt every hour and run one full tick per prompt. |
 
 ## Vendored scripts
 
