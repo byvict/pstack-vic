@@ -1,6 +1,7 @@
-import { afterEach, beforeEach, describe, it } from "node:test";
+import { afterEach, beforeEach, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import fs, { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { loadMatrix, renderRoleSheet } from "../../../scripts/model-matrix.ts";
@@ -10,6 +11,7 @@ import {
   buildPlan,
   ledgerPathFor,
   loadState,
+  main,
   normalizeLane,
   parseSheet,
   pickLane,
@@ -23,6 +25,7 @@ const matrix = loadMatrix();
 
 let home = "";
 let restoreProcessEnv: () => void = () => {};
+let previousNetworkMarker: string | undefined;
 
 // The test process itself holds no CLI, fake or real, and its HOME is the
 // temporary one: a probe whose `env` gets lost on the way to the launcher
@@ -31,10 +34,14 @@ let restoreProcessEnv: () => void = () => {};
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "pstack-setup-"));
   restoreProcessEnv = isolateProcessEnv(home);
+  previousNetworkMarker = process.env.CODEX_SANDBOX_NETWORK_DISABLED;
+  delete process.env.CODEX_SANDBOX_NETWORK_DISABLED;
 });
 
 afterEach(() => {
   restoreProcessEnv();
+  if (previousNetworkMarker === undefined) delete process.env.CODEX_SANDBOX_NETWORK_DISABLED;
+  else process.env.CODEX_SANDBOX_NETWORK_DISABLED = previousNetworkMarker;
   rmSync(home, { recursive: true, force: true });
 });
 
@@ -839,12 +846,12 @@ beforeEach(() => {
 
 /** The fake CLIs and this node on PATH, under the test's temporary home; nothing of the operator's PATH or HOME. */
 function fakeEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
-  return isolatedEnv(home, [bin], extra);
+  return isolatedEnv(home, [bin], { NO_COLOR: "1", ...extra });
 }
 
 /** For a command that must launch nothing: not even the fakes are on PATH, so a lane that starts anyway finds no CLI. */
 function noCliEnv(): NodeJS.ProcessEnv {
-  return isolatedEnv(home);
+  return isolatedEnv(home, [], { NO_COLOR: "1" });
 }
 
 describe("test isolation", () => {
@@ -871,6 +878,109 @@ async function planAndProbe(parent: string, input: { efforts?: Record<string, st
   if (plan.ownerProbe) attestNative(plan, runDir, "owner-nesting", plan.ownerProbe.marker, { ownerId: "owner", childId: "helper" });
   return plan;
 }
+
+describe("Codex parent network admission", () => {
+  const familyNames = "Fable (claude:fable), Opus (claude:claude-opus-5-5), Grok (grok:grok-4.6), Grok-4-7 (grok:grok-4.7)";
+  const networkWarnings = (plan: Plan) => plan.warnings.filter((warning) => warning.includes("Codex parent sandbox"));
+
+  it("warns once about the complete selected family map, including verified families", () => {
+    putLedger("codex", matrix.families.map((family) => family.family));
+    const plan = buildPlan({ parent: "codex", home, matrix, env: { CODEX_SANDBOX_NETWORK_DISABLED: "1" } });
+    assert.equal(plan.schemaVersion, 7);
+    assert.deepEqual(plan.pairs, []);
+    assert.equal(networkWarnings(plan).length, 1);
+    assert.match(networkWarnings(plan)[0], /CODEX_SANDBOX_NETWORK_DISABLED=1/);
+    assert.ok(networkWarnings(plan)[0].includes(familyNames));
+    assert.match(networkWarnings(plan)[0], /provider-dispatch\.md#host-and-parent-prerequisites/);
+    const roles = Object.fromEntries(plan.rows.map((row) => [row.role, row.lanes.map((lane) => lane.replace("claude:fable@", "claude:claude-opus-5-5@"))]));
+    const removed = buildPlan({ parent: "codex", home, matrix, roles, env: { CODEX_SANDBOX_NETWORK_DISABLED: "1" } });
+    assert.equal(networkWarnings(removed).length, 1);
+    assert.doesNotMatch(networkWarnings(removed)[0], /Fable|codex:/);
+    assert.match(networkWarnings(removed)[0], /Opus .*Grok .*Grok-4-7/);
+  });
+
+  it("uses matrix routes to decide which selected families are external", () => {
+    const routes = { ...matrix.routes, codex: { ...matrix.routes.codex, claude: "native" as const } };
+    const plan = buildPlan({ parent: "codex", home, matrix: { ...matrix, routes }, env: { CODEX_SANDBOX_NETWORK_DISABLED: "1" } });
+    assert.equal(networkWarnings(plan).length, 1);
+    assert.doesNotMatch(networkWarnings(plan)[0], /Fable|Opus/);
+    assert.ok(networkWarnings(plan)[0].includes("Grok (grok:grok-4.6), Grok-4-7 (grok:grok-4.7)"));
+  });
+
+  it("refuses before directory creation or provider activity even with no pending pairs", async () => {
+    for (const verified of [false, true]) {
+      if (verified) putLedger("codex", matrix.families.map((family) => family.family));
+      const plan = buildPlan({ parent: "codex", home, matrix });
+      const dir = join(home, verified ? "verified-refusal" : "first-refusal");
+      const log = join(home, "refused-invocations.log");
+      await assert.rejects(runProbes(plan, { dir, env: fakeEnv({ CODEX_SANDBOX_NETWORK_DISABLED: "1", FAKE_INVOCATION_LOG: log }) }),
+        (error: unknown) => error instanceof SetupError && error.message.includes(familyNames));
+      assert.equal(existsSync(dir), false);
+      assert.equal(existsSync(log), false);
+    }
+  });
+
+  it("the CLI plans a warning and refuses probing with exit 1 and no new artifacts", () => {
+    const env = fakeEnv({ CODEX_SANDBOX_NETWORK_DISABLED: "1" });
+    const planned = cli(["plan", "--parent", "codex", "--home", home, "--dir", runDir], env);
+    assert.equal(planned.code, 0, planned.stderr);
+    assert.ok(JSON.parse(planned.stdout).warnings.some((warning: string) => warning.includes(familyNames)));
+    const probed = cli(["probe", "--dir", runDir], env);
+    assert.equal(probed.code, 1);
+    assert.match(probed.stderr, /Codex parent sandbox has network disabled/);
+    assert.deepEqual(readdirSync(runDir), ["plan.json"]);
+  });
+
+  it("forwards the CLI's injected current environment instead of saved warnings or ambient state", async () => {
+    const plan = buildPlan({ parent: "codex", home, matrix });
+    savePlan(runDir, plan);
+    const errors: string[] = [];
+    const code = await main(["probe", "--dir", runDir], { env: fakeEnv({ CODEX_SANDBOX_NETWORK_DISABLED: "1" }),
+      stdout: () => assert.fail("blocked probe emitted a summary"), stderr: (value) => errors.push(value) });
+    assert.equal(code, 1);
+    assert.match(errors.join(""), /Codex parent sandbox has network disabled/);
+    assert.deepEqual(readdirSync(runDir), ["plan.json"]);
+
+    process.env.CODEX_SANDBOX_NETWORK_DISABLED = "1";
+    const log = join(home, "allowed-invocations.log");
+    const output: string[] = [];
+    const allowed = await main(["probe", "--dir", runDir], { env: fakeEnv({ CODEX_SANDBOX_NETWORK_DISABLED: "0", FAKE_INVOCATION_LOG: log }),
+      stdout: (value) => output.push(value), stderr: (value) => assert.fail(value) });
+    assert.equal(allowed, 0);
+    assert.equal(JSON.parse(output.join("")).externalOk, true);
+    assert.match(readFileSync(log, "utf8"), /claude|grok/);
+  });
+
+  it("does not warn or refuse a Claude parent with the same marker", async () => {
+    const env = fakeEnv({ CODEX_SANDBOX_NETWORK_DISABLED: "1" });
+    const plan = buildPlan({ parent: "claude", home, matrix, env });
+    assert.deepEqual(networkWarnings(plan), []);
+    const summary = await runProbes(plan, { dir: runDir, env });
+    assert.equal(summary.externalOk, true);
+    assert.deepEqual(summary.external.map((result) => [result.family, result.status]), [["sol-6-1", "passed"], ["astra", "passed"], ["grok", "passed"], ["grok-4-7", "passed"]]);
+  });
+
+  it("uses exact markers and preserves unblocked empty summaries and buildPlan's default environment", async () => {
+    putLedger("codex", matrix.families.map((family) => family.family));
+    process.env.CODEX_SANDBOX_NETWORK_DISABLED = "1";
+    assert.deepEqual(networkWarnings(buildPlan({ parent: "codex", home, matrix })), []);
+    for (const marker of [undefined, "0", "true"]) {
+      const env = fakeEnv(marker === undefined ? {} : { CODEX_SANDBOX_NETWORK_DISABLED: marker });
+      const plan = buildPlan({ parent: "codex", home, matrix, env });
+      assert.deepEqual(networkWarnings(plan), []);
+      const summary = await runProbes({ ...plan, warnings: ["Codex parent sandbox saved warning"] }, { dir: runDir, env });
+      assert.deepEqual(summary, { external: [], native: [], owner: null, externalOk: true, ok: true });
+    }
+    const plan = buildPlan({ parent: "codex", home, matrix });
+    await assert.rejects(runProbes(plan, { dir: join(home, "ambient-refusal") }), /Codex parent sandbox/);
+    assert.equal(existsSync(join(home, "ambient-refusal")), false);
+  });
+
+  it("keeps cross-family validation authoritative for native-only role changes", () => {
+    const roles = Object.fromEntries(matrix.roles.map((role) => [role.role, ["codex:gpt-6.1-sol@xhigh"]]));
+    assert.throws(() => buildPlan({ parent: "codex", home, matrix, roles, env: { CODEX_SANDBOX_NETWORK_DISABLED: "1" } }), /trail reviewer pool|cross-family/);
+  });
+});
 
 describe("runProbes", () => {
   it("runs one external lane per runner pair, passes when the marker comes back, and lists the native pairs as pending", async () => {
@@ -1226,33 +1336,42 @@ describe("writeSheet", () => {
     }
   });
 
-  it("restores every snapshot when the integration write fails after the sheet was written", async () => {
+  it("refuses an unwritable integration before touching an existing sheet", async (t) => {
     const plan = await planAndProbe("claude");
     writeSheet(plan, runDir, { home });
     const changed = await planAndProbe("claude", { efforts: { grok: "high" } });
     writeFileSync(changed.integrationPath, "# mine\n");
-    chmodSync(changed.integrationPath, 0o444); // the integration write fails with EACCES
-    assert.throws(() => writeSheet(changed, runDir, { home }), /every snapshot restored/);
+    chmodSync(changed.integrationPath, 0o444);
+    if (!permissionDenied(changed.integrationPath, fs.constants.W_OK)) return t.skip("this host permits writes to chmod 0444 files; no OS permission proof");
+    const before = targetState(changed);
+    assertNoMutations(() => assert.throws(() => writeSheet(changed, runDir, { home }), /integration.*not writable/));
+    assert.deepEqual(targetState(changed), before);
     assert.equal(readFileSync(changed.sheetPath, "utf8"), plan.sheet);
     assert.equal(readFileSync(changed.integrationPath, "utf8"), "# mine\n");
   });
 
-  it("removes a first-run sheet again when the integration write fails", async () => {
+  it("creates no first-run sheet or ledger when an existing integration is unwritable", async (t) => {
     const plan = await planAndProbe("codex");
     mkdirSync(dirname(plan.integrationPath), { recursive: true });
     writeFileSync(plan.integrationPath, "");
     chmodSync(plan.integrationPath, 0o444);
-    assert.throws(() => writeSheet(plan, runDir, { home }), /every snapshot restored/);
+    if (!permissionDenied(plan.integrationPath, fs.constants.W_OK)) return t.skip("this host permits writes to chmod 0444 files; no OS permission proof");
+    const before = targetState(plan);
+    assertNoMutations(() => assert.throws(() => writeSheet(plan, runDir, { home }), /integration.*not writable/));
+    assert.deepEqual(targetState(plan), before);
     assert.equal(existsSync(plan.sheetPath), false);
     assert.equal(existsSync(plan.ledgerPath), false);
   });
 
-  it("restores the sheet and the integration when the ledger write fails", async () => {
+  it("refuses a changing unwritable ledger before creating the sheet or integration", async (t) => {
     const plan = await planAndProbe("claude");
     mkdirSync(dirname(plan.ledgerPath), { recursive: true });
     writeFileSync(plan.ledgerPath, `{"schemaVersion":1,"families":{}}\n`);
     chmodSync(plan.ledgerPath, 0o444);
-    assert.throws(() => writeSheet(plan, runDir, { home }), /every snapshot restored/);
+    if (!permissionDenied(plan.ledgerPath, fs.constants.W_OK)) return t.skip("this host permits writes to chmod 0444 files; no OS permission proof");
+    const before = targetState(plan);
+    assertNoMutations(() => assert.throws(() => writeSheet(plan, runDir, { home }), /probe ledger.*not writable/));
+    assert.deepEqual(targetState(plan), before);
     assert.equal(existsSync(plan.sheetPath), false);
     assert.equal(existsSync(plan.integrationPath), false);
     assert.equal(readFileSync(plan.ledgerPath, "utf8"), `{"schemaVersion":1,"families":{}}\n`);
@@ -1263,6 +1382,370 @@ describe("writeSheet", () => {
     mkdirSync(plan.integrationPath, { recursive: true });
     assert.throws(() => writeSheet(plan, runDir, { home }), /not a regular file/);
     assert.equal(existsSync(plan.sheetPath), false);
+  });
+});
+
+function permissionDenied(path: string, mode: number): boolean {
+  try {
+    fs.accessSync(path, mode);
+    return false;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && (error.code === "EACCES" || error.code === "EPERM")) return true;
+    throw error;
+  }
+}
+
+function targetState(plan: Plan) {
+  return [plan.sheetPath, plan.integrationPath, plan.ledgerPath].map((path) => existsSync(path)
+    ? { bytes: readFileSync(path, "utf8"), mtime: statSync(path).mtimeMs }
+    : null);
+}
+
+function assertNoMutations(action: () => void): void {
+  const mutations: string[] = [];
+  const mocks = (["mkdirSync", "writeFileSync", "unlinkSync"] as const).map((name) => {
+    const original = fs[name];
+    return mock.method(fs, name, (...args: unknown[]) => {
+      mutations.push(`${name} ${String(args[0])}`);
+      return Reflect.apply(original, fs, args);
+    });
+  });
+  syncBuiltinESMExports();
+  try {
+    action();
+    assert.deepEqual(mutations, [], "admission changed the filesystem before refusing");
+  } finally {
+    for (const method of mocks) method.mock.restore();
+    syncBuiltinESMExports();
+  }
+}
+
+describe("write admission", () => {
+  beforeEach(() => putLedger("claude", matrix.families.map((family) => family.family)));
+
+  it("refuses an unwritable sheet before any target changes", (t) => {
+    const plan = buildPlan({ parent: "claude", home, matrix });
+    writeFileSync(plan.sheetPath, "# old sheet\n");
+    chmodSync(plan.sheetPath, 0o444);
+    if (!permissionDenied(plan.sheetPath, fs.constants.W_OK)) return t.skip("this host permits writes to chmod 0444 files; no OS permission proof");
+    const before = targetState(plan);
+    assertNoMutations(() => assert.throws(() => writeSheet(plan, runDir, { home }), /sheet.*not writable/));
+    assert.deepEqual(targetState(plan), before);
+  });
+
+  it("checks an unchanged integration when the sheet changes", (t) => {
+    const initial = buildPlan({ parent: "claude", home, matrix });
+    writeSheet(initial, runDir, { home });
+    const plan = buildPlan({ parent: "claude", home, matrix, efforts: { grok: "high" } });
+    chmodSync(plan.integrationPath, 0o444);
+    if (!permissionDenied(plan.integrationPath, fs.constants.W_OK)) return t.skip("this host permits writes to chmod 0444 files; no OS permission proof");
+    const before = targetState(plan);
+    assertNoMutations(() => assert.throws(() => writeSheet(plan, runDir, { home }), /integration.*not writable/));
+    assert.deepEqual(targetState(plan), before);
+  });
+
+  it("checks an unchanged sheet when the integration changes", (t) => {
+    const plan = buildPlan({ parent: "claude", home, matrix });
+    writeFileSync(plan.sheetPath, plan.sheet);
+    writeFileSync(plan.integrationPath, "# mine\n");
+    chmodSync(plan.sheetPath, 0o444);
+    if (!permissionDenied(plan.sheetPath, fs.constants.W_OK)) return t.skip("this host permits writes to chmod 0444 files; no OS permission proof");
+    const before = targetState(plan);
+    assertNoMutations(() => assert.throws(() => writeSheet(plan, runDir, { home }), /sheet.*not writable/));
+    assert.deepEqual(targetState(plan), before);
+  });
+
+  it("admits no writes or access checks when all target bytes are identical", () => {
+    const plan = buildPlan({ parent: "claude", home, matrix });
+    writeSheet(plan, runDir, { home });
+    for (const path of [plan.sheetPath, plan.integrationPath, plan.ledgerPath]) chmodSync(path, 0o444);
+    const before = targetState(plan);
+    const access = mock.method(fs, "accessSync", () => { throw new Error("no-op unexpectedly checked access"); });
+    syncBuiltinESMExports();
+    try {
+      assertNoMutations(() => {
+        const result = writeSheet(plan, runDir, { home });
+        assert.deepEqual([result.sheet, result.integration, result.ledger], ["unchanged", "unchanged", "unchanged"]);
+      });
+      assert.equal(access.mock.callCount(), 0);
+      assert.deepEqual(targetState(plan), before);
+    } finally {
+      access.mock.restore();
+      syncBuiltinESMExports();
+    }
+  });
+
+  it("does not require write permission for an unchanged ledger during a sheet update", () => {
+    const initial = buildPlan({ parent: "claude", home, matrix });
+    writeSheet(initial, runDir, { home });
+    const plan = buildPlan({ parent: "claude", home, matrix, efforts: { grok: "high" } });
+    chmodSync(plan.ledgerPath, 0o444);
+    const before = targetState(plan)[2];
+    const result = writeSheet(plan, runDir, { home });
+    assert.deepEqual([result.sheet, result.integration, result.ledger], ["updated", "unchanged", "unchanged"]);
+    assert.equal(readFileSync(plan.sheetPath, "utf8"), plan.sheet);
+    assert.deepEqual(targetState(plan)[2], before);
+  });
+
+  it("admits existing writable files even when their directory is not writable", (t) => {
+    const initial = buildPlan({ parent: "claude", home, matrix });
+    writeSheet(initial, runDir, { home });
+    const plan = buildPlan({ parent: "claude", home, matrix, efforts: { grok: "high" } });
+    const configHome = dirname(plan.sheetPath);
+    chmodSync(configHome, 0o555);
+    try {
+      if (!permissionDenied(configHome, fs.constants.W_OK)) return t.skip("this host bypasses directory write permissions; no OS permission proof");
+      const result = writeSheet(plan, runDir, { home });
+      assert.deepEqual([result.sheet, result.integration, result.ledger], ["updated", "unchanged", "unchanged"]);
+      assert.equal(readFileSync(plan.sheetPath, "utf8"), plan.sheet);
+    } finally {
+      chmodSync(configHome, 0o755);
+    }
+  });
+
+  it("checks ledger creation when both peer files already have the rendered bytes", async (t) => {
+    rmSync(ledgerPathFor("claude", home));
+    const plan = await planAndProbe("claude");
+    writeFileSync(plan.sheetPath, plan.sheet);
+    writeFileSync(plan.integrationPath, `${CLAUDE_INCLUDE_LINE}\n`);
+    const configHome = dirname(plan.sheetPath);
+    chmodSync(configHome, 0o555);
+    try {
+      if (!permissionDenied(configHome, fs.constants.W_OK | fs.constants.X_OK)) return t.skip("this host permits creation in chmod 0555 directories; no OS permission proof");
+      const before = targetState(plan);
+      assertNoMutations(() => assert.throws(() => writeSheet(plan, runDir, { home }), /probe ledger.*not writable/));
+      assert.deepEqual(targetState(plan), before);
+      assert.equal(existsSync(plan.ledgerPath), false);
+    } finally {
+      chmodSync(configHome, 0o755);
+    }
+  });
+
+  it("checks the nearest existing parent of missing targets without creating directories", (t) => {
+    const cfg = join(home, "blocked", "nested", "config");
+    const env = { CLAUDE_CONFIG_DIR: cfg };
+    const original = buildPlan({ parent: "claude", home, matrix });
+    const plan = { ...original, sheetPath: join(cfg, "pstack-models.md"), integrationPath: join(cfg, "CLAUDE.md"), ledgerPath: join(cfg, "pstack-probes.json") };
+    const ancestor = join(home, "blocked");
+    mkdirSync(ancestor);
+    chmodSync(ancestor, 0o555);
+    try {
+      if (!permissionDenied(ancestor, fs.constants.W_OK | fs.constants.X_OK)) return t.skip("this host permits creation in chmod 0555 directories; no OS permission proof");
+      assertNoMutations(() => assert.throws(() => writeSheet(plan, runDir, { home, env }), /sheet.*not writable.*blocked/));
+      assert.deepEqual(readdirSync(ancestor), []);
+    } finally {
+      chmodSync(ancestor, 0o755);
+    }
+    const result = writeSheet(plan, runDir, { home, env });
+    assert.deepEqual([result.sheet, result.integration, result.ledger], ["created", "created", "unchanged"]);
+    assert.equal(readFileSync(plan.integrationPath, "utf8"), "@./pstack-models.md\n");
+  });
+
+  it("refuses a missing target in an unwritable config directory", (t) => {
+    const plan = buildPlan({ parent: "claude", home, matrix });
+    chmodSync(dirname(plan.sheetPath), 0o555);
+    try {
+      if (!permissionDenied(dirname(plan.sheetPath), fs.constants.W_OK | fs.constants.X_OK)) return t.skip("this host permits creation in chmod 0555 directories; no OS permission proof");
+      const before = targetState(plan);
+      assertNoMutations(() => assert.throws(() => writeSheet(plan, runDir, { home }), /sheet.*not writable/));
+      assert.deepEqual(targetState(plan), before);
+    } finally {
+      chmodSync(dirname(plan.sheetPath), 0o755);
+    }
+  });
+
+  it("propagates inspection permission errors rather than treating them as absence", (t) => {
+    const plan = buildPlan({ parent: "claude", home, matrix });
+    chmodSync(dirname(plan.sheetPath), 0o600);
+    try {
+      if (!permissionDenied(dirname(plan.sheetPath), fs.constants.X_OK)) return t.skip("this host bypasses directory search permissions; no OS permission proof");
+      assertNoMutations(() => assert.throws(() => writeSheet(plan, runDir, { home }), /sheet.*EACCES/));
+    } finally {
+      chmodSync(dirname(plan.sheetPath), 0o755);
+    }
+    assert.equal(existsSync(plan.sheetPath), false);
+  });
+
+  it("refuses ENOTDIR without hiding it as a missing target", () => {
+    const initial = buildPlan({ parent: "claude", home, matrix });
+    const cfg = join(home, "file-parent", "nested");
+    writeFileSync(dirname(cfg), "not a directory\n");
+    const plan = { ...initial, sheetPath: join(cfg, "pstack-models.md"), integrationPath: join(cfg, "CLAUDE.md"), ledgerPath: join(cfg, "pstack-probes.json") };
+    assertNoMutations(() => assert.throws(() => writeSheet(plan, runDir, { home, env: { CLAUDE_CONFIG_DIR: cfg } }), /sheet.*ENOTDIR/));
+    assert.equal(readFileSync(dirname(cfg), "utf8"), "not a directory\n");
+  });
+
+  for (const target of ["sheetPath", "integrationPath", "ledgerPath"] as const) {
+    it(`refuses a dangling ${target} symlink without writing through it`, () => {
+      const plan = buildPlan({ parent: "claude", home, matrix });
+      const missing = join(home, `missing-${target}`);
+      if (existsSync(plan[target])) rmSync(plan[target]);
+      symlinkSync(missing, plan[target]);
+      assertNoMutations(() => assert.throws(() => writeSheet(plan, runDir, { home }), /ENOENT/));
+      assert.equal(readlinkSync(plan[target]), missing);
+      assert.equal(existsSync(missing), false);
+      assert.equal(existsSync(target === "sheetPath" ? plan.integrationPath : plan.sheetPath), false);
+    });
+  }
+
+  it("refuses a dangling config-home symlink before creating its referent", () => {
+    const initial = buildPlan({ parent: "claude", home, matrix });
+    const cfg = join(home, "dangling-config");
+    const missing = join(home, "missing-config");
+    symlinkSync(missing, cfg);
+    const plan = { ...initial, sheetPath: join(cfg, "pstack-models.md"), integrationPath: join(cfg, "CLAUDE.md"), ledgerPath: join(cfg, "pstack-probes.json") };
+    assertNoMutations(() => assert.throws(() => writeSheet(plan, runDir, { home, env: { CLAUDE_CONFIG_DIR: cfg } }), /sheet.*ENOENT/));
+    assert.equal(readlinkSync(cfg), missing);
+    assert.equal(existsSync(missing), false);
+  });
+
+  it("refuses a symlink cycle before any target mutation", () => {
+    const plan = buildPlan({ parent: "claude", home, matrix });
+    const left = join(dirname(plan.sheetPath), "loop-left");
+    const right = join(dirname(plan.sheetPath), "loop-right");
+    symlinkSync(right, left);
+    symlinkSync(left, right);
+    symlinkSync(left, plan.sheetPath);
+    const ledger = readFileSync(plan.ledgerPath, "utf8");
+    assertNoMutations(() => assert.throws(() => writeSheet(plan, runDir, { home }), /sheet.*ELOOP/));
+    assert.equal(readlinkSync(plan.sheetPath), left);
+    assert.equal(readlinkSync(left), right);
+    assert.equal(readlinkSync(right), left);
+    assert.equal(existsSync(plan.integrationPath), false);
+    assert.equal(readFileSync(plan.ledgerPath, "utf8"), ledger);
+  });
+
+  it("refuses a usable file symlink with a read-only referent without changing its peers", (t) => {
+    const plan = buildPlan({ parent: "claude", home, matrix });
+    const target = join(home, "read-only-sheet-target.md");
+    writeFileSync(target, "# original sheet\n");
+    symlinkSync(target, plan.sheetPath);
+    writeFileSync(plan.integrationPath, "# original integration\n");
+    chmodSync(target, 0o444);
+    try {
+      if (!permissionDenied(target, fs.constants.W_OK)) return t.skip("this host permits writes to chmod 0444 referents; no OS permission proof");
+      const before = targetState(plan);
+      assertNoMutations(() => assert.throws(() => writeSheet(plan, runDir, { home }), /sheet.*not writable/));
+      assert.equal(lstatSync(plan.sheetPath).isSymbolicLink(), true);
+      assert.equal(readlinkSync(plan.sheetPath), target);
+      assert.equal(readFileSync(target, "utf8"), "# original sheet\n");
+      assert.deepEqual(targetState(plan), before);
+    } finally {
+      chmodSync(target, 0o644);
+    }
+  });
+
+  it("preserves usable file and directory symlinks when updating their referents", () => {
+    const cfg = join(home, "linked-config");
+    symlinkSync(join(home, ".claude"), cfg);
+    const env = { CLAUDE_CONFIG_DIR: cfg };
+    const plan = buildPlan({ parent: "claude", home, matrix, env });
+    const sheet = join(home, "sheet-target.md");
+    const integration = join(home, "integration-target.md");
+    writeFileSync(sheet, "# old\n");
+    writeFileSync(integration, "# mine\n");
+    symlinkSync(sheet, plan.sheetPath);
+    symlinkSync(integration, plan.integrationPath);
+    const result = writeSheet(plan, runDir, { home, env });
+    assert.deepEqual([result.sheet, result.integration, result.ledger], ["updated", "updated", "unchanged"]);
+    assert.equal(readlinkSync(plan.sheetPath), sheet);
+    assert.equal(readlinkSync(plan.integrationPath), integration);
+    assert.equal(readlinkSync(cfg), join(home, ".claude"));
+    assert.equal(readFileSync(sheet, "utf8"), plan.sheet);
+    assert.equal(readFileSync(integration, "utf8"), "# mine\n@./pstack-models.md\n");
+  });
+});
+
+describe("late write failures after admission", () => {
+  for (const failed of ["integrationPath", "ledgerPath"] as const) {
+    it(`restores original bytes after a late ${failed} failure`, async () => {
+      const plan = await planAndProbe("codex");
+      mkdirSync(dirname(plan.sheetPath), { recursive: true });
+      writeFileSync(plan.sheetPath, "# original sheet\n");
+      writeFileSync(plan.integrationPath, "# original integration\n");
+      writeFileSync(plan.ledgerPath, '{"schemaVersion":1,"families":{}}\n');
+      const before = targetState(plan).map((target) => target?.bytes);
+      const original = fs.writeFileSync;
+      const written: string[] = [];
+      let failedOnce = false;
+      const write = mock.method(fs, "writeFileSync", (...args: unknown[]) => {
+        if (args[0] === plan[failed] && !failedOnce) {
+          failedOnce = true;
+          throw new Error("late injected failure");
+        }
+        written.push(String(args[0]));
+        return Reflect.apply(original, fs, args);
+      });
+      syncBuiltinESMExports();
+      try {
+        assert.throws(() => writeSheet(plan, runDir, { home }), /late injected failure.*every snapshot restored/);
+        assert.ok(written.includes(plan.sheetPath));
+        if (failed === "ledgerPath") assert.ok(written.includes(plan.integrationPath));
+        assert.deepEqual(targetState(plan).map((target) => target?.bytes), before);
+      } finally {
+        write.mock.restore();
+        syncBuiltinESMExports();
+      }
+    });
+  }
+
+  it("removes newly created files after a late ledger failure", async () => {
+    const plan = await planAndProbe("claude");
+    const original = fs.writeFileSync;
+    const write = mock.method(fs, "writeFileSync", (...args: unknown[]) => {
+      if (args[0] === plan.ledgerPath) throw new Error("late ledger failure");
+      return Reflect.apply(original, fs, args);
+    });
+    syncBuiltinESMExports();
+    try {
+      assert.throws(() => writeSheet(plan, runDir, { home }), /late ledger failure.*every snapshot restored/);
+      assert.deepEqual(targetState(plan), [null, null, null]);
+    } finally {
+      write.mock.restore();
+      syncBuiltinESMExports();
+    }
+  });
+
+  it("restores targets after a readback mismatch", () => {
+    putLedger("claude", matrix.families.map((family) => family.family));
+    const plan = buildPlan({ parent: "claude", home, matrix });
+    const original = fs.writeFileSync;
+    const write = mock.method(fs, "writeFileSync", (...args: unknown[]) => {
+      if (args[0] === plan.integrationPath) return original(plan.integrationPath, "corrupted render\n");
+      return Reflect.apply(original, fs, args);
+    });
+    syncBuiltinESMExports();
+    try {
+      assert.throws(() => writeSheet(plan, runDir, { home }), /read back differs from the render.*every snapshot restored/);
+      assert.deepEqual(targetState(plan).slice(0, 2), [null, null]);
+      assert.match(readFileSync(plan.ledgerPath, "utf8"), /verifiedAt/);
+    } finally {
+      write.mock.restore();
+      syncBuiltinESMExports();
+    }
+  });
+
+  it("continues restoring later targets when one restoration fails", async () => {
+    const plan = await planAndProbe("codex");
+    mkdirSync(dirname(plan.sheetPath), { recursive: true });
+    writeFileSync(plan.sheetPath, "# original sheet\n");
+    writeFileSync(plan.integrationPath, "# original integration\n");
+    const original = fs.writeFileSync;
+    const write = mock.method(fs, "writeFileSync", (...args: unknown[]) => {
+      if (args[0] === plan.ledgerPath) throw new Error("late ledger failure");
+      if (args[0] === plan.sheetPath && args[1] === "# original sheet\n") throw new Error("sheet restoration denied");
+      return Reflect.apply(original, fs, args);
+    });
+    syncBuiltinESMExports();
+    try {
+      assert.throws(() => writeSheet(plan, runDir, { home }), /snapshot restore failed for .*sheet restoration denied/);
+      assert.equal(readFileSync(plan.sheetPath, "utf8"), plan.sheet);
+      assert.equal(readFileSync(plan.integrationPath, "utf8"), "# original integration\n");
+      assert.equal(existsSync(plan.ledgerPath), false);
+    } finally {
+      write.mock.restore();
+      syncBuiltinESMExports();
+    }
   });
 });
 

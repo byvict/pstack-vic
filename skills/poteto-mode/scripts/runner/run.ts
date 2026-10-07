@@ -52,6 +52,7 @@ import {
 
 const ERROR_EVIDENCE_LIMIT = 4_000;
 const GROK_PREFLIGHT_RETRY_DELAY_MS = 5_000;
+const CODEX_NETWORK_HINT = "likely cause: Codex parent sandbox has network disabled; see provider-dispatch.md#host-and-parent-prerequisites";
 
 export interface RunResult {
   readonly exitCode: number;
@@ -679,14 +680,16 @@ async function runPreparedLane(
 }
 
 function cliLane(options: Extract<ExecutionRequest, { kind: "cli" }>): Lane {
+  const parentNetworkDisabled = options.parent === "codex" && process.env.CODEX_SANDBOX_NETWORK_DISABLED === "1";
   const invocation = invocationCommand(options);
-  return preparedLane(options, invocation, (context) => runCliAttempt(options, invocation, context));
+  return preparedLane(options, invocation, (context) => runCliAttempt(options, invocation, context, parentNetworkDisabled));
 }
 
 async function runCliAttempt(
   options: Extract<ExecutionRequest, { kind: "cli" }>,
   invocation: CommandSpec,
   context: PreparedContext,
+  parentNetworkDisabled: boolean,
 ): Promise<LaneOutcome> {
   const result = await runModel(options, context.executable, invocation, context.environment, context, context.evidence);
 
@@ -712,6 +715,8 @@ async function runCliAttempt(
       : result.timedOut
         ? "timed-out"
         : providerFailure?.status ?? unavailableStatus(rawFailureEvidence, options.model);
+    const hint = status === "child-failed" && providerFailure === null && parentNetworkDisabled
+      ? CODEX_NETWORK_HINT : null;
     return {
       kind: "failed",
       status,
@@ -722,9 +727,9 @@ async function runCliAttempt(
             : `launcher received ${result.cancelledBy} after child exited`
           : result.timedOut
             ? `launcher exceeded the explicit ${options.timeoutMs}ms deadline`
-            : providerFailure?.message ?? `child exited with status ${result.exitCode}`,
+            : providerFailure?.message ?? `child exited with status ${result.exitCode}${hint === null ? "" : `; ${hint}`}`,
         evidence: evidence(providerFailure === null
-          ? rawFailureEvidence
+          ? `${hint === null ? "" : `${hint}\n`}${rawFailureEvidence}`
           : `${providerFailure.message}\n${rawFailureEvidence}`),
       },
       metadata: providerFailure?.metadata,
