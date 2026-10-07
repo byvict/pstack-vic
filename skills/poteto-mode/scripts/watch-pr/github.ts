@@ -885,18 +885,32 @@ export class GhGitHubReader implements T.GitHubReader {
     };
   }
   async pullRequest(context: T.PrContext): Promise<T.PullRequestFacts> {
-    const value = await runJson(graphqlArgs(PR_NATIVE_QUERY, context));
-    const native = parseNativeLanding(value, context);
-    return {
-      ...parsePullRequest(
-        at(value, ["data", "repository", "pullRequest"]),
+    try {
+      const value = await runJson(graphqlArgs(PR_NATIVE_QUERY, context));
+      const native = parseNativeLanding(value, context);
+      return {
+        ...parsePullRequest(
+          at(value, ["data", "repository", "pullRequest"]),
+          context
+        ),
+        native: {
+          ...native,
+          requirements: await readRequirements(value, context, native),
+        },
+      };
+    } catch (error) {
+      if (!(error instanceof WatcherQueryError)) throw error;
+      // Optional landing fields must not make the upstream PR facts unreadable.
+      const facts = parsePullRequest(
+        await runJson([
+          "gh", "pr", "view", String(context.number), "--repo",
+          `${context.owner}/${context.repo}`, "--json",
+          "mergeable,mergeStateStatus,reviewDecision,headRefOid,headRefName,baseRefName,state,mergedAt,isDraft",
+        ]),
         context
-      ),
-      native: {
-        ...native,
-        requirements: await readRequirements(value, context, native),
-      },
-    };
+      );
+      return { ...facts, native: { kind: "unknown", reason: error.failure.detail } };
+    }
   }
   async openPullRequests(
     repository: T.Repository

@@ -265,11 +265,6 @@ export type MergeGateReason =
   | "changes-requested";
 export type MergeBlocker =
   | {
-      readonly kind: "native-admission";
-      readonly pr: PrContext;
-      readonly snapshot: PrSnapshot;
-    }
-  | {
       readonly kind: "merge-conflicts";
       readonly pr: PrContext;
       readonly facts: PullRequestFacts;
@@ -337,12 +332,10 @@ export interface WaitingDecision {
 export type PrDecision =
   | { readonly kind: "blocker"; readonly blocker: MergeBlocker }
   | WaitingDecision
-  | { readonly kind: "admitted"; readonly snapshot: PrSnapshot }
   | { readonly kind: "ready"; readonly pr: ReadyPr }
   | { readonly kind: "merged"; readonly pr: MergedPr };
 export type StackDecision =
   | { readonly kind: "blocker"; readonly blocker: MergeBlocker }
-  | { readonly kind: "admitted"; readonly snapshot: PrSnapshot }
   | WaitingDecision
   | { readonly kind: "clear"; readonly prs: NonEmpty<ReadyPr | MergedPr> };
 export type WatchMode = "single" | "stack" | "queued-stack";
@@ -398,12 +391,6 @@ export type ProgressVerdict =
       readonly retryInSeconds: number;
     });
 export type BlockerVerdict =
-  | (Terminal<"BLOCKER", 8> & {
-      readonly blocker: Extract<
-        MergeBlocker,
-        { readonly kind: "native-admission" }
-      >;
-    })
   | (Terminal<"BLOCKER", 2> & {
       readonly blocker: Extract<
         MergeBlocker,

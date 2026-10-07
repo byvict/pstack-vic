@@ -126,8 +126,6 @@ type StatusQueryBlocker = {
 };
 function renderBlocker(blocker: T.MergeBlocker | StatusQueryBlocker): string {
   switch (blocker.kind) {
-    case "native-admission":
-      return `BLOCKER: native-admission\n${renderLanding(blocker.snapshot)}action=diagnose current requirements and queue removal before another admission`;
     case "merge-conflicts":
       return [
         "BLOCKER: merge-conflicts",

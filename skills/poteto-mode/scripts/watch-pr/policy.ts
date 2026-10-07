@@ -114,22 +114,6 @@ export function observeLanding(
 const admitted = (row: T.PrSnapshot): boolean =>
   row.facts.native.kind === "observed" &&
   (row.facts.native.queueEntry !== null || row.facts.native.autoMerge !== null);
-const requirementsReady = (row: T.PrSnapshot): boolean =>
-  row.facts.native.kind === "observed" &&
-  row.facts.native.currentBaseSha !== "unknown" &&
-  row.facts.native.requirements.kind === "known" &&
-  row.facts.native.requirements.checks.every(
-    (check) => check.head.state === "passed"
-  );
-const nativeBlocker = (row: T.PrSnapshot): T.MergeBlocker | null =>
-  row.kind === "open" &&
-  (["failed", "unknown"].includes(row.landing.kind) ||
-    (row.landing.kind === "removed" && row.landing.headBinding === "current") ||
-    (row.facts.native.kind === "observed" &&
-      (row.facts.native.requirements.kind === "unknown" ||
-        row.facts.native.currentBaseSha === "unknown")))
-    ? { kind: "native-admission", pr: row.context, snapshot: row }
-    : null;
 const AUTOMATION_TOKENS = [
   "bugbot",
   "security review",
@@ -232,7 +216,6 @@ export async function readSnapshot(args: {
 }
 const conflictBlocker = (row: T.PrSnapshot): T.MergeBlocker | null =>
   row.kind === "open" &&
-  !admitted(row) &&
   (row.facts.mergeable === "CONFLICTING" ||
     row.facts.mergeStateStatus === "DIRTY" ||
     row.facts.mergeStateStatus === "CONFLICTING")
@@ -247,7 +230,6 @@ function threadBlocker(row: T.PrSnapshot): T.MergeBlocker | null {
 }
 const ciBlocker = (row: T.PrSnapshot): T.MergeBlocker | null =>
   row.kind === "open" &&
-  !admitted(row) &&
   (row.ci.kind === "ci-failing" || row.ci.kind === "ci-github-rejected")
     ? { kind: "failing-checks", pr: row.context, ci: row.ci }
     : null;
@@ -289,7 +271,6 @@ function readyContribution(
   if (
     row.kind !== "open" ||
     row.ci.kind !== "ci-clean" ||
-    !requirementsReady(row) ||
     row.threads.length !== 0 ||
     conflictBlocker(row) !== null ||
     gateReason(row, allowDraft) !== null
@@ -319,21 +300,12 @@ export function classifyPr(
   allowDraft = false
 ): T.PrDecision {
   for (const blocker of [
-    nativeBlocker(row),
     conflictBlocker(row),
     threadBlocker(row),
     ciBlocker(row),
     gateBlocker(row, allowDraft),
   ])
     if (blocker !== null) return { kind: "blocker", blocker };
-  if (
-    row.kind === "open" &&
-    (admitted(row) ||
-      ((row.landing.kind === "not-admitted" || !requirementsReady(row)) &&
-        row.ci.kind === "ci-clean" &&
-        !(allowDraft && row.facts.isDraft)))
-  )
-    return { kind: "admitted", snapshot: row };
   if (row.kind === "open" && row.ci.kind === "ci-pending")
     return { kind: "waiting", frontier: row.context, pending: row.ci.pending };
   const ready = readyContribution(row, allowDraft);
@@ -346,7 +318,7 @@ export function selectTierMajorStackDecision(
   rows: T.NonEmpty<T.PrSnapshot>,
   allowDraft = false
 ): T.StackDecision {
-  for (const tier of [nativeBlocker, conflictBlocker, threadBlocker, ciBlocker])
+  for (const tier of [conflictBlocker, threadBlocker, ciBlocker])
     for (const row of rows) {
       const blocker = tier(row);
       if (blocker !== null) return { kind: "blocker", blocker };
@@ -362,10 +334,6 @@ export function selectTierMajorStackDecision(
         frontier: row.context,
         pending: row.ci.pending,
       };
-  for (const row of rows) {
-    const decision = classifyPr(row, allowDraft);
-    if (decision.kind === "admitted") return decision;
-  }
   const prs = nonEmpty(
     rows
       .map((row) => readyContribution(row, allowDraft))
@@ -425,8 +393,6 @@ function blockerVerdict(
   blocker: T.MergeBlocker
 ): T.BlockerVerdict {
   switch (blocker.kind) {
-    case "native-admission":
-      return stamp({ kind: "BLOCKER", terminal: true, exitCode: 8, blocker });
     case "merge-conflicts":
       return stamp({ kind: "BLOCKER", terminal: true, exitCode: 2, blocker });
     case "review-threads":
@@ -598,26 +564,6 @@ export async function runSimple(args: {
           args.mode
         ),
       };
-    if (
-      decision.kind === "clear" &&
-      complete.some((row) => row.kind === "open" && admitted(row))
-    )
-      return {
-        kind: "sleep",
-        seconds: args.options.interval,
-        onDeadline: () =>
-          stamp({
-            kind: "TIMEOUT",
-            terminal: true,
-            exitCode: 5,
-            reason: {
-              kind: "queued-stack",
-              frontier: complete[0].context,
-              unmergedCount: complete.filter((row) => row.kind !== "merged")
-                .length,
-            },
-          }),
-      };
     if (decision.kind === "clear")
       return {
         kind: "terminal",
@@ -630,22 +576,6 @@ export async function runSimple(args: {
           },
           args.mode
         ),
-      };
-    if (decision.kind === "admitted")
-      return {
-        kind: "sleep",
-        seconds: args.options.interval,
-        onDeadline: () =>
-          stamp({
-            kind: "TIMEOUT",
-            terminal: true,
-            exitCode: 5,
-            reason: {
-              kind: "queued-stack",
-              frontier: decision.snapshot.context,
-              unmergedCount: 1,
-            },
-          }),
       };
     args.dependencies.emit(
       stamp({

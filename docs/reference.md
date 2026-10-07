@@ -140,7 +140,7 @@ Nada é declarado em manifest. O que as skills usam:
 - **CLIs `claude`, `codex` e `grok`** — autenticados, só os que o sheet de modelos usa. O pai prefere lanes nativas e pode usar o runner do mesmo provedor quando a rota nativa não atende à tarefa. A versão delas muda só pela skill `update-clis` (seção [Versões das CLIs](#versões-das-clis)).
 - **`gh`** — forge padrão dos playbooks; quando Origin está disponível e resolve o repositório, os playbooks seguem essa rota. `gt` só no playbook Orchestrate. A skill `update-clis` também usa `gh` para ler as releases do codex.
 - **`lsof`** — só para `update-clis`, que o usa para saber se alguém está rodando a CLI que ela trocaria.
-- **`bun`** — só para `watch-pr` e `orch`, que vieram da Cursor sem mudança, e para os testes deles e o typecheck do `watch-pr` (`npm run test:bun`).
+- **`bun`** — para `watch-pr` e `orch`, originados na Cursor, e para os testes deles e o typecheck do `watch-pr` (`npm run test:bun`). O watcher conserva observações adicionais de admissão, sem acrescentar gates: single/stack retornam readiness upstream; `--queued-stack` espera o merge efetivo. `LANDING` pode informar unknown, falha ou remoção mesmo com `READY`. A decisão e os limites estão no [ADR 0006](adr/0006-watcher-observa-admissao-sem-gates-extras.md).
 - **`jq` e `rg`** — só para `worktree-audit.sh` (playbook Worktree cleanup); sem eles o audit avisa e deixa colunas em branco.
 - **`run`, `verify`, `loop`** — built-ins do Claude Code; **`skill-creator`** — skill oficial da Anthropic para autoria de SKILL.md. Os quatro têm substituto em `codex-tools.md`. O `verify` nem sempre fica ao alcance do agente, e a seção [Autopilot](#autopilot) diz o que a lane de tela usa nesse caso.
 
