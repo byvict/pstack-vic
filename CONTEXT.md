@@ -23,7 +23,7 @@ O fornecedor de um modelo (Claude, Codex, Grok); duas lanes são cruzadas quando
 _Avoid_: provider, vendor, modelo
 
 **Executor**:
-Uma Família que escreveu o trabalho de uma execução: a da sessão que o fez, sempre, e a de cada Lane de escrita cujo resultado entrou na entrega. Uma Lane só de leitura não é Executor. A revisão da trilha de decisões vem do papel `trail reviewer pool` e nunca de uma Família executora.
+Uma Família que escreveu o trabalho de uma execução: a da sessão que o fez, sempre, e a de cada Lane de escrita cujo resultado entrou na entrega. Uma Lane só de leitura não é Executor.
 _Avoid_: autor, pai, escritor
 
 ### O programa

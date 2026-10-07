@@ -36,10 +36,12 @@ As auditorias `2026-10-07-pstack-codex-fidelity-audit.md` e `2026-10-07-cursor-e
 Por determinação do operador, `skills/poteto-mode/references/provider-dispatch.md` pertence à outra frente e não é editado simultaneamente. A skill da trilha é a autoridade de elegibilidade e conclusão deste papel; consulta provider-dispatch para transporte e evidência. Antes de publicar uma distribuição integrada, a frente proprietária precisa reconciliar estes pontos:
 
 1. Em *Cross-family selection*, separar a regra da trilha (somente raiz) da regra/fallbacks de Arena; retirar a dispensa automática da trilha. Documentar a semântica de `--executor` e `executors` acima.
-2. Atualizar a descrição de `trail reviewer pool` em `model-matrix.json` e regenerar a tabela de papéis em provider-dispatch. Preservar os descritores, esforços, ordem e defaults pessoais. Esse texto gerado ainda diz que o provedor não escreveu nenhuma parte; não é a regra da trilha após este PR.
+2. Atualizar a nota de `selection`, a descrição de `trail reviewer pool` em `model-matrix.json` e a documentação do tipo `Role.selection` em `scripts/model-matrix.ts`; regenerar a tabela de papéis em provider-dispatch. Preservar os descritores, esforços, ordem e defaults pessoais. Esses textos ainda dizem que o provedor não escreveu nenhuma parte; não são a regra da trilha após este PR. O helper genérico de exclusão de autores continua servindo à Arena.
 3. Preservar a capacidade de iniciar um contexto novo, read-only, no descritor escolhido e com acesso aos caminhos da trilha e transcript. Uma execução conta com resultado e evidência de modelo conforme o contrato existente. Dropout ou recusa precisam permanecer distinguíveis de revisão concluída. Nenhuma mudança de runtime foi demonstrada necessária para a correção da seleção; qualquer lacuna real deve ser tratada pela outra frente.
 
 Essa é uma dependência de integração documental, explicitamente pendente, não motivo para dispensar a revisão nem autorização para alterar runner/provider-dispatch nesta frente. A correção do watcher é independente deste PR.
+
+O glossário `CONTEXT.md` conserva Executor como família autora. Sai apenas a frase que aplicava a antiga proibição à trilha: a definição do termo não determina quais papéis podem revisar seu trabalho. A regra de seleção pertence à skill, e a semântica do campo legado do CLI está explicitada acima.
 
 ## Provas e limites
 
