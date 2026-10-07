@@ -98,14 +98,15 @@ async function prepareRoutes(context: Context): Promise<void> {
 }
 
 const PONG = "Reply with exactly PSTACK_VERIFIER_PONG. Do not use tools or spawn agents.";
-function assertPong(result: LaneResult): void {
+function assertPong(result: LaneResult, timing = false): void {
   assertLane(result);
   assert.equal(readFileSync(join(result.directory, "output.md"), "utf8").trim(), "PSTACK_VERIFIER_PONG");
-  assertNoTools(result.route, result.route === "grok-acp" ? result.receipt.acp!.eventsPath
+  if (timing) assertNoTools(result.route, result.route === "grok-acp" ? result.receipt.acp!.eventsPath
     : result.route === "grok-cli" ? join(result.directory, "grok-tool-updates.jsonl") : result.receipt.stdoutPath!);
 }
 
 export function assertNoTools(route: Route, path: string): void {
+  assert.notEqual(route, "claude-cli", "Claude runner output has no complete tool trace; PONG timing is unsupported");
   if (route === "grok-cli" || route === "grok-acp") {
     assert.equal(toolEvents(path, ROUTES[route].transport).length, 0, "PONG method forbids tool calls");
     return;
@@ -114,10 +115,6 @@ export function assertNoTools(route: Route, path: string): void {
   for (const event of events) {
     if (route === "codex-cli" && event.type?.startsWith("item.")) {
       assert.ok(["agent_message", "reasoning"].includes(event.item?.type), "PONG method forbids tool or other work items");
-    }
-    if (route === "claude-cli") {
-      const blocks = [...(event.message?.content ?? []), ...(event.event?.content_block ? [event.event.content_block] : [])];
-      for (const block of blocks) assert.ok(["text", "thinking", "redacted_thinking"].includes(block.type), "PONG method forbids tool or other content blocks");
     }
   }
 }
@@ -167,7 +164,7 @@ export const recipes: Record<Feature, Recipe> = {
     },
     assert(value) {
       const results = value as LaneResult[];
-      results.forEach(assertPong);
+      results.forEach((result) => assertPong(result));
       return { assertions: ["Every selected route produced the exact marker with matching model, effort, paths and preserved streams"], measurements: results.map(({ route, receipt }) => ({ route, elapsedMs: receipt.elapsedMs })) };
     },
   },
@@ -204,8 +201,11 @@ export const recipes: Record<Feature, Recipe> = {
     },
   },
   concurrency: {
-    description: "Four real PONG sessions at each width 1, 2 and 4, per route; zero warmups; twelve sessions per route. Measures external processes, not native agent slots.",
-    live: true, prepare: prepareRoutes,
+    description: "Four tool-free PONG sessions at each width 1, 2 and 4, per Grok or Codex route; zero warmups; twelve sessions per route. Claude's summary output cannot prove the method. Measures external processes, not native agent slots.",
+    live: true, async prepare(context) {
+      assert.ok(!context.routes.includes("claude-cli"), "Claude runner output has no complete tool trace; concurrency requires Grok or Codex");
+      await prepareRoutes(context);
+    },
     async exercise(context) {
       const measurements = [];
       for (const route of context.routes) for (const width of [1, 2, 4]) {
@@ -224,7 +224,7 @@ export const recipes: Record<Feature, Recipe> = {
       const measurements = value as { route: Route; width: number; samples: number; warmups: number; elapsedMs: number; outcomes: PromiseSettledResult<LaneResult>[] }[];
       for (const measurement of measurements) for (const outcome of measurement.outcomes) {
         assert.equal(outcome.status, "fulfilled", "concurrent lane failed; all attempts were retained");
-        if (outcome.status === "fulfilled") assertPong(outcome.value);
+        if (outcome.status === "fulfilled") assertPong(outcome.value, true);
       }
       return { assertions: ["All twelve sessions per route completed; fixed four samples at widths 1, 2, 4; no automatic retries"], measurements: measurements.map(({ outcomes, ...measurement }) => ({ ...measurement, laneElapsedMs: outcomes.map((outcome) => outcome.status === "fulfilled" ? outcome.value.receipt.elapsedMs : null) })) };
     },

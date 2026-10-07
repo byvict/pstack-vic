@@ -51,7 +51,7 @@ test("the fixed probe command quotes paths without invoking shell substitutions"
   assert.match(execFileSync("/bin/sh", ["-c", innerCommand(directory)], { encoding: "utf8" }), /PSTACK_INNER_TIMEOUT_COMPLETED/);
 });
 
-test("PONG measurements reject extra tools across all supported routes", (t) => {
+test("PONG measurements reject extra tools and routes without observable tool traces", (t) => {
   const root = mkdtempSync(join(tmpdir(), "pstack-pong-method-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const cases: { route: Route; clean: unknown; tool: unknown }[] = [
@@ -63,6 +63,12 @@ test("PONG measurements reject extra tools across all supported routes", (t) => 
   for (const { route, clean, tool } of cases) {
     const path = join(root, route);
     writeFileSync(path, JSON.stringify(clean) + "\n");
+    if (route === "claude-cli") {
+      assert.throws(() => assertNoTools(route, path), /no complete tool trace/);
+      writeFileSync(path, JSON.stringify([tool, clean]));
+      assert.throws(() => assertNoTools(route, path), /no complete tool trace/);
+      continue;
+    }
     assert.doesNotThrow(() => assertNoTools(route, path));
     writeFileSync(path, JSON.stringify(tool) + "\n" + JSON.stringify(clean) + "\n");
     assert.throws(() => assertNoTools(route, path), /PONG method forbids/);
