@@ -67,7 +67,7 @@ Skills name roles by the labels below, the same labels `/setup-pstack` writes to
 | `swarm workers` | Default worker for every swarm lane: coverage matrices, races, gauntlets, exploration partitions. | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` | `grok:grok-4.6@xhigh` |
 | `architect runners` | Each lane proposes a design (types, module shape) for the same problem before implementation. One lane per entry. | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` |
 | `interrogate reviewers` | Each lane reviews the diff adversarially from its own angle; a different provider per lane widens the blind spots covered. | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` | `claude:fable@max`, `codex:gpt-6-astra@max`, `grok:grok-4.6@xhigh`, `claude:claude-opus-5-5@xhigh` |
-| `trail reviewer pool` | Reviews the decision trail of a finished run; one lane runs, the first entry whose provider wrote none of the work. | `claude:claude-opus-5-5@xhigh`, `codex:gpt-6.1-sol@xhigh`, `grok:grok-4.7@xhigh` | `claude:claude-opus-5-5@xhigh`, `codex:gpt-6.1-sol@xhigh`, `grok:grok-4.7@xhigh` | `claude:claude-opus-5-5@xhigh`, `codex:gpt-6.1-sol@xhigh`, `grok:grok-4.7@xhigh` |
+| `trail reviewer pool` | Reviews the decision trail in a fresh context; picks the first entry outside the root's provider, including other author providers. If none completes, review stays pending and delivery incomplete. | `claude:claude-opus-5-5@xhigh`, `codex:gpt-6.1-sol@xhigh`, `grok:grok-4.7@xhigh` | `claude:claude-opus-5-5@xhigh`, `codex:gpt-6.1-sol@xhigh`, `grok:grok-4.7@xhigh` | `claude:claude-opus-5-5@xhigh`, `codex:gpt-6.1-sol@xhigh`, `grok:grok-4.7@xhigh` |
 
 A list is a panel: one lane per entry, in this order. A row whose label ends in `pool` is the exception: one lane runs, picked by the Cross-family selection rule below. A role whose parent columns differ takes a family native to each parent. Why and Reflect adapt the pinned upstream defaults as described below. Aliases use the parent model and effort, preferring native dispatch.
 
@@ -99,16 +99,13 @@ Swarm workers have one optional exception to descriptor preservation: the explic
 
 ## Cross-family selection
 
-A pool role is a list from which one lane runs. `trail reviewer pool` reviews the decision trail of a finished run (the **show-me-your-work** skill). `arena cross-judge pool` judges the arena candidates. Both pick their lane with the rule in this section.
+A pool role is an ordered list from which one lane runs. `trail reviewer pool` reviews the decision trail of a finished run (the **show-me-your-work** skill). `arena cross-judge pool` judges the arena candidates. They share the selector and transport, with different exclusions.
 
 Two lanes are cross-family when their providers differ. The provider is the Provider column of the model matrix. The Family column names one model line, so it does not decide: `gpt-6-sol` reviewing `gpt-6-astra` is the same provider, and so is `fable` reviewing `claude-opus-5-5`. The route does not decide either. A `claude:*` lane that a Codex parent launches through the runner is still a Claude lane. Each provider in the matrix serves the models of one vendor. A provider that serves another vendor's models needs a vendor field in the matrix before it enters a pool.
 
-The executors of a piece of work are the providers that wrote it:
+For trail review, exclude only the top-level session's provider, including when reviewing a child's trail. Other providers remain eligible even if their authoring lanes contributed to the result. Start a fresh, read-only reviewer context; a resumed writer cannot supply this review. [show-me-your-work](../../show-me-your-work/SKILL.md#cross-model-review-of-the-trail) owns this role's eligibility and completion contract, recorded in [ADR 0007](../../../docs/adr/0007-revisor-da-trilha-de-outra-familia-da-raiz.md).
 
-- The session that did the work, always. A root session and every native subagent under it, an autopilot owner included, run on the parent's native provider.
-- Every lane dispatched with `isolated-write` whose output is part of the result: an authoring lane, the base candidate of an arena, a swarm worker that wrote.
-
-A `read-only` lane is not an executor.
+For Arena, the executors are the parent and the likely base candidate's provider. Exclude both on the first pick. Arena's [cross-judge phase](../../arena/SKILL.md#phase-c-cross-judge) retains its fallbacks: pick again excluding only the parent, then use the first entry of the row if still empty, naming the shared provider in either case. A fallback sharing the parent's provider is not cross-family.
 
 The top-level session picks the lane with the `pick` subcommand of `skills/setup-pstack/scripts/setup-pstack.ts` under the installed plugin. It does not choose by reading the row:
 
@@ -119,11 +116,13 @@ node <plugin>/skills/setup-pstack/scripts/setup-pstack.ts pick \
   [--executor <provider>]...
 ```
 
-`--parent` makes the parent's native provider an executor. Pass one `--executor` for each other provider that wrote. The script reads the role's row from the parent's sheet, or the role-table default when the sheet has no such row. It drops every entry whose provider is an executor and every alias, because an alias runs on the parent model. It prints the entries that remain as `eligible`, in the operator's order, the first of them as `chosen`, and the dropped entries as `skipped` with the reason. Exit code 1 means that no entry is eligible.
+`--parent` identifies the responsible top-level session and always excludes its provider. For trail review, omit `--executor`: supplied names are validated but do not exclude coauthors, and the legacy result field `executors` contains only the root provider. For Arena, pass the likely base candidate's provider with `--executor`; `executors` contains all excluded providers.
 
-Dispatch `chosen` as written, with its model and its effort, in `read-only` mode. The parent's provider is always an executor, so the chosen lane is always an external lane. If that lane drops out (see **Completion and dropouts**), keep its receipt and dispatch the next entry of `eligible`. This is the dropout policy of a pool: the operator wrote every entry of the row as an accepted choice. For a pool, never dispatch a model outside the row or substitute the parent model. The optional swarm fallback does not apply to pools.
+The script reads the role's row from the parent's sheet, or the role-table default when the sheet has no such row. It drops entries under the role's exclusions and every alias, because an alias runs on the parent model. It prints the entries that remain as `eligible`, in the operator's order, the first of them as `chosen`, and the dropped entries as `skipped` with the reason. Exit code 1 means that no entry is eligible; it does not waive trail review.
 
-When `eligible` is empty, or every eligible lane dropped out, the pool yields no cross-family lane. The calling skill says what happens then: for `trail reviewer pool` no lane runs, and for `arena cross-judge pool` the arena skill names the fallback. No skill may count a lane on an executor's provider as cross-family.
+Dispatch `chosen` as written, with its model and its effort, in `read-only` mode. A cross-family pick uses an external lane. If that lane drops out (see **Completion and dropouts**), keep its receipt and dispatch the next entry of `eligible`. This is the dropout policy of a pool: the operator wrote every entry of the row as an accepted choice. For a pool, never dispatch a model outside the row or substitute the parent model. The optional swarm fallback does not apply to pools.
+
+When no eligible trail reviewer completes, report `review pending: no cross-family reviewer completed`, explain the skipped entries and dropouts with their evidence, and return the available artifacts as incomplete work. Resume review when the obstacle is resolved; an empty pool or exhausted attempts never become a waiver. Arena retains the fallback policy above. A lane on the root's provider cannot count as cross-family.
 
 Name the lane that ran from its receipt, never from what the lane says about itself: `reportedModel` when `modelEvidence` is `provider-report`, and the requested model marked as not confirmed when it is `pinned-argv`.
 
