@@ -280,8 +280,9 @@ function unavailableStatus(value: string, requestedModel: string): LaneFailure {
 function preflightFailureStatus(
   provider: Provider,
   model: string,
-  value: string
+  result: ProcessResult
 ): LaneFailure {
+  const value = `${result.stdout}\n${result.stderr}`;
   const status = unavailableStatus(value, model);
   if (status !== "child-failed") return status;
   return cliFor(provider) === "grok" && !grokModelAvailable(value, model)
@@ -597,7 +598,7 @@ async function runPreparedLane(
     !passed &&
     preflightResult.cancelledBy === null &&
     !preflightResult.timedOut &&
-    preflightFailureStatus(options.provider, options.model, rawPreflightEvidence) ===
+    preflightFailureStatus(options.provider, options.model, preflightResult) ===
       "unauthenticated"
   ) {
     ev.preflight = {
@@ -654,7 +655,7 @@ async function runPreparedLane(
       ? "cancelled"
       : preflightResult.timedOut
         ? "timed-out"
-        : preflightFailureStatus(options.provider, options.model, rawPreflightEvidence);
+        : preflightFailureStatus(options.provider, options.model, preflightResult);
     return {
       kind: "failed",
       status,

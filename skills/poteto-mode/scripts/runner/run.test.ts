@@ -14,7 +14,7 @@ import fs, {
 import { syncBuiltinESMExports } from "node:module";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { childEnvironment, evidence, findExecutable, runLane } from "./run.ts";
+import { childEnvironment, evidence, findExecutable, runLane, type RunResult } from "./run.ts";
 import { main } from "./cli.ts";
 import { cliFor, PROVIDERS, type Provider, type RunnerOptions, type RunnerReceipt } from "./types.ts";
 import { matchObject } from "./match-object.test-helper.ts";
@@ -686,12 +686,12 @@ describe("R2 neutral auth-required", () => {
     return { exitCode: 77, status: "unauthenticated", attempts: site.provider === "grok" ? 2 : 1 };
   }
 
-  async function check(site: Site, diagnostic: string, expected: Expected): Promise<void> {
+  async function check(site: Site, diagnostic: string, expected: Expected, listing?: string): Promise<RunResult> {
     const input = options(site.provider, "r2-diagnostic");
     const calls = join(scratch, "r2-invocations.log");
-    const preflightOut = site.provider === "grok"
+    const preflightOut = listing ?? (site.provider === "grok"
       ? `You are logged in.\nAvailable models: ${input.model}`
-      : site.provider === "claude" ? '{"loggedIn":true}' : "Logged in using ChatGPT";
+      : site.provider === "claude" ? '{"loggedIn":true}' : "Logged in using ChatGPT");
     const preflightErr = site.stage === "model-failure" ? "" : diagnostic;
     const preflightExit = site.stage === "preflight-failure" ? 1 : 0;
     const stdout = site.stage === "model-failure" ? "" : JSON.stringify({
@@ -721,23 +721,88 @@ process.exit(${site.stage === "model-failure" ? 1 : 0});
       "preflight\n".repeat(expected.attempts) + (started ? `model=${input.model}\n` : ""));
     assert.equal(result.receipt.preflight.status, started ? "passed" : "failed");
     assert.equal(result.receipt.exitCode, site.stage === "model-failure" || preflightExit === 1 ? 1 : 0);
+    assert.equal(result.receipt.argv[result.receipt.argv.indexOf("--model") + 1], input.model);
+    assert.deepEqual(result.receipt.preflight.argv, [join(bin, cliOf(site.provider)),
+      ...(site.provider === "grok" ? ["models"] : site.provider === "claude" ? ["auth", "status", "--json"] : ["login", "status"])]);
     assert.equal(existsSync(input.outputPath), expected.status === "complete");
     if (expected.status === "complete") assert.equal(readFileSync(input.outputPath, "utf8"), "R2_OK");
     assert.equal(readFileSync(streamPath(result.receipt.stdoutPath), "utf8"), started ? stdout : "");
     assert.equal(readFileSync(streamPath(result.receipt.stderrPath), "utf8"), started ? stderr : "");
     assert.equal(receipt(input.receiptPath).status, expected.status);
+    assert.ok(result.receipt.preflight.evidence.length <= 4_000);
+    assert.ok((result.receipt.error?.evidence.length ?? 0) <= 4_000);
     if (site.stage === "model-failure") {
-      assert.equal(result.receipt.error?.evidence, diagnostic.trim());
+      if (diagnostic.length <= 4_000) assert.equal(result.receipt.error?.evidence, diagnostic.trim());
+      else assert.ok(result.receipt.error?.evidence.includes("\n[…]\n"));
       assert.equal(result.receipt.error?.message, "child exited with status 1");
     } else if (!started) {
       const emitted = `${preflightOut}\n${preflightErr}`.trim();
       const preserved = expected.attempts === 2
         ? `attempt 1 failed:\n${emitted}\n\nattempt 2 failed:\n${emitted}` : emitted;
-      assert.equal(result.receipt.preflight.evidence, preserved);
-      assert.equal(result.receipt.error?.evidence, preserved);
+      if (emitted.length <= 1_900) assert.equal(result.receipt.preflight.evidence, preserved);
+      else {
+        assert.ok(result.receipt.preflight.evidence.includes("\n[…]\n"));
+        assert.ok(result.receipt.preflight.evidence.startsWith(expected.attempts === 2 ? "attempt 1 failed:\n" : emitted.slice(0, 1_000)));
+        assert.equal(result.receipt.preflight.evidence.includes("attempt 2 failed"), expected.attempts === 2);
+      }
+      assert.equal(result.receipt.error?.evidence, result.receipt.preflight.evidence);
       assert.equal(result.receipt.error?.message, "authentication or model preflight failed");
     }
+    return result;
   }
+
+  describe("R2 evidence window", () => {
+    function cutNeutral(message: string): string {
+      const clause = `${message}.`;
+      return `${"x".repeat(2_000)}\n${clause}\n${"z".repeat(2_997 - clause.length)}`;
+    }
+
+    for (const site of sites) {
+      const model = options(site.provider).model;
+      const label = `${site.provider} ${site.stage}`;
+      const refusal = `${model} is not supported`;
+      for (const message of neutral) {
+        for (const competingRefusal of [false, true]) {
+          it(`complete neutral clause at cut ${label}: ${message}, refusal ${competingRefusal}`, { timeout: GROK_RETRY_RUN_BUDGET_MS }, async () => {
+            const diagnostic = `${competingRefusal ? `${refusal}\n` : ""}${cutNeutral(message)}`;
+            const result = await check(site, diagnostic, competingRefusal
+              ? { exitCode: 69, status: "unavailable-model", attempts: 1 } : neutralOutcome(site));
+            assert.ok(diagnostic.includes(`${message}.`));
+            if (result.receipt.error !== null) assert.equal(result.receipt.error.evidence.includes("No "), false);
+          });
+        }
+      }
+
+      it(`owns opaque qualifier across cut ${label}`, { timeout: GROK_RETRY_RUN_BUDGET_MS }, async () => {
+        const diagnostic = `${"x".repeat(1_200)} Invalid model: ]${"y".repeat(1_900)} ${refusal}${" z".repeat(1_400)}`;
+        const result = await check(site, diagnostic, neutralOutcome(site));
+        if (result.receipt.error !== null) assert.equal(result.receipt.error.evidence.includes("Invalid model:"), false);
+      });
+
+      it(`auth in dropped middle wins over independent refusal ${label}`, { timeout: GROK_RETRY_RUN_BUDGET_MS }, async () => {
+        const diagnostic = `${refusal}\n${"x".repeat(1_200)}\nYou are not authenticated.\n${"z".repeat(4_000)}`;
+        const result = await check(site, diagnostic, { exitCode: 77, status: "unauthenticated",
+          attempts: site.provider === "grok" && site.stage !== "model-failure" ? 2 : 1 });
+        assert.equal(result.receipt.error?.evidence.includes("You are not authenticated"), false);
+      });
+
+      it(`requested refusal in dropped middle remains unavailable ${label}`, async () => {
+        const diagnostic = `${"x".repeat(1_200)}\n${refusal}\n${"z".repeat(4_000)}`;
+        const result = await check(site, diagnostic, { exitCode: 69, status: "unavailable-model", attempts: 1 });
+        assert.equal(result.receipt.error?.evidence.includes("is not supported"), false);
+      });
+    }
+
+    for (const stage of ["success", "preflight-failure"] as const) {
+      for (const message of neutral) {
+        it(`neutral cut with missing Grok token ${stage}: ${message}`, async () => {
+          await check({ provider: "grok", stage }, cutNeutral(message),
+            { exitCode: 69, status: "unavailable-model", attempts: 1 },
+            "You are logged in.\nAvailable models: grok-5");
+        });
+      }
+    }
+  });
 
   for (const site of sites) {
     const label = `${site.provider} ${site.stage}`;
