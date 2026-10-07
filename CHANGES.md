@@ -1962,3 +1962,10 @@ A admissão de escrita é código novo do port. Depois dos snapshots e do render
 A seção Host and parent prerequisites mantém a orientação de seatbelt e os caminhos de estado do Grok. A exigência Linux de Landlock e `bwrap`, inclusive nas sessões Claude cloud afetadas, vem do upstream citado, separada das observações locais no macOS. O ponto de sync do open permanece em `de67e6b`. O PR preserva as mudanças entregues em A, B, C, F, G, #94 e #95.
 
 Verificação focada: 52 testes passaram no Node, sem falhas, cancelamentos ou skips. Os controles cobrem a pista final e suas exclusões, o mapa completo e o ambiente atual, a admissão sem mutações, os links pendentes e cíclicos, o destino de symlink somente leitura e o rollback após falhas tardias. A revisão e os sete gates serão vinculados ao head final antes do veredito independente.
+
+
+## 0.5.24 — Provas de execução e observabilidade ACP
+
+Adapta o verificador local do open-pstack em `1b03678171f6f400ae2cc9dc4e7a4a6a13e4bb43` para Node 24 e a raiz deste port. `npm run verify` classifica mudanças, executa receitas nomeadas e conserva streams e recibos desde a preparação, antes de interpretar resultados. Tentativas usam diretórios novos; o verificador acompanha os grupos de processos que cria e recusa atribuir a prova a uma fonte alterada durante a execução.
+
+O runner ACP acrescenta `<receipt>.events.jsonl`, com tempos, argumentos/resultados de ferramentas e remoção do token conhecido do T3. As receitas de diagnóstico preservam também os eventos nativos do Grok CLI, verificam o método executado e medem concorrência externa. A reprodução local com Grok 1.0.46 confirmou o corte perto de 300 segundos tanto em ACP quanto em CLI para pedidos de 450 segundos; as verificações longas passam pelo handle persistente do host. Não há reutilização de prova entre heads nem mudança das exigências de Shipping. A origem e as adaptações estão em `NOTICE.md`.

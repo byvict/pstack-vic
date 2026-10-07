@@ -66,6 +66,7 @@ export type ExecutionRequest = RequestFiles & (
 export type GrokAcpRequest = Extract<ExecutionRequest, { readonly kind: "grok-acp" }>;
 
 export interface AcpDetail {
+  readonly eventsPath: string;
   stage: "preflight" | "initialize" | "authenticate" | "session" | "model" | "capability-check" | "prompt" | "shutdown" | "finished";
   sessionId: string | null;
   stopReason: string | null;
@@ -171,6 +172,7 @@ export interface LaneContext {
   readonly deadlineAt: number | null;
   readonly cancellation: RunCancellation;
   readonly streamFiles: ModelStreams | null;
+  readonly acpEvents?: number;
   /**
    * Sleep at most `delayMs`, waking early on the latch or the lane deadline,
    * re-checking both after the wake. `wait(0)` is the checkpoint before an

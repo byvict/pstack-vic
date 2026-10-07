@@ -1,7 +1,7 @@
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { clisOutsideFakes, isolatedEnv, isolateProcessEnv } from "./isolated-env.test-helper.ts";
@@ -228,7 +228,8 @@ describe("Grok ACP through the real runner launcher", () => {
   it("redacts fragmented credentials and escaped credentials before writing any evidence", async () => {
     const result = await launch({ scenario: "secret", extra: attachmentArgs(), env: attachmentEnv });
     assert.equal(result.code, 0, result.stderr);
-    const persisted = result.stdout + result.stderr + readFileSync(join(scratch, "out.md"), "utf8") + readFileSync(join(scratch, "receipt.json"), "utf8") + readFileSync(join(scratch, "events.jsonl"), "utf8");
+    const transcript = readFileSync(join(scratch, "receipt.json.events.jsonl"), "utf8");
+    const persisted = result.stdout + result.stderr + readFileSync(join(scratch, "out.md"), "utf8") + readFileSync(join(scratch, "receipt.json"), "utf8") + readFileSync(join(scratch, "events.jsonl"), "utf8") + transcript;
     assert.equal(persisted.includes(attachmentEnv.T3_MCP_BEARER_TOKEN), false);
     assert.equal(persisted.includes(JSON.stringify(attachmentEnv.T3_MCP_BEARER_TOKEN).slice(1, -1)), false);
     assert.match(readFileSync(join(scratch, "out.md"), "utf8"), /\[REDACTED\]/);
@@ -236,6 +237,29 @@ describe("Grok ACP through the real runner launcher", () => {
     assert.equal(result.receipt?.stderrPath, null);
     assert.equal(existsSync(join(scratch, "receipt.json.stdout")), false);
     assert.equal(existsSync(join(scratch, "receipt.json.stderr")), false);
+    const trace = transcript.trim().split("\n").map((line) => JSON.parse(line));
+    assert.ok(trace.some((event) => event.kind === "tool" && event.update.rawInput?.timeout === 450000));
+    assert.ok(trace.some((event) => event.kind === "tool" && event.update.rawOutput?.other === "[REDACTED]"));
+    assert.equal(transcript.includes("Private thought"), false);
+    assert.equal(transcript.includes("mcpServers"), false);
+    assert.equal(statSync(join(scratch, "receipt.json.events.jsonl")).mode & 0o777, 0o600);
+  });
+
+  it("retains tool evidence when the exchange times out before a terminal result", async () => {
+    const result = await launch({ scenario: "tool-then-hang", extra: ["--timeout", "2"], env: { FAKE_READY: join(scratch, "ready") } });
+    assert.equal(result.receipt?.status, "timed-out");
+    const trace = readFileSync(join(scratch, "receipt.json.events.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    assert.ok(trace.some((event) => event.kind === "tool" && event.update.toolCallId === "tool-1"));
+    assert.ok(trace.some((event) => event.kind === "process-exit" && event.timedOut === true));
+  });
+
+  it("preserves a colliding event transcript and rolls back only new reservations", async () => {
+    writeFileSync(join(scratch, "receipt.json.events.jsonl"), "existing proof");
+    const result = await launch({ scenario: "happy" });
+    assert.notEqual(result.code, 0);
+    assert.equal(readFileSync(join(scratch, "receipt.json.events.jsonl"), "utf8"), "existing proof");
+    assert.equal(existsSync(join(scratch, "out.md")), false);
+    assert.equal(existsSync(join(scratch, "receipt.json")), false);
   });
 
   it("retains the authentication-only retry and exactly one prompt", async () => {

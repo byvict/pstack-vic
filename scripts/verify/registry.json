@@ -1,0 +1,11 @@
+{
+  "runtime": {
+    "runner": ["skills/poteto-mode/scripts/runner/**"],
+    "setup": ["skills/setup-pstack/**"],
+    "verification": ["scripts/verify/**", ".claude/skills/verify-pstack-vic/**", ".agents/skills/verify-pstack-vic"],
+    "agent-instructions": ["skills/**", "agents/**", "AGENTS.md", "CONTEXT.md", "docs/**"],
+    "tooling": ["scripts/**", "tests/**", "hooks/**", ".github/**", "package.json", "model-matrix.json"],
+    "plugin": [".claude-plugin/**", ".codex-plugin/**", ".agents/plugins/**", "assets/**"]
+  },
+  "nonRuntime": ["README.md", "CHANGES.md", "NOTICE.md", "UPSTREAM.md", "LICENSE", "LICENSE-cursor-team-kit", "LICENSE-marked", "LICENSE-open-pstack", ".gitignore", "docs/research/**"]
+}

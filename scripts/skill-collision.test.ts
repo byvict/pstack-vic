@@ -1,7 +1,7 @@
 import { after, it } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { PLUGIN_ROOT } from "./model-matrix.ts";
@@ -47,7 +47,9 @@ function pluginCopy(t: Cleanup): string {
   for (const file of files) {
     if (!file || !existsSync(join(PLUGIN_ROOT, file))) continue;
     mkdirSync(dirname(join(root, file)), { recursive: true });
-    copyFileSync(join(PLUGIN_ROOT, file), join(root, file));
+    const source = join(PLUGIN_ROOT, file), target = join(root, file);
+    if (lstatSync(source).isSymbolicLink()) symlinkSync(readlinkSync(source), target);
+    else copyFileSync(source, target);
   }
   return root;
 }

@@ -18,7 +18,7 @@ Este port mantém a prosa da Cursor onde ela não depende da Cursor e substitui 
    ```
 
    ```shell
-   codex plugin marketplace add byvict/pstack-vic --ref v0.5.23
+   codex plugin marketplace add byvict/pstack-vic --ref v0.5.24
    codex plugin add pstack@pstack-vic
    ```
 
@@ -39,6 +39,10 @@ Este port mantém a prosa da Cursor onde ela não depende da Cursor e substitui 
 - [`UPSTREAM.md`](UPSTREAM.md) — os dois upstreams (Cursor, fonte de merge; open-pstack, só leitura) e o ponto de sync de cada um.
 - [`NOTICE.md`](NOTICE.md) — proveniência de cada arquivo copiado e o que é escrita nova.
 - [`CHANGES.md`](CHANGES.md) — veredito por hunk e por skill de cada fase do port.
+
+## Verificar mudanças neste repositório
+
+`npm run verify -- doctor` lista as receitas de contratos, smoke real do runner, timeout interno e concorrência. A [skill local de verificação](.claude/skills/verify-pstack-vic/SKILL.md) descreve a seleção de checks, os recibos por fase e a captura de todos os comandos antes de qualquer parse. Provas em árvore suja precisam de `--working-tree` e ficam identificadas pelo digest; a execução padrão exige um commit limpo. O verificador não publica resultados nem substitui revisão e Shipping.
 
 ## Licença
 

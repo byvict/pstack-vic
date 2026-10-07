@@ -101,7 +101,12 @@ input.on("line", async (line) => {
       if (scenario === "permission-request") { await send({ jsonrpc: "2.0", id: "permission", method: "session/request_permission", params: {} }); return; }
       await update("agent_message_chunk", { content: { type: "text", text: "Earlier narration" } }, 1);
       await update("response_completed", {}, 1, "_x.ai/session_notification");
-      await update("tool_call", { toolCallId: "tool-1" }, 1);
+      await update("tool_call", { toolCallId: "tool-1", title: "run_terminal_command", status: "in_progress", rawInput: { command: "fixture-command", timeout: 450000 } }, 1);
+      await update("tool_call_update", { toolCallId: "tool-1", status: "completed", rawOutput: scenario === "secret" ? { result: `Authorization: Bearer ${token}`, other: token } : { result: "fixture-result" } }, 1);
+      if (scenario === "tool-then-hang") {
+        writeFileSync(process.env.FAKE_READY, String(process.pid));
+        return;
+      }
       if (scenario === "mcp-expansion") {
         await catalog(["t3-code__preview_status", "t3-code__preview_click", "t3-code__preview_evaluate", ...(process.env.FAKE_MCP_TOOL ? [process.env.FAKE_MCP_TOOL] : [])]);
         log({ kind: "catalog-expanded" });
