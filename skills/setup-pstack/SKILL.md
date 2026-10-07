@@ -94,7 +94,16 @@ The output carries `dir` (a fresh run directory holding `plan.json`; pass `--dir
 
 ### 6. Probe new families
 
-Skip this step only when both `pairs` is empty and `ownerProbe` is null. Otherwise:
+Before deciding whether probes can be skipped, read [Host and parent prerequisites](../poteto-mode/references/provider-dispatch.md#host-and-parent-prerequisites). Resolve every selected family through this parent's route table, including the families in `verified`. On Codex, an exact `CODEX_SANDBOX_NETWORK_DISABLED=1` in the current invocation makes `plan` warn about the external families and makes an explicit `probe` refuse with exit 1 before any probe side effect, even with empty `pairs`. Saved warnings do not authorize or block a later invocation. Missing markers do not prove permission. Check effective parent permissions for the selected CLIs' network, credentials, and required state paths before external checks.
+
+If access is blocked or cannot be established, name the affected families and the missing access. Offer two paths:
+
+1. Restart the parent with the needed permissions. Stop this setup without writing.
+2. Move the affected roles to allowed native families through the operator's named changes. Return to steps 3 through 5 to validate the complete map and its efforts. `inherit-parent` and `auto` remain native. Report reduced provider diversity and any pool-validation failure.
+
+Keep the active configuration unchanged if Grok refuses because the host cannot enforce its bounded sandbox. The linked subsection distinguishes upstream Linux requirements from local macOS observations.
+
+After permissions allow the selected families, skip the probe command only when both `pairs` is empty and `ownerProbe` is null. Otherwise:
 
 ```shell
 node scripts/setup-pstack.ts probe --dir <dir> [--timeout <seconds>]
@@ -122,7 +131,7 @@ Show the fallback as enabled with its descriptor, preserved, or disabled, includ
 node scripts/setup-pstack.ts write --dir <dir>
 ```
 
-`write` refuses a plan made for another config home, so run it with the same `--home` and variable as `plan`. After that it verifies every required family probe and the fresh Grok owner capability against the run directory and refuses (exit 1, nothing touched) while any is missing or failed. It then snapshots the sheet, the parent integration, and the ledger, renders the integration and the ledger (plus one entry per family this plan probed), compares, writes only what changed, reads each back, and restores every snapshot if a write or read-back fails. The result names each target as `created`, `updated`, or `unchanged`. An unchanged rerun is byte-identical and reports all three as `unchanged`.
+`write` refuses a plan made for another config home, so run it with the same `--home` and variable as `plan`. After that it verifies every required family probe and the fresh Grok owner capability against the run directory and refuses (exit 1, nothing touched) while any is missing or failed. It then snapshots the sheet, the parent integration, and the ledger, and renders the integration and the ledger with one entry per family this plan probed. Before the first write or directory creation in a mutating transaction, `write` checks that both actual destinations are writable, even if one destination has identical bytes. It also checks any changed or created ledger. Admission creates no files or directories. A refusal names the destination and leaves existing bytes unchanged. A byte-identical transaction skips admission and writes nothing. After admission, it writes only what changed, reads each back, and restores every snapshot if a write or read-back fails. Permissions and paths can change after admission, so the checks do not replace rollback. The result names each target as `created`, `updated`, or `unchanged`. An unchanged rerun is byte-identical and reports all three as `unchanged`.
 
 ### 8. How the integration is wired
 
