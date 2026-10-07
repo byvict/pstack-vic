@@ -10,10 +10,11 @@ import {
   classifyPr,
   readSnapshot,
   runQueued,
+  runSimple,
   selectTierMajorStackDecision,
 } from "./policy.ts";
 import { renderJson, renderPretty } from "./render.ts";
-import { fakeReader, failedCheck, passingCheck } from "./fakes.test-helper.ts";
+import { fakeReader, failedCheck, passingCheck, pendingCheck } from "./fakes.test-helper.ts";
 import { parsePrNumber } from "./types.ts";
 import type {
   NativeLandingFacts,
@@ -287,13 +288,59 @@ describe("required check reruns", () => {
 });
 
 describe("native lifecycle observation", () => {
+  const observations: readonly NativeLandingFacts[] = [
+    { kind: "unknown", reason: "native API unavailable" },
+    { ...native, currentBaseSha: "unknown" },
+    { ...native, requirements: { kind: "unknown", reason: "forbidden" } },
+    { ...native, autoMerge: { enabledAt: "now" } },
+    { ...native, queueEntry: entry },
+    { ...native, queueEntry: { ...entry, state: "AWAITING_CHECKS" } },
+    { ...native, queueEntry: { ...entry, state: "UNMERGEABLE" } },
+  ];
+  it("keeps upstream readiness and blocker precedence across landing observations", async () => {
+    for (const observation of observations) {
+      for (const [facts, checks, expected] of [
+        [{}, [passingCheck()], "ready"],
+        [{}, [pendingCheck()], "waiting"],
+        [{}, [failedCheck()], "failing-checks"],
+        [{ mergeable: "CONFLICTING" }, [failedCheck()], "merge-conflicts"],
+        [{ isDraft: true }, [passingCheck()], "merge-gate"],
+        [{ reviewDecision: "CHANGES_REQUESTED" }, [passingCheck()], "merge-gate"],
+      ] as const) {
+        const row = await readSnapshot({
+          reader: fakeReader({ facts: { ...facts, native: observation }, fastPath: { kind: "checks", checks } }),
+          context, pendingHistory: "include", allowDraft: false,
+        });
+        const single = classifyPr(row);
+        expect(single.kind === "blocker" ? single.blocker.kind : single.kind).toBe(expected);
+        const stack = selectTierMajorStackDecision([row]);
+        expect(stack.kind === "blocker" ? stack.blocker.kind : stack.kind).toBe(expected === "ready" ? "clear" : expected);
+      }
+    }
+  });
+  it("returns READY in single and stack modes without waiting for admission or merge", async () => {
+    for (const observation of observations) for (const mode of ["single", "stack"] as const) {
+      const events: ProgressVerdict[] = [];
+      const verdict = await runSimple({
+        contexts: [context], mode, statusOnly: false,
+        options: { interval: 1, sweepInterval: 5, timeout: 10, maxQueryErrors: 2, allowDraft: false },
+        dependencies: {
+          reader: fakeReader({ facts: { native: observation } }),
+          emit: (event) => events.push(event),
+          clock: { now: () => 0, observedAt: () => "now", sleep: async () => { throw new Error("READY must not sleep"); } },
+        },
+      });
+      expect(verdict).toMatchObject({ kind: "READY", terminal: true, exitCode: 0 });
+      expect(events[0]).toMatchObject({ kind: "LANDING", snapshot: { facts: { native: observation } } });
+    }
+  });
   it("reports readiness separately from admission", async () => {
     expect((await snapshot(native)).landing).toEqual({
       kind: "ready-unadmitted",
       reason: "unknown",
     });
   });
-  it("waits on auto-merge despite stale failing head checks", async () => {
+  it("keeps auto-merge visible without suppressing failing head checks", async () => {
     const row = await snapshot(
       { ...native, autoMerge: { enabledAt: "now" } },
       undefined,
@@ -303,7 +350,7 @@ describe("native lifecycle observation", () => {
       kind: "auto-merge-pending",
       reason: "unknown",
     });
-    expect(classifyPr(row).kind).toBe("admitted");
+    expect(classifyPr(row)).toMatchObject({ kind: "blocker", blocker: { kind: "failing-checks" } });
   });
   it("keeps queued candidate unknown in JSON and human output", async () => {
     const row = await snapshot({ ...native, queueEntry: entry });
@@ -369,10 +416,7 @@ describe("native lifecycle observation", () => {
       },
     });
     expect(row.landing).toEqual({ kind: "failed", reason: "unknown" });
-    expect(classifyPr(row)).toMatchObject({
-      kind: "blocker",
-      blocker: { kind: "native-admission" },
-    });
+    expect(classifyPr(row).kind).toBe("ready");
   });
   it("binds observed removal to the unchanged head, not beforeCommit candidate", async () => {
     const previous = await snapshot({ ...native, queueEntry: entry });
@@ -393,7 +437,7 @@ describe("native lifecycle observation", () => {
       reason: "unknown",
       headBinding: "current",
     });
-    expect(classifyPr(row).kind).toBe("blocker");
+    expect(classifyPr(row).kind).toBe("ready");
     const newHead = await snapshot(
       {
         ...native,
@@ -430,15 +474,15 @@ describe("native lifecycle observation", () => {
       headBinding: "unknown",
     });
   });
-  it("never treats unavailable requirements as positive readiness", async () => {
+  it("retains unavailable requirements as unknown without adding a readiness gate", async () => {
     const row = await snapshot({
       ...native,
       requirements: { kind: "unknown", reason: "forbidden" },
     });
     expect(row.landing).toEqual({ kind: "unknown", reason: "unknown" });
-    expect(classifyPr(row).kind).toBe("blocker");
+    expect(classifyPr(row).kind).toBe("ready");
   });
-  it("waits for a missing required check even when visible CI is green", async () => {
+  it("keeps missing required checks observational when upstream CI is green", async () => {
     const result = {
       state: "pending",
       producer: "unknown",
@@ -458,8 +502,8 @@ describe("native lifecycle observation", () => {
         ],
       },
     });
-    expect(classifyPr(row).kind).toBe("admitted");
-    expect(selectTierMajorStackDecision([row]).kind).toBe("admitted");
+    expect(classifyPr(row).kind).toBe("ready");
+    expect(selectTierMajorStackDecision([row]).kind).toBe("clear");
   });
   it("keeps watching admitted work until the actual merged state", async () => {
     let reads = 0;
