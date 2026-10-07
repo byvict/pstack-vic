@@ -70,7 +70,6 @@ export const UPSTREAMS: readonly UpstreamSpec[] = [
  */
 export const EXCLUDED_PATHS: readonly string[] = [
   "automations/benny/",
-  "docs/guide/",
   "skills/make-bot-ui/",
   "README.md",
   ".cursor-plugin/",
