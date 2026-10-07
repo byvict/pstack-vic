@@ -73,7 +73,7 @@ export function modelFromUsage(
     ?? null;
 }
 
-function parseClaude(stdout: string, requestedModel: string): ParsedOutput {
+function parseClaude(stdout: string, requestedModel: string, agentKind?: "lane" | "owner"): ParsedOutput {
   let raw: unknown;
   try {
     raw = JSON.parse(stdout);
@@ -81,10 +81,12 @@ function parseClaude(stdout: string, requestedModel: string): ParsedOutput {
     throw new Error("claude did not emit valid JSON");
   }
   let value: JsonObject | null = null;
+  let rootModel: string | null = null;
   if (Array.isArray(raw)) {
     for (const entry of raw) {
       const event = object(entry);
       if (event?.type === "result") value = event;
+      if (event?.type === "assistant" && event.parent_tool_use_id === null) rootModel = nullableString(object(event.message)?.model) ?? rootModel;
     }
     if (value === null) throw new Error("claude result did not contain a terminal event");
   } else {
@@ -98,7 +100,7 @@ function parseClaude(stdout: string, requestedModel: string): ParsedOutput {
 
   return {
     text,
-    reportedModel: modelFromUsage(value.modelUsage, "claude", requestedModel),
+    reportedModel: agentKind === "owner" ? rootModel : modelFromUsage(value.modelUsage, "claude", requestedModel),
     sessionId: nullableString(value.session_id ?? value.sessionId),
     usage: normalizedUsage(value.usage),
     costUsd: finiteNumber(value.total_cost_usd) ?? null,
@@ -194,11 +196,12 @@ export function parseProviderOutput(
   provider: Provider,
   stdout: string,
   stderr: string,
-  requestedModel: string
+  requestedModel: string,
+  agentKind?: "lane" | "owner"
 ): ParsedOutput {
   switch (cliFor(provider)) {
     case "claude":
-      return parseClaude(stdout, requestedModel);
+      return parseClaude(stdout, requestedModel, agentKind);
     case "codex":
       return parseCodex(stdout);
     case "grok":

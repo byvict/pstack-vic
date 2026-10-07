@@ -1,3 +1,4 @@
+import { readCapabilities } from "./capabilities.ts";
 import { parseArgs as parseNodeArgs } from "node:util";
 import { resolvedOptions, runLane, validateRoute } from "./run.ts";
 import {
@@ -15,9 +16,12 @@ import {
 const HELP = `Usage: pstack-runner --parent <${PARENTS.join("|")}> --provider <${PROVIDERS.join("|")}> \\
   --model <slug> --effort <${EFFORTS.join("|")}> --mode <${ACCESS_MODES.join("|")}> \\
   --prompt <file> --cwd <dir> --output <file> --receipt <file> [--timeout <seconds>]
+  [--capabilities <task-capabilities.json>]
   [--transport grok-acp --mode full-access [--mcp-config <file>]]
 
-Runs exactly one fresh model session, including the parent's own provider.
+Runs one fresh top-level model session, including the parent's own provider.
+The default is a non-delegating lane. --capabilities selects task tools and an
+explicit owner role; owners must collect their helpers before returning.
 The parent prefers native agents and uses this runner when native dispatch cannot
 meet the task. CLI sessions do not inherit conversation MCP access. The (provider, model)
 pair must be a family in model-matrix.json and the effort must be selectable for
@@ -78,6 +82,7 @@ export function parseArgs(argv: readonly string[]): RunnerOptions | null {
         mode: { type: "string" },
         transport: { type: "string" },
         "mcp-config": { type: "string" },
+        capabilities: { type: "string" },
         prompt: { type: "string" },
         cwd: { type: "string" },
         output: { type: "string" },
@@ -104,6 +109,7 @@ export function parseArgs(argv: readonly string[]): RunnerOptions | null {
     throw new UsageError("timeout must be a number greater than zero");
   }
   const transport = stringValue(parsed.values.transport);
+  const capabilityPath = stringValue(parsed.values.capabilities);
   const mcpConfigPath = stringValue(parsed.values["mcp-config"]);
   const options = resolvedOptions({
     parent: oneOf("parent", stringValue(parsed.values.parent), PARENTS) as Parent,
@@ -113,6 +119,7 @@ export function parseArgs(argv: readonly string[]): RunnerOptions | null {
     mode,
     ...(transport === undefined ? {} : { transport: oneOf("transport", transport, ["cli", "grok-acp"] as const) }),
     ...(mcpConfigPath === undefined ? {} : { mcpConfigPath: required("mcp-config", mcpConfigPath) }),
+    ...(capabilityPath === undefined ? {} : { capabilities: readCapabilities(required("capabilities", capabilityPath)) }),
     promptPath: required("prompt", stringValue(parsed.values.prompt)),
     cwd: required("cwd", stringValue(parsed.values.cwd)),
     outputPath: required("output", stringValue(parsed.values.output)),

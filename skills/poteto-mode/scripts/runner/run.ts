@@ -1,3 +1,4 @@
+import { validateCapabilities } from "./capabilities.ts";
 import { childEnvironment, findExecutable, runProcess, stageOverlay, type ProcessResult } from "./child.ts";
 export { childEnvironment, findExecutable } from "./child.ts";
 import {
@@ -392,6 +393,7 @@ function finish(
     model: options.model,
     effort: options.effort,
     mode: options.mode,
+    ...(options.capabilities === undefined ? {} : { capabilities: options.capabilities }),
     cwd: options.cwd,
     promptPath: options.promptPath,
     outputPath: options.outputPath,
@@ -701,7 +703,7 @@ async function runCliAttempt(
     (result.exitCode === 0 || (cliFor(options.provider) === "grok" && result.stdout.trim().length > 0))
   ) {
     try {
-      parsed = parseProviderOutput(options.provider, result.stdout, result.stderr, options.model);
+      parsed = parseProviderOutput(options.provider, result.stdout, result.stderr, options.model, options.capabilities?.agentKind);
     } catch (error) {
       parseError = error;
     }
@@ -861,11 +863,13 @@ export function resolvedOptions(options: RunnerOptions): RunnerOptions {
 }
 
 export function validateRoute(options: RunnerOptions): void {
+  validateCapabilities(options.provider, options.capabilities);
   if (options.transport === undefined || options.transport === "cli") {
     if (options.mode === "full-access") throw new UsageError("full-access requires --transport grok-acp");
     if (options.mcpConfigPath !== undefined) throw new UsageError("MCP configuration requires --transport grok-acp");
     return;
   }
+  if (options.capabilities !== undefined) throw new UsageError("--capabilities selects CLI tools; Grok ACP uses its explicit attachment contract");
   if (options.transport !== "grok-acp") throw new UsageError("unsupported transport");
   if (options.parent !== "codex" && options.parent !== "claude") throw new UsageError("Grok ACP requires parent codex or claude; use Grok's native subagent primitive");
   if (options.provider !== "grok") throw new UsageError("Grok ACP requires provider grok");
@@ -884,5 +888,5 @@ function executionRequest(options: RunnerOptions): ExecutionRequest {
       t3: options.mcpConfigPath === undefined ? null : readT3Attachment(options.mcpConfigPath) };
   }
   if (options.mode === "full-access") throw new UsageError("full-access requires Grok ACP");
-  return { ...files, kind: "cli", parent: options.parent, provider: options.provider, mode: options.mode };
+  return { ...files, kind: "cli", parent: options.parent, provider: options.provider, mode: options.mode, ...(options.capabilities === undefined ? {} : { capabilities: options.capabilities }) };
 }
