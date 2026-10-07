@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assertToolMethod, captureGrokTools, toolEvents } from "./grok-tools.ts";
-import { innerCommand, innerProbeScript } from "./recipes.ts";
+import { assertNoTools, innerCommand, innerProbeScript, type Route } from "./recipes.ts";
 
 const start = { at: 1_000, update: { sessionUpdate: "tool_call", toolCallId: "call-1", title: "run_terminal_command", rawInput: { command: "node probe.cjs", timeout: 450_000 } } };
 const end = { at: 301_074, update: { sessionUpdate: "tool_call_update", toolCallId: "call-1", status: "failed", rawOutput: { timed_out: true } } };
@@ -49,4 +49,22 @@ test("the fixed probe command quotes paths without invoking shell substitutions"
   const directory = join(root, "quote' dollar$(exit 71) `exit 72`"); mkdirSync(directory);
   writeFileSync(join(directory, "probe.cjs"), innerProbeScript(1));
   assert.match(execFileSync("/bin/sh", ["-c", innerCommand(directory)], { encoding: "utf8" }), /PSTACK_INNER_TIMEOUT_COMPLETED/);
+});
+
+test("PONG measurements reject extra tools across all supported routes", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "pstack-pong-method-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const cases: { route: Route; clean: unknown; tool: unknown }[] = [
+    { route: "grok-acp", clean: { kind: "reply", method: "session/prompt" }, tool: { kind: "tool", at: new Date(1000).toISOString(), update: start.update } },
+    { route: "grok-cli", clean: { method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk" } } }, tool: { method: "session/update", params: { update: start.update, _meta: { agentTimestampMs: 1000 } } } },
+    { route: "codex-cli", clean: { type: "item.completed", item: { type: "agent_message", text: "PSTACK_VERIFIER_PONG" } }, tool: { type: "item.completed", item: { type: "command_execution", command: "echo extra" } } },
+    { route: "claude-cli", clean: { type: "assistant", message: { content: [{ type: "text", text: "PSTACK_VERIFIER_PONG" }] } }, tool: { type: "assistant", message: { content: [{ type: "tool_use", name: "Bash", input: { command: "echo extra" } }] } } },
+  ];
+  for (const { route, clean, tool } of cases) {
+    const path = join(root, route);
+    writeFileSync(path, JSON.stringify(clean) + "\n");
+    assert.doesNotThrow(() => assertNoTools(route, path));
+    writeFileSync(path, JSON.stringify(tool) + "\n" + JSON.stringify(clean) + "\n");
+    assert.throws(() => assertNoTools(route, path), /PONG method forbids/);
+  }
 });

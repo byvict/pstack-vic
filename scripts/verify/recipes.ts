@@ -67,6 +67,7 @@ async function lane(context: Context, route: Route, name: string, prompt: string
   ], { cwd: directory, label: `lane-${route}`, env: childEnvironment() });
   // Even an absent/malformed receipt is diagnosed only after command streams are durable.
   const receipt: RunnerReceipt = JSON.parse(readFileSync(receiptPath, "utf8"));
+  if (route === "grok-cli") captureGrokTools(directory, receipt.sessionId);
   return { directory, route, receipt, commandStatus: command.status };
 }
 
@@ -100,6 +101,25 @@ const PONG = "Reply with exactly PSTACK_VERIFIER_PONG. Do not use tools or spawn
 function assertPong(result: LaneResult): void {
   assertLane(result);
   assert.equal(readFileSync(join(result.directory, "output.md"), "utf8").trim(), "PSTACK_VERIFIER_PONG");
+  assertNoTools(result.route, result.route === "grok-acp" ? result.receipt.acp!.eventsPath
+    : result.route === "grok-cli" ? join(result.directory, "grok-tool-updates.jsonl") : result.receipt.stdoutPath!);
+}
+
+export function assertNoTools(route: Route, path: string): void {
+  if (route === "grok-cli" || route === "grok-acp") {
+    assert.equal(toolEvents(path, ROUTES[route].transport).length, 0, "PONG method forbids tool calls");
+    return;
+  }
+  const events = readFileSync(path, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+  for (const event of events) {
+    if (route === "codex-cli" && event.type?.startsWith("item.")) {
+      assert.ok(["agent_message", "reasoning"].includes(event.item?.type), "PONG method forbids tool or other work items");
+    }
+    if (route === "claude-cli") {
+      const blocks = [...(event.message?.content ?? []), ...(event.event?.content_block ? [event.event.content_block] : [])];
+      for (const block of blocks) assert.ok(["text", "thinking", "redacted_thinking"].includes(block.type), "PONG method forbids tool or other content blocks");
+    }
+  }
 }
 
 // Slightly beyond the observed five-minute boundary, not another 40-minute run.
@@ -165,7 +185,6 @@ export const recipes: Record<Feature, Recipe> = {
         const result = await lane(context, route, route,
           `Transport capability probe. Use your terminal tool exactly ONCE to run this command in the foreground: ${command}\nSet that tool's timeout to ${INNER_REQUEST_MS} milliseconds. Wait for completion inside that same tool call. Do not background, poll, warm up, retry, alter files, or spawn agents. If the tool stops early, report its actual error and stop. After it returns, reply with its terminal result. This intentionally takes ${INNER_PROBE_MS / 1000} seconds.`,
           (dir) => writeFileSync(join(dir, "probe.cjs"), innerProbeScript(), { flag: "wx", mode: 0o600 }));
-        if (route === "grok-cli") captureGrokTools(result.directory, result.receipt.sessionId);
         results.push(result);
       }
       return results;

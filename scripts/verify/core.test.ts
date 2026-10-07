@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { changedFiles, classify, source, type Registry } from "./core.ts";
@@ -67,6 +67,33 @@ test("the inner probe proves real elapsed work and records prohibited extra invo
   assert.throws(() => execFileSync(process.execPath, [script], { stdio: "pipe" }));
   assert.throws(() => assertInnerEvents(events(), 30), /exactly once/);
   assert.throws(() => assertInnerEvents([{ kind: "invoked", at: 0 }, { kind: "started", at: 0 }], 30), /did not survive/);
+});
+
+test("commit proofs compare bytes and modes even when Git status hides changes", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "pstack-hidden-source-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const repository = join(root, "repo"), output = join(root, "proof");
+  mkdirSync(repository); mkdirSync(output);
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: repository, encoding: "utf8" });
+  git("init", "-q");
+  const file = join(repository, "runner.ts");
+  writeFileSync(file, "committed"); chmodSync(file, 0o644);
+  git("add", "."); git("-c", "user.name=Verifier", "-c", "user.email=verifier@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "fixture");
+  const journal = new Journal(output);
+  for (const flag of ["assume-unchanged", "skip-worktree"]) {
+    git("update-index", `--${flag}`, "runner.ts");
+    writeFileSync(file, "hidden edit");
+    assert.equal(git("status", "--porcelain"), "");
+    await assert.rejects(source(journal, repository, "HEAD", "HEAD", false), /differ from HEAD/);
+    const proof = await source(journal, repository, "HEAD", "HEAD", true);
+    assert.equal(proof.kind, "working-tree");
+    assert.ok(proof.changed.some(({ filename }) => filename === "runner.ts"));
+    writeFileSync(file, "committed");
+    git("update-index", `--no-${flag}`, "runner.ts");
+  }
+  git("config", "core.filemode", "false"); chmodSync(file, 0o755);
+  assert.equal(git("status", "--porcelain"), "");
+  await assert.rejects(source(journal, repository, "HEAD", "HEAD", false), /differ from HEAD/);
 });
 
 test("artifact hashes include empty streams and refuse links outside the evidence root", (t) => {

@@ -70,6 +70,14 @@ export async function source(journal: Journal, repository: string, baseRef: stri
   if (workingTree) changed.push(...changedFiles(await git("diff", "--name-status", "-z", "--find-renames", head, "--")));
   const untracked = (await git("ls-files", "--others", "--exclude-standard", "-z")).split("\0").filter(Boolean);
   if (workingTree) changed.push(...untracked.map((filename) => ({ filename })));
+  // The index may hide edits (assume-unchanged/skip-worktree), and core.filemode
+  // may hide executable-bit changes. Compare the actual bytes to HEAD's tree.
+  const tree = new Map<string, { mode: number; hash: string }>();
+  for (const entry of (await git("ls-tree", "-rz", "--full-tree", head)).split("\0").filter(Boolean)) {
+    const match = /^([0-7]+) blob ([a-f0-9]{40})\t([\s\S]+)$/.exec(entry);
+    if (!match) throw new Error(`Unsupported candidate tree entry: ${entry}`);
+    tree.set(match[3], { mode: parseInt(match[1], 8), hash: match[2] });
+  }
   const paths = [...new Set((await git("ls-files", "--cached", "--others", "--exclude-standard", "-z")).split("\0").filter(Boolean))].sort();
   const files: Source["files"] = [];
   for (const path of paths) {
@@ -77,8 +85,18 @@ export async function source(journal: Journal, repository: string, baseRef: stri
     let stat;
     try { stat = lstatSync(file); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; throw error; }
     if (!stat.isFile() && !stat.isSymbolicLink()) throw new Error(`Unsupported source entry: ${path}`);
-    files.push({ path, mode: stat.isSymbolicLink() ? 0o120000 : (stat.mode & 0o111) ? 0o100755 : 0o100644,
-      hash: sha256(stat.isSymbolicLink() ? readlinkSync(file) : readFileSync(file)) });
+    const bytes = stat.isSymbolicLink() ? Buffer.from(readlinkSync(file)) : readFileSync(file);
+    const mode = stat.isSymbolicLink() ? 0o120000 : (stat.mode & 0o111) ? 0o100755 : 0o100644;
+    const blob = createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
+    const expected = tree.get(path);
+    if (!expected || expected.mode !== mode || expected.hash !== blob) {
+      if (!workingTree) throw new Error(`Candidate bytes or mode differ from HEAD: ${path}; use --working-tree for an exploratory proof`);
+      changed.push({ filename: path });
+    }
+    tree.delete(path);
+    files.push({ path, mode, hash: sha256(bytes) });
   }
+  if (tree.size && !workingTree) throw new Error(`Candidate entries missing from HEAD: ${[...tree.keys()].join(", ")}`);
+  if (workingTree) changed.push(...[...tree.keys()].map((filename) => ({ filename })));
   return { base, head, kind: workingTree ? "working-tree" : "exact-commit", files, digest: sha256(JSON.stringify(files)), changed };
 }
