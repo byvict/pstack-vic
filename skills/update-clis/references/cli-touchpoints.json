@@ -526,7 +526,7 @@
       "measuredOn": "1.0.46"
     },
     {
-      "id": "runner.task-capabilities",
+      "id": "codex.task-capabilities",
       "cli": "codex",
       "kind": "lane",
       "contract": "Task capabilities keep the descriptor and sandbox while selecting native web, configured skills/plugins, named HTTP MCP sources or an owner. Codex owners enable multi_agent and keep a fresh persisted session; ordinary lanes remain ephemeral. CLI receipts record profile SHA-256 and requested capabilities; access requires an actual source call, not a listed catalog.",
