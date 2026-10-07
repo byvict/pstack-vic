@@ -1117,6 +1117,7 @@ export function buildPlan(input: PlanInput): Plan {
     if (roleNamed(matrix, row.role)?.selection !== "cross-family") continue;
     const problem = crossFamilyRowProblem(matrix, parent, row.role, row.lanes);
     if (problem !== null) fail(problem);
+    if (row.role === "trail reviewer pool") continue;
     const native = nativeProviderOf(matrix, parent);
     const others = [...new Set(row.lanes.map((lane) => parseDescriptor(lane)?.provider))].filter((p) => p !== native);
     if (others.length === 1) {
@@ -1182,7 +1183,7 @@ export function buildPlan(input: PlanInput): Plan {
 
 export interface PickInput extends StateInput {
   readonly role: string;
-  /** Providers of the write lanes whose output is part of the result, besides the parent's own. */
+  /** Additional author providers to exclude for Arena; trail review excludes only the root. */
   readonly executors?: readonly string[];
 }
 
@@ -1205,12 +1206,17 @@ export function pickLane(input: PickInput): PickResult {
   if (!role) fail(`unknown role ${JSON.stringify(input.role)}`);
   const row = state.rows.find((r) => r.role === role.role);
   const lanes = row?.lanes ?? roleDefault(matrix, role.role, state.parent);
+  // Validate supplied authors even for trail review, whose criterion is only the root family.
+  const authorsPick = pickCrossFamily(matrix, state.parent, lanes, input.executors ?? []);
+  const selection = role.role === "trail reviewer pool"
+    ? pickCrossFamily(matrix, state.parent, lanes, [])
+    : authorsPick;
   return {
     parent: state.parent,
     role: role.role,
     source: row ? "sheet" : "default",
     lanes,
-    ...pickCrossFamily(matrix, state.parent, lanes, input.executors ?? []),
+    ...selection,
   };
 }
 
@@ -1676,9 +1682,10 @@ const USAGE = `Usage: setup-pstack <state|plan|probe|attest|write|pick> [options
          Verify the plan's probes, then write the sheet, the parent integration, and the probe
          ledger (byte-identical rerun writes nothing).
   pick   --parent <p> --role "<pool role>" [--executor <provider>]... [--home <dir>]
-         From the role's row, list the lanes whose provider wrote none of the work, in the
-         operator's order. The parent's own provider always counts as a writer; name every
-         other provider that wrote with --executor. Exit 1 when no lane is eligible.
+         Pick in the operator's order. Trail review excludes only the root's provider;
+         --executor is validated but does not exclude coauthors from that role. Arena also
+         excludes the providers named with --executor. Exit 1 means no eligible lane;
+         it does not waive the trail review.
 
 The sheet, the ledger and the integration live in the parent's config home: CLAUDE_CONFIG_DIR
 (claude) or CODEX_HOME (codex), an absolute path, else <home>/.claude, <home>/.codex, <home>/.grok.
