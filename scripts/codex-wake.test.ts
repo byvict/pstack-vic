@@ -141,6 +141,20 @@ describe("local Codex wake", () => {
     await assert.rejects(armWake(join(root, "job"), request), /exact persisted thread/);
     assert.equal(existsSync(request.socket + ".effects"), false);
   });
+  it("can inspect and cancel a legacy delivery-unknown receipt without a persisted dispatch timestamp", async () => {
+    writeFileSync(request.socket + ".disconnect", "1");
+    const state = join(root, "job");
+    await armWake(state, request);
+    const { receipt } = await terminal(state);
+    assert.equal(receipt.status, "delivery-unknown");
+    writeFileSync(join(state, "receipt.json"), JSON.stringify({ ...receipt, dispatchAt: undefined, error: "" }));
+    assert.equal(wakeStatus(state).receipt.status, "delivery-unknown");
+    assert.deepEqual((await cancelWake(state)).cancellation, {
+      status: "cancelled", queuedSubmissionId: "queued-1", at: JSON.parse(readFileSync(join(state, "cancellation.json"), "utf8")).at,
+    });
+    assert.equal(existsSync(request.socket + ".queue"), false);
+    assert.equal(readFileSync(request.socket + ".effects", "utf8").trim().split("\n").length, 1);
+  });
   it("rejects corrupt persisted states before making queue cancellation calls", async () => {
     const state = join(root, "job");
     await armWake(state, request);

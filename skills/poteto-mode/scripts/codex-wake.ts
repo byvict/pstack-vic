@@ -124,7 +124,7 @@ export type WakeReceipt =
   | (ArmedContext & { readonly status: "cancelled"; readonly completedAt: string })
   | (ArmedContext & { readonly status: "dispatching"; readonly dispatchAt: string })
   | (ArmedContext & { readonly status: "queued"; readonly dispatchAt: string; readonly completedAt: string; readonly queuedSubmissionId: string })
-  | (ArmedContext & { readonly status: "delivery-unknown"; readonly dispatchAt: string; readonly completedAt: string; readonly error: string })
+  | (ArmedContext & { readonly status: "delivery-unknown"; readonly dispatchAt?: string; readonly completedAt: string; readonly error: string })
   | (Partial<ArmedContext> & { readonly status: "failed"; readonly completedAt: string; readonly error: string });
 type QueueRemoval =
   | { readonly status: "cancelled" | "already-consumed"; readonly queuedSubmissionId: string }
@@ -146,6 +146,10 @@ function timestamp(value: unknown): string {
 function optionalText(value: unknown): string | null | undefined {
   return value === undefined || value === null ? value : text(value);
 }
+function errorText(value: unknown): string {
+  if (typeof value !== "string") throw new Error("Invalid wake error");
+  return value;
+}
 function armedContext(value: ObjectValue): ArmedContext {
   const threadId = text(value.threadId), eventId = text(value.eventId);
   if (!UUID.test(threadId) || !UUID.test(eventId) || typeof value.pid !== "number" || !Number.isSafeInteger(value.pid) || value.pid <= 0
@@ -164,10 +168,12 @@ function readReceipt(state: string): WakeReceipt {
     case "dispatching": return { ...value, ...armedContext(value), status: "dispatching", dispatchAt: timestamp(value.dispatchAt) };
     case "queued": return { ...value, ...armedContext(value), status: "queued", dispatchAt: timestamp(value.dispatchAt),
       completedAt: timestamp(value.completedAt), queuedSubmissionId: text(value.queuedSubmissionId) };
-    case "delivery-unknown": return { ...value, ...armedContext(value), status: "delivery-unknown", dispatchAt: timestamp(value.dispatchAt),
-      completedAt: timestamp(value.completedAt), error: text(value.error) };
+    // Older workers could fail to persist dispatching before recording delivery-unknown.
+    case "delivery-unknown": return { ...value, ...armedContext(value), status: "delivery-unknown",
+      ...(value.dispatchAt === undefined ? {} : { dispatchAt: timestamp(value.dispatchAt) }),
+      completedAt: timestamp(value.completedAt), error: errorText(value.error) };
     case "failed": return { ...value, ...(["threadId", "eventId", "pid", "dueAt", "modelEvidence", "configuredModel", "configuredEffort", "cwd"].some((key) => key in value) ? armedContext(value) : {}), status: "failed",
-      completedAt: timestamp(value.completedAt), error: text(value.error) };
+      completedAt: timestamp(value.completedAt), error: errorText(value.error) };
     default: throw new Error("Invalid wake receipt status");
   }
 }
