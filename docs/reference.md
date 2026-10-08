@@ -279,7 +279,7 @@ Num programa que roda a partir de um plano, o Tick é silencioso. A Raiz só esc
 Sua parte num programa é esta:
 
 - **Dá o "go".** Depois deixa a sessão aberta até o último merge e a resposta final da Raiz.
-- **Manda o Tick, no Codex.** Onde nenhuma tarefa agendada do Codex chama a sessão de volta, você manda o prompt do Tick a cada hora ([Limites no Codex](#limites-no-codex)).
+- **Manda o Tick manual quando necessário, no Codex.** Só quando nenhum mecanismo válido de despertar estiver disponível, você manda o prompt integral do Tick a cada hora ([Limites no Codex](#limites-no-codex)).
 - **Clica no merge dos seus itens.** O Dono leva um item seu até o Merge-ready e para ali. Quem revisa e clica no merge é você, e nenhum Dono mergeia um item seu. Num programa com plano, um PR que muda uma interação também espera você. As capturas de tela e um vídeo vão para o chat, e você revisa antes do merge.
 - **Aprova o que a sua autorização não cobre.** Alguns limites o CI só deixa apertar, como um gate ou um orçamento fixado. Subir um limite desses pede o aval da Raiz (*countersign*), que ela só dá depois da prova de um verificador. Quando a sua autorização ou as suas ordens permanentes, que são as instruções que você deu para o programa todo, cobrem aprovações, o aval da Raiz é a aprovação, e o Dono a registra apontando para ele. Quando não cobrem, a aprovação continua sendo sua. A Raiz também nunca dá nem contorna uma aprovação que o GitHub exige. Absorver um valor que já entrou na `main` não conta como subir limite.
 - **Manda parar quando quiser.** Um "para" seu chega na hora a todos os Donos como ordem de não escrever mais nada. Eles seguram o trabalho até você liberar.
@@ -304,16 +304,26 @@ Até a 0.4.19 o plugin tinha um fluxo próprio, em que um robô no Mac conferia 
 - **PR aberto fora de um programa espera.** Ou você mergeia, ou um programa o adota como item da fila ([PR aberto fora de um programa](#pr-aberto-fora-de-um-programa)).
 - **O GitHub só exige o CI.** Os checks `verdict` e `hold` saíram das regras, e um rótulo no PR não trava mais nada. O que segura um merge é o Veredito da Raiz, dentro da sessão. Para ficar com um PR, diga isso na sessão.
 - **A versão sai em dois passos.** O CI cria a tag. Trocar o plugin nos dois pais é um comando seu no Mac ([Publicar uma versão](#publicar-uma-versão)).
-- **No Codex não há relógio interno.** Você mesmo pede o Tick a cada hora. O Codex também precisa de `multi_agent` ligado para ter Donos ([Limites no Codex](#limites-no-codex)).
+- **No Codex a cadência depende do host.** A Raiz seleciona heartbeat nativo, fila CLI ou, na falta de ambos, Tick manual. O Codex também precisa de `multi_agent` ligado para ter Donos ([Limites no Codex](#limites-no-codex)).
 
 ### Limites no Codex
 
 No Codex o programa segue os mesmos playbooks. Mudam quatro coisas, que estão em [`codex-tools.md`](../skills/poteto-mode/references/codex-tools.md):
 
-- **Não há `/loop`.** O Codex não tem um `/loop` que chame a sessão de volta. Onde nenhuma tarefa agendada do Codex faz isso, quem dá a cadência do Tick é você. A Raiz avisa isso quando declara o protocolo. Você manda o prompt do Tick a cada hora, e ela roda um Tick inteiro a cada envio.
+- **O despertar usa outro mecanismo.** A Raiz declara o mecanismo disponível ao apresentar o protocolo e segue o [contrato de despertar Codex](../skills/poteto-mode/references/codex-local-wake.md), conforme a seleção abaixo.
 - **Os Donos precisam de `multi_agent`.** No Codex o Dono é um `spawn_agent`, que é a ferramenta de criar subagentes. Ela só funciona com `multi_agent = true` em `~/.codex/config.toml` ([Instalação, Codex](#codex)). Sem isso não há Donos.
 - **A Raiz cria o worktree antes.** O `spawn_agent` não cria worktree. A Raiz cria um com `git worktree add` e passa o caminho ao Dono.
 - **Não há `run` nem `verify`.** A lane ao vivo roda o app pelo shell. Para uma tela, ela usa a automação que tiver ou entrega a você uma checagem manual concreta.
+
+Para o Tick do Autopilot, a Raiz escolhe um único mecanismo:
+
+1. **Heartbeat nativo na thread exata da Raiz**, quando o host o anuncia e suporta a cadência horária e as ferramentas/permissões do programa. No desktop, usa `automation_update` com `kind: heartbeat` e o UUID exato em `targetThreadId`. Conserva o ID retornado e atualiza esse mesmo agendamento quando o programa muda.
+2. **Fila CLI como alternativa**, com um controlador local que tenha acesso ao socket e um app-server em execução com a thread persistida exata já carregada. A Raiz/controlador arma um evento finito antes de encerrar o turno e rearma explicitamente cada próximo Tick enquanto houver trabalho, preservando o horário devido. Enfileirar não carrega a thread.
+3. **Tick manual**, somente quando nenhum dos mecanismos anteriores for válido. A Raiz informa esse limite; você envia o prompt integral a cada hora, e ela executa um Tick inteiro por envio.
+
+As três rotas conservam o payload integral do playbook e a cadência de produção de uma hora, incluindo auditoria de Donos, filhos, trilhas, efeitos, lanes travadas e término. Agendamento salvo ou recibo `queued` não prova execução; até um turno concluído exige conferir os efeitos da auditoria. Na fila CLI, `observe` reconcilia fila e histórico sem reenviar eventos incertos.
+
+Quando não resta trabalho delegado, mesmo após o último merge, ou você manda parar, a Raiz remove o heartbeat ou cancela seus eventos pendentes, confirma a saída dos timers e encerra somente os processos de host/controlador que o programa possui. Cancelar um evento já consumido não interrompe seu turno. O host escolhido precisa continuar disponível; não há promessa de exatamente uma execução através de crashes nem recuperação automática após reboot. Os 30 minutos do [ADR 0005](adr/0005-autopilot-substitui-converge.md) são história; o [ADR 0008](adr/0008-despertar-local-por-fila-do-codex.md) registra as alternativas posteriores.
 
 A conferência antes do "go" usa o mesmo script com `--parent codex`. Ela sai com 0 quando `approval_policy = "never"` está no topo do `<config-home>/config.toml` do Codex, que é `CODEX_HOME` ou `~/.codex` ([Harness config homes](../skills/poteto-mode/references/codex-tools.md#harness-config-homes)). Com outro valor, o Codex interrompe o programa e pede aprovação.
 
