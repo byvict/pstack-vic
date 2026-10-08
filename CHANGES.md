@@ -1999,3 +1999,14 @@ Os relatórios de 2026-10-07 e 2026-10-08 registram o que foi medido: Claude rec
 Reúne a prova de renovação de capacidade e revisão em contextos novos (#112), a conciliação dos mapas de ferramentas e de despacho (#114) e o [relatório integrado de Autopilot-stack](docs/research/2026-10-08-codex-integrated-autopilot.md) (#115). O mapa do Codex distingue o heartbeat recorrente, os eventos finitos de verificação e os demais usos de `/loop`. A exigência de socket/loopback fica restrita ao controlador CLI; não se aplica ao heartbeat nativo.
 
 O relatório registra o ensaio acelerado de um minuto, auditorias reais, verificações independentes e coleta das delegações, com os limites de cada prova. A cadência de produção continua horária. O pin upstream, os arquivos gerados, os relatórios anteriores e as escolhas de modelo e esforço permanecem inalterados.
+
+
+## 0.5.27 — Fontes de modelos por projeto e despertar Codex
+
+Publica as correções já integradas de E/N1 (#122) e F/N2 (#121). No Codex, `state`, `plan`, `pick` e `write` resolvem a fonte de modelos do projeto antes do perfil global, preservando os descritores, esforços e ordem configurados. O seletor informa a origem; cadeias de instruções customizadas podem ser fornecidas explicitamente, conforme [model-sources.md](skills/setup-pstack/references/model-sources.md). Um worktree não herda silenciosamente a sheet do checkout principal.
+
+O manual apresenta a seleção heartbeat nativo → fila CLI com controlador válido → Tick manual quando nenhuma rota válida está disponível. Os ADRs e recibos anteriores mantêm sua cadência e alcance históricos. Esta release não acrescenta uma nova prova de temporização ou de reload de conversas abertas.
+
+Conteúdo herdado do trunk desde a tag 0.5.26: #117 versiona a configuração de projeto do Claude; #118 atualiza seus registros de instalação por escopo; #119 registra o programa da raiz Claude, a capacidade observada e o pedido de pool do owner à raiz; #120 versiona a ativação Codex neste projeto e isola `plugin remove/add` num perfil temporário para trocar o cache compartilhado preservando a política real do usuário. Esses PRs já estavam integrados; não são trabalho novo desta release.
+
+O PR de release atualiza somente manifests, referências de instalação e estas notas. A publicação usa a tag criada pelo CI após o merge. A entrega desta sessão instala somente no Codex, preservando as ativações por projeto, sheets e preferências pessoais; o comando `release.ts`, que atualiza os dois pais, permanece inalterado. A melhoria residual G do tooling de prova continua opcional.
