@@ -1,6 +1,6 @@
 // pstack-vic's release on the operator's Mac: moves Claude Code and Codex to the version CI tagged. Run it in the main checkout after `git pull --ff-only`. Every step reads what is already done before it acts, so a second run is safe.
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, readFileSync } from 'node:fs';
+import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -61,29 +61,41 @@ function updateClaude(version: string): void {
     say(`Claude Code on ${PLUGIN} ${version} (${recordName(record)})`);
   }
 }
-function codexVersion(): string | null {
-  return (JSON.parse(run('codex', ['plugin', 'list', '--json'])) as { installed: { pluginId: string; version: string }[] }).installed.find(p => p.pluginId === PLUGIN)?.version ?? null;
+function codexVersion(home: string): string | null {
+  return (JSON.parse(run('codex', ['plugin', 'list', '--json'], home)) as { installed: { pluginId: string; version: string }[] }).installed.find(p => p.pluginId === PLUGIN)?.version ?? null;
 }
-function codexMarketplace(): boolean {
-  return (JSON.parse(run('codex', ['plugin', 'marketplace', 'list', '--json'])) as { marketplaces: { name: string }[] }).marketplaces.some(m => m.name === MARKETPLACE);
+function codexMarketplace(home: string): boolean {
+  return (JSON.parse(run('codex', ['plugin', 'marketplace', 'list', '--json'], home)) as { marketplaces: { name: string }[] }).marketplaces.some(m => m.name === MARKETPLACE);
+}
+/** Preserve the user's plugin policy while the CLI replaces its shared cache. An absent policy means project-only activation. */
+function restoreCodexPolicy(config: string, before: string): void {
+  const policy = /^\[plugins\.["']pstack@pstack-vic["'](?:\.[^\]]+)?\][ \t]*\r?\n(?:(?!^\[)[\s\S])*/gm;
+  const original = before.match(policy)?.join('') ?? `[plugins."${PLUGIN}"]\nenabled = false\n`;
+  const current = readFileSync(config, 'utf8');
+  writeFileSync(config, current.replace(policy, '').trimEnd() + '\n\n' + original);
 }
 /** Codex pins its marketplace to a tag, so a version moves by remove, remove, add at the tag, add. A step an interrupted run already undid is skipped, and the first backup of config.toml is kept. */
 function updateCodex(version: string, home: string): void {
-  const before = codexVersion();
+  const before = codexVersion(home);
   if (before === version) { say(`Codex on ${PLUGIN} ${version}`); return; }
-  const config = join(home, '.codex', 'config.toml');
+  const config = join(process.env.CODEX_HOME || join(home, '.codex'), 'config.toml');
+  const policyBefore = existsSync(config) ? readFileSync(config, 'utf8') : '';
   const backup = `${config}.pre-${version}`;
   if (existsSync(config) && !existsSync(backup)) copyFileSync(config, backup);
   try {
-    if (before !== null) run('codex', ['plugin', 'remove', PLUGIN]);
-    if (codexMarketplace()) run('codex', ['plugin', 'marketplace', 'remove', MARKETPLACE]);
-    run('codex', ['plugin', 'marketplace', 'add', 'byvict/pstack-vic', '--ref', `v${version}`]);
-    run('codex', ['plugin', 'add', PLUGIN]);
-    const installed = codexVersion();
+    try {
+      if (before !== null) run('codex', ['plugin', 'remove', PLUGIN], home);
+      if (codexMarketplace(home)) run('codex', ['plugin', 'marketplace', 'remove', MARKETPLACE], home);
+      run('codex', ['plugin', 'marketplace', 'add', 'byvict/pstack-vic', '--ref', `v${version}`], home);
+      run('codex', ['plugin', 'add', PLUGIN], home);
+    } finally {
+      if (existsSync(config)) restoreCodexPolicy(config, policyBefore);
+    }
+    const installed = codexVersion(home);
     if (installed !== version) throw new Error(`Codex reports ${PLUGIN} ${installed ?? 'not installed'}, not ${version}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const wayBack = existsSync(backup) ? `, or go back to the previous Codex setup with:\ncp ~/.codex/config.toml.pre-${version} ~/.codex/config.toml && codex plugin add ${PLUGIN}` : '';
+    const wayBack = existsSync(backup) ? `; previous Codex configuration: ${backup}` : '';
     throw new Error(`${message}\nThe Codex swap did not finish. Run this script again to finish it${wayBack}`);
   }
   say(`Codex on ${PLUGIN} ${version}`);

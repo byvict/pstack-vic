@@ -11,7 +11,7 @@ const commit = 'c'.repeat(40);
 const other = 'd'.repeat(40);
 /** One fake for git, claude and codex, dispatched on its own file name. It answers from FAKE_ROOT/state.json and appends each call to FAKE_ROOT/calls.jsonl. A call the release has no business making, such as `git tag` or `git push`, fails. The fake claude keeps one install record per scope and project, and `plugin update --scope` moves only the record of that scope whose project is the cwd (any cwd for user), as the real CLI does. */
 const fake = `#!/usr/bin/env node
-import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 const root = process.env.FAKE_ROOT;
 const file = join(root, 'state.json');
@@ -23,6 +23,18 @@ const out = text => process.stdout.write(text);
 const save = () => writeFileSync(file, JSON.stringify(state));
 const is = (...words) => args.length === words.length && words.every((word, i) => args[i] === word);
 const fail = text => { process.stderr.write(text + '\\n'); process.exit(1); };
+const policyFile = join(process.env.CODEX_HOME || join(process.env.HOME, '.codex'), 'config.toml');
+const changePolicy = enabled => {
+  const text = existsSync(policyFile) ? readFileSync(policyFile, 'utf8') : '';
+  let skipping = false;
+  const newline = String.fromCharCode(10);
+  const kept = text.split(newline).filter(line => {
+    if (line.startsWith('[')) skipping = line.startsWith('[plugins."pstack@pstack-vic"]') || line.startsWith('[plugins."pstack@pstack-vic".');
+    return !skipping;
+  }).join(newline);
+  mkdirSync(process.env.CODEX_HOME || join(process.env.HOME, '.codex'), { recursive: true });
+  writeFileSync(policyFile, kept + (enabled ? newline + '[plugins."pstack@pstack-vic"]' + newline + 'enabled = true' + newline : ''));
+};
 if ((state.failing ?? []).some(prefix => [name, ...args].join(' ').startsWith(prefix))) fail('fake ' + name + ': unable to access remote');
 if (name === 'git') {
   if (is('fetch', 'origin')) {}
@@ -44,10 +56,10 @@ if (name === 'git') {
 } else if (name === 'codex') {
   if (is('plugin', 'list', '--json')) out(JSON.stringify({ installed: state.codex.version ? [{ pluginId: 'pstack@pstack-vic', version: state.codex.version }] : [], available: [] }));
   else if (is('plugin', 'marketplace', 'list', '--json')) out(JSON.stringify({ marketplaces: state.codex.ref ? [{ name: 'pstack-vic' }] : [] }));
-  else if (is('plugin', 'remove', 'pstack@pstack-vic')) { if (!state.codex.version) fail('not installed'); state.codex.version = null; save(); }
+  else if (is('plugin', 'remove', 'pstack@pstack-vic')) { if (!state.codex.version) fail('not installed'); changePolicy(false); state.codex.version = null; save(); }
   else if (is('plugin', 'marketplace', 'remove', 'pstack-vic')) { if (!state.codex.ref) fail('no such marketplace'); state.codex.ref = null; save(); }
   else if (args.length === 6 && args[0] === 'plugin' && args[1] === 'marketplace' && args[2] === 'add' && args[3] === 'byvict/pstack-vic' && args[4] === '--ref') { state.codex.ref = args[5]; save(); }
-  else if (is('plugin', 'add', 'pstack@pstack-vic')) { if (!state.codex.ref) fail('no marketplace'); state.codex.version = state.codex.lands ?? state.codex.ref.slice(1); save(); }
+  else if (is('plugin', 'add', 'pstack@pstack-vic')) { if (!state.codex.ref) fail('no marketplace'); changePolicy(true); state.codex.version = state.codex.lands ?? state.codex.ref.slice(1); save(); }
   else fail('fake codex: ' + args.join(' '));
 } else fail('fake: ' + name);
 `;
@@ -56,7 +68,7 @@ const checks = [['git', 'fetch', 'origin'], ['git', 'rev-parse', 'HEAD'], ['git'
 const claudeUpdate = [['claude', 'plugin', 'marketplace', 'update', 'pstack-vic'], ['claude', 'plugin', 'update', 'pstack@pstack-vic', '--scope', 'user']];
 const codexAdds = [['codex', 'plugin', 'marketplace', 'add', 'byvict/pstack-vic', '--ref', 'v0.4.8'], ['codex', 'plugin', 'add', 'pstack@pstack-vic']];
 const codexQuartet = [['codex', 'plugin', 'remove', 'pstack@pstack-vic'], ['codex', 'plugin', 'marketplace', 'remove', 'pstack-vic'], ...codexAdds];
-const wayBack = 'The Codex swap did not finish. Run this script again to finish it, or go back to the previous Codex setup with:\ncp ~/.codex/config.toml.pre-0.4.8 ~/.codex/config.toml && codex plugin add pstack@pstack-vic\n';
+const wayBack = (backup: string) => `The Codex swap did not finish. Run this script again to finish it; previous Codex configuration: ${backup}\n`;
 /** The merge commit of 0.4.8 checked out at the trunk tip, v0.4.8 on origin, both parents on 0.4.7 with one Claude Code record at user scope. The child's PATH holds only the fakes and a link to this node, and its HOME is a temporary directory, so no real CLI and no real ~/.claude or ~/.codex is in reach. `project(name)` makes a directory a project record can point at. */
 function setup(t: { after: (fn: () => void) => void }, change: (state: Record<string, any>, project: (name: string) => string) => void = () => {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'pstack-release-'))); t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -199,7 +211,7 @@ test('a Codex swap that fails halfway exits 1 with the way back, and the next ru
   const s = setup(t, state => { state.failing = ['codex plugin marketplace add']; });
   const failed = s.run();
   assert.equal(failed.status, 1);
-  assert.equal(failed.stderr, `codex plugin marketplace add byvict/pstack-vic --ref v0.4.8 failed: fake codex: unable to access remote\n${wayBack}`);
+  assert.equal(failed.stderr, `codex plugin marketplace add byvict/pstack-vic --ref v0.4.8 failed: fake codex: unable to access remote\n${wayBack(s.backup)}`);
   assert.deepEqual([s.state().claude.records[0].version, s.state().codex.version, s.state().codex.ref], ['0.4.8', null, null], 'Claude Code moved; Codex is left without the plugin and its marketplace');
   assert.equal(readFileSync(s.backup, 'utf8'), original);
   writeFileSync(s.config, 'half swapped\n');
@@ -215,7 +227,7 @@ test('a Codex swap that lands on another version exits 1 with the way back', t =
   const s = setup(t, state => { state.codex.lands = '0.4.9'; });
   const result = s.run();
   assert.equal(result.status, 1);
-  assert.equal(result.stderr, `Codex reports pstack@pstack-vic 0.4.9, not 0.4.8\n${wayBack}`);
+  assert.equal(result.stderr, `Codex reports pstack@pstack-vic 0.4.9, not 0.4.8\n${wayBack(s.backup)}`);
 });
 test('without a config.toml there is no backup to go back to, and the failure says only to run again', t => {
   const s = setup(t, state => { state.failing = ['codex plugin add']; });
@@ -224,4 +236,40 @@ test('without a config.toml there is no backup to go back to, and the failure sa
   assert.equal(result.status, 1);
   assert.equal(result.stderr, 'codex plugin add pstack@pstack-vic failed: fake codex: unable to access remote\nThe Codex swap did not finish. Run this script again to finish it\n');
   assert.equal(existsSync(s.backup), false);
+});
+
+test('a Codex cache update preserves disabled user activation and plugin tool policy', t => {
+  const s = setup(t);
+  const policy = '[plugins."pstack@pstack-vic"]\nenabled = false\n\n[plugins."pstack@pstack-vic".mcp_servers.example]\nenabled = false\n';
+  writeFileSync(s.config, '[features]\nmulti_agent = true\n\n' + policy + '\n[plugins."other@elsewhere"]\nenabled = true\n');
+  const result = s.run();
+  assert.equal(result.status, 0, result.stderr);
+  const after = readFileSync(s.config, 'utf8');
+  assert.ok(after.includes(policy));
+  assert.ok(after.includes('[features]\nmulti_agent = true'));
+  assert.ok(after.includes('[plugins."other@elsewhere"]\nenabled = true'));
+  assert.equal(s.state().codex.version, '0.4.8');
+});
+test('a Codex user installation remains enabled after the cache update', t => {
+  const s = setup(t);
+  const policy = '[plugins."pstack@pstack-vic"]\nenabled = true\n';
+  writeFileSync(s.config, policy);
+  assert.equal(s.run().status, 0);
+  assert.ok(readFileSync(s.config, 'utf8').includes(policy));
+});
+test('a project-only Codex installation stays disabled for the user after failure and retry', t => {
+  const s = setup(t, state => { state.failing = ['codex plugin add']; });
+  const policy = '[plugins."pstack@pstack-vic"]\nenabled = false\n';
+  writeFileSync(s.config, policy);
+  assert.equal(s.run().status, 1);
+  assert.ok(readFileSync(s.config, 'utf8').includes(policy));
+  s.write({ ...s.state(), failing: [] });
+  assert.equal(s.run().status, 0);
+  assert.ok(readFileSync(s.config, 'utf8').includes(policy));
+  assert.equal(readFileSync(s.backup, 'utf8'), policy);
+});
+test('a missing Codex user policy defaults to disabled after installing the shared cache', t => {
+  const s = setup(t);
+  assert.equal(s.run().status, 0);
+  assert.match(readFileSync(s.config, 'utf8'), /\[plugins\."pstack@pstack-vic"\]\nenabled = false/);
 });
