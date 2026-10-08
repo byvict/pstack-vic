@@ -30,7 +30,7 @@ O [Autonomous run](../../skills/poteto-mode/playbooks/autonomous-run.md) usa a c
 
 | Ambiente | Como o port acompanha |
 | --- | --- |
-| Claude Code | O `/loop` do ambiente fornece a cadência; o programa registra o que deve conferir. |
+| Claude Code | O `/loop` do ambiente fornece a cadência numa raiz de terminal; numa Raiz do app desktop, um comando em segundo plano de uma hora, re-armado a cada vez ([referência](../reference.md#o-que-a-raiz-faz-a-cada-hora)). O programa registra o que deve conferir. |
 | Codex | Usa uma tarefa agendada que retome a sessão, se disponível. Sem esse recurso, a auditoria horária depende de um novo pedido do operador, conforme o [mapa de ferramentas](../../skills/poteto-mode/references/codex-tools.md). |
 | Grok Build | O coordenador usa o mecanismo descrito em [Autopilot audit](../../skills/poteto-mode/references/grok-tools.md#autopilot-audit); o `/loop` do Grok executa um subagente separado. |
 
