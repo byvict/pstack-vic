@@ -6,19 +6,18 @@ import { createServer, type Server } from "node:http";
 import { createHash } from "node:crypto";
 import type { Duplex } from "node:stream";
 import { join } from "node:path";
-import { armWake, cancelWake, wakeStatus, type WakeRequest } from "../skills/poteto-mode/scripts/codex-wake.ts";
+import { armWake, cancelWake, wakeStatus, type WakeRequest, type WakeStatus } from "../skills/poteto-mode/scripts/codex-wake.ts";
 
 const THREAD = "11111111-1111-4111-8111-111111111111";
 let root: string;
 let server: Server;
 const connections = new Set<Duplex>();
 let request: WakeRequest;
-async function terminal(state: string): Promise<Record<string, unknown>> {
+async function terminal(state: string): Promise<WakeStatus> {
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
     const status = wakeStatus(state);
-    const receipt = JSON.parse(readFileSync(join(state, "receipt.json"), "utf8"));
-    if (["queued", "cancelled", "failed", "delivery-unknown"].includes(receipt.status)) return status;
+    if (["queued", "cancelled", "failed", "delivery-unknown"].includes(status.receipt.status)) return status;
     await new Promise((done) => setTimeout(done, 20));
   }
   throw new Error("Wake did not reach a terminal receipt");
@@ -97,6 +96,8 @@ describe("local Codex wake", () => {
     assert.equal(effects[0].clientUserMessageId, first.eventId);
     assert.equal(effects[0].input[0].text, `[pstack local wake ${first.eventId}]\nRead the assigned sentinel and report it.`);
     assert.equal(end.threadId, THREAD);
+    assert.equal(end.receipt.status, "queued");
+    if (end.receipt.status === "queued") assert.equal(end.receipt.queuedSubmissionId, "queued-1");
     await assert.rejects(armWake(state, { ...request, payload: "different task" }), /another request/);
   });
   it("cancels an armed event before it can queue, without rearming it", async () => {
@@ -139,5 +140,35 @@ describe("local Codex wake", () => {
     writeFileSync(request.socket + ".thread", JSON.stringify(data));
     await assert.rejects(armWake(join(root, "job"), request), /exact persisted thread/);
     assert.equal(existsSync(request.socket + ".effects"), false);
+  });
+  it("can inspect and cancel a legacy delivery-unknown receipt without a persisted dispatch timestamp", async () => {
+    writeFileSync(request.socket + ".disconnect", "1");
+    const state = join(root, "job");
+    await armWake(state, request);
+    const { receipt } = await terminal(state);
+    assert.equal(receipt.status, "delivery-unknown");
+    writeFileSync(join(state, "receipt.json"), JSON.stringify({ ...receipt, dispatchAt: undefined, error: "" }));
+    assert.equal(wakeStatus(state).receipt.status, "delivery-unknown");
+    assert.deepEqual((await cancelWake(state)).cancellation, {
+      status: "cancelled", queuedSubmissionId: "queued-1", at: JSON.parse(readFileSync(join(state, "cancellation.json"), "utf8")).at,
+    });
+    assert.equal(existsSync(request.socket + ".queue"), false);
+    assert.equal(readFileSync(request.socket + ".effects", "utf8").trim().split("\n").length, 1);
+  });
+  it("rejects corrupt persisted states before making queue cancellation calls", async () => {
+    const state = join(root, "job");
+    await armWake(state, request);
+    const { receipt } = await terminal(state);
+    const calls = readFileSync(request.socket + ".calls", "utf8");
+    for (const corrupt of [{ ...receipt, queuedSubmissionId: undefined }, { ...receipt, dispatchAt: "invalid" },
+      { ...receipt, status: "unexpected" }, { ...receipt, pid: "123" }]) {
+      writeFileSync(join(state, "receipt.json"), JSON.stringify(corrupt));
+      assert.throws(() => wakeStatus(state));
+      await assert.rejects(cancelWake(state));
+      assert.equal(readFileSync(request.socket + ".calls", "utf8"), calls);
+    }
+    writeFileSync(join(state, "receipt.json"), JSON.stringify(receipt));
+    writeFileSync(join(state, "cancellation.json"), JSON.stringify({ status: "cancelled", at: new Date().toISOString() }));
+    assert.throws(() => wakeStatus(state), /nonempty string/);
   });
 });
