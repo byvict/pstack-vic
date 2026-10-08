@@ -9,7 +9,7 @@ Use this mapping when the root runs on Grok Build CLI, including a T3 Code threa
 | Read, search, edit, run commands | `read_file`, `grep`, `list_dir`, `search_replace`, `run_terminal_command`. Use the names and parameters advertised in the session; some CLI versions call the shell tool `run_terminal_cmd`. |
 | Invoke a skill | Load its `SKILL.md` and follow it. Grok reads pstack through its Claude plugin compatibility, `.grok/skills`, or configured skill paths. |
 | `Agent` / `spawn_agent` | `spawn_subagent`, retaining the returned subagent ID. |
-| `TaskOutput` / wait for a child | `get_command_or_subagent_output` with `task_ids: [id]`. A positive `timeout_ms` waits; zero gives a snapshot. |
+| Collect a child's result (on Claude Code, the completion notification plus the files the child wrote) | `get_command_or_subagent_output` with `task_ids: [id]`. A positive `timeout_ms` waits; zero gives a snapshot. |
 | Background Bash | Shell tool with `block_until_ms: 0`, retaining its task ID. |
 | `TaskStop` | `kill_command_or_subagent` with the retained `task_id`. |
 | Agent list for an audit | The IDs the root recorded in the program's `children.tsv`, queried through the output tool. Todo items are not running agents. |

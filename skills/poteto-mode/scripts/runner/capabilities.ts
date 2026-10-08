@@ -81,7 +81,7 @@ export function codexCapabilityArgs(capabilities: CliCapabilities | undefined): 
 
 export function claudeCapabilityTools(capabilities: CliCapabilities | undefined): { available: string[]; denied: string[] } {
   const groups = [
-    { enabled: capabilities?.agentKind === "owner", tools: ["Agent", "Task", "TaskOutput", "TaskStop", "SendMessage"], denyWhenDisabled: true },
+    { enabled: capabilities?.agentKind === "owner", tools: ["Agent", "ListAgents", "TaskStop", "SendMessage"], denyWhenDisabled: true },
     { enabled: capabilities?.web, tools: ["WebSearch", "WebFetch"], denyWhenDisabled: true },
     { enabled: capabilities?.skills, tools: ["Skill"], denyWhenDisabled: false },
   ];
