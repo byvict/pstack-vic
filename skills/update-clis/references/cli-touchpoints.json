@@ -408,6 +408,18 @@
       "measuredOn": "2.1.281"
     },
     {
+      "id": "claude.owner-lifecycle",
+      "cli": "claude",
+      "kind": "lane",
+      "contract": "An explicit owner keeps a fresh persisted session and --verbose root messages, and selects Agent/Task, TaskOutput, TaskStop and SendMessage through --tools and --allowedTools. Collect, continue and interrupt assigned local helpers through their native handles; launch success alone is insufficient. Native Agent isolation: worktree supplies a writer's own cwd. Untrusted project permissions.additionalDirectories may be ignored in headless mode. Ordinary lanes keep delegation and these lifecycle tools disabled.",
+      "pointers": [
+        { "file": "skills/poteto-mode/scripts/runner/capabilities.ts", "anchor": "export function claudeCapabilityTools" },
+        { "file": "skills/poteto-mode/references/runner-capabilities.md", "anchor": "Claude owners need the lifecycle tools" }
+      ],
+      "coveredBy": [],
+      "measuredOn": "2.1.292"
+    },
+    {
       "id": "claude.result-json",
       "cli": "claude",
       "kind": "lane",
