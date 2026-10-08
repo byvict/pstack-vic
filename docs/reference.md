@@ -28,7 +28,7 @@ As outras skills de fluxo entram quando você as nomeia ou quando um fluxo pstac
 ### Codex
 
 ```shell
-codex plugin marketplace add byvict/pstack-vic --ref v0.5.24
+codex plugin marketplace add byvict/pstack-vic --ref v0.5.25
 codex plugin add pstack@pstack-vic
 ```
 
