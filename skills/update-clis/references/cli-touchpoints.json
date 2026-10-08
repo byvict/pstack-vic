@@ -508,7 +508,7 @@
       "id": "claude.background-drain",
       "cli": "claude",
       "kind": "harness",
-      "contract": "a non-interactive `claude -p` parent is never woken by a finished background task; it must keep its turn open until each handle's completion notification arrives (`TaskOutput` was removed in 2.1.277), while an interactive root is re-invoked by background Bash completions and Monitor events (measured 2026-10-08 on 2.1.293 in the desktop app)",
+      "contract": "a non-interactive `claude -p` owner whose turn ends with a live background native helper is re-invoked by that helper's completion inside the same process, producing more than one `result` event in one invocation (measured 2026-10-08 on 2.1.292); a finished background Bash task did not wake a `claude -p` parent on 2.1.281 (2026-09-18) and was not re-measured, so keep the turn open or hold the handle until each notification arrives (`TaskOutput` was removed in 2.1.277); an interactive root is re-invoked by background Bash completions and Monitor events (measured 2026-10-08 on 2.1.293 in the desktop app)",
       "pointers": [{ "file": "skills/poteto-mode/references/provider-dispatch.md", "anchor": "Draining is the parent's job in every harness mode" }],
       "coveredBy": [],
       "measuredOn": "2.1.281"
