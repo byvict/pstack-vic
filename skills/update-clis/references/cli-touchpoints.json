@@ -411,7 +411,7 @@
       "id": "claude.owner-lifecycle",
       "cli": "claude",
       "kind": "lane",
-      "contract": "An explicit owner keeps a fresh persisted session and --verbose root messages, and selects Agent/Task, TaskOutput, TaskStop and SendMessage through --tools and --allowedTools. Collect, continue and interrupt assigned local helpers through their native handles; launch success alone is insufficient. Native Agent isolation: worktree supplies a writer's own cwd. Untrusted project permissions.additionalDirectories may be ignored in headless mode. Ordinary lanes keep delegation and these lifecycle tools disabled.",
+      "contract": "An explicit owner keeps a fresh persisted session and --verbose root messages, and selects Agent, ListAgents, TaskStop and SendMessage through --tools and --allowedTools; TaskOutput was removed in 2.1.277 and a helper's result is its completion notification plus the files it wrote. Collect, continue and interrupt assigned local helpers through their native handles; launch success alone is insufficient. Native Agent isolation: worktree supplies a writer's own cwd and the completion notification names it. Untrusted project permissions.additionalDirectories may be ignored in headless mode. Ordinary lanes keep delegation and these lifecycle tools disabled.",
       "pointers": [
         { "file": "skills/poteto-mode/scripts/runner/capabilities.ts", "anchor": "export function claudeCapabilityTools" },
         { "file": "skills/poteto-mode/references/runner-capabilities.md", "anchor": "Claude owners need the lifecycle tools" }
@@ -508,7 +508,7 @@
       "id": "claude.background-drain",
       "cli": "claude",
       "kind": "harness",
-      "contract": "a non-interactive `claude -p` parent is never woken by a finished background task; it must drain the handles (`TaskOutput` with block) before its turn ends",
+      "contract": "a non-interactive `claude -p` parent is never woken by a finished background task; it must keep its turn open until each handle's completion notification arrives (`TaskOutput` was removed in 2.1.277), while an interactive root is re-invoked by background Bash completions and Monitor events (measured 2026-10-08 on 2.1.293 in the desktop app)",
       "pointers": [{ "file": "skills/poteto-mode/references/provider-dispatch.md", "anchor": "Draining is the parent's job in every harness mode" }],
       "coveredBy": [],
       "measuredOn": "2.1.281"
