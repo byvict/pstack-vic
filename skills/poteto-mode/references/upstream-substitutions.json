@@ -246,18 +246,18 @@
     },
     {
       "id": "T13",
-      "reason": "The tick runs on Claude Code's `loop` skill exactly as upstream writes it: `/loop 1h <prompt>` is the fixed-interval form (a `CronCreate` entry of the session), which Claude Code restores on `--resume` and ends after 7 days (measured on 2.1.289, 2026-10-05). Upstream's sentence about local and cloud roots names Cursor's cloud agents; the port's root is a local session, and the sentence becomes the pointer to the other parents: Codex has no `loop` skill and codex-tools.md names its cadence (the operator's hourly re-prompt), and a Grok root arms a monitor ticker per grok-tools.md.",
+      "reason": "The tick runs on Claude Code's `loop` skill exactly as upstream writes it on a terminal root: `/loop 1h <prompt>` is the fixed-interval form (a `CronCreate` entry of the session), which Claude Code restores on `--resume` and ends after 7 days (measured on 2.1.289, 2026-10-05), and which a terminal root delivers on time with background tasks alive (measured on 2.1.293, 2026-10-08). A root inside the Claude desktop app cannot use it: that host delivers a scheduled prompt only at the first turn end with no background task alive, and a program always has background owners (same measurement), so SKILL.md's Platform Adaptation names its cadence, a background `Bash` command that sleeps an hour and prints the tick prompt, re-armed by each tick. Upstream's sentence about local and cloud roots names Cursor's cloud agents; the port's root is a local session, and the sentence becomes the pointer to the other cadences: Codex has no `loop` skill and codex-tools.md names its cadence (the operator's hourly re-prompt), a Grok root arms a monitor ticker per grok-tools.md, and a desktop-app Claude root follows SKILL.md.",
       "pairs": [
         {
           "file": "skills/poteto-mode/playbooks/autopilot-full.md",
           "from": "`/loop` works in local and cloud roots.",
-          "to": "On Codex or on a Grok root, arm the cadence `../references/codex-tools.md` or `../references/grok-tools.md` names instead.",
+          "to": "On Codex, on a Grok root, or on a Claude root inside the desktop app, arm the cadence `../references/codex-tools.md`, `../references/grok-tools.md` or the Platform Adaptation section of `../SKILL.md` names instead.",
           "count": 1
         },
         {
           "file": "skills/poteto-mode/playbooks/multi-phase-plan.md",
           "from": "arm the audit tick as `/loop 1h` with the tick prompt below.",
-          "to": "arm the audit tick as `/loop 1h` with the tick prompt below (on Codex or on a Grok root, the cadence `../references/codex-tools.md` or `../references/grok-tools.md` names).",
+          "to": "arm the audit tick as `/loop 1h` with the tick prompt below (on Codex, on a Grok root, or on a Claude root inside the desktop app, the cadence `../references/codex-tools.md`, `../references/grok-tools.md` or the Platform Adaptation section of `../SKILL.md` names).",
           "count": 1
         }
       ],
