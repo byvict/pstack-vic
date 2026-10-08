@@ -1,7 +1,9 @@
+import { createHash } from "node:crypto";
 import { readFileSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
+import type { CliCapabilities, McpSource } from "./capabilities.ts";
 import { runInteractiveChild, stageOverlay, type InteractiveIo } from "./child.ts";
-import { grokAcpCommand, grokAcpOverlay, grokAcpProfile, grokAcpTools } from "./commands.ts";
+import { grokAcpCommand, grokAcpOverlay, grokAcpProfile, grokAcpTools, grokSandbox, insideCodexSandbox } from "./commands.ts";
 import { modelFromUsage } from "./parse-output.ts";
 import {
   UsageError,
@@ -77,8 +79,8 @@ interface HttpMcpServer {
   readonly headers: readonly { readonly name: "Authorization"; readonly value: string }[];
 }
 
-function resolveServers(attachment: T3Attachment | null, source: NodeJS.ProcessEnv): readonly HttpMcpServer[] {
-  if (attachment === null) return [];
+function resolveServers(attachment: T3Attachment | null, source: NodeJS.ProcessEnv, sources: readonly McpSource[] = []): readonly HttpMcpServer[] {
+  if (attachment === null) return sources.map(({ name, url }) => ({ type: "http", name, url, headers: [] }));
   const reference = attachment;
   return [(() => {
     const endpoint = source[reference.urlEnv];
@@ -90,6 +92,18 @@ function resolveServers(attachment: T3Attachment | null, source: NodeJS.ProcessE
     if (!["http:", "https:"].includes(url.protocol) || !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) || url.username || url.password || url.search || url.hash) throw new AcpError("child-failed", "MCP endpoint must be HTTP(S) on loopback without credentials, query, or fragment");
     return { type: "http", name: "t3-code", url: url.href, headers: [{ name: "Authorization", value: `Bearer ${token}` }] };
   })()];
+}
+
+function capabilityBrief(capabilities: CliCapabilities | undefined): string {
+  if (capabilities === undefined) return "";
+  const instructions = capabilities.skills
+    ? ["Use accessible project or installed skill instructions when the task calls for them. Read the relevant SKILL.md with read_file and follow it; skills are instructions, not a native Skill tool."]
+    : [];
+  if (capabilities.mcpSources.length) instructions.push(
+    `Your parent assigned these MCP sources and tools: ${JSON.stringify(capabilities.mcpSources)}.`,
+    "Use only the assigned sources and tools for this task. This is a requested scope, not an enforced MCP tool allowlist. Configured integrations can appear in the effective catalog. A catalog listing does not prove access: call the required source tool and report an inaccessible source as a gap.",
+  );
+  return instructions.length ? `\n\n${instructions.join("\n")}\n` : "";
 }
 
 type CatalogTool =
@@ -296,7 +310,7 @@ function terminalOutput(value: unknown, text: string, sessionId: string, acp: Ac
   return { text, sessionId, reportedModel, usage, costUsd: null };
 }
 
-export function grokAcpExecution(request: GrokAcpRequest, source: NodeJS.ProcessEnv): {
+export function grokAcpExecution(request: GrokAcpRequest, source: NodeJS.ProcessEnv, outerSeatbelt = insideCodexSandbox(source)): {
   readonly command: ReturnType<typeof grokAcpCommand>;
   readonly environment: NodeJS.ProcessEnv;
   readonly sanitize: (value: string) => string;
@@ -307,13 +321,16 @@ export function grokAcpExecution(request: GrokAcpRequest, source: NodeJS.Process
   const sanitize = secretRedactor(request.t3 === null ? [] : [source[request.t3.bearerTokenEnv] ?? ""]);
   if (request.t3 !== null) { delete environment[request.t3.bearerTokenEnv]; delete environment[request.t3.urlEnv]; }
   let servers: readonly HttpMcpServer[];
-  try { servers = resolveServers(request.t3, source); } catch (error) { throw new UsageError(sanitize(error instanceof AcpError ? error.message : "invalid T3 MCP references")); }
+  try { servers = resolveServers(request.t3, source, request.capabilities?.mcpSources); } catch (error) { throw new UsageError(sanitize(error instanceof AcpError ? error.message : "invalid T3 MCP references")); }
+  const sandbox = grokSandbox(request.mode, outerSeatbelt);
+  const profile = grokAcpProfile(servers.length > 0, request.mode, request.capabilities?.web);
   const acp: AcpDetail = {
     eventsPath: `${request.receiptPath}.events.jsonl`,
     stage: "preflight", sessionId: null, stopReason: null, observedModels: [], effectiveTools: [], shutdownIntent: null,
-    grokSandbox: "off", mcpScope: request.t3 === null ? "none" : "configured-and-forwarded", attachment: request.t3, closeOutcome: null,
+    grokSandbox: sandbox, profileSha256: createHash("sha256").update(profile).digest("hex"),
+    mcpScope: servers.length === 0 ? "none" : "configured-and-forwarded", attachment: request.t3, closeOutcome: null,
   };
-  const command = grokAcpCommand("<private-agent-profile>");
+  const command = grokAcpCommand("<private-agent-profile>", sandbox);
   const attempt: PreparedAttempt = async (context): Promise<LaneOutcome> => {
     let directory: string | null = null;
     // Deliberately omit outbound params, assistant thoughts, and raw RPC frames.
@@ -339,14 +356,14 @@ export function grokAcpExecution(request: GrokAcpRequest, source: NodeJS.Process
       const staged = stageOverlay(context.environment, grokAcpOverlay());
       directory = staged.directory;
       const profilePath = join(directory, "lane-profile.md");
-      writeFileSync(profilePath, grokAcpProfile(servers.length > 0), { encoding: "utf8", mode: 0o600 });
-      const invocation = grokAcpCommand(profilePath);
+      writeFileSync(profilePath, profile, { encoding: "utf8", mode: 0o600 });
+      const invocation = grokAcpCommand(profilePath, sandbox);
       context.evidence.argv = [context.executable, ...invocation.args];
       const catalogs = new Map<string, readonly CatalogTool[]>();
       let sessionId: string | null = null;
       let currentGeneration: { readonly streamStart: number; text: string } | null = null;
       let finalText = "";
-      const expectedBuiltins = [...grokAcpTools(servers.length > 0)].sort();
+      const expectedBuiltins = [...grokAcpTools(servers.length > 0, request.mode, request.capabilities?.web)].sort();
       const checkCatalog = (tools: readonly CatalogTool[]): void => {
         const names = tools.map((tool) => tool.name);
         acp.effectiveTools = names.map(sanitize);
@@ -406,7 +423,7 @@ export function grokAcpExecution(request: GrokAcpRequest, source: NodeJS.Process
             acp.stage = "prompt";
             const prompt = request.t3 !== null
               ? `${context.prompt}\n\nYour parent assigned preview tab ${request.t3.previewTabId}. Use this exact tab for preview work. Do not create or operate another tab.\n`
-              : context.prompt;
+              : context.prompt + capabilityBrief(request.capabilities);
             const terminal = await rpc.request("session/prompt", { sessionId, prompt: [{ type: "text", text: prompt }] });
             rpc.check();
             const parsed = terminalOutput(terminal, sanitize(finalText), sanitize(sessionId), acp, request.model);

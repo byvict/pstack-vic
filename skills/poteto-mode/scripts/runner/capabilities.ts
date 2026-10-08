@@ -63,10 +63,11 @@ export function readCapabilities(path: string): CliCapabilities {
     web: flag(value.web, "web"), skills: flag(value.skills, "skills"), mcpSources };
 }
 
-export function validateCapabilities(provider: string, capabilities: CliCapabilities | undefined): void {
+export function validateCapabilities(provider: string, capabilities: CliCapabilities | undefined, transport = "cli"): void {
   if (capabilities === undefined) return;
-  if (provider === "grok" && (capabilities.agentKind === "owner" || capabilities.skills || capabilities.mcpSources.length)) {
-    throw new UsageError("Grok CLI task capabilities currently support web only; use its native owner/skills/source route or the explicit T3 ACP attachment where applicable");
+  if (provider === "grok") {
+    if (capabilities.agentKind === "owner") throw new UsageError("Grok task capabilities do not support owner; use its native owner route");
+    if (capabilities.mcpSources.length && transport !== "grok-acp") throw new UsageError("Grok MCP task capabilities require --transport grok-acp");
   }
 }
 

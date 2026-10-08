@@ -19,6 +19,7 @@ import {
 } from "../../../../scripts/model-matrix.ts";
 import {
   configOverlay,
+  insideCodexSandbox,
   invocationCommand,
   preflightCommand,
   type CommandSpec,
@@ -791,7 +792,7 @@ export async function runLane(
   const deadlineAt = options.timeoutMs === null ? null : started + options.timeoutMs;
   const request = executionRequest(options);
   const lane = request.kind === "cli" ? cliLane(request) : (() => {
-    const execution = grokAcpExecution(request, childEnvironment());
+    const execution = grokAcpExecution(request, childEnvironment(), insideCodexSandbox(process.env));
     return preparedLane(request, execution.command, execution.attempt, execution.environment, execution.sanitize, execution.acp);
   })();
   const cancellation = installRunCancellation();
@@ -863,17 +864,19 @@ export function resolvedOptions(options: RunnerOptions): RunnerOptions {
 }
 
 export function validateRoute(options: RunnerOptions): void {
-  validateCapabilities(options.provider, options.capabilities);
+  validateCapabilities(options.provider, options.capabilities, options.transport);
   if (options.transport === undefined || options.transport === "cli") {
     if (options.mode === "full-access") throw new UsageError("full-access requires --transport grok-acp");
     if (options.mcpConfigPath !== undefined) throw new UsageError("MCP configuration requires --transport grok-acp");
     return;
   }
-  if (options.capabilities !== undefined) throw new UsageError("--capabilities selects CLI tools; Grok ACP uses its explicit attachment contract");
   if (options.transport !== "grok-acp") throw new UsageError("unsupported transport");
   if (options.parent !== "codex" && options.parent !== "claude") throw new UsageError("Grok ACP requires parent codex or claude; use Grok's native subagent primitive");
   if (options.provider !== "grok") throw new UsageError("Grok ACP requires provider grok");
-  if (options.mode !== "full-access") throw new UsageError("Grok ACP requires explicit --mode full-access");
+  if (options.mcpConfigPath !== undefined) {
+    if (options.capabilities !== undefined) throw new UsageError("T3 MCP attachment cannot be mixed with --capabilities");
+    if (options.mode !== "full-access") throw new UsageError("T3 MCP attachment requires explicit --mode full-access");
+  }
 }
 
 function executionRequest(options: RunnerOptions): ExecutionRequest {
@@ -883,9 +886,10 @@ function executionRequest(options: RunnerOptions): ExecutionRequest {
     outputPath: options.outputPath, receiptPath: options.receiptPath, timeoutMs: options.timeoutMs,
   };
   if (options.transport === "grok-acp") {
-    if ((options.parent !== "codex" && options.parent !== "claude") || options.provider !== "grok" || options.mode !== "full-access") throw new UsageError("invalid Grok ACP request");
-    return { ...files, kind: "grok-acp", parent: options.parent, provider: "grok", mode: "full-access",
-      t3: options.mcpConfigPath === undefined ? null : readT3Attachment(options.mcpConfigPath) };
+    if ((options.parent !== "codex" && options.parent !== "claude") || options.provider !== "grok") throw new UsageError("invalid Grok ACP request");
+    return { ...files, kind: "grok-acp", parent: options.parent, provider: "grok", mode: options.mode,
+      t3: options.mcpConfigPath === undefined ? null : readT3Attachment(options.mcpConfigPath),
+      ...(options.capabilities === undefined ? {} : { capabilities: options.capabilities }) };
   }
   if (options.mode === "full-access") throw new UsageError("full-access requires Grok ACP");
   return { ...files, kind: "cli", parent: options.parent, provider: options.provider, mode: options.mode, ...(options.capabilities === undefined ? {} : { capabilities: options.capabilities }) };

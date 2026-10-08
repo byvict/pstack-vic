@@ -15,6 +15,7 @@ export type Parent = string;
 export type Provider = string;
 export type Effort = string;
 export type AccessMode = (typeof ACCESS_MODES)[number];
+export type GrokSandbox = "off" | "none" | "read-only" | "workspace";
 
 /** The CLI binary the matrix assigns to a provider, or null for an unknown provider. */
 export function cliFor(provider: Provider): string | null {
@@ -60,8 +61,9 @@ export type ExecutionRequest = RequestFiles & (
       readonly kind: "grok-acp";
       readonly parent: "codex" | "claude";
       readonly provider: "grok";
-      readonly mode: "full-access";
+      readonly mode: RunnerOptions["mode"];
       readonly t3: T3Attachment | null;
+      readonly capabilities?: CliCapabilities;
     }
 );
 
@@ -75,7 +77,8 @@ export interface AcpDetail {
   observedModels: readonly string[];
   effectiveTools: readonly string[];
   shutdownIntent: "session-complete" | "cancelled" | "timed-out" | "failure" | null;
-  readonly grokSandbox: "off";
+  readonly grokSandbox: GrokSandbox;
+  readonly profileSha256: string;
   closeOutcome: "closed" | "rpc-error" | "grace-elapsed" | null;
   readonly mcpScope: "none" | "configured-and-forwarded";
   readonly attachment: T3Attachment | null;

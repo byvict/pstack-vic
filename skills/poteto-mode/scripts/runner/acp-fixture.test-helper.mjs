@@ -24,6 +24,11 @@ if (args[0] === "models") {
   }
   process.exit(0);
 }
+if (args[0] === "--prompt-file") {
+  log({ kind: "cli", args, overlay: readFileSync(process.env.GROK_CONFIG_PATH, "utf8") });
+  writeSync(1, JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "FINAL_OK", session_id: "fixture-cli-session", modelUsage: { "grok-4.7-build": {} } }) + "\n");
+  process.exit(0);
+}
 const profilePath = args[args.indexOf("--agent-profile") + 1];
 const overlayPath = process.env.GROK_CONFIG_PATH;
 const profile = readFileSync(profilePath, "utf8");
@@ -32,6 +37,7 @@ log({ kind: "started", pid: process.pid, args, profilePath, overlayPath, profile
   tokenInEnv: process.env.T3_MCP_BEARER_TOKEN !== undefined, endpointInEnv: process.env.PSTACK_T3_MCP_URL !== undefined,
 });
 let token = "";
+let servers = [];
 const sessionId = "fixture-session";
 const send = async (value) => {
   const text = JSON.stringify(value) + "\n";
@@ -48,7 +54,9 @@ const update = (sessionUpdate, fields = {}, streamStartMs = 1, method = "session
 });
 const catalog = (additional = []) => {
   let tools = ["run_terminal_command", "read_file", "search_replace", "list_dir", "grep"];
-  if (/^  - use_tool$/m.test(profile.split("disallowedTools:")[0])) tools.push("search_tool", "use_tool");
+  const allowed = profile.split("disallowedTools:")[0];
+  tools = tools.filter((tool) => allowed.includes(`  - ${tool === "run_terminal_command" ? "run_terminal_cmd" : tool}\n`));
+  for (const tool of ["search_tool", "use_tool", "web_search", "web_fetch"]) if (allowed.includes(`  - ${tool}\n`)) tools.push(tool);
   if (scenario === "extra-tools") tools.push("spawn_subagent");
   if (scenario === "missing-tools") tools.pop();
   tools.push(...additional);
@@ -81,6 +89,7 @@ input.on("line", async (line) => {
       return;
     case "authenticate": await reply(id, {}); return;
     case "session/new":
+      servers = params.mcpServers;
       token = params.mcpServers[0]?.headers?.[0]?.value?.replace(/^Bearer /, "") ?? "";
       log({ kind: "session", cwd: params.cwd, forwarded: params.mcpServers.map((server) => ({ type: server.type, name: server.name, url: server.url, headerPresent: Boolean(server.headers?.[0]?.value) })) });
       if (scenario !== "no-catalog") await catalog();
@@ -111,6 +120,7 @@ input.on("line", async (line) => {
         await catalog(["t3-code__preview_status", "t3-code__preview_click", "t3-code__preview_evaluate", ...(process.env.FAKE_MCP_TOOL ? [process.env.FAKE_MCP_TOOL] : [])]);
         log({ kind: "catalog-expanded" });
       }
+      if (scenario === "source-expansion") await catalog([`${servers[0].name}__${process.env.FAKE_MCP_TOOL ?? "lookup"}`, `${servers[0].name}__unassigned`, "trusted-other__read_file"]);
       if (scenario === "reload-replies") await reply("skills-reload", { result: {} });
       await update("agent_thought_chunk", { content: { type: "text", text: "Private thought" } }, 2);
       if (scenario === "drift") { await update("available_commands_update", { _meta: { tools: ["spawn_subagent"] } }); return; }
