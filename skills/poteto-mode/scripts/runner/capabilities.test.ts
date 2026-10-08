@@ -68,6 +68,14 @@ describe("task-selected runner capabilities", () => {
       }
     }
   });
+  it("keeps read-only tools separate from preapproved capabilities and MCP permissions", () => {
+    const input = options("claude", { schemaVersion: 1, agentKind: "owner", web: true, skills: true, mcpSources: [source] });
+    const { args } = invocationCommand({ ...input, mode: "read-only" });
+    assert.equal(args[args.indexOf("--permission-mode") + 1], "plan");
+    assert.equal(args[args.indexOf("--tools") + 1], "Read,Grep,Glob,Bash,Agent,Task,WebSearch,WebFetch,Skill");
+    assert.equal(args[args.indexOf("--allowedTools") + 1], "Agent,Task,WebSearch,WebFetch,Skill,mcp__docs__search_openai_docs");
+    assert.equal(args[args.indexOf("--disallowed-tools") + 1], "Edit,Write,NotebookEdit");
+  });
   it("opens Grok web without changing its sandbox, core environment or no-subagent role", () => {
     const { args } = invocationCommand(options("grok", { schemaVersion: 1, web: true }), {});
     assert.ok(args.includes("--no-subagents"));
