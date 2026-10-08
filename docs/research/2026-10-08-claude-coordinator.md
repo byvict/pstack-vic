@@ -43,8 +43,8 @@ Classificação: **nativo** (basta mapear a operação certa), **configuração*
 | Cancelar lane externa | nativo + adaptador | `TaskStop` no handle Bash matou o grupo (capture, runner, codex, `sleep 600`); o runner recebeu SIGTERM e escreveu `cancelled` | a captura externa (`capture.sh`) não chegou a gravar o exit |
 | Despertar por Monitor | nativo | linha de stdout abriu um turno novo na mesma sessão | expira em 30 min no máximo; re-armar |
 | Despertar por Bash em background | nativo | fim de `sleep 420` abriu um turno novo; repetido duas vezes | tick de 1 h: ver [Despertar](#despertar-da-raiz) |
-| Despertar por cron (`/loop` de intervalo fixo) | indisponível nas condições observadas | one-shot `40 11 8 10 *` não disparou em 8,5 min de sessão ociosa no app desktop | ver [Despertar](#despertar-da-raiz) |
-| `ScheduleWakeup` | indisponível nas condições observadas | aceito fora de `/loop`; vira entrada one-shot em `CronList`; não disparou | idem |
+| Despertar por cron (`/loop` de intervalo fixo) | nativo, retido por tarefas em background | one-shot `40 11 8 10 *` entregue 76 min depois, só quando a sessão ficou ociosa sem tarefa em background viva | ver [Despertar](#despertar-da-raiz) |
+| `ScheduleWakeup` | nativo, retido do mesmo modo | aceito fora de `/loop`; vira entrada one-shot em `CronList`; entregue 73 min depois, no mesmo regime | idem |
 | Cancelamento de evento armado | nativo | `CronDelete` removeu o job de controle, que nunca disparou | |
 | Retomada da raiz pelo ID exato | nativo | `claude -p --resume 9afb4e9c-… --no-session-persistence --tools ""` devolveu `session_id` igual e recuperou IDs, worktrees, recibos e eventos | leitura paralela sem reiniciar a raiz |
 | Owner nativo em background com `Agent` | nativo | ver [Owner em background](#owner-em-background) | `run_in_background: false` não é honrado dentro do owner |
@@ -82,12 +82,12 @@ Mecanismos nativos confrontados com `claude --help`, o catálogo efetivo e as p�
 | Mecanismo | Identidade | Resultado |
 | --- | --- | --- |
 | `Monitor` (`sleep 150; echo …`) | `da398056f5829f2a`, tarefa `boo073y1d` | linha às 14:37:42 UTC abriu um turno novo às 14:38:07 UTC |
-| `CronCreate` one-shot `40 11 8 10 *` (11:40 local) | `6354fac34bf49046`, job `e5073c18` | não disparou; ainda listado às 11:48:41 local, com a sessão ociosa de 14:38:10 a 14:42:54 e de 14:43:30 a 14:48:41 UTC |
+| `CronCreate` one-shot `40 11 8 10 *` (11:40 local) | `6354fac34bf49046`, job `e5073c18` | retido enquanto houve tarefa em background viva (ainda listado às 11:48:41 local, com a sessão ociosa de 14:38:10 a 14:42:54 e de 14:43:30 a 14:48:41 UTC, sempre com um `sleep` ou um verificador rodando); entregue às 15:56:09 UTC como prompt de turno, 76 min depois, logo após o primeiro turno encerrado sem nenhuma tarefa em background |
 | `CronCreate` one-shot cancelado antes de 11:43 | `5a73977e26a8a1c8`, job `4bd90f13` | `CronDelete` confirmou; nunca disparou; não listado |
 | `Bash run_in_background` (`sleep 420; echo …`) | `684cf9d319281daa`, tarefa `bouufavi5` | saída às 14:42:12 UTC abriu um turno novo às 14:42:54 UTC |
-| `ScheduleWakeup` 540 s | nonce `wake_schedule`, entrada `0916f2a4` em `CronList` | aceito fora de `/loop` ("Next wakeup scheduled for 11:45:00"); não disparou até 11:48:41 local |
+| `ScheduleWakeup` 540 s | nonce `wake_schedule`, entrada `0916f2a4` em `CronList` | aceito fora de `/loop` ("Next wakeup scheduled for 11:45:00"); retido do mesmo modo; entregue às 15:58:19 UTC como prompt de turno, no turno ocioso seguinte; `stop: true` chamado em seguida, sem disparo residual |
 
-Cada evento entregue abriu exatamente um turno na sessão `9afb4e9c-…` (um Monitor, três fins de Bash contando a rede de segurança), sem duplicata e sem disparo residual. O `/loop` de intervalo fixo que o Tick do autopilot usa é um `CronCreate` recorrente; nas condições desta raiz (app desktop, `stream-json`, atendida) o scheduler não entregou os jobs enquanto a sessão esteve ociosa, embora a documentação prometa disparo "between your turns". Os dois jobs ficaram armados para observar um disparo tardio no próximo turno enviado pelo operador. Um `sleep 3600; echo HOUR_TICK …` em background (tarefa `bs7ftkxh8`, nonce `4c90c18f6cb6cf2f`) foi armado às 14:49 UTC como candidato a substituto do Tick de uma hora: a saída às 2026-10-08T15:50:49Z abriu um turno novo na mesma sessão às 2026-10-08T15:51:20Z, com os dois crons ainda listados e não entregues, mesmo depois de dois turnos enviados pelo operador (12:22 e 12:40 locais). Um comando em segundo plano que dorme uma hora é, portanto, um Tick comprovado numa raiz do app desktop; ele precisa ser re-armado a cada disparo.
+Cada evento entregue abriu exatamente um turno na sessão `9afb4e9c-…` (um Monitor, quatro fins de Bash contando a rede de segurança e o tick de uma hora, um cron e um `ScheduleWakeup`), sem duplicata e sem disparo residual; `CronList` ficou vazio depois dos dois disparos. O `/loop` de intervalo fixo que o Tick do autopilot usa é um `CronCreate` recorrente. Nas condições desta raiz (app desktop, `stream-json`, atendida) o scheduler só entregou os dois jobs no primeiro intervalo ocioso em que nenhuma tarefa em background estava viva: nem os turnos enviados pelo operador às 12:22 e 12:40 locais os liberaram, porque o `sleep 3600` do tick ainda rodava. A hipótese consistente com todas as observações é que a entrega exige sessão ociosa **e** sem tarefa em background em execução. Num programa de autopilot, com Donos, monitores ou shells em background sempre vivos, um Tick por `/loop 1h` ficaria retido até o programa esvaziar. Um `sleep 3600; echo HOUR_TICK …` em background (tarefa `bs7ftkxh8`, nonce `4c90c18f6cb6cf2f`) foi armado às 14:49 UTC como candidato a substituto do Tick de uma hora: a saída às 2026-10-08T15:50:49Z abriu um turno novo na mesma sessão às 2026-10-08T15:51:20Z, com os dois crons ainda listados e não entregues, mesmo depois de dois turnos enviados pelo operador (12:22 e 12:40 locais). Um comando em segundo plano que dorme uma hora é, portanto, um Tick comprovado numa raiz do app desktop; ele precisa ser re-armado a cada disparo.
 
 ## Owner em background
 
@@ -116,7 +116,7 @@ Nenhum modelo, esforço, fallback de swarm, política de Arena ou de trilha, pin
 | Continuidade | `resume` em `Task` | `followup_task`; `codex exec resume <thread>` | `SendMessage` ao ID; `claude -p --resume <id>` para a raiz |
 | Interrupção | `interrupt` em `Task` | `interrupt_agent` quando anunciado | `TaskStop` (`local_agent`) mata o helper e seus shells em background; helper parado continua retomável |
 | Cancelar processo externo | não exercitado | handle da sessão exec persistente | `TaskStop` no handle Bash mata o grupo; recibo `cancelled` do runner |
-| Despertar da raiz | `Shell.notify_on_output` acordou a sessão após o fim do turno | fila do app-server local (`codex-wake.ts`), com controlador fora do sandbox | Monitor e fim de Bash em background acordam a raiz; cron e `ScheduleWakeup` não dispararam no app desktop |
+| Despertar da raiz | `Shell.notify_on_output` acordou a sessão após o fim do turno | fila do app-server local (`codex-wake.ts`), com controlador fora do sandbox | Monitor e fim de Bash em background acordam a raiz; cron e `ScheduleWakeup` só entregam com a sessão ociosa e sem tarefa em background viva |
 | Fechamento de handle | não medido | `close_agent` não anunciado | nenhuma operação de fechamento; slot não comprovado |
 | Ferramentas do filho | leitura, shell, MCP conforme tipo | plugins, web e MCP por invocação (`--capabilities`) | background: `Read`, `Bash`, `Edit`, `Write`, `Skill`, `WebSearch`, `Monitor`, `TaskStop`, `SendMessage`, MCPs; sem `Agent` por definição, sem agendamento |
 
@@ -130,7 +130,7 @@ A adaptação 1 foi classificada pelo verificador (`classify --base origin/main`
 
 ## Lacunas e próximos passos
 
-- Disparo do cron e do `ScheduleWakeup` no app desktop: observar o próximo turno do operador com os jobs `e5073c18` e `0916f2a4` ainda armados; repetir o exercício numa raiz de terminal (`claude` interativo) para separar host e versão.
+- Confirmar a regra de entrega do scheduler (sessão ociosa sem tarefa em background) com um exercício dedicado: um cron curto armado com e sem um `sleep` em background vivo, numa raiz do app desktop e numa raiz de terminal, para separar host, versão e a presença de tarefas.
 - Liberação de slots e capacidade máxima continuam não comprovadas; a documentação anuncia 20 por padrão.
 - Concessão a worktree irmão fora do repositório da raiz não foi re-exercitada.
 - Um programa Autopilot completo com Claude na raiz ainda não rodou; esta frente prova os contratos de coordenação, não o playbook de ponta a ponta.
