@@ -33,13 +33,20 @@ Um comando `Bash` em segundo plano que dorme e imprime o prompt do Tick, re-arma
 | --- | --- | --- | --- | --- | --- |
 | s1 | 16:57:21, tarefa `bn1dwchcu` | `sleep 120; echo TICK_S1 …` (timeout 180 000 ms) | 16:59:16 | 16:59:25 | 9 s |
 | s2 | 16:59:29, re-armado no turno do s1 | `sleep 120; echo TICK_S2 …` | 17:01:25 | 17:01:37 | 12 s |
-| h1 | 17:03:26, re-armado no turno do s2, tarefa `bf0mzge5b` | `sleep 3600; echo TICK_H1 …; cat tick-prompt.txt` (timeout 3 660 000 ms) | pendente | pendente | pendente |
+| h1 | 17:01:41, re-armado no turno do s2, tarefa `bf0mzge5b` | `sleep 3600; echo TICK_H1 …; cat tick-prompt.txt` (timeout 3 660 000 ms) | 18:01:41 | 18:01:52 | 11 s |
 
-O `tick-prompt.txt` é o prompt do Tick, palavra por palavra, do `multi-phase-plan.md`. O timeout acima de uma hora é necessário: a documentação de `tools-reference` dá trinta minutos a um comando em segundo plano sem `timeout`, e no máximo duas horas. Na véspera, um `sleep 3600` em segundo plano já tinha acordado a raiz do app uma hora depois (tarefa `bs7ftkxh8`, relatório anterior).
+O `tick-prompt.txt` é o prompt do Tick, palavra por palavra, do `multi-phase-plan.md`; a saída do ciclo h1 (906 bytes, `tick-h1-bf0mzge5b.output`) traz o nonce e esse prompt inteiro, que é o que a Raiz lê ao acordar. Entre a armação do h1 e o despertar, a Raiz rodou os testes, o verificador e as edições deste PR em turnos próprios, sem perturbar o relógio. O timeout acima de uma hora é necessário: a documentação de `tools-reference` dá trinta minutos a um comando em segundo plano sem `timeout`, e no máximo duas horas. Na véspera, um `sleep 3600` em segundo plano já tinha acordado a raiz do app uma hora depois (tarefa `bs7ftkxh8`, relatório anterior).
 
 ## Decisão
 
 Mantém-se o `/loop 1h` onde ele funciona, a raiz de terminal, exatamente como o upstream escreve. Só a Raiz do app desktop, reconhecida por `CLAUDE_CODE_ENTRYPOINT=claude-desktop`, arma o Tick como o comando em segundo plano acima, com o re-arme como primeiro passo de cada Tick e `TaskStop` no fim do programa. O prompt do Tick e a cadência de uma hora não mudam. Não entra daemon, serviço, mudança de modelo, de esforço, de fallback de swarm nem de política de Arena ou de trilha. A decisão está no [ADR 0010](../adr/0010-tick-em-segundo-plano-na-raiz-do-app-desktop.md); os chamadores são `docs/reference.md`, `CONTEXT.md`, a seção *Platform Adaptation* de `skills/poteto-mode/SKILL.md`, o guia de trabalho noturno e a troca T13 de `upstream-substitutions.json`, que passa a apontar a Raiz do app desktop para o `SKILL.md`, como já aponta Codex e Grok para os mapas deles. O marcador `/loop 1h` do `check-plan.mjs` continua válido, porque o texto gerado do plano continua a nomeá-lo.
+
+## Verificação
+
+- `npm run verify -- classify --base origin/main` no commit `9a226fa2`: área `agent-instructions`, `noRuntime: false` (`verify-classify-1/receipt.json`).
+- `npm run verify -- run --base origin/main --feature repository-contracts` no mesmo commit: `failed` na asserção da receita, com 233 testes passando e 1 falhando, `upstream-parity: this checkout` (`verify-run-1/`). A falha é a residência esperada dos dois playbooks até `node scripts/upstream-parity.ts --write`, que o Victor roda; `node scripts/upstream-parity.ts check` mostra exatamente essas duas regenerações com zero problemas na tabela.
+- `npm test` completo: 1516 testes, 1515 passaram, 1 falhou, o mesmo de paridade (`npm-test.log`). `npm run matrix:check`, `npm run agents:check`, `npm run collision:check` e `git diff --check` passaram.
+- Nenhuma receita ao vivo do verificador foi rodada: as sessões reais desta frente são as duas raízes acima, lançadas diretamente.
 
 ## Lacunas
 
