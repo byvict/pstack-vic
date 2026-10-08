@@ -103,8 +103,9 @@ Todos os nomes abaixo são relativos à raiz nativa, salvo a sessão CLI. Os res
 | `post_completion_probe`, `01a11cc1-0c84-7973-bb0e-3b21faa09784` | Sol `high`, admissão após conclusão | Candidato somente leitura | Completed/coletado; ferramenta exit 0, hash `dc803c2a2afc9c8fc5353939798d5bf2b1a9b3f0145724510aa582044b6b1cc9`. |
 | `independent_review` | Sol `high`, revisão fresca solicitada | Candidato somente leitura | **Rejeitado**, sem novo handle/result; erro conservado. |
 | CLI `01a11cc0-acca-7ce0-b3ab-cfa2736fdbc3` | Sol `high`, revisão substituta fresca | Candidato, sandbox read-only | Complete/exit 0, processo encerrado; `runner/review-1/`. |
+| `patch_review`, `01a11cc8-09c2-75a0-b49c-242e037455fd` | Sol `max`, julgamento/revisão final fresca | Candidato somente leitura; saída privada própria | Completed/coletado, PASS com limites; `patch-review/report.md`. |
 
-A coleta final deve conservar a listagem anunciada **e** este inventário histórico: a primeira pode omitir handles retomáveis. Nenhum processo de outra sessão foi encerrado. As barreiras usaram apenas espera nativa; nenhum timer/heartbeat foi criado nesta frente.
+A coleta final conserva a listagem anunciada **e** o inventário histórico: `native/final-list.json` mostra a raiz ativa e três handles completed; `native/final-inventory.json` registra os oito contextos nativos conhecidos, com todos os sete filhos/descendentes concluídos e coletados. A lista omite outros handles retomáveis; nenhum deles é declarado fechado. Os handles de processo 65790, 69141 e 59808 foram drenados, com exit 0 nos recibos. Nenhum processo de outra sessão foi encerrado. As barreiras usaram apenas espera nativa; nenhum timer/heartbeat foi criado nesta frente.
 
 ## Reprodução e handoff para D
 
@@ -132,4 +133,11 @@ O brief pede auditoria dos contratos/evidências e consultas diretas `linear.get
 
 ## Verificação e revisão da entrega
 
-Seleção pelo diff: relatório de pesquisa e uma observação no contrato de instruções. `verify-pstack-vic` foi aplicado a partir de `doctor`; a receita pertinente é **repository-contracts**, além da prova real acima. Sem alteração de runner, setup ou verificador, suas suítes não são selecionadas como substituto de lifecycle. Os resultados do commit e a revisão final são registrados na conclusão desta seção.
+Seleção pelo diff: relatório de pesquisa e uma observação no contrato de instruções. `verify-pstack-vic` foi aplicado a partir de `doctor`; a receita pertinente é **repository-contracts**, além da prova real acima. Sem alteração de runner, setup ou verificador, suas suítes não são selecionadas como substituto de lifecycle.
+
+- `verification/classify-1/`: dois caminhos, área `agent-instructions`, nenhum desconhecido.
+- `verification/repository-1/`: **242 testes passaram, zero falhas**, commit limpo `d35f05d7435bd66801457788197ceb614bb0b09e`, handle 69141. Recibo terminal, observações e stdout/stderr foram lidos.
+- Revisão final independente `patch_review`, contexto novo Sol `max`, sobre `79e67d05..d35f05d`: **PASS com limites, nenhum P1/P2 acionável**. Conferiu a sequência rejeição/conclusão/admissão, retomadas, fontes reais, coleta do filho e os 371 arquivos do manifesto do runner. Não recebeu conversa do autor nem leu as conclusões do reviewer externo. Relatório em `patch-review/report.md`.
+- Antes da publicação, `main` avançou para **`4727538ba6e4708ed36ed96d343944d1770e85ee`**, #111, adaptação do tick do Claude desktop. Rebase limpo produziu **`08a60c761c1eb766b202d7a1e59e6b7915b7915a`**. Os dois arquivos da mudança permaneceram byte a byte iguais ao snapshot revisado. As provas reais continuam atribuídas à base inicial, sem reatribuição ao rebase.
+- `verification/repository-2/`: **242 testes passaram, zero falhas**, fonte `exact-commit` em `08a60c76`, base `4727538b`, handle 59808. É a verificação do candidato integrado; os registros seguintes só acrescentam esta conclusão e o inventário final ao relatório. O contrato de lifecycle não mudou depois da revisão.
+- `git diff --check` passou. Hashes de AGENTS.md, UPSTREAM.md e dos relatórios de A/C continuam iguais aos iniciais. `baseline/personal-config-after.json` confirma hashes inalterados da sheet e `config.toml`; `baseline/preserved-inputs.json` conserva as demais comparações. Os recibos e tentativas originais foram mantidos, inclusive a rejeição nativa, sem transformá-la em resultado de aprovação.
