@@ -6,7 +6,7 @@ import { createServer, type Server } from "node:http";
 import { createHash } from "node:crypto";
 import type { Duplex } from "node:stream";
 import { join } from "node:path";
-import { armWake, cancelWake, wakeStatus, type WakeRequest, type WakeStatus } from "../skills/poteto-mode/scripts/codex-wake.ts";
+import { armWake, cancelWake, observeWake, wakeStatus, type WakeRequest, type WakeStatus } from "../skills/poteto-mode/scripts/codex-wake.ts";
 
 const THREAD = "11111111-1111-4111-8111-111111111111";
 let root: string;
@@ -61,6 +61,11 @@ beforeEach(async () => {
         if (m.method === "initialized") continue;
         if (m.method === "initialize") { reply(m.id, { userAgent: "fixture" }); continue; }
         if (m.method === "thread/read") { reply(m.id, { thread: JSON.parse(readFileSync(socket + ".thread", "utf8")) }); continue; }
+        if (m.method === "thread/turns/list") {
+          assert.equal(m.params.itemsView, "full");
+          const pages = existsSync(socket + ".history") ? JSON.parse(readFileSync(socket + ".history", "utf8")) : [{ data: [], nextCursor: null }];
+          reply(m.id, pages[Number(m.params.cursor ?? 0)]); continue;
+        }
         if (m.method === "thread/queue/add") {
           const item = { id: "queued-1", clientUserMessageId: m.params.clientUserMessageId, input: m.params.input };
           appendFileSync(socket + ".effects", JSON.stringify(m.params) + "\n"); writeFileSync(socket + ".queue", JSON.stringify(item));
@@ -134,6 +139,11 @@ describe("local Codex wake", () => {
     assert.equal(JSON.parse(readFileSync(join(state, "receipt.json"), "utf8")).status, "delivery-unknown");
     assert.equal((await armWake(state, request)).duplicate, true);
     assert.equal(readFileSync(request.socket + ".effects", "utf8").trim().split("\n").length, 1);
+    const before = readFileSync(join(state, "receipt.json"), "utf8");
+    assert.equal((await observeWake(state)).observation.delivery, "pending");
+    assert.equal(readFileSync(join(state, "receipt.json"), "utf8"), before);
+    await cancelWake(state);
+    assert.equal((await observeWake(state)).observation.delivery, "unobserved");
   });
   it("rejects a different thread identity returned by the host", async () => {
     const data = JSON.parse(readFileSync(request.socket + ".thread", "utf8")); data.id = "22222222-2222-4222-8222-222222222222";
@@ -170,5 +180,54 @@ describe("local Codex wake", () => {
     writeFileSync(join(state, "receipt.json"), JSON.stringify(receipt));
     writeFileSync(join(state, "cancellation.json"), JSON.stringify({ status: "cancelled", at: new Date().toISOString() }));
     assert.throws(() => wakeStatus(state), /nonempty string/);
+  });
+  it("correlates consumed events across history pages by client ID, retaining failed and interrupted turns", async () => {
+    const state = join(root, "job");
+    const first = await armWake(state, request); await terminal(state);
+    rmSync(request.socket + ".queue");
+    writeFileSync(request.socket + ".history", JSON.stringify([
+      { data: [{ id: "unrelated", status: "completed", items: [{ type: "agentMessage", text: first.eventId }] }], nextCursor: "1" },
+      { data: ["completed", "failed", "interrupted", "inProgress"].map((status) => ({ id: status, status,
+        items: [{ type: "userMessage", clientId: first.eventId, content: [] }] })), nextCursor: null },
+    ]));
+    const result = await observeWake(state);
+    assert.deepEqual(result.observation.turns, [
+      { id: "completed", status: "completed" }, { id: "failed", status: "failed" },
+      { id: "interrupted", status: "interrupted" }, { id: "inProgress", status: "inProgress" },
+    ]);
+    assert.equal(result.observation.delivery, "consumed");
+    assert.deepEqual(result.observation.pendingSubmissionIds, []);
+    assert.equal(result.receipt.status, "queued");
+    assert.equal((await cancelWake(state)).cancellation?.status, "not-pending");
+    assert.equal(readFileSync(request.socket + ".effects", "utf8").trim().split("\n").length, 1);
+  });
+  it("does not turn absence or a quoted event marker into proof of execution", async () => {
+    const state = join(root, "job");
+    const first = await armWake(state, request); await terminal(state);
+    rmSync(request.socket + ".queue");
+    writeFileSync(request.socket + ".history", JSON.stringify([{ data: [{ id: "other", status: "completed",
+      items: [{ type: "userMessage", clientId: "other", content: [{ type: "text", text: `[pstack local wake ${first.eventId}]` }] }] }], nextCursor: null }]));
+    assert.equal((await observeWake(state)).observation.delivery, "unobserved");
+    assert.equal((await armWake(state, request)).duplicate, true);
+  });
+  it("fails observation explicitly on incomplete history", async () => {
+    const state = join(root, "job");
+    await armWake(state, request); await terminal(state);
+    writeFileSync(request.socket + ".history", JSON.stringify([{ data: [{ id: "summary", status: "completed", itemsView: "summary", items: [] }], nextCursor: null }]));
+    await assert.rejects(observeWake(state), /full turn items/);
+  });
+  it("fails without dispatch when the loaded host disappears during the timer", async () => {
+    const state = join(root, "job");
+    await armWake(state, { ...request, delayMs: 5_000 });
+    for (const stream of connections) stream.destroy();
+    assert.equal((await terminal(state)).receipt.status, "failed");
+    assert.equal(existsSync(request.socket + ".effects"), false);
+  });
+  it("rechecks that the target is loaded at dispatch time", async () => {
+    const state = join(root, "job");
+    await armWake(state, { ...request, delayMs: 500 });
+    writeFileSync(request.socket + ".thread", JSON.stringify({ id: THREAD, status: { type: "notLoaded" }, ephemeral: false }));
+    assert.equal((await terminal(state)).receipt.status, "failed");
+    assert.equal(existsSync(request.socket + ".effects"), false);
   });
 });

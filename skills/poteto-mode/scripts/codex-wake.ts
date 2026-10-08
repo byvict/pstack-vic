@@ -130,6 +130,13 @@ type QueueRemoval =
   | { readonly status: "cancelled" | "already-consumed"; readonly queuedSubmissionId: string }
   | { readonly status: "not-pending"; readonly note: string };
 type CancellationReceipt = QueueRemoval & { readonly at: string };
+export type WakeObservation = {
+  readonly observedAt: string;
+  readonly threadStatus: string;
+  readonly pendingSubmissionIds: readonly string[];
+  readonly turns: readonly { readonly id: string; readonly status: string }[];
+  readonly delivery: "pending" | "consumed" | "unobserved";
+};
 export interface WakeStatus {
   readonly state: string;
   readonly eventId: string;
@@ -250,6 +257,41 @@ async function removePending(host: Host, request: Manifest): Promise<QueueRemova
   return { status: "not-pending", note: "No pending event found; an already started turn is not interrupted." };
 }
 
+/** Reconcile transport uncertainty with native evidence. Never resubmit an event. */
+export async function observeWake(state: string): Promise<WakeStatus & { readonly observation: WakeObservation }> {
+  const status = wakeStatus(state), request = manifest(state);
+  const host = new Host(request.socket, state);
+  try {
+    await host.initialize();
+    const thread = object((await host.call("thread/read", { threadId: request.threadId, includeTurns: false })).thread);
+    if (thread.id !== request.threadId) throw new Error("Host returned a different wake thread");
+    const pendingSubmissionIds: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await host.call("thread/queue/list", { threadId: request.threadId, ...(cursor ? { cursor } : {}) });
+      if (!Array.isArray(page.data)) throw new Error("Invalid Codex queue page");
+      for (const item of page.data.map(object)) if (item.clientUserMessageId === request.eventId) pendingSubmissionIds.push(text(item.id));
+      cursor = typeof page.nextCursor === "string" ? page.nextCursor : undefined;
+    } while (cursor);
+    const turns: { id: string; status: string }[] = [];
+    do {
+      const page = await host.call("thread/turns/list", { threadId: request.threadId, itemsView: "full", ...(cursor ? { cursor } : {}) });
+      if (!Array.isArray(page.data)) throw new Error("Invalid Codex turn page");
+      for (const turn of page.data.map(object)) {
+        if (!Array.isArray(turn.items) || turn.itemsView === "summary") throw new Error("Host did not return full turn items");
+        if (turn.items.map(object).some((item) => item.type === "userMessage" && item.clientId === request.eventId)) {
+          turns.push({ id: text(turn.id), status: text(turn.status) });
+        }
+      }
+      cursor = typeof page.nextCursor === "string" ? page.nextCursor : undefined;
+    } while (cursor);
+    const observation: WakeObservation = { observedAt: new Date().toISOString(), threadStatus: text(object(thread.status).type),
+      pendingSubmissionIds, turns, delivery: turns.length ? "consumed" : pendingSubmissionIds.length ? "pending" : "unobserved" };
+    save(join(state, `observation-${randomUUID()}.json`), observation);
+    return { ...status, observation };
+  } finally { await host.close(); }
+}
+
 export async function cancelWake(state: string): Promise<WakeStatus & { readonly cancellationRequested?: true }> {
   const request = manifest(state);
   writeFileSync(join(state, "cancel.request"), "cancel\n", { mode: 0o600 });
@@ -298,7 +340,7 @@ async function work(state: string): Promise<void> {
       process.send?.({ armed: true });
       if (existsSync(join(state, "cancel.request"))) finish(true);
     });
-    const cancelled = await Promise.race([waiting, host.exited.then(() => { cancel(); throw new Error("Local Codex host disconnected before the event"); })]);
+    const cancelled = await Promise.race([waiting, host.exited.then(() => { throw new Error("Local Codex host disconnected before the event"); })]);
     if (cancelled) { saveReceipt(receiptPath, { ...context, status: "cancelled", completedAt: new Date().toISOString() }); return; }
     // Recheck the same host before dispatch. Never resume a closed target as a side effect.
     const current = object((await host.call("thread/read", { threadId: request.threadId, includeTurns: false })).thread);
@@ -319,6 +361,7 @@ async function work(state: string): Promise<void> {
     if (process.connected) process.send?.({ error: message });
     process.exitCode = 1;
   } finally {
+    cancel();
     await host.close();
     process.removeListener("SIGTERM", stop); process.removeListener("SIGINT", stop);
     if (process.connected) process.disconnect?.();
@@ -330,14 +373,15 @@ async function main(): Promise<void> {
     state: { type: "string" }, thread: { type: "string" }, socket: { type: "string" },
     "delay-ms": { type: "string" }, payload: { type: "string" }, help: { type: "boolean" },
   } });
-  if (values.help) { console.log("codex-wake <arm|status|cancel> --state <absolute unique directory>\narm: --thread <UUID> --delay-ms <milliseconds> --payload <file> [--socket <local Unix socket>]\nOne event per state directory. Requires a persisted thread loaded in that local Codex host."); return; }
+  if (values.help) { console.log("codex-wake <arm|status|observe|cancel> --state <absolute unique directory>\narm: --thread <UUID> --delay-ms <milliseconds> --payload <file> [--socket <local Unix socket>]\nOne event per state directory. Requires a persisted thread loaded in that local Codex host.\nobserve: read native queue and full turn history by event UUID; does not replay or certify payload effects."); return; }
   const state = text(values.state);
   if (!isAbsolute(state)) throw new Error("--state must be absolute");
   const [command] = positionals;
   if (command === "worker") { await work(state); return; }
   if (command === "status") { console.log(JSON.stringify(wakeStatus(state))); return; }
+  if (command === "observe") { console.log(JSON.stringify(await observeWake(state))); return; }
   if (command === "cancel") { console.log(JSON.stringify(await cancelWake(state))); return; }
-  if (command !== "arm" || positionals.length !== 1) throw new Error("Expected arm, status, or cancel; see --help");
+  if (command !== "arm" || positionals.length !== 1) throw new Error("Expected arm, status, observe, or cancel; see --help");
   const configHome = process.env.CODEX_HOME || join(homedir(), ".codex");
   console.log(JSON.stringify(await armWake(state, { threadId: text(values.thread), delayMs: Number(values["delay-ms"]),
     socket: values.socket ? resolve(values.socket) : join(configHome, "app-server-control", "app-server-control.sock"), payload: readFileSync(text(values.payload), "utf8") })));
