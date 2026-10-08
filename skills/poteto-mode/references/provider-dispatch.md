@@ -239,7 +239,7 @@ A Codex parent runs the launcher inside its own seatbelt and exports `CODEX_SAND
 
 The parent invocation must itself be resumable background work:
 
-- Claude Code: call the launcher through a Bash tool invocation with `run_in_background: true` and retain its task ID. A foreground Bash tool call has an automatic ten-minute ceiling even when the runner's own timeout is longer. Shelling out with `&` and losing the task handle is not equivalent.
+- Claude Code: call the launcher through a Bash tool invocation with `run_in_background: true` and retain its task ID. A foreground Bash tool call has an automatic ten-minute ceiling even when the runner's own timeout is longer. Shelling out with `&` and losing the task handle is not equivalent. The task's completion re-invokes an interactive root in the same session, and `TaskStop` on that task ID kills the whole process group, after which the runner still writes its `cancelled` receipt (measured 2026-10-08 on 2.1.293; see the [coordinator report](../../../docs/research/2026-10-08-claude-coordinator.md)).
 - Grok Build: use the shell tool with `block_until_ms: 0`, retain the task ID, and wait through `get_command_or_subagent_output`.
 - Codex: run the launcher in a persistent exec session that returns a session ID, then wait or poll that handle. Do not hold one foreground tool call open for the model's full runtime.
 
