@@ -1986,3 +1986,10 @@ Numa Raiz aberta no app desktop do Claude, um prompt agendado (`/loop`, cron de 
 - `docs/reference.md`, `CONTEXT.md`, `skills/poteto-mode/SKILL.md` (*Platform Adaptation*) e `docs/guide/07-overnight.md` dizem em que host vale cada relógio e como a Raiz do app reconhece o host (`CLAUDE_CODE_ENTRYPOINT`).
 - A troca T13 de `upstream-substitutions.json` aponta a Raiz do app desktop para o `SKILL.md`, como já aponta Codex e Grok para os mapas deles; os dois playbooks regenerados por `node scripts/upstream-parity.ts --write` continuam a dizer `/loop 1h`, e o marcador do `check-plan.mjs` não muda.
 - Nenhum modelo, esforço, fallback de swarm, política de Arena ou de trilha, pin upstream, daemon ou serviço entra.
+
+
+## 0.5.25 — Claude como raiz: lifecycle, capacidades e despertar
+
+Reúne os PRs #99 a #111. O watcher volta à prontidão do upstream sem gates nativos (#99, ADR 0006) e a revisão da trilha exclui só a família da raiz (#100, ADR 0007). O runner ganha capacidades por tarefa (`web`, `skills`, `mcpSources`, `agentKind: owner`, `additionalDirectories`) com recibo do pedido (#102, #109, ADR 0009), o despertar local do Codex pela fila do app-server com recibos tipados (#101, #103, #108, ADR 0008) e o perfil owner Claude com `Agent`, `ListAgents`, `TaskStop` e `SendMessage` no lugar do `TaskOutput` removido em Claude Code 2.1.277 (#104, #106).
+
+Os relatórios de 2026-10-07 e 2026-10-08 registram o que foi medido: Claude recebido pelo runner, Claude como raiz coordenadora (helpers isolados, interrupção, retomada, Codex e Grok despachados, retomada da raiz pelo ID exato), capacidade nativa e liberação de slots, worktree irmão por `--add-dir`, e a regra do scheduler no app desktop, que só entrega um prompt agendado sem tarefa em segundo plano viva. Por isso a Raiz do app desktop arma o Tick como um comando em segundo plano de uma hora re-armado a cada Tick, e a raiz de terminal mantém `/loop 1h` (#111, ADR 0010). Nenhum modelo, esforço, fallback de swarm, política de Arena ou de trilha, nem o pin upstream mudou.
