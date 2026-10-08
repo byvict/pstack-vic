@@ -1,3 +1,4 @@
+import { codexCapabilityArgs, claudeCapabilityArgs, type CliCapabilities } from "./capabilities.ts";
 import {
   cliFor,
   UsageError,
@@ -51,16 +52,16 @@ export function preflightCommand(provider: Provider): CommandSpec {
   }
 }
 
-function claudeDeniedTools(mode: AccessMode): string {
-  const always = ["Agent", "Task", "WebSearch", "WebFetch"];
+function claudeDeniedTools(mode: AccessMode, capabilities: CliCapabilities | undefined): string {
+  const always = [...(capabilities?.agentKind === "owner" ? [] : ["Agent", "Task"]), ...(capabilities?.web ? [] : ["WebSearch", "WebFetch"])];
   const readonly = ["Edit", "Write", "NotebookEdit"];
   return [...always, ...(mode === "read-only" ? readonly : [])].join(",");
 }
 
-function claudeTools(mode: AccessMode): string {
-  return mode === "read-only"
-    ? "Read,Grep,Glob,Bash"
-    : "Read,Write,Edit,Grep,Glob,Bash";
+function claudeTools(mode: AccessMode, capabilities: CliCapabilities | undefined): string {
+  const tools = mode === "read-only" ? ["Read", "Grep", "Glob", "Bash"] : ["Read", "Write", "Edit", "Grep", "Glob", "Bash"];
+  return [...tools, ...(capabilities?.agentKind === "owner" ? ["Agent", "Task"] : []),
+    ...(capabilities?.web ? ["WebSearch", "WebFetch"] : []), ...(capabilities?.skills ? ["Skill"] : [])].join(",");
 }
 
 function codexSandbox(mode: AccessMode): string {
@@ -103,9 +104,9 @@ export function configOverlay(
   };
 }
 
-function grokTools(mode: AccessMode): string {
+function grokTools(mode: AccessMode, web = false): string {
   const readonly = ["read_file", "grep", "list_dir", "run_terminal_cmd"];
-  return [...readonly, ...(mode === "isolated-write" ? ["search_replace"] : [])].join(",");
+  return [...readonly, ...(mode === "isolated-write" ? ["search_replace"] : []), ...(web ? ["web_search", "web_fetch"] : [])].join(",");
 }
 
 function permissionMode(mode: AccessMode): string {
@@ -135,6 +136,7 @@ export function invocationCommand(
   env: NodeJS.ProcessEnv = process.env
 ): CommandSpec {
   const mode = options.mode;
+  const capabilities = options.capabilities;
   if (mode === "full-access") throw new UsageError("full-access requires the Grok ACP transport");
   const cli = requireCli(options.provider);
   switch (cli) {
@@ -153,11 +155,11 @@ export function invocationCommand(
           "project",
           "--strict-mcp-config",
           "--tools",
-          claudeTools(mode),
-          "--no-session-persistence",
-          "--disable-slash-commands",
-          "--disallowed-tools",
-          claudeDeniedTools(mode),
+          claudeTools(mode, capabilities),
+          ...(capabilities?.agentKind === "owner" ? [] : ["--no-session-persistence"]),
+          ...(capabilities?.skills ? [] : ["--disable-slash-commands"]),
+          ...(claudeDeniedTools(mode, capabilities) ? ["--disallowed-tools", claudeDeniedTools(mode, capabilities)] : []),
+          ...claudeCapabilityArgs(capabilities),
           "--output-format",
           "json",
         ],
@@ -177,15 +179,16 @@ export function invocationCommand(
           "--cd",
           options.cwd,
           "--skip-git-repo-check",
-          "--ephemeral",
-          "--disable",
+          ...(capabilities?.agentKind === "owner" ? [] : ["--ephemeral"]),
+          capabilities?.skills ? "--enable" : "--disable",
           "plugins",
-          "--disable",
+          capabilities?.agentKind === "owner" ? "--enable" : "--disable",
           "multi_agent",
           "--disable",
           "hooks",
           "--disable",
           "memories",
+          ...codexCapabilityArgs(capabilities),
           "--json",
           "-",
         ],
@@ -206,7 +209,7 @@ export function invocationCommand(
           "--sandbox",
           grokSandbox(mode, insideCodexSandbox(env)),
           "--tools",
-          grokTools(mode),
+          grokTools(mode, capabilities?.web),
           "--disallowed-tools",
           "Agent,search_tool,use_tool",
           "--output-format",
@@ -214,7 +217,7 @@ export function invocationCommand(
           "--cwd",
           options.cwd,
           "--no-subagents",
-          "--disable-web-search",
+          ...(capabilities?.web ? [] : ["--disable-web-search"]),
           "--verbatim",
         ],
         stdin: "none",

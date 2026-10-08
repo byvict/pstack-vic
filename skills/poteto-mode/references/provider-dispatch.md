@@ -40,7 +40,7 @@ The allowed effort universe is exactly `low`, `medium`, `high`, `xhigh`, `max`. 
 
 Grok Build CLI 1.0.5 reports the served model as `grok-4.6-build` in the result event's `modelUsage` (measured 2026-09-17); the grok family's `reportedModel` pattern accepts that build suffix and nothing else.
 
-`sol`, `sol-6-1` and `astra` share the `codex` CLI, its flags, and its output parser. They differ only in the `--model` argument. Codex also exposes an `ultra` effort that delegates tasks automatically; it is outside the effort universe because a pstack child never delegates.
+`sol`, `sol-6-1` and `astra` share the `codex` CLI, its flags, and its output parser. They differ only in the `--model` argument. `ultra` remains outside the configured effort universe. Ordinary lanes do not delegate; explicit owners delegate at their configured effort. Enabling owner tools never changes the selected model or effort.
 
 ## Role defaults
 
@@ -89,13 +89,21 @@ The legacy Cursor selector `grok-4.6-fast-{effort}` maps to CLI model `grok-4.6`
 
 The top-level harness resolves the route once. A child receives an assigned provider, model, effort, access mode, prompt, working directory, and output path. A child never detects the harness, chooses a provider, or launches another model. Environment markers may corroborate the top-level harness before fan-out, but nested processes inherit parent markers and must not use them for routing.
 
-An autopilot owner is the one child that dispatches. It is the parent of the lanes it starts, and it resolves their routes by this document on the harness its root runs on. A pool lane stays with the top-level session (see **Cross-family selection**).
+An autopilot owner is the one child that dispatches. It is the parent of the lanes it starts, and it resolves their routes on its own assigned harness. For example, a Grok root launches a Codex owner with `--parent grok`, and that owner dispatches its helpers as a Codex parent. Pass that assignment explicitly; inherited environment markers do not select the harness. A pool lane stays with the top-level session (see **Cross-family selection**).
 
 The route table rendered above from `model-matrix.json` selects the preferred route. A provider is native in exactly one parent. If that parent's native route cannot meet the task, apply [When native dispatch is unavailable](#when-native-dispatch-is-unavailable). The matrix and model sheet keep the configured provider, model, and effort.
 
 Swarm workers have one optional exception to descriptor preservation: the explicitly configured [`swarm fallback` policy](../../swarm/references/native-fallback.md). The parent applies it to eligible capability gaps and terminal execution failures. It adds no default model and grants no fallback to other roles or model comparisons.
 
 `inherit-parent` and `auto` remain aliases. They use the parent's current model and effort, preferring its native subagent primitive. Before using the runner, resolve the alias to an observed provider, registered model, and selectable effort. If any part is unknown or unsupported by the runner, record a gap instead of guessing. In a panel aliases still consume one lane, but they reduce provider diversity; say so in the synthesis record.
+
+### Autopilot owners
+
+Before Autopilot-full or Autopilot-stack launches an owner, resolve the PR's authoring row (`bug-fix` for a reported defect, `perf-issue` for measured slowness, `feature, refactoring` otherwise). The owner itself receives that row's normalized provider, model and effort. Prefer a native owner when the host can bind that descriptor and supply delegation, the required tools and the assigned worktree access. Native call mechanics are in the skill's Subagents section, [codex-tools.md](codex-tools.md#subagent-policy) and [grok-tools.md](grok-tools.md#native-lanes-and-owners).
+
+For an external descriptor, or when the native owner cannot meet those requirements, use the same descriptor through [External lanes](#external-lanes) with a [task-capabilities profile](runner-capabilities.md) containing `agentKind: "owner"`. Select `skills: true` when the owner's assigned workflow needs native skills, plus its required web and explicit MCP sources. Codex and Claude support this owner profile. Grok's CLI and current ACP route do not; a Grok owner needs a working native route, including its nesting proof. If no authorized route supplies the required capabilities and access, record that concrete gap under the calling playbook. An inherited owner is selected only by an explicit `inherit-parent` or `auto` row, never as a replacement for another descriptor. The configured swarm fallback remains limited to swarm workers.
+
+Give the owner its own worktree, complete brief, helper descriptors and the executing harness assignment. Check access for each writer's worktree before assigning it; the owner profile does not grant sibling write access. Retain the runner receipt and session ID for compatible same-task continuation under [Owners and lifecycle](runner-capabilities.md#owners-and-lifecycle). Drain live children before ending a headless session. Persistence, completed state and slot release remain distinct.
 
 ## Cross-family selection
 
@@ -152,6 +160,8 @@ Preserve the configured model and effort when a task needs MCP tools. Prefer nat
 
 Choose an execution mode that retains the required tools. When a platform's read-only or Ask mode strips MCPs, use its MCP-capable agent mode and instruct the agent not to write. If the assigned runtime cannot access a required source, record the access gap under the calling skill's coverage or dropout policy. Preserve the selected model unless the [configured swarm fallback](../../swarm/references/native-fallback.md) applies. A successful tool call and its result establish source access; a tool listing alone does not.
 
+For Codex and Claude CLI routes, [task capabilities](runner-capabilities.md) can attach named HTTP MCP sources and select the required tools without changing the user's global configuration. This is explicit configuration, not inheritance of the parent's conversation MCPs. Prove a call to each source the assigned task requires. The existing T3 attachment remains the separate Grok ACP contract.
+
 ## External lanes
 
 The launcher lives at `skills/poteto-mode/scripts/runner/pstack-runner` under the installed plugin. The parent writes the complete candidate prompt to a unique file, creates a unique output directory or worktree, and invokes the launcher directly. Do not put another agent in front of it.
@@ -167,10 +177,11 @@ pstack-runner \
   --cwd <repository or dedicated worktree> \
   --output <unique final-response file> \
   --receipt <unique receipt file> \
+  [--capabilities <task-capabilities.json>] \
   [--timeout <seconds>]
 ```
 
-Pass arguments as an argv array or quote every path. Never interpolate prompt text into a shell command. The launcher preflights the assigned CLI and authentication, invokes the model exactly once, disables recursive agents and ambient skill dispatch where the CLI supports it, restricts the built-in tool surface, and records the exact provider/model/effort flags. The default CLI route does not receive the parent's MCP surface. Follow [MCP-dependent tasks](#mcp-dependent-tasks) for Why and Reflect. A supported Grok ACP task below requires an explicit parent assignment. The launcher never falls back.
+Pass arguments as an argv array or quote every path. Never interpolate prompt text into a shell command. The launcher preflights the assigned CLI and authentication, opens one fresh top-level session, and records the exact provider/model/effort flags. The default lane disables native recursive agents and optional ambient dispatch where the CLI supports it. Select [task capabilities](runner-capabilities.md) when the assignment needs web, native skills, an explicit MCP source, or a delegating owner. Owner selection enables native delegation and persistence on Codex/Claude; the owner must assign isolated worktrees, preserve each helper's descriptor, and collect all results before the CLI exits. It is not another delivery workflow or a fallback. The default route does not receive the parent's MCP surface. Follow [MCP-dependent tasks](#mcp-dependent-tasks) for Why and Reflect. A supported Grok ACP task below requires an explicit parent assignment. The launcher never falls back.
 
 ### Explicit Grok ACP tasks
 

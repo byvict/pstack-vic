@@ -1,3 +1,4 @@
+import type { CliCapabilities } from "./capabilities.ts";
 import {
   loadMatrix,
   type Family,
@@ -36,6 +37,7 @@ export interface RunnerOptions {
   readonly mode: AccessMode | "full-access";
   readonly transport?: "cli" | "grok-acp";
   readonly mcpConfigPath?: string;
+  readonly capabilities?: CliCapabilities;
   readonly promptPath: string;
   readonly cwd: string;
   readonly outputPath: string;
@@ -53,7 +55,7 @@ type RequestFiles = Pick<RunnerOptions,
   "model" | "effort" | "promptPath" | "cwd" | "outputPath" | "receiptPath" | "timeoutMs">;
 
 export type ExecutionRequest = RequestFiles & (
-  | { readonly kind: "cli"; readonly parent: Parent; readonly provider: Provider; readonly mode: AccessMode }
+  | { readonly kind: "cli"; readonly parent: Parent; readonly provider: Provider; readonly mode: AccessMode; readonly capabilities?: CliCapabilities }
   | {
       readonly kind: "grok-acp";
       readonly parent: "codex" | "claude";
@@ -128,6 +130,7 @@ export interface RunnerReceipt {
   readonly effort: Effort;
   readonly mode: RunnerOptions["mode"];
   readonly acp?: AcpDetail;
+  readonly capabilities?: CliCapabilities;
   readonly cwd: string;
   readonly promptPath: string;
   readonly outputPath: string;

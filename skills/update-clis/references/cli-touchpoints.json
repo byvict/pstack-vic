@@ -38,10 +38,10 @@
       "id": "codex.identity-env",
       "cli": "codex",
       "kind": "lane",
-      "contract": "a same-provider `codex exec --ephemeral` receives no inherited Codex or Claude session identity, opens a fresh thread, and retains configuration and authentication; the parent still supplies the sandbox and disables recursive agents",
+      "contract": "a same-provider `codex exec --ephemeral` receives no inherited Codex or Claude session identity, opens a fresh thread, and retains configuration and authentication; the parent still supplies the sandbox; default lanes disable recursive agents, explicit owners enable native delegation",
       "pointers": [
         { "file": "skills/poteto-mode/scripts/runner/child.ts", "anchor": "const CODEX_IDENTITY" },
-        { "file": "skills/poteto-mode/scripts/runner/commands.ts", "anchor": "\"--ephemeral\"," }
+        { "file": "skills/poteto-mode/scripts/runner/commands.ts", "anchor": "[\"--ephemeral\"]" }
       ],
       "coveredBy": [],
       "measuredOn": "0.160.0"
@@ -106,7 +106,7 @@
       "cli": "codex",
       "kind": "lane",
       "contract": "`codex exec` runs the turn in its own process: it neither connects to the shared app-server daemon nor starts one, and `--ephemeral` writes no rollout under `~/.codex/sessions`. Only the TUI takes `--no-daemon`",
-      "pointers": [{ "file": "skills/poteto-mode/scripts/runner/commands.ts", "anchor": "\"--ephemeral\"," }],
+      "pointers": [{ "file": "skills/poteto-mode/scripts/runner/commands.ts", "anchor": "[\"--ephemeral\"]" }],
       "coveredBy": [],
       "measuredOn": "0.156.1"
     },
@@ -403,7 +403,7 @@
       "cli": "claude",
       "kind": "lane",
       "contract": "`claude -p --model <model> --effort <effort> --permission-mode plan|acceptEdits --setting-sources project --strict-mcp-config --tools <list> --no-session-persistence --disable-slash-commands --disallowed-tools <list> --output-format json` (prompt on stdin)",
-      "pointers": [{ "file": "skills/poteto-mode/scripts/runner/commands.ts", "anchor": "\"--no-session-persistence\"," }],
+      "pointers": [{ "file": "skills/poteto-mode/scripts/runner/commands.ts", "anchor": "[\"--no-session-persistence\"]" }],
       "coveredBy": ["read", "write", "seatbelt"],
       "measuredOn": "2.1.281"
     },
@@ -538,6 +538,42 @@
         {
           "file": "skills/poteto-mode/references/grok-tools.md",
           "anchor": "Arm the hourly root audit with `monitor`"
+        }
+      ],
+      "coveredBy": [],
+      "measuredOn": "1.0.46"
+    },
+    {
+      "id": "codex.task-capabilities",
+      "cli": "codex",
+      "kind": "lane",
+      "contract": "Task capabilities keep the descriptor and sandbox while selecting native web, configured skills/plugins, named HTTP MCP sources or an owner. Codex owners enable multi_agent and keep a fresh persisted session; ordinary lanes remain ephemeral. CLI receipts record profile SHA-256 and requested capabilities; access requires an actual source call, not a listed catalog.",
+      "pointers": [
+        {
+          "file": "skills/poteto-mode/scripts/runner/capabilities.ts",
+          "anchor": "export function readCapabilities"
+        },
+        {
+          "file": "skills/poteto-mode/references/runner-capabilities.md",
+          "anchor": "Task capabilities for local CLI sessions"
+        }
+      ],
+      "coveredBy": [],
+      "measuredOn": "0.161.0"
+    },
+    {
+      "id": "grok.task-web",
+      "cli": "grok",
+      "kind": "lane",
+      "contract": "An explicit web task adds web_search/web_fetch to the CLI tool list and omits --disable-web-search, retaining --no-subagents and the bounded sandbox. Grok 1.0.46 emits server_tool_use web_search, web_search_tool_result and server_tool_use.web_search_requests in the terminal usage.",
+      "pointers": [
+        {
+          "file": "skills/poteto-mode/scripts/runner/commands.ts",
+          "anchor": "grokTools(mode, capabilities?.web)"
+        },
+        {
+          "file": "docs/research/2026-10-07-runner-capabilities.md",
+          "anchor": "Grok: web"
         }
       ],
       "coveredBy": [],

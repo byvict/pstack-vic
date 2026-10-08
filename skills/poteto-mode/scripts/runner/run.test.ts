@@ -1,3 +1,4 @@
+import { readCapabilities } from "./capabilities.ts";
 import { afterEach, beforeEach, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
@@ -432,6 +433,19 @@ function writeGrok(script: string): void {
   writeFileSync(join(bin, cliOf("grok")), script);
   warm("grok", GROK_PREFLIGHT_ARGS);
 }
+
+describe("capability execution boundary", () => {
+  it("passes selected capabilities through execution and records their exact digest", async () => {
+    const path = join(scratch, "capabilities.json");
+    writeFileSync(path, JSON.stringify({ schemaVersion: 1, agentKind: "owner", web: true }));
+    const capabilities = readCapabilities(path);
+    const result = await runLane({ ...options("codex"), capabilities });
+    assert.equal(result.receipt.status, "complete");
+    assert.deepEqual(result.receipt.capabilities, capabilities);
+    assert.ok(result.receipt.argv.includes('web_search="live"'));
+    assert.equal(result.receipt.argv[result.receipt.argv.indexOf("multi_agent") - 1], "--enable");
+  });
+});
 
 describe("Codex parent network hint", () => {
   const hint = "likely cause: Codex parent sandbox has network disabled; see provider-dispatch.md#host-and-parent-prerequisites";
