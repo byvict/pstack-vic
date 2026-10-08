@@ -134,7 +134,7 @@ When no eligible trail reviewer completes, report `review pending: no cross-fami
 
 Name the lane that ran from its receipt, never from what the lane says about itself: `reportedModel` when `modelEvidence` is `provider-report`, and the requested model marked as not confirmed when it is `pinned-argv`.
 
-A subagent does not launch a pool lane. It returns what the lane needs with its report, and the top-level session runs the script and dispatches.
+A subagent does not launch a pool lane. It returns what the lane needs with its report, and the top-level session runs the script and dispatches. An autopilot owner that needs the result before it can continue, such as Arena's cross-judge before Phase D of its own build, sends that need to the root as a report (on Claude Code, `SendMessage` to `main`) and waits for the root to return the lane's result; it does not judge in the lane's place.
 
 ## Native lanes
 
