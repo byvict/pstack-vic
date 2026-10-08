@@ -100,6 +100,43 @@ describe("Codex project model sources", () => {
     assert.equal(readFileSync(override, "utf8"), block(rowB));
   });
 
+  it("an empty project override hides AGENTS.md, while an empty global override falls through", () => {
+    const cwd = project("a");
+    put(join(cwd, "AGENTS.md"), block(rowA));
+    put(join(cwd, "AGENTS.override.md"), "");
+    const global = put(join(home, ".codex/AGENTS.md"), block(rowB));
+    put(join(home, ".codex/AGENTS.override.md"), "");
+    const pick = pickLane({ parent: "codex", home, cwd, role });
+    assert.equal(pick.chosen?.descriptor, "claude:fable@max");
+    assert.deepEqual(pick.configurationSource, { kind: "block", path: global });
+  });
+
+  it("an explicit source-less chain does not recover or rewrite excluded global configuration", () => {
+    const cwd = project("a");
+    const global = put(join(home, ".codex/pstack-models.md"), sheet(rowA));
+    const plain = put(join(cwd, "TEAM.md"), "Repository instructions\n");
+    const pick = pickLane({ parent: "codex", home, cwd, instructionSources: [plain], role });
+    assert.equal(pick.source, "default");
+    assert.deepEqual(pick.configurationSource, { kind: "first-run" });
+    assert.equal(pick.chosen?.descriptor, "claude:claude-opus-5-5@xhigh");
+    assert.equal(buildPlan({ parent: "codex", home, cwd, instructionSources: [plain] }).integrationPath, plain);
+    const empty = buildPlan({ parent: "codex", home, cwd, instructionSources: [] });
+    assert.throws(() => writeSheet(empty, join(root, "run"), { home }), /without a loaded instruction source/);
+    assert.equal(readFileSync(global, "utf8"), sheet(rowA));
+    const result = spawnSync(process.execPath, [script, "pick", "--parent", "codex", "--home", home, "--role", role, "--no-instruction-sources"], {
+      cwd, env: { ...process.env, CODEX_HOME: "" }, encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).source, "default");
+  });
+
+  it("does not inspect malformed excluded broader instruction files", () => {
+    const cwd = project("a", rowA);
+    mkdirSync(join(home, ".codex/AGENTS.md"), { recursive: true });
+    assert.equal(pickLane({ parent: "codex", home, cwd, role }).chosen?.descriptor, "grok:grok-4.7@high");
+    assert.equal(pickLane({ parent: "codex", home, cwd, instructionSources: [join(cwd, "AGENTS.md")], role }).chosen?.descriptor, "grok:grok-4.7@high");
+  });
+
   it("refuses a conflicting mirror or a missing explicit reference instead of falling back", () => {
     const cwd = project("a", rowA);
     put(join(cwd, "AGENTS.md"), block(rowB));

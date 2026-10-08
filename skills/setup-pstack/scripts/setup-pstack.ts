@@ -119,6 +119,7 @@ interface Location {
   readonly integrationPath: string;
   readonly ledgerPath: string;
   readonly wiring: Target["wiring"];
+  readonly readSource?: boolean;
 }
 
 interface SourceContext {
@@ -127,11 +128,11 @@ interface SourceContext {
   readonly instructionSources?: readonly string[];
 }
 
-function instructionFile(directory: string): string | null {
+function instructionFile(directory: string, skipEmpty = false): string | null {
   for (const name of ["AGENTS.override.md", "AGENTS.md"]) {
     const path = join(directory, name);
     const text = snapshotOf(path, "instruction file");
-    if (text !== null && text.trim() !== "") return path;
+    if (text !== null && (!skipEmpty || text.trim() !== "")) return path;
   }
   return null;
 }
@@ -187,17 +188,18 @@ function locate(parent: string, home: string, env: ConfigEnv, context: SourceCon
     return global;
   }
 
-  const globalInstruction = instructionFile(configHome);
   const directories = projectDirectories(context.cwd ?? process.cwd());
   // Local standalone sheets retain setup's recovery contract. An explicit chain
   // restricts recovery to its directories, including custom runtime filenames.
   const candidates = context.instructionSources === undefined
-    ? [...new Set([configHome, ...directories])].map((directory) => ({ directory, path: instructionFile(directory) }))
+    ? [...new Set([configHome, ...directories])].map((directory) => ({ directory, path: undefined }))
     : context.instructionSources.map((source) => {
       const path = resolve(source);
       return { directory: dirname(path), path };
     });
-  for (const { directory, path } of candidates.reverse()) {
+  for (const candidate of [...candidates].reverse()) {
+    const { directory } = candidate;
+    const path = candidate.path === undefined ? instructionFile(directory, directory === configHome) : candidate.path;
     const integrationPath = path ?? join(directory, "AGENTS.md");
     const integration = snapshotOf(integrationPath, "instruction file");
     if (path !== null && integration === null) fail(`loaded instruction source ${path} does not exist`);
@@ -210,8 +212,16 @@ function locate(parent: string, home: string, env: ConfigEnv, context: SourceCon
       return { ...global, sheetPath, integrationPath, ledgerPath: join(dirname(sheetPath), LEDGER_FILE) };
     }
   }
+  if (context.instructionSources !== undefined) {
+    const last = context.instructionSources.at(-1);
+    if (last === undefined) return { ...global, readSource: false };
+    const integrationPath = resolve(last);
+    const directory = dirname(integrationPath);
+    const sheetDirectory = directory === configHome ? configHome : join(directory, ".codex");
+    return { ...global, integrationPath, sheetPath: join(sheetDirectory, SHEET_FILE), ledgerPath: join(sheetDirectory, LEDGER_FILE) };
+  }
   // First-run global setup still uses the instruction file Codex would load.
-  return { ...global, integrationPath: globalInstruction ?? global.integrationPath };
+  return { ...global, integrationPath: instructionFile(configHome, true) ?? global.integrationPath };
 }
 
 export function sheetPathFor(parent: string, home: string = homedir(), env: ConfigEnv = {}): string {
@@ -834,6 +844,7 @@ function describeSource(source: LoadedSource, where: Location): string {
 }
 
 function selectSource(where: Location, matrix: ModelMatrix): { readonly loaded: Loaded | null; readonly missingImport: string | null } {
+  if (where.readSource === false) return { loaded: null, missingImport: null };
   if (existsSync(where.configHome) && !statSync(where.configHome).isDirectory()) {
     const variable = targetFor(where.parent).variable;
     fail(`inconsistent state: the config home ${where.configHome} is a file, not a directory; move it aside${variable === null ? "" : ` or point ${variable.name} at a directory`}`);
@@ -1246,7 +1257,7 @@ export function buildPlan(input: PlanInput): Plan {
     sheetPath: state.sheetPath,
     integrationPath: state.integrationPath,
     ledgerPath,
-    sourceContext: { cwd: resolve(input.cwd ?? process.cwd()), instructionSources: input.instructionSources },
+    sourceContext: { cwd: resolve(input.cwd ?? process.cwd()), instructionSources: input.instructionSources?.map((path) => resolve(path)) },
     firstRun: state.source.kind === "first-run",
     efforts,
     rows,
@@ -1692,6 +1703,7 @@ export function writeSheet(plan: Plan, dir: string, options: { readonly home?: s
     cwd: options.cwd ?? plan.sourceContext?.cwd,
     instructionSources: options.instructionSources ?? plan.sourceContext?.instructionSources,
   });
+  if (where.readSource === false) fail("refusing to write without a loaded instruction source; identify the setup destination and run plan again");
   const { sheetPath, integrationPath, ledgerPath } = where;
   if (plan.sheetPath !== sheetPath || plan.integrationPath !== integrationPath || plan.ledgerPath !== ledgerPath) {
     const variable = targetFor(plan.parent).variable;
@@ -1784,6 +1796,7 @@ const USAGE = `Usage: setup-pstack <state|plan|probe|attest|write|pick> [options
 
 Codex state, plan, pick and write accept --cwd <project directory> (default: current directory)
 and repeated --instruction-source <file> in the runtime's global-to-local loaded order.
+Use --no-instruction-sources for an empty observed chain (defaults; setup cannot write).
 For custom instruction discovery, pass that exact chain instead of guessing. The nearest
 Codex project sheet/block/reference wins, then the global source, then role-table defaults.
 An absent row in the selected source uses its role-table default, not a broader sheet.
@@ -1845,6 +1858,7 @@ export async function main(argv: readonly string[], io: Io = {
           home: { type: "string" },
           cwd: { type: "string" },
           "instruction-source": { type: "string", multiple: true },
+          "no-instruction-sources": { type: "boolean", default: false },
           dir: { type: "string" },
           effort: { type: "string", multiple: true },
           role: { type: "string", multiple: true },
@@ -1872,9 +1886,10 @@ export async function main(argv: readonly string[], io: Io = {
     if (swarmFallback !== undefined && typeof swarmFallback !== "string") usage("--swarm-fallback expects a native descriptor or off");
     const home = typeof parsed.values.home === "string" ? parsed.values.home : homedir();
     const env = io.env ?? {};
+    if (parsed.values["no-instruction-sources"] && parsed.values["instruction-source"] !== undefined) usage("--no-instruction-sources cannot be combined with --instruction-source");
     const context: SourceContext = {
       cwd: typeof parsed.values.cwd === "string" ? parsed.values.cwd : undefined,
-      instructionSources: parsed.values["instruction-source"] as string[] | undefined,
+      instructionSources: parsed.values["no-instruction-sources"] ? [] : parsed.values["instruction-source"] as string[] | undefined,
     };
     const requireParent = (): string => {
       const parent = parsed.values.parent;
