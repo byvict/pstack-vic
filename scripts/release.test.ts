@@ -11,7 +11,7 @@ const commit = 'c'.repeat(40);
 const other = 'd'.repeat(40);
 /** One fake for git, claude and codex, dispatched on its own file name. It answers from FAKE_ROOT/state.json and appends each call to FAKE_ROOT/calls.jsonl. A call the release has no business making, such as `git tag` or `git push`, fails. The fake claude keeps one install record per scope and project, and `plugin update --scope` moves only the record of that scope whose project is the cwd (any cwd for user), as the real CLI does. */
 const fake = `#!/usr/bin/env node
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 const root = process.env.FAKE_ROOT;
 const file = join(root, 'state.json');
@@ -19,6 +19,7 @@ const state = JSON.parse(readFileSync(file, 'utf8'));
 const name = basename(process.argv[1]);
 const args = process.argv.slice(2);
 appendFileSync(join(root, 'calls.jsonl'), JSON.stringify([name, ...args]) + '\\n');
+appendFileSync(join(root, 'contexts.jsonl'), JSON.stringify({ name, args, cwd: process.cwd(), configHome: process.env.CODEX_HOME || join(process.env.HOME, '.codex') }) + '\\n');
 const out = text => process.stdout.write(text);
 const save = () => writeFileSync(file, JSON.stringify(state));
 const is = (...words) => args.length === words.length && words.every((word, i) => args[i] === word);
@@ -55,11 +56,11 @@ if (name === 'git') {
   else fail('fake claude: ' + args.join(' '));
 } else if (name === 'codex') {
   if (is('plugin', 'list', '--json')) out(JSON.stringify({ installed: state.codex.version ? [{ pluginId: 'pstack@pstack-vic', version: state.codex.version }] : [], available: [] }));
-  else if (is('plugin', 'marketplace', 'list', '--json')) out(JSON.stringify({ marketplaces: state.codex.ref ? [{ name: 'pstack-vic' }] : [] }));
+  else if (is('plugin', 'marketplace', 'list', '--json')) out(JSON.stringify({ marketplaces: state.codex.ref ? [{ name: 'pstack-vic', root: state.codex.root }] : [] }));
   else if (is('plugin', 'remove', 'pstack@pstack-vic')) { if (!state.codex.version) fail('not installed'); changePolicy(false); state.codex.version = null; save(); }
-  else if (is('plugin', 'marketplace', 'remove', 'pstack-vic')) { if (!state.codex.ref) fail('no such marketplace'); state.codex.ref = null; save(); }
-  else if (args.length === 6 && args[0] === 'plugin' && args[1] === 'marketplace' && args[2] === 'add' && args[3] === 'byvict/pstack-vic' && args[4] === '--ref') { state.codex.ref = args[5]; save(); }
-  else if (is('plugin', 'add', 'pstack@pstack-vic')) { if (!state.codex.ref) fail('no marketplace'); changePolicy(true); state.codex.version = state.codex.lands ?? state.codex.ref.slice(1); save(); }
+  else if (is('plugin', 'marketplace', 'remove', 'pstack-vic')) { if (!state.codex.ref) fail('no such marketplace'); state.codex.ref = null; rmSync(state.codex.root, { recursive: true, force: true }); save(); }
+  else if (args.length === 6 && args[0] === 'plugin' && args[1] === 'marketplace' && args[2] === 'add' && args[3] === 'byvict/pstack-vic' && args[4] === '--ref') { state.codex.ref = args[5]; mkdirSync(state.codex.root, { recursive: true }); save(); }
+  else if (is('plugin', 'add', 'pstack@pstack-vic')) { if (!state.codex.ref) fail('no marketplace'); changePolicy(true); state.codex.version = state.codex.lands ?? state.codex.ref.slice(1); save(); if (state.codex.killReleaseAfterAdd) process.kill(process.ppid, 'SIGKILL'); }
   else fail('fake codex: ' + args.join(' '));
 } else fail('fake: ' + name);
 `;
@@ -80,6 +81,8 @@ function setup(t: { after: (fn: () => void) => void }, change: (state: Record<st
   const work = join(root, 'work'); mkdirSync(work); writeFileSync(join(work, 'package.json'), JSON.stringify({ version: '0.4.8' }));
   const state: Record<string, any> = { head: commit, tip: commit, remoteTags: { 'v0.4.8': commit }, claude: { records: [{ scope: 'user', version: '0.4.7' }], latest: '0.4.8', updates: [] }, codex: { version: '0.4.7', ref: 'v0.4.7' } };
   change(state, project);
+  state.codex.root = join(home, '.codex', '.tmp', 'marketplaces', 'pstack-vic');
+  if (state.codex.ref) mkdirSync(state.codex.root, { recursive: true });
   const write = (next: Record<string, any>) => writeFileSync(join(root, 'state.json'), JSON.stringify(next));
   write(state);
   const calls = (): string[][] => existsSync(join(root, 'calls.jsonl')) ? readFileSync(join(root, 'calls.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line)) : [];
@@ -268,8 +271,54 @@ test('a project-only Codex installation stays disabled for the user after failur
   assert.ok(readFileSync(s.config, 'utf8').includes(policy));
   assert.equal(readFileSync(s.backup, 'utf8'), policy);
 });
-test('a missing Codex user policy defaults to disabled after installing the shared cache', t => {
+test('a missing Codex user policy remains absent after installing the shared cache', t => {
   const s = setup(t);
   assert.equal(s.run().status, 0);
-  assert.match(readFileSync(s.config, 'utf8'), /\[plugins\."pstack@pstack-vic"\]\nenabled = false/);
+  assert.equal(readFileSync(s.config, 'utf8'), original);
+});
+
+test('Codex cache commands use a disposable config home and marketplace commands use the user home', t => {
+  const s = setup(t);
+  assert.equal(s.run().status, 0);
+  const contexts = readFileSync(join(s.root, 'contexts.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  for (const c of contexts.filter(c => c.name === 'codex')) {
+    if (c.args[1] === 'marketplace') assert.equal(c.configHome, join(s.root, 'home', '.codex'));
+    else {
+      assert.notEqual(c.configHome, join(s.root, 'home', '.codex'));
+      assert.equal(c.cwd, c.configHome);
+      assert.equal(existsSync(c.configHome), false, 'temporary installer is removed');
+    }
+  }
+});
+
+test('valid commented, spaced and inline TOML policies survive success and remote failure byte for byte', t => {
+  const policies = [
+    '[plugins."pstack@pstack-vic"] # keep user activation\nenabled = true\n',
+    '  [ plugins . "pstack@pstack-vic" ]\nenabled = false\n',
+    'plugins."pstack@pstack-vic" = { enabled = false }\n',
+  ];
+  for (const policy of policies) {
+    for (const failing of [[], ['codex plugin remove'], ['codex plugin marketplace add']]) {
+      const s = setup(t, state => { state.failing = failing; });
+      writeFileSync(s.config, policy);
+      assert.equal(s.run().status, failing.length ? 1 : 0);
+      assert.equal(readFileSync(s.config, 'utf8'), policy);
+    }
+  }
+});
+
+test('an abrupt stop after native install cannot enable the user, and retry completes as a no-op', t => {
+  const s = setup(t, state => { state.codex.killReleaseAfterAdd = true; });
+  const policy = '[plugins."pstack@pstack-vic"] # projects only\nenabled = false\n';
+  writeFileSync(s.config, policy);
+  const interrupted = s.run();
+  assert.equal(interrupted.signal, 'SIGKILL');
+  assert.equal(readFileSync(s.config, 'utf8'), policy);
+  assert.equal(s.state().codex.version, '0.4.8');
+  const before = s.moves().length;
+  assert.equal(s.run().status, 0);
+  assert.equal(s.moves().length, before);
+  assert.equal(readFileSync(s.config, 'utf8'), policy);
+  const contexts = readFileSync(join(s.root, 'contexts.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  for (const c of contexts.filter(c => c.name === 'codex' && c.args[1] !== 'marketplace')) rmSync(c.configHome, { recursive: true, force: true });
 });

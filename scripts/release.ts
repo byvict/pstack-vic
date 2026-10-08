@@ -1,7 +1,7 @@
 // pstack-vic's release on the operator's Mac: moves Claude Code and Codex to the version CI tagged. Run it in the main checkout after `git pull --ff-only`. Every step reads what is already done before it acts, so a second run is safe.
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const PLUGIN = 'pstack@pstack-vic';
@@ -10,12 +10,12 @@ const MARKETPLACE = 'pstack-vic';
 const NO_MATCHING_REF = 2;
 
 function say(line: string): void { process.stdout.write(line + '\n'); }
-function attempt(binary: string, args: string[], cwd?: string): { status: number | null; stdout: string; failure: string } {
-  const result = spawnSync(binary, args, { cwd, encoding: 'utf8', timeout: 300_000 });
+function attempt(binary: string, args: string[], cwd?: string, env = process.env): { status: number | null; stdout: string; failure: string } {
+  const result = spawnSync(binary, args, { cwd, env, encoding: 'utf8', timeout: 300_000 });
   return { status: result.error ? null : result.status, stdout: result.stdout ?? '', failure: `${binary} ${args.join(' ')} failed: ${(result.stderr || result.error?.message || `exit ${result.status}`).trim()}` };
 }
-function run(binary: string, args: string[], cwd?: string): string {
-  const result = attempt(binary, args, cwd);
+function run(binary: string, args: string[], cwd?: string, env = process.env): string {
+  const result = attempt(binary, args, cwd, env);
   if (result.status !== 0) throw new Error(result.failure);
   return result.stdout;
 }
@@ -61,42 +61,45 @@ function updateClaude(version: string): void {
     say(`Claude Code on ${PLUGIN} ${version} (${recordName(record)})`);
   }
 }
-function codexVersion(home: string): string | null {
-  return (JSON.parse(run('codex', ['plugin', 'list', '--json'], home)) as { installed: { pluginId: string; version: string }[] }).installed.find(p => p.pluginId === PLUGIN)?.version ?? null;
+function codexVersion(cwd: string, env: NodeJS.ProcessEnv): string | null {
+  return (JSON.parse(run('codex', ['plugin', 'list', '--json'], cwd, env)) as { installed: { pluginId: string; version: string }[] }).installed.find(p => p.pluginId === PLUGIN)?.version ?? null;
 }
-function codexMarketplace(home: string): boolean {
-  return (JSON.parse(run('codex', ['plugin', 'marketplace', 'list', '--json'], home)) as { marketplaces: { name: string }[] }).marketplaces.some(m => m.name === MARKETPLACE);
+function codexMarketplace(home: string): { root: string } | undefined {
+  return (JSON.parse(run('codex', ['plugin', 'marketplace', 'list', '--json'], home)) as { marketplaces: { name: string; root: string }[] }).marketplaces.find(m => m.name === MARKETPLACE);
 }
-/** Preserve the user's plugin policy while the CLI replaces its shared cache. An absent policy means project-only activation. */
-function restoreCodexPolicy(config: string, before: string): void {
-  const policy = /^\[plugins\.["']pstack@pstack-vic["'](?:\.[^\]]+)?\][ \t]*\r?\n(?:(?!^\[)[\s\S])*/gm;
-  const original = before.match(policy)?.join('') ?? `[plugins."${PLUGIN}"]\nenabled = false\n`;
-  const current = readFileSync(config, 'utf8');
-  writeFileSync(config, current.replace(policy, '').trimEnd() + '\n\n' + original);
-}
-/** Codex pins its marketplace to a tag, so a version moves by remove, remove, add at the tag, add. A step an interrupted run already undid is skipped, and the first backup of config.toml is kept. */
+/** Install against the shared cache from a disposable config home. Only marketplace commands may write the real config, so plugin remove/add never delete or enable user activation, even if this process is killed. */
 function updateCodex(version: string, home: string): void {
-  const before = codexVersion(home);
-  if (before === version) { say(`Codex on ${PLUGIN} ${version}`); return; }
-  const config = join(process.env.CODEX_HOME || join(home, '.codex'), 'config.toml');
-  const policyBefore = existsSync(config) ? readFileSync(config, 'utf8') : '';
+  const configHome = process.env.CODEX_HOME || join(home, '.codex');
+  const config = join(configHome, 'config.toml');
   const backup = `${config}.pre-${version}`;
-  if (existsSync(config) && !existsSync(backup)) copyFileSync(config, backup);
+  const installer = realpathSync(mkdtempSync(join(tmpdir(), 'pstack-codex-release-')));
+  const env = { ...process.env, CODEX_HOME: installer };
+  const cache = join(configHome, 'plugins');
+  mkdirSync(cache, { recursive: true });
+  symlinkSync(cache, join(installer, 'plugins'), 'dir');
+  const selectSource = (root: string) => writeFileSync(join(installer, 'config.toml'), `[marketplaces.${MARKETPLACE}]\nsource_type = "local"\nsource = ${JSON.stringify(root)}\n\n[plugins."${PLUGIN}"]\nenabled = true\n`);
   try {
-    try {
-      if (before !== null) run('codex', ['plugin', 'remove', PLUGIN], home);
-      if (codexMarketplace(home)) run('codex', ['plugin', 'marketplace', 'remove', MARKETPLACE], home);
-      run('codex', ['plugin', 'marketplace', 'add', 'byvict/pstack-vic', '--ref', `v${version}`], home);
-      run('codex', ['plugin', 'add', PLUGIN], home);
-    } finally {
-      if (existsSync(config)) restoreCodexPolicy(config, policyBefore);
-    }
-    const installed = codexVersion(home);
+    const marketplace = codexMarketplace(home);
+    const root = marketplace?.root ?? join(configHome, '.tmp', 'marketplaces', MARKETPLACE);
+    selectSource(root);
+    const before = existsSync(root) ? codexVersion(installer, env) : null;
+    if (before === version) { say(`Codex on ${PLUGIN} ${version}`); return; }
+    if (existsSync(config) && !existsSync(backup)) copyFileSync(config, backup);
+    if (before !== null) run('codex', ['plugin', 'remove', PLUGIN], installer, env);
+    if (marketplace || existsSync(root)) run('codex', ['plugin', 'marketplace', 'remove', MARKETPLACE], home);
+    run('codex', ['plugin', 'marketplace', 'add', 'byvict/pstack-vic', '--ref', `v${version}`], home);
+    const after = codexMarketplace(home);
+    if (!after) throw new Error(`Codex reports marketplace ${MARKETPLACE} not registered`);
+    selectSource(after.root);
+    run('codex', ['plugin', 'add', PLUGIN], installer, env);
+    const installed = codexVersion(installer, env);
     if (installed !== version) throw new Error(`Codex reports ${PLUGIN} ${installed ?? 'not installed'}, not ${version}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const wayBack = existsSync(backup) ? `; previous Codex configuration: ${backup}` : '';
     throw new Error(`${message}\nThe Codex swap did not finish. Run this script again to finish it${wayBack}`);
+  } finally {
+    rmSync(installer, { recursive: true, force: true });
   }
   say(`Codex on ${PLUGIN} ${version}`);
 }
