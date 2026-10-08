@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 const script = fileURLToPath(new URL('./release.ts', import.meta.url));
 const commit = 'c'.repeat(40);
 const other = 'd'.repeat(40);
-/** One fake for git, claude and codex, dispatched on its own file name. It answers from FAKE_ROOT/state.json and appends each call to FAKE_ROOT/calls.jsonl. A call the release has no business making, such as `git tag` or `git push`, fails. */
+/** One fake for git, claude and codex, dispatched on its own file name. It answers from FAKE_ROOT/state.json and appends each call to FAKE_ROOT/calls.jsonl. A call the release has no business making, such as `git tag` or `git push`, fails. The fake claude keeps one install record per scope and project, and `plugin update --scope` moves only the record of that scope whose project is the cwd (any cwd for user), as the real CLI does. */
 const fake = `#!/usr/bin/env node
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
@@ -31,9 +31,15 @@ if (name === 'git') {
   else if (args.length === 5 && is('ls-remote', '--exit-code', '--tags', 'origin', args[4]) && args[4].startsWith('refs/tags/')) { const tag = args[4].slice('refs/tags/'.length); if (!state.remoteTags[tag]) process.exit(2); out(state.remoteTags[tag] + '\\t' + args[4] + '\\n'); }
   else fail('fake git: ' + args.join(' '));
 } else if (name === 'claude') {
-  if (is('plugin', 'list', '--json')) out(JSON.stringify(state.claude.version ? [{ id: 'pstack@pstack-vic', version: state.claude.version }] : []));
+  if (is('plugin', 'list', '--json')) out(JSON.stringify([{ id: 'other@elsewhere', version: '9.9.9', scope: 'user' }, ...state.claude.records.map(({ lands, ...record }) => ({ id: 'pstack@pstack-vic', ...record }))]));
   else if (is('plugin', 'marketplace', 'update', 'pstack-vic')) { state.claude.fetched = true; save(); }
-  else if (is('plugin', 'update', 'pstack@pstack-vic')) { if (state.claude.fetched) state.claude.version = state.claude.latest; save(); }
+  else if (is('plugin', 'update', 'pstack@pstack-vic', '--scope', args[4] ?? '')) {
+    const record = state.claude.records.find(r => r.scope === args[4] && (r.scope === 'user' || r.projectPath === process.cwd()));
+    if (!record) fail('plugin-not-installed');
+    state.claude.updates.push([args[4], process.cwd()]);
+    if (state.claude.fetched) record.version = record.lands ?? state.claude.latest;
+    save();
+  }
   else fail('fake claude: ' + args.join(' '));
 } else if (name === 'codex') {
   if (is('plugin', 'list', '--json')) out(JSON.stringify({ installed: state.codex.version ? [{ pluginId: 'pstack@pstack-vic', version: state.codex.version }] : [], available: [] }));
@@ -47,26 +53,27 @@ if (name === 'git') {
 `;
 const original = 'ref = "v0.4.7"\n';
 const checks = [['git', 'fetch', 'origin'], ['git', 'rev-parse', 'HEAD'], ['git', 'rev-parse', 'origin/main'], ['git', 'ls-remote', '--exit-code', '--tags', 'origin', 'refs/tags/v0.4.8']];
-const claudeUpdate = [['claude', 'plugin', 'marketplace', 'update', 'pstack-vic'], ['claude', 'plugin', 'update', 'pstack@pstack-vic']];
+const claudeUpdate = [['claude', 'plugin', 'marketplace', 'update', 'pstack-vic'], ['claude', 'plugin', 'update', 'pstack@pstack-vic', '--scope', 'user']];
 const codexAdds = [['codex', 'plugin', 'marketplace', 'add', 'byvict/pstack-vic', '--ref', 'v0.4.8'], ['codex', 'plugin', 'add', 'pstack@pstack-vic']];
 const codexQuartet = [['codex', 'plugin', 'remove', 'pstack@pstack-vic'], ['codex', 'plugin', 'marketplace', 'remove', 'pstack-vic'], ...codexAdds];
 const wayBack = 'The Codex swap did not finish. Run this script again to finish it, or go back to the previous Codex setup with:\ncp ~/.codex/config.toml.pre-0.4.8 ~/.codex/config.toml && codex plugin add pstack@pstack-vic\n';
-/** The merge commit of 0.4.8 checked out at the trunk tip, v0.4.8 on origin, both parents on 0.4.7. The child's PATH holds only the fakes and a link to this node, and its HOME is a temporary directory, so no real CLI and no real ~/.claude or ~/.codex is in reach. */
-function setup(t: { after: (fn: () => void) => void }, change: (state: Record<string, any>) => void = () => {}) {
-  const root = mkdtempSync(join(tmpdir(), 'pstack-release-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+/** The merge commit of 0.4.8 checked out at the trunk tip, v0.4.8 on origin, both parents on 0.4.7 with one Claude Code record at user scope. The child's PATH holds only the fakes and a link to this node, and its HOME is a temporary directory, so no real CLI and no real ~/.claude or ~/.codex is in reach. `project(name)` makes a directory a project record can point at. */
+function setup(t: { after: (fn: () => void) => void }, change: (state: Record<string, any>, project: (name: string) => string) => void = () => {}) {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'pstack-release-'))); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = (name: string) => { const path = join(root, 'projects', name); mkdirSync(path, { recursive: true }); return path; };
   const bin = join(root, 'bin'); mkdirSync(bin);
   for (const name of ['git', 'claude', 'codex']) { writeFileSync(join(bin, name), fake); chmodSync(join(bin, name), 0o755); }
   symlinkSync(process.execPath, join(bin, 'node'));
   const home = join(root, 'home'); mkdirSync(join(home, '.codex'), { recursive: true }); writeFileSync(join(home, '.codex', 'config.toml'), original);
   const work = join(root, 'work'); mkdirSync(work); writeFileSync(join(work, 'package.json'), JSON.stringify({ version: '0.4.8' }));
-  const state: Record<string, any> = { head: commit, tip: commit, remoteTags: { 'v0.4.8': commit }, claude: { version: '0.4.7', latest: '0.4.8' }, codex: { version: '0.4.7', ref: 'v0.4.7' } };
-  change(state);
+  const state: Record<string, any> = { head: commit, tip: commit, remoteTags: { 'v0.4.8': commit }, claude: { records: [{ scope: 'user', version: '0.4.7' }], latest: '0.4.8', updates: [] }, codex: { version: '0.4.7', ref: 'v0.4.7' } };
+  change(state, project);
   const write = (next: Record<string, any>) => writeFileSync(join(root, 'state.json'), JSON.stringify(next));
   write(state);
   const calls = (): string[][] => existsSync(join(root, 'calls.jsonl')) ? readFileSync(join(root, 'calls.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line)) : [];
   const read = () => JSON.parse(readFileSync(join(root, 'state.json'), 'utf8'));
   return {
-    config: join(home, '.codex', 'config.toml'), backup: join(home, '.codex', 'config.toml.pre-0.4.8'),
+    root, config: join(home, '.codex', 'config.toml'), backup: join(home, '.codex', 'config.toml.pre-0.4.8'),
     run: () => spawnSync(process.execPath, [script], { cwd: work, encoding: 'utf8', env: { PATH: bin, HOME: home, FAKE_ROOT: root } }),
     calls, state: read, write,
     git: () => calls().filter(call => call[0] === 'git'),
@@ -80,15 +87,15 @@ test('with the checkout at the trunk tip and the tag on origin, a release moves 
   const s = setup(t);
   const result = s.run();
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout, 'v0.4.8 is on origin\nClaude Code on pstack@pstack-vic 0.4.8\nCodex on pstack@pstack-vic 0.4.8\n');
+  assert.equal(result.stdout, 'v0.4.8 is on origin\nClaude Code on pstack@pstack-vic 0.4.8 (user)\nCodex on pstack@pstack-vic 0.4.8\n');
   assert.deepEqual(s.calls().slice(0, checks.length), checks, 'the checks run before any parent is read');
   assert.deepEqual(s.git(), checks, 'the release never tags or pushes; CI does');
   assert.deepEqual(s.moves(), [...claudeUpdate, ...codexQuartet]);
   assert.equal(readFileSync(s.backup, 'utf8'), original);
-  assert.deepEqual([s.state().claude.version, s.state().codex.version, s.state().codex.ref], ['0.4.8', '0.4.8', 'v0.4.8']);
+  assert.deepEqual([s.state().claude.records[0].version, s.state().codex.version, s.state().codex.ref], ['0.4.8', '0.4.8', 'v0.4.8']);
 });
 test('run again once both parents are on the version, it changes nothing', t => {
-  const s = setup(t, state => { state.claude.version = '0.4.8'; state.codex = { version: '0.4.8', ref: 'v0.4.8' }; });
+  const s = setup(t, state => { state.claude.records[0].version = '0.4.8'; state.codex = { version: '0.4.8', ref: 'v0.4.8' }; });
   const result = s.run();
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(s.moves(), []);
@@ -122,7 +129,7 @@ test('a Claude Code update that lands on another version exits 1 and leaves Code
   const s = setup(t, state => { state.claude.latest = '0.4.9'; });
   const result = s.run();
   assert.equal(result.status, 1);
-  assert.equal(result.stderr, 'Claude Code reports pstack@pstack-vic 0.4.9, not 0.4.8\n');
+  assert.equal(result.stderr, 'Claude Code reports pstack@pstack-vic 0.4.9 (user), not 0.4.8\n');
   assert.deepEqual(s.parentCalls().filter(call => call[0] === 'codex'), []);
   assert.equal(existsSync(s.backup), false);
 });
@@ -130,8 +137,55 @@ test('a Claude Code command that fails exits 1 and leaves Codex alone', t => {
   const s = setup(t, state => { state.failing = ['claude plugin update']; });
   const result = s.run();
   assert.equal(result.status, 1);
-  assert.equal(result.stderr, 'claude plugin update pstack@pstack-vic failed: fake claude: unable to access remote\n');
+  assert.equal(result.stderr, 'claude plugin update pstack@pstack-vic --scope user failed: fake claude: unable to access remote\n');
   assert.deepEqual(s.parentCalls().filter(call => call[0] === 'codex'), []);
+});
+test('every Claude Code record moves with its own scope, a project or local one from its project, and one whose project is gone is skipped and named', t => {
+  let clinext = '', vic = '', local = '';
+  const s = setup(t, (state, project) => {
+    clinext = project('clinext'); vic = project('pstack-vic'); local = project('scratch');
+    state.claude.records = [{ scope: 'project', projectPath: clinext, version: '0.4.7' }, { scope: 'user', version: '0.4.7' }, { scope: 'project', projectPath: join(clinext, '..', 'removed-worktree'), version: '0.4.7' }, { scope: 'project', projectPath: vic, version: '0.4.7' }, { scope: 'local', projectPath: local, version: '0.4.7' }];
+  });
+  const gone = join(s.root, 'projects', 'removed-worktree');
+  const result = s.run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, ['v0.4.8 is on origin', `Claude Code pstack@pstack-vic (project ${gone}) skipped: the project no longer exists`, `Claude Code on pstack@pstack-vic 0.4.8 (project ${clinext})`, 'Claude Code on pstack@pstack-vic 0.4.8 (user)', `Claude Code on pstack@pstack-vic 0.4.8 (project ${vic})`, `Claude Code on pstack@pstack-vic 0.4.8 (local ${local})`, 'Codex on pstack@pstack-vic 0.4.8', ''].join('\n'));
+  assert.deepEqual(s.moves().filter(call => call[0] === 'claude').map(call => call.slice(1).join(' ')), ['plugin marketplace update pstack-vic', 'plugin update pstack@pstack-vic --scope project', 'plugin update pstack@pstack-vic --scope user', 'plugin update pstack@pstack-vic --scope project', 'plugin update pstack@pstack-vic --scope local'], 'one marketplace refresh, then one update per live record');
+  assert.deepEqual(s.state().claude.updates.filter(([scope]: string[]) => scope !== 'user'), [['project', clinext], ['project', vic], ['local', local]], 'each project or local update runs from its project');
+  assert.deepEqual(s.state().claude.records.map((r: { version: string }) => r.version), ['0.4.8', '0.4.8', '0.4.7', '0.4.8', '0.4.8'], 'the skipped record is left as it was');
+});
+test('only the Claude Code records behind the version are updated, and every record is read back', t => {
+  let clinext = '';
+  const s = setup(t, (state, project) => { clinext = project('clinext'); state.claude.records = [{ scope: 'user', version: '0.4.8' }, { scope: 'project', projectPath: clinext, version: '0.4.7' }]; });
+  const result = s.run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(s.moves().filter(call => call[0] === 'claude'), [['claude', 'plugin', 'marketplace', 'update', 'pstack-vic'], ['claude', 'plugin', 'update', 'pstack@pstack-vic', '--scope', 'project']]);
+  assert.deepEqual(s.state().claude.updates, [['project', clinext]]);
+  assert.match(result.stdout, /Claude Code on pstack@pstack-vic 0\.4\.8 \(user\)\n/);
+});
+test('a project record that lands on another version names that record, exits 1 and leaves Codex alone', t => {
+  let vic = '';
+  const s = setup(t, (state, project) => { vic = project('pstack-vic'); state.claude.records.push({ scope: 'project', projectPath: vic, version: '0.4.7', lands: '0.4.7' }); });
+  const result = s.run();
+  assert.equal(result.status, 1);
+  assert.equal(result.stderr, `Claude Code reports pstack@pstack-vic 0.4.7 (project ${vic}), not 0.4.8\n`);
+  assert.deepEqual(s.parentCalls().filter(call => call[0] === 'codex'), []);
+});
+test('without a live Claude Code record, the release says the plugin is not installed and leaves Codex alone', t => {
+  for (const records of [[], [{ scope: 'project', projectPath: '/nonexistent/pstack-release-project', version: '0.4.7' }]]) {
+    const s = setup(t, state => { state.claude.records = records; });
+    const result = s.run();
+    assert.equal(result.status, 1);
+    assert.equal(result.stderr, 'Claude Code reports pstack@pstack-vic not installed\n');
+    assert.deepEqual(s.moves(), []);
+  }
+});
+test('a Claude Code record in a scope the release does not update stops it before anything moves', t => {
+  const s = setup(t, state => { state.claude.records.push({ scope: 'managed', version: '0.4.7' }); });
+  const result = s.run();
+  assert.equal(result.status, 1);
+  assert.equal(result.stderr, 'Claude Code has pstack@pstack-vic in managed, a scope this release does not update\n');
+  assert.deepEqual(s.moves(), []);
 });
 test('a Codex swap interrupted after the marketplace removal resumes with the two adds and keeps the first backup', t => {
   const s = setup(t, state => { state.codex = { version: null, ref: null }; });
@@ -146,7 +200,7 @@ test('a Codex swap that fails halfway exits 1 with the way back, and the next ru
   const failed = s.run();
   assert.equal(failed.status, 1);
   assert.equal(failed.stderr, `codex plugin marketplace add byvict/pstack-vic --ref v0.4.8 failed: fake codex: unable to access remote\n${wayBack}`);
-  assert.deepEqual([s.state().claude.version, s.state().codex.version, s.state().codex.ref], ['0.4.8', null, null], 'Claude Code moved; Codex is left without the plugin and its marketplace');
+  assert.deepEqual([s.state().claude.records[0].version, s.state().codex.version, s.state().codex.ref], ['0.4.8', null, null], 'Claude Code moved; Codex is left without the plugin and its marketplace');
   assert.equal(readFileSync(s.backup, 'utf8'), original);
   writeFileSync(s.config, 'half swapped\n');
   s.write({ ...s.state(), failing: [] });
