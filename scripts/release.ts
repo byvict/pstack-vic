@@ -10,12 +10,12 @@ const MARKETPLACE = 'pstack-vic';
 const NO_MATCHING_REF = 2;
 
 function say(line: string): void { process.stdout.write(line + '\n'); }
-function attempt(binary: string, args: string[]): { status: number | null; stdout: string; failure: string } {
-  const result = spawnSync(binary, args, { encoding: 'utf8', timeout: 300_000 });
+function attempt(binary: string, args: string[], cwd?: string): { status: number | null; stdout: string; failure: string } {
+  const result = spawnSync(binary, args, { cwd, encoding: 'utf8', timeout: 300_000 });
   return { status: result.error ? null : result.status, stdout: result.stdout ?? '', failure: `${binary} ${args.join(' ')} failed: ${(result.stderr || result.error?.message || `exit ${result.status}`).trim()}` };
 }
-function run(binary: string, args: string[]): string {
-  const result = attempt(binary, args);
+function run(binary: string, args: string[], cwd?: string): string {
+  const result = attempt(binary, args, cwd);
   if (result.status !== 0) throw new Error(result.failure);
   return result.stdout;
 }
@@ -31,18 +31,35 @@ function requireTaggedTrunk(version: string): void {
   if (tag.status !== 0) throw new Error(tag.failure);
   say(`${name} is on origin`);
 }
-function claudeVersion(): string | null {
-  return (JSON.parse(run('claude', ['plugin', 'list', '--json'])) as { id: string; version: string }[]).find(p => p.id === PLUGIN)?.version ?? null;
+type ClaudeRecord = { scope: string; projectPath?: string; version: string };
+/** Scopes whose install record belongs to one project; `claude plugin update` finds that record from the cwd. */
+const PROJECT_SCOPES = ['project', 'local'];
+const recordKey = (r: ClaudeRecord) => `${r.scope} ${r.projectPath ?? ''}`;
+const recordName = (r: ClaudeRecord) => r.projectPath ? `${r.scope} ${r.projectPath}` : r.scope;
+/** One entry per install record of the plugin: user, and each project or local install. */
+function claudeRecords(): ClaudeRecord[] {
+  return (JSON.parse(run('claude', ['plugin', 'list', '--json'])) as (ClaudeRecord & { id: string })[]).filter(p => p.id === PLUGIN);
 }
+/** Moves every Claude Code install record of the plugin, each with its own scope and, for a project or local record, from its project. A record whose project is gone is skipped and named. */
 function updateClaude(version: string): void {
-  let installed = claudeVersion();
-  if (installed !== version) {
-    run('claude', ['plugin', 'marketplace', 'update', MARKETPLACE]);
-    run('claude', ['plugin', 'update', PLUGIN]);
-    installed = claudeVersion();
+  const live: ClaudeRecord[] = [];
+  for (const record of claudeRecords()) {
+    if (!['user', ...PROJECT_SCOPES].includes(record.scope)) throw new Error(`Claude Code has ${PLUGIN} in ${recordName(record)}, a scope this release does not update`);
+    if (PROJECT_SCOPES.includes(record.scope) && !existsSync(record.projectPath ?? '')) say(`Claude Code ${PLUGIN} (${recordName(record)}) skipped: the project no longer exists`);
+    else live.push(record);
   }
-  if (installed !== version) throw new Error(`Claude Code reports ${PLUGIN} ${installed ?? 'not installed'}, not ${version}`);
-  say(`Claude Code on ${PLUGIN} ${version}`);
+  if (live.length === 0) throw new Error(`Claude Code reports ${PLUGIN} not installed`);
+  const behind = live.filter(r => r.version !== version);
+  if (behind.length > 0) {
+    run('claude', ['plugin', 'marketplace', 'update', MARKETPLACE]);
+    for (const record of behind) run('claude', ['plugin', 'update', PLUGIN, '--scope', record.scope], PROJECT_SCOPES.includes(record.scope) ? record.projectPath : undefined);
+  }
+  const after = new Map(claudeRecords().map(r => [recordKey(r), r.version]));
+  for (const record of live) {
+    const installed = after.get(recordKey(record));
+    if (installed !== version) throw new Error(`Claude Code reports ${PLUGIN} ${installed ?? 'not installed'} (${recordName(record)}), not ${version}`);
+    say(`Claude Code on ${PLUGIN} ${version} (${recordName(record)})`);
+  }
 }
 function codexVersion(): string | null {
   return (JSON.parse(run('codex', ['plugin', 'list', '--json'])) as { installed: { pluginId: string; version: string }[] }).installed.find(p => p.pluginId === PLUGIN)?.version ?? null;
