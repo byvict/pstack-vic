@@ -79,12 +79,22 @@ export function codexCapabilityArgs(capabilities: CliCapabilities | undefined): 
     ])];
 }
 
+export function claudeCapabilityTools(capabilities: CliCapabilities | undefined): { available: string[]; denied: string[] } {
+  const groups = [
+    { enabled: capabilities?.agentKind === "owner", tools: ["Agent", "Task", "TaskOutput", "TaskStop", "SendMessage"], denyWhenDisabled: true },
+    { enabled: capabilities?.web, tools: ["WebSearch", "WebFetch"], denyWhenDisabled: true },
+    { enabled: capabilities?.skills, tools: ["Skill"], denyWhenDisabled: false },
+  ];
+  return {
+    available: groups.filter((group) => group.enabled).flatMap((group) => group.tools),
+    denied: groups.filter((group) => !group.enabled && group.denyWhenDisabled).flatMap((group) => group.tools),
+  };
+}
+
 export function claudeCapabilityArgs(capabilities: CliCapabilities | undefined): string[] {
   if (capabilities === undefined) return [];
   const allowed = [
-    ...(capabilities.agentKind === "owner" ? ["Agent", "Task"] : []),
-    ...(capabilities.web ? ["WebSearch", "WebFetch"] : []),
-    ...(capabilities.skills ? ["Skill"] : []),
+    ...claudeCapabilityTools(capabilities).available,
     ...capabilities.mcpSources.flatMap((source) => source.tools.map((tool) => `mcp__${source.name}__${tool}`)),
   ];
   const servers = Object.fromEntries(capabilities.mcpSources.map((source) => [source.name, { type: "http", url: source.url }]));

@@ -46,7 +46,7 @@ describe("task-selected runner capabilities", () => {
     const { args } = invocationCommand(input);
     assert.deepEqual(JSON.parse(args[args.indexOf("--mcp-config") + 1]!), { mcpServers: { docs: { type: "http", url: "https://developers.openai.com/mcp" } } });
     assert.equal(args[args.indexOf("--allowedTools") + 1], "WebSearch,WebFetch,Skill,mcp__docs__search_openai_docs");
-    assert.equal(args[args.indexOf("--disallowed-tools") + 1], "Agent,Task");
+    assert.equal(args[args.indexOf("--disallowed-tools") + 1], "Agent,Task,TaskOutput,TaskStop,SendMessage");
     assert.ok(args.includes("--strict-mcp-config"));
     assert.ok(!args.includes("--disable-slash-commands"));
   });
@@ -64,9 +64,18 @@ describe("task-selected runner capabilities", () => {
         assert.ok(args.includes("--verbose"));
         assert.ok(!args.includes("--no-session-persistence"));
         assert.ok(args.includes("acceptEdits"));
-        assert.match(args[args.indexOf("--tools") + 1]!, /Agent,Task/);
+        assert.equal(args[args.indexOf("--tools") + 1], "Read,Write,Edit,Grep,Glob,Bash,Agent,Task,TaskOutput,TaskStop,SendMessage");
+        assert.equal(args[args.indexOf("--allowedTools") + 1], "Agent,Task,TaskOutput,TaskStop,SendMessage");
       }
     }
+  });
+  it("keeps read-only tools separate from preapproved capabilities and MCP permissions", () => {
+    const input = options("claude", { schemaVersion: 1, agentKind: "owner", web: true, skills: true, mcpSources: [source] });
+    const { args } = invocationCommand({ ...input, mode: "read-only" });
+    assert.equal(args[args.indexOf("--permission-mode") + 1], "plan");
+    assert.equal(args[args.indexOf("--tools") + 1], "Read,Grep,Glob,Bash,Agent,Task,TaskOutput,TaskStop,SendMessage,WebSearch,WebFetch,Skill");
+    assert.equal(args[args.indexOf("--allowedTools") + 1], "Agent,Task,TaskOutput,TaskStop,SendMessage,WebSearch,WebFetch,Skill,mcp__docs__search_openai_docs");
+    assert.equal(args[args.indexOf("--disallowed-tools") + 1], "Edit,Write,NotebookEdit");
   });
   it("opens Grok web without changing its sandbox, core environment or no-subagent role", () => {
     const { args } = invocationCommand(options("grok", { schemaVersion: 1, web: true }), {});

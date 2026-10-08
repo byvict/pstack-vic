@@ -1566,7 +1566,7 @@ describe("runLane", () => {
   const authDiagnostics: readonly [string, string][] = [
     ["auth inside rejected tail", 'Invalid model: "other-model Not authenticated. model not found."'],
   ];
-  const diagnosticModels = { claude: "claude-opus-5-5", codex: "gpt-6.1-sol", grok: "grok-4.7" };
+  const diagnosticModels: Record<Provider, string> = { claude: "claude-opus-5-5", codex: "gpt-6.1-sol", grok: "grok-4.7" };
   for (const expected of [
     { cases: opaqueDiagnostics, successExit: 0, successStatus: "complete", preflightExit: 77,
       preflightStatus: "unauthenticated", modelExit: 70, modelStatus: "child-failed" },

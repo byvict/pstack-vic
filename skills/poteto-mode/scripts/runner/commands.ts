@@ -1,4 +1,4 @@
-import { codexCapabilityArgs, claudeCapabilityArgs, type CliCapabilities } from "./capabilities.ts";
+import { codexCapabilityArgs, claudeCapabilityArgs, claudeCapabilityTools, type CliCapabilities } from "./capabilities.ts";
 import {
   cliFor,
   UsageError,
@@ -53,15 +53,13 @@ export function preflightCommand(provider: Provider): CommandSpec {
 }
 
 function claudeDeniedTools(mode: AccessMode, capabilities: CliCapabilities | undefined): string {
-  const always = [...(capabilities?.agentKind === "owner" ? [] : ["Agent", "Task"]), ...(capabilities?.web ? [] : ["WebSearch", "WebFetch"])];
   const readonly = ["Edit", "Write", "NotebookEdit"];
-  return [...always, ...(mode === "read-only" ? readonly : [])].join(",");
+  return [...claudeCapabilityTools(capabilities).denied, ...(mode === "read-only" ? readonly : [])].join(",");
 }
 
 function claudeTools(mode: AccessMode, capabilities: CliCapabilities | undefined): string {
   const tools = mode === "read-only" ? ["Read", "Grep", "Glob", "Bash"] : ["Read", "Write", "Edit", "Grep", "Glob", "Bash"];
-  return [...tools, ...(capabilities?.agentKind === "owner" ? ["Agent", "Task"] : []),
-    ...(capabilities?.web ? ["WebSearch", "WebFetch"] : []), ...(capabilities?.skills ? ["Skill"] : [])].join(",");
+  return [...tools, ...claudeCapabilityTools(capabilities).available].join(",");
 }
 
 function codexSandbox(mode: AccessMode): string {

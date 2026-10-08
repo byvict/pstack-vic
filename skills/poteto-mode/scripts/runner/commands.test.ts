@@ -100,7 +100,7 @@ describe("invocationCommand", () => {
       "--no-session-persistence",
       "--disable-slash-commands",
       "--disallowed-tools",
-      "Agent,Task,WebSearch,WebFetch,Edit,Write,NotebookEdit",
+      "Agent,Task,TaskOutput,TaskStop,SendMessage,WebSearch,WebFetch,Edit,Write,NotebookEdit",
       "--output-format",
       "json",
     ]);

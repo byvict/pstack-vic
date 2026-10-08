@@ -25,7 +25,7 @@ Omitted fields mean `lane`, false, false and no explicit sources. No file means 
 | `web: true` | Native live search | WebSearch/WebFetch in the tool and permission lists | Native web_search/web_fetch; removes disable-web-search |
 | `skills: true` | Enables configured plugins; uses native project/installed skills | Enables native skills and Skill; removes disable-slash-commands | Use native Grok skill dispatch; this profile refuses the request |
 | `mcpSources` | Per-invocation mcp_servers URL and enabled_tools | Explicit HTTP config under strict-mcp-config; selected tool permission rules | Use native source tools or the existing T3 ACP attachment; this profile refuses the request |
-| `agentKind: owner` | Enables multi_agent, persists the fresh session | Enables Agent/Task, persists the fresh session, captures verbose root messages | Use the native owner route and its owner → helper setup proof |
+| `agentKind: owner` | Enables multi_agent, persists the fresh session | Enables Agent/Task, TaskOutput, TaskStop and SendMessage; persists the fresh session, captures verbose root messages | Use the native owner route and its owner → helper setup proof |
 
 MCP sources support public HTTP MCP servers or authentication already provided by the CLI for that source. HTTPS is required except on loopback. This small adapter does not forward conversation connectors, invent credentials, provision OAuth, accept credential-bearing URLs, or configure arbitrary stdio commands. The separate T3 ACP route already supports its explicit bearer-token environment contract. An inaccessible required source is a named gap; changing model is governed only by the existing calling skill and configured swarm fallback.
 
@@ -34,6 +34,10 @@ Source names select per-invocation configuration; use distinct names when an exi
 ## Owners and lifecycle
 
 An ordinary lane gives one independent result and must not recursively manufacture more votes. An owner explicitly needs native delegation. Pass the complete helper descriptors and briefs, keep a handle inventory, and follow [native lifecycle](native-lifecycle.md) for capacity, fresh contexts, compatible same-task follow-ups, interruption and closure. The runner does not allocate worktrees or reserve native capacity: the parent/owner assigns a distinct worktree to every writer and confines each helper to its task. Read-only helpers can inspect assigned worktrees; sibling write access is not granted by this profile.
+
+Claude owners need the lifecycle tools as well as Agent: collect a background result through TaskOutput (or the host's completion notification), continue the exact collected helper through SendMessage, and stop a live task through TaskStop. Scope these operations to the assigned local helpers. An Agent launch alone does not demonstrate that the owner can finish that lifecycle. A stopped or completed handle is not proof of slot release.
+
+For a Claude writer, prefer Agent's native `isolation: "worktree"` when it supplies the assigned repository and scope; retain the returned path and inspect the actual effects there. A directory named in a prompt does not change the helper's cwd or permissions. Headless Claude can ignore capability-granting `permissions.additionalDirectories` in an untrusted project's settings. Confirm effective access before selecting a precreated sibling worktree; a settings entry alone is not a grant or a proof. Do not bypass a denial through another tool.
 
 An owner starts fresh but retains its session ID so the native CLI can resume the same task when state must survive. Use the exact receipt's ID and the CLI's advertised resume operation; check the configured descriptor, cwd and tools before continuing. A persisted writer context is never an independent reviewer. Ordinary lanes remain ephemeral/nonpersistent where the previous route supported it. Ending a headless owner still requires draining its live children; persistence is not a background service.
 
