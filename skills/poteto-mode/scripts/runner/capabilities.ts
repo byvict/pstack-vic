@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, statSync } from "node:fs";
+import { isAbsolute, resolve } from "node:path";
 import { UsageError } from "./types.ts";
 
 export interface McpSource {
@@ -17,6 +17,8 @@ export interface CliCapabilities {
   readonly web: boolean;
   readonly skills: boolean;
   readonly mcpSources: readonly McpSource[];
+  /** Absolute directories the session may read and write beside its cwd, such as a precreated sibling worktree. */
+  readonly additionalDirectories: readonly string[];
 }
 
 function object(value: unknown): Record<string, unknown> {
@@ -38,10 +40,19 @@ function name(value: unknown): string {
   return value;
 }
 
+function directory(value: unknown): string {
+  if (typeof value !== "string" || !isAbsolute(value)) throw new UsageError("additionalDirectories entries must be absolute paths");
+  const path = resolve(value);
+  let stat;
+  try { stat = statSync(path); } catch { throw new UsageError(`additional directory does not exist: ${path}`); }
+  if (!stat.isDirectory()) throw new UsageError(`additional directory is not a directory: ${path}`);
+  return path;
+}
+
 export function readCapabilities(path: string): CliCapabilities {
   const sourcePath = resolve(path), raw = readFileSync(sourcePath, "utf8");
   const value = object(JSON.parse(raw));
-  keys(value, ["schemaVersion", "agentKind", "web", "skills", "mcpSources"]);
+  keys(value, ["schemaVersion", "agentKind", "web", "skills", "mcpSources", "additionalDirectories"]);
   if (value.schemaVersion !== 1) throw new UsageError("Capabilities require schemaVersion 1");
   const agentKind = value.agentKind ?? "lane";
   if (agentKind !== "lane" && agentKind !== "owner") throw new UsageError("agentKind must be lane or owner");
@@ -59,15 +70,24 @@ export function readCapabilities(path: string): CliCapabilities {
     return { name: name(source.name), url: url.href, tools };
   });
   if (new Set(mcpSources.map((source) => source.name)).size !== mcpSources.length) throw new UsageError("Duplicate MCP source name");
+  const directories = value.additionalDirectories ?? [];
+  if (!Array.isArray(directories)) throw new UsageError("additionalDirectories must be an array");
+  const additionalDirectories = directories.map(directory);
+  if (new Set(additionalDirectories).size !== additionalDirectories.length) throw new UsageError("Duplicate additional directory");
   return { sourcePath, sha256: createHash("sha256").update(raw).digest("hex"), agentKind,
-    web: flag(value.web, "web"), skills: flag(value.skills, "skills"), mcpSources };
+    web: flag(value.web, "web"), skills: flag(value.skills, "skills"), mcpSources, additionalDirectories };
 }
 
 export function validateCapabilities(provider: string, capabilities: CliCapabilities | undefined): void {
   if (capabilities === undefined) return;
-  if (provider === "grok" && (capabilities.agentKind === "owner" || capabilities.skills || capabilities.mcpSources.length)) {
-    throw new UsageError("Grok CLI task capabilities currently support web only; use its native owner/skills/source route or the explicit T3 ACP attachment where applicable");
+  if (provider === "grok" && (capabilities.agentKind === "owner" || capabilities.skills || capabilities.mcpSources.length || capabilities.additionalDirectories.length)) {
+    throw new UsageError("Grok CLI task capabilities currently support web only; use its native owner/skills/source route, its assigned cwd for directory access, or the explicit T3 ACP attachment where applicable");
   }
+}
+
+/** One `--add-dir` per directory: repeated flags accumulate in Claude Code 2.1.292 and Codex 0.161.0 (measured 2026-10-08). */
+function addDirArgs(capabilities: CliCapabilities): string[] {
+  return capabilities.additionalDirectories.flatMap((path) => ["--add-dir", path]);
 }
 
 export function codexCapabilityArgs(capabilities: CliCapabilities | undefined): string[] {
@@ -76,7 +96,8 @@ export function codexCapabilityArgs(capabilities: CliCapabilities | undefined): 
     ...capabilities.mcpSources.flatMap((source) => [
       "--config", `mcp_servers.${source.name}.url=${JSON.stringify(source.url)}`,
       "--config", `mcp_servers.${source.name}.enabled_tools=${JSON.stringify(source.tools)}`,
-    ])];
+    ]),
+    ...addDirArgs(capabilities)];
 }
 
 export function claudeCapabilityTools(capabilities: CliCapabilities | undefined): { available: string[]; denied: string[] } {
@@ -99,6 +120,7 @@ export function claudeCapabilityArgs(capabilities: CliCapabilities | undefined):
   ];
   const servers = Object.fromEntries(capabilities.mcpSources.map((source) => [source.name, { type: "http", url: source.url }]));
   return [...(capabilities.agentKind === "owner" ? ["--verbose"] : []),
+    ...addDirArgs(capabilities),
     ...(capabilities.mcpSources.length ? ["--mcp-config", JSON.stringify({ mcpServers: servers })] : []),
     ...(allowed.length ? ["--allowedTools", allowed.join(",")] : [])];
 }

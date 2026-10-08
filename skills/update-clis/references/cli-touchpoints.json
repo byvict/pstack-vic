@@ -411,7 +411,7 @@
       "id": "claude.owner-lifecycle",
       "cli": "claude",
       "kind": "lane",
-      "contract": "An explicit owner keeps a fresh persisted session and --verbose root messages, and selects Agent, ListAgents, TaskStop and SendMessage through --tools and --allowedTools; TaskOutput was removed in 2.1.277 and a helper's result is its completion notification plus the files it wrote. Collect, continue and interrupt assigned local helpers through their native handles; launch success alone is insufficient. Native Agent isolation: worktree supplies a writer's own cwd and the completion notification names it. Untrusted project permissions.additionalDirectories may be ignored in headless mode. Ordinary lanes keep delegation and these lifecycle tools disabled.",
+      "contract": "An explicit owner keeps a fresh persisted session and --verbose root messages, and selects Agent, ListAgents, TaskStop and SendMessage through --tools and --allowedTools; TaskOutput was removed in 2.1.277 and a helper's result is its completion notification plus the files it wrote. Collect, continue and interrupt assigned local helpers through their native handles; launch success alone is insufficient. Native Agent isolation: worktree supplies a writer's own cwd and the completion notification names it. Untrusted project permissions.additionalDirectories is ignored in headless mode (stderr: this workspace has not been trusted); a sibling worktree is granted through the additionalDirectories task capability (--add-dir), which the owner's background helpers inherit. Ordinary lanes keep delegation and these lifecycle tools disabled.",
       "pointers": [
         { "file": "skills/poteto-mode/scripts/runner/capabilities.ts", "anchor": "export function claudeCapabilityTools" },
         { "file": "skills/poteto-mode/references/runner-capabilities.md", "anchor": "Claude owners need the lifecycle tools" }
@@ -514,6 +514,30 @@
       "measuredOn": "2.1.281"
     },
     {
+      "id": "claude.add-dir",
+      "cli": "claude",
+      "kind": "lane",
+      "contract": "`--add-dir <dir>`, one flag per additionalDirectories entry (repeated flags accumulate), grants the file tools read and write access to a directory outside the cwd in a headless `claude -p` session regardless of workspace trust, and the session's background helpers inherit it; `permissions.additionalDirectories` in an untrusted project's .claude/settings.json is ignored with the stderr warning `this workspace has not been trusted`. Bash commands in the added directory still follow the permission mode: `git -C <dir> status` is denied in headless acceptEdits while `ls` passes.",
+      "pointers": [
+        { "file": "skills/poteto-mode/scripts/runner/capabilities.ts", "anchor": "function addDirArgs" },
+        { "file": "skills/poteto-mode/references/runner-capabilities.md", "anchor": "Additional directories must be absolute, existing directories" }
+      ],
+      "coveredBy": [],
+      "measuredOn": "2.1.292"
+    },
+    {
+      "id": "claude.subagent-capacity",
+      "cli": "claude",
+      "kind": "harness",
+      "contract": "Agent fails with `Concurrent subagent limit reached. You can run N subagents at once. Do not retry. If the user wants more concurrent subagents, ask them to increase CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS.` once N subagents (default 20) are running in the session, and creates no handle; a completed or TaskStop-stopped helper frees its slot at once (the next spawn was admitted before the completion notification arrived); ListAgents states no limit (measured 2026-10-08 on 2.1.292 headless with N=2 and on the 2.1.293 desktop root with the default)",
+      "pointers": [
+        { "file": "skills/poteto-mode/references/native-lifecycle.md", "anchor": "Concurrent subagent limit reached" },
+        { "file": "skills/poteto-mode/references/provider-dispatch.md", "anchor": "states that number only in its rejection text" }
+      ],
+      "coveredBy": [],
+      "measuredOn": "2.1.292"
+    },
+    {
       "id": "grok.parent-tools",
       "cli": "grok",
       "kind": "harness",
@@ -569,6 +593,18 @@
           "file": "skills/poteto-mode/references/runner-capabilities.md",
           "anchor": "Task capabilities for local CLI sessions"
         }
+      ],
+      "coveredBy": [],
+      "measuredOn": "0.161.0"
+    },
+    {
+      "id": "codex.add-dir",
+      "cli": "codex",
+      "kind": "lane",
+      "contract": "`codex exec --add-dir <DIR>`, one flag per additionalDirectories entry (repeated flags accumulate), adds a writable root beside the primary workspace under --sandbox workspace-write; a lane wrote through a shell redirect and ran git status in a sibling worktree of another repository.",
+      "pointers": [
+        { "file": "skills/poteto-mode/scripts/runner/capabilities.ts", "anchor": "export function codexCapabilityArgs" },
+        { "file": "skills/poteto-mode/references/runner-capabilities.md", "anchor": "| `additionalDirectories` |" }
       ],
       "coveredBy": [],
       "measuredOn": "0.161.0"

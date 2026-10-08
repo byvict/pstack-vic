@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readCapabilities } from "./capabilities.ts";
@@ -84,10 +84,31 @@ describe("task-selected runner capabilities", () => {
     assert.ok(args.includes("workspace"));
     assert.match(args[args.indexOf("--tools") + 1]!, /web_search,web_fetch/);
   });
+  it("grants explicit additional directories to Claude and Codex sessions, one --add-dir per entry, and refuses them for Grok", () => {
+    const sibling = join(directory, "sibling-worktree"), other = join(directory, "other");
+    mkdirSync(sibling); mkdirSync(other);
+    for (const provider of ["claude", "codex"]) {
+      const input = options(provider, { schemaVersion: 1, additionalDirectories: [sibling, other] });
+      assert.deepEqual(input.capabilities!.additionalDirectories, [sibling, other]);
+      const { args } = invocationCommand(input);
+      assert.deepEqual(args.filter((arg, index) => args[index - 1] === "--add-dir"), [sibling, other]);
+      assert.equal(args.filter((arg) => arg === "--add-dir").length, 2);
+      assert.equal(args[args.indexOf("--model") + 1], provider === "claude" ? "claude-opus-5-5" : "gpt-6.1-sol");
+      if (provider === "claude") assert.ok(args.includes("--no-session-persistence") && args.includes("acceptEdits"));
+      else assert.equal(args[args.indexOf("--sandbox") + 1], "workspace-write");
+    }
+    assert.ok(!invocationCommand(options("claude", { schemaVersion: 1 })).args.includes("--add-dir"));
+    assert.throws(() => options("grok", { schemaVersion: 1, additionalDirectories: [sibling] }), /assigned cwd/);
+  });
   it("rejects unknown, secret-bearing or unsupported capability requests before dispatch", () => {
+    const sibling = join(directory, "sibling-worktree"); mkdirSync(sibling);
+    writeFileSync(join(directory, "a-file"), "");
     for (const value of [{ schemaVersion: 2 }, { schemaVersion: 1, cloud: true }, { schemaVersion: 1, web: "yes" },
       { schemaVersion: 1, mcpSources: [{ ...source, url: "https://user:token@example.com/mcp" }] },
-      { schemaVersion: 1, mcpSources: [{ ...source, tools: [] }] }, { schemaVersion: 1, mcpSources: [source, source] }]) {
+      { schemaVersion: 1, mcpSources: [{ ...source, tools: [] }] }, { schemaVersion: 1, mcpSources: [source, source] },
+      { schemaVersion: 1, additionalDirectories: sibling }, { schemaVersion: 1, additionalDirectories: ["relative/worktree"] },
+      { schemaVersion: 1, additionalDirectories: [join(directory, "missing")] }, { schemaVersion: 1, additionalDirectories: [join(directory, "a-file")] },
+      { schemaVersion: 1, additionalDirectories: [sibling, sibling] }]) {
       assert.throws(() => readCapabilities(profile(value)));
     }
     assert.throws(() => options("grok", { schemaVersion: 1, agentKind: "owner" }), /native owner/);

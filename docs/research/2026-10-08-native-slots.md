@@ -1,0 +1,40 @@
+# Capacidade nativa, liberação de slots e worktree irmão
+
+Execução de 2026-10-08, sem poteto-mode, numa sessão raiz interativa do Claude Code (app desktop) a partir da main com os merges #106 e #107. Mediu o limite de subagentes simultâneos e a liberação de slots, numa raiz headless de laboratório e na raiz interativa, e o acesso de um helper nativo a um worktree precriado de outro repositório. Não houve merge, troca de modelo nem mudança de esforço, fallback de swarm, Arena ou trilha; os helpers foram `pstack-opus-xhigh` (`claude:claude-opus-5-5@xhigh`, a linha `feature, refactoring` da planilha) e os owners headless, `claude-opus-5-5@xhigh` pelo runner.
+
+## Base e versões
+
+Raiz: sessão `1790ad50-9feb-4612-aa51-ac1262bce298`, Claude Code **2.1.293** no app desktop 2.26454.2, `--permission-mode auto`, `--setting-sources user,project,local`, sem `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` no ambiente; settings do usuário com `permissions.additionalDirectories` = `~/Dev` e `~/Dev/clinext`. `claude` no PATH **2.1.292** (é o que as sessões headless usaram), Codex 0.161.0, Grok 1.0.46, Node 24.21.0. Candidato: este branch sobre `75d0228b` (merge #107). Documentação oficial lida antes: subagentes (limite simultâneo, `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`, profundidade 3), permissões (working directories, `additionalDirectories`, confiança do workspace) e worktrees.
+
+Evidência privada: `~/Dev/Skills/pstack-vic-runs/2026-10-08-native-slots/` (`00-versions/`, `01-slots-headless/`, `02-sibling/{a,b,c1,c2,codex}/`, `03-slots-interactive/`, `04-add-dir-multi/`, `inventory.tsv`, `summary.json`, `lab/` com fixtures, prompts, scripts de lançamento e `nonces.json`). `capture.sh` grava argv, cwd, início, PID, stdout, stderr e exit antes de qualquer interpretação. Nenhum token ou dump de ambiente entra no repositório.
+
+## Matriz
+
+"Comprovado" se limita ao host, versão e tarefa exercitados.
+
+| Medição | Condição | Resultado | Lacuna |
+| --- | --- | --- | --- |
+| Rejeição concreta por capacidade (headless) | `claude -p` owner pelo runner (`agentKind: owner`, `isolated-write`), cwd fixture descartável com `.claude/agents/pstack-opus-xhigh.md`, `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2` no ambiente do runner | H1 e H2 admitidos; o 3º `Agent` falhou com `Concurrent subagent limit reached. You can run 2 subagents at once. Do not retry. If the user wants more concurrent subagents, ask them to increase CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS.`; `ListAgents` listou os 2 em `running` sem anunciar limite | nenhuma |
+| Liberação por conclusão (headless) | owner tocou `release-1`, esperou `done-1` num `until` em foreground e tentou de novo | H4 admitido logo após a conclusão de H1 (`done-1` 16:39:30Z, H4 concluiu 16:39:43Z) | nenhuma |
+| Liberação por `TaskStop` (headless) | `TaskStop` em H2 (`local_agent`, "Successfully stopped task") e nova tentativa | H5 admitido; `ListAgents` final listou H1, H4, H5 `completed` e H2 `killed` (no mesmo turno) | um helper parado continua retomável por `SendMessage` e a documentação diz que a retomada ocupa slot sem checar o limite; não re-medido |
+| Capacidade anunciada e admissão (raiz interativa) | 2.1.293, limite padrão, 21 `pstack:pstack-opus-xhigh` em background travados por arquivo (`until [ -f release-N ]`) | 20 admitidos (duas levas de 10, 16:41:50Z e 16:42:54Z); o 21º falhou com o mesmo texto, `You can run 20 subagents at once`; `ListAgents` listou 20 `running` e nenhum número de capacidade | o host só anuncia N no texto da rejeição |
+| Liberação por conclusão (raiz interativa) | `release-1` às 16:43:05Z, `done-1` no mesmo segundo | o 22º spawn foi admitido às 16:43:16Z, antes de a notificação de conclusão de H1 chegar à raiz; os 21 restantes concluíram em 1 s após `release-all` | nenhuma |
+| Espera observável dentro do helper | `until [ -f … ]; do sleep 1; done` em foreground | aceito pelo Bash nos 21 helpers interativos e nos 5 headless; nenhum `refused-N` | o `sleep N` isolado continua recusado (medido em #107) |
+| Worktree irmão (a): raiz interativa, `additionalDirectories` do usuário | helper nativo sem isolamento, cwd no worktree do pstack-vic, alvo `lab/other-repo-wt` (worktree de outro repositório sob `~/Dev`) | Read do seed, Write de `proof-a.txt`, `ls` e `git -C … status --short --branch` todos ok; conteúdo conferido pela raiz | depende de `~/Dev` nas settings do usuário; fora delas não medido |
+| Worktree irmão (b): lane headless pelo runner, settings de projeto não confiadas | fixture com `.claude/settings.json` → `permissions.additionalDirectories: [other-repo-wt]`, argv do runner (`--setting-sources project`) | stderr: `Ignoring 1 permissions.additionalDirectories entry from .claude/settings.json: this workspace has not been trusted…`; Read: `Claude requested permissions to read from …, but you haven't granted it yet.`; Write idem; `ls`: `blocked. For security, Claude Code may only list files in the allowed working directories for this session`; `git -C`: `This command requires approval`; `proof-b.txt` não existe | confirma o negativo de #104; as settings do usuário também não entram sob `--setting-sources project` |
+| Worktree irmão (c1): lane headless com `--add-dir` | mesma argv do runner + `--add-dir other-repo-wt`, sem entrada de settings | Read, Write (`proof-c1.txt`) e `ls` ok; `git -C … status`: `This command requires approval` | git no diretório adicionado é permissão de Bash, não de diretório; sem prompt em headless |
+| Worktree irmão (c2): owner headless com `--add-dir` → helper nativo | argv de owner do runner + `--add-dir`, helper `pstack-opus-xhigh` em background sem isolamento | helper leu o seed, escreveu `proof-c2-helper.txt` e listou; `git -C`: `Permission to use Bash has been denied…`; stdout do owner com dois eventos `result` (primeiro turno terminou com o helper vivo) | idem; o segundo `result` repete a medição de #106 |
+| `--add-dir` repetido | `claude -p` 2.1.292 e `codex exec` 0.161.0 com dois `--add-dir` | os dois diretórios lidos e escritos em ambos os CLIs | nenhuma |
+| Codex com `--add-dir` | `codex exec --sandbox workspace-write … --add-dir other-repo-wt` | escreveu `proof-codex.txt` por redirect, `ls` e `git -C … status` ok (thread `01a11c62-864b-7bd3-8a01-9f8933f919a1`) | nenhuma |
+| Grok | `grok --help` | sem flag equivalente | o runner recusa `additionalDirectories` para Grok; use o cwd da lane |
+
+## Adaptação do runner
+
+`additionalDirectories` passa a ser um campo explícito das task capabilities ([`capabilities.ts`](../../skills/poteto-mode/scripts/runner/capabilities.ts)): lista de caminhos absolutos que existem e são diretórios, sem repetição; o runner emite um `--add-dir` por entrada para Claude e Codex e recusa o campo para Grok. O recibo guarda a lista com o resto das capacidades. Testes em `capabilities.test.ts`; contrato em [runner-capabilities](../../skills/poteto-mode/references/runner-capabilities.md); touchpoints `claude.add-dir`, `codex.add-dir` e `claude.subagent-capacity` em `cli-touchpoints.json`. Os fatos de capacidade e de diretório foram levados a [native-lifecycle](../../skills/poteto-mode/references/native-lifecycle.md) e [provider-dispatch](../../skills/poteto-mode/references/provider-dispatch.md). Nada mudou em modelos, esforços, fallback de swarm, políticas de Arena ou trilha, playbooks, pin upstream ou nos parágrafos do Tick.
+
+## Lacunas
+
+- O limite por sessão é o único anunciado: `ListAgents` e o schema de `Agent` não trazem capacidade. A documentação diz que a retomada de um helper concluído ocupa um slot sem checar o limite; não foi medido.
+- `git` dentro de um diretório adicionado por `--add-dir` numa sessão headless `acceptEdits` é negado por falta de prompt (lane e helper). Um escritor que precise commitar no worktree irmão deve recebê-lo como cwd da própria lane, ou o owner commita por ele.
+- O acesso da raiz interativa ao worktree irmão veio de `~/Dev` nas settings do usuário; uma raiz sem essa entrada não foi medida.
+- Nenhuma receita ao vivo do verificador cobre estas sessões; as provas são as capturas privadas acima.
