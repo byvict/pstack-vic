@@ -538,6 +538,64 @@
       "measuredOn": "2.1.292"
     },
     {
+      "id": "claude.desktop-scheduler",
+      "cli": "claude",
+      "kind": "harness",
+      "contract": "In a root inside the desktop app (CLAUDE_CODE_ENTRYPOINT=claude-desktop) a scheduled prompt (one-shot CronCreate, /loop, ScheduleWakeup) is delivered only at the first turn end with no background task alive, counting background shells and subagents, even a subagent ListAgents already lists as completed while its own shell runs; a terminal root (CLAUDE_CODE_ENTRYPOINT=cli) on the same binary delivers it on time with a background shell alive (measured 2026-10-08 on 2.1.293). This is why the desktop root's tick is not /loop 1h.",
+      "pointers": [
+        { "file": "skills/poteto-mode/SKILL.md", "anchor": "cannot use `/loop 1h`" },
+        { "file": "docs/reference.md", "anchor": "o `/loop 1h` não serve para o Tick" }
+      ],
+      "coveredBy": [],
+      "measuredOn": "2.1.293"
+    },
+    {
+      "id": "claude.desktop-tick",
+      "cli": "claude",
+      "kind": "harness",
+      "contract": "The desktop root's tick is a Bash command with run_in_background true and a timeout above one hour (without one the host ends it at thirty minutes; the maximum is two hours): its exit opens a root turn with its output in the notification (9 to 12 s after the output in two short cycles; a background command's exit also woke a root with a background owner alive), and TaskStop ends it. It ends with its session: the session resumed under the same id with --resume gets one task-notification with status stopped (`Background shell command didn't finish before the previous session ended`) and never its completion, so a resumed root re-arms it (measured 2026-10-08 on 2.1.293, the resume in a terminal root on the app's binary; app sessions resumed on 2.1.275 and 2.1.284 got the same notification).",
+      "pointers": [
+        { "file": "skills/poteto-mode/SKILL.md", "anchor": "That root arms the tick as one `Bash` command" },
+        { "file": "skills/poteto-mode/SKILL.md", "anchor": "A resumed desktop root re-arms it." },
+        { "file": "docs/adr/0010-tick-em-segundo-plano-na-raiz-do-app-desktop.md", "anchor": "O comando não volta com `--resume`" }
+      ],
+      "coveredBy": [],
+      "measuredOn": "2.1.293"
+    },
+    {
+      "id": "claude.owner-channel",
+      "cli": "claude",
+      "kind": "harness",
+      "contract": "A background subagent keeps SendMessage, and SendMessage to `main` opens a new turn in the root that launched it; the root's SendMessage to the subagent's agent ID resumes an idle one in place (`Resuming agent`) and queues for a running one until its next tool round (`queued for delivery`). The two owners of one autopilot program sent every report this way (measured 2026-10-08 on 2.1.293 in a desktop root).",
+      "pointers": [
+        { "file": "skills/poteto-mode/SKILL.md", "anchor": "to the root with `SendMessage` to `main`" },
+        { "file": "docs/reference.md", "anchor": "o Dono manda cada aviso por `SendMessage` para `main`" }
+      ],
+      "coveredBy": [],
+      "measuredOn": "2.1.293"
+    },
+    {
+      "id": "claude.todolist-tools",
+      "cli": "claude",
+      "kind": "harness",
+      "contract": "A desktop root and its background owners have neither TodoWrite nor TaskCreate; ToolSearch for them answers `No matching deferred tools found`, so the Playbooks todolist lives in todo.md in the run's notes (measured 2026-10-08 on 2.1.293 in two desktop roots and two owners). TaskList, where present, lists todo items, not agents.",
+      "pointers": [{ "file": "skills/poteto-mode/SKILL.md", "anchor": "offers no todolist tool" }],
+      "coveredBy": [],
+      "measuredOn": "2.1.293"
+    },
+    {
+      "id": "claude.subagent-transcript",
+      "cli": "claude",
+      "kind": "harness",
+      "contract": "A native subagent's transcript is ~/.claude/projects/<encoded root cwd>/<root session id>/subagents/agent-<agent id>.jsonl with agent-<agent id>.meta.json beside it (agentType, worktreePath, worktreeBranch, description, spawnDepth); its records carry isSidechain true, its agentId, the root's sessionId and its own cwd. Its environment has the root's CLAUDE_CODE_SESSION_ID and no agent id or root cwd, and nothing exists under ~/.claude/projects/<its own encoded cwd>/. The root's Agent result names the file as output_file through a symlink in the root's tasks directory (measured 2026-10-08 on 2.1.293 with a worktree-isolated background owner).",
+      "pointers": [
+        { "file": "skills/show-me-your-work/SKILL.md", "anchor": "subagents/agent-<agent id>.jsonl" },
+        { "file": "skills/poteto-mode/SKILL.md", "anchor": "root's `subagents/` transcript directory" }
+      ],
+      "coveredBy": [],
+      "measuredOn": "2.1.293"
+    },
+    {
       "id": "grok.parent-tools",
       "cli": "grok",
       "kind": "harness",
