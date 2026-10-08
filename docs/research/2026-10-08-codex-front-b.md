@@ -74,15 +74,17 @@ Com CLIs autenticados e Node 24, em um checkout do candidato, execute a [prova d
 ```sh
 node scripts/prove-runner-sources.ts --route codex-cli \
   --model gpt-6.1-sol --effort xhigh --linear-document 668a922674a8 \
-  --output /tmp/front-b-codex-proof
+  --output "$HOME/front-b-codex-proof"
 node scripts/prove-runner-sources.ts --route grok-cli \
-  --model grok-4.7 --effort xhigh --output /tmp/front-b-grok-skill
+  --model grok-4.7 --effort xhigh --output "$HOME/front-b-grok-skill"
 node scripts/prove-runner-sources.ts --route grok-acp \
-  --model grok-4.7 --effort xhigh --output /tmp/front-b-grok-mcp
+  --model grok-4.7 --effort xhigh --output "$HOME/front-b-grok-mcp"
 node scripts/prove-runner-sources.ts --route grok-acp \
   --model grok-4.7 --effort xhigh --mode read-only \
-  --output /tmp/front-b-grok-readonly
+  --output "$HOME/front-b-grok-readonly"
 ```
+
+Para read-only, o destino deve ficar fora de `/tmp`, `/var/tmp`, do temporário do sistema e de `~/.grok`, que o sandbox Grok mantém graváveis. O script rejeita essas localizações, incluindo aliases por symlink, antes de lançar o modelo. A prova exige a execução exata de um script controlado pelo parent e seu resultado terminal de negação; texto do agente não conta.
 
 O documento privado só é consultado quando `--linear-document` é fornecido; requer a conexão autenticada do próprio Codex CLI. O MCP público usado é `https://developers.openai.com/mcp`. Consulte `source-calls.json` e os resultados originais para conferir conteúdo e alvo, além de `assertions.json`. `--web` acrescenta uma chamada web nativa cuja conclusão deve ser inspecionada no stream. O comando não instala plugins, provisiona OAuth nem muda a sheet.
 

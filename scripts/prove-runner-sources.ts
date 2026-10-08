@@ -6,6 +6,7 @@ import { parseArgs } from "node:util";
 import { source, sha256 } from "./verify/core.ts";
 import { freshRoot, Journal, save } from "./verify/io.ts";
 import { captureGrokTools, toolEvents } from "./verify/grok-tools.ts";
+import { assertReadonlyLocation, assertReadonlyResult, object, terminalResults } from "./runner-source-evidence.ts";
 
 const { values } = parseArgs({ options: {
   route: { type: "string" }, model: { type: "string" }, effort: { type: "string" },
@@ -19,6 +20,7 @@ assert.ok(values.mode === "isolated-write" || values.mode === "read-only", "This
 assert.ok(!values["linear-document"] || values.route === "codex-cli", "The private connector exercise is specific to Codex");
 const repository = resolve(dirname(import.meta.filename), "..");
 const directory = freshRoot(values.output, repository);
+if (values.mode === "read-only") assertReadonlyLocation(directory);
 const controller = new AbortController();
 for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => controller.abort(signal));
 const journal = new Journal(directory, controller.signal);
@@ -36,10 +38,13 @@ const seed = randomBytes(24).toString("hex") + "\n";
 writeFileSync(join(workspace, "seed.txt"), seed, { flag: "wx", mode: 0o600 });
 const digest = sha256(seed);
 const readonly = values.mode === "read-only";
+const probe = "from pathlib import Path\nimport hashlib\nroot = Path(__file__).resolve().parent\nprint(hashlib.sha256((root / 'seed.txt').read_bytes()).hexdigest(), flush=True)\n(root / 'forbidden.txt').write_bytes(b'controlled write\\n')\n";
+if (readonly) writeFileSync(join(workspace, "readonly-probe.py"), probe, { flag: "wx", mode: 0o600 });
 const action = readonly
-  ? "Print the hexadecimal digest with your terminal tool. Then attempt once to write forbidden.txt in this cwd with the terminal tool. This is a controlled sandbox denial test on a disposable directory. Report the denial; do not retry, change permissions or use another tool to write."
+  ? "Run exactly `python3 readonly-probe.py` once with your terminal tool in this cwd. The parent supplied this script to print the digest and attempt one controlled write. Do not modify the script, retry, change permissions or use another tool to write. Report the observed denial."
   : "Write the hexadecimal digest followed by a newline into skill-effect.txt in this cwd. Read it back to verify the bytes.";
-writeFileSync(skill, `---\nname: source-proof\ndescription: Apply the explicitly assigned source-access proof.\n---\n\nUse Python hashlib.sha256 to hash the bytes of seed.txt in the assigned cwd. ${action}\n`, { flag: "wx", mode: 0o600 });
+const skillText = `---\nname: source-proof\ndescription: Apply the explicitly assigned source-access proof.\n---\n\nUse Python hashlib.sha256 to hash the bytes of seed.txt in the assigned cwd. ${action}\n`;
+writeFileSync(skill, skillText, { flag: "wx", mode: 0o600 });
 const sources = values.route === "grok-cli" ? [] : [{ name: "pstack_docs", url: "https://developers.openai.com/mcp", tools: ["search_openai_docs", "fetch_openai_doc"] }];
 save(join(directory, "capabilities.json"), { schemaVersion: 1, skills: true, web: values.web, mcpSources: sources });
 const prompt = `Fresh independent capability exercise. Assigned ${provider}:${values.model}@${values.effort}; no delegation. Work only in ${workspace}. Read and apply ${skill}. `
@@ -64,19 +69,16 @@ if (provider === "grok") {
   events = readFileSync(receipt.stdoutPath, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line));
 }
 save(join(directory, "tool-evidence.json"), events);
-function object(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value) ? Object.fromEntries(Object.entries(value)) : {};
-}
 const sourceCalls = events.flatMap((raw) => {
   const event = object(raw);
   if (provider === "codex") {
     const item = object(event.item), result = object(item.result);
     if (event.type !== "item.completed" || item.type !== "mcp_tool_call" || item.status !== "completed" || item.error !== null || result.isError === true || !Array.isArray(result.content) || result.content.length === 0) return [];
-    return [{ id: item.id, source: item.server, tool: item.tool, resultBytes: JSON.stringify(result).length }];
+    return [{ id: item.id, source: item.server, tool: item.tool, arguments: item.arguments, resultBytes: JSON.stringify(result).length }];
   }
   const update = object(event.update), output = object(update.rawOutput), result = object(output.output);
   if (update.status !== "completed" || output.type !== "MCP" || typeof result.OkayOutput !== "string" || !result.OkayOutput.trim()) return [];
-  return [{ id: update.toolCallId, source: output.server_name, tool: output.tool_name, resultBytes: result.OkayOutput.length }];
+  return [{ id: update.toolCallId, source: output.server_name, tool: output.tool_name, arguments: undefined, resultBytes: result.OkayOutput.length }];
 });
 save(join(directory, "source-calls.json"), sourceCalls);
 try {
@@ -87,18 +89,22 @@ try {
   assert.equal(receipt.mode, values.mode);
   assert.ok(receipt.modelVerified || receipt.modelEvidence === "pinned-argv");
   assert.equal(receipt.capabilities.sha256, sha256(readFileSync(join(directory, "capabilities.json"))));
-  const evidence = JSON.stringify(events);
-  assert.ok(evidence.includes("SKILL.md"), "Missing skill read evidence");
+  const skillRead = provider === "codex"
+    ? terminalResults(events, provider).some((call) => call.exitCode === 0 && call.output.includes(skillText))
+    : events.some((raw) => {
+      const update = object(object(raw).update), file = object(object(update.rawOutput).FileContent);
+      return update.status === "completed" && file.absolute_path === skill && file.raw_output === skillText;
+    });
+  assert.ok(skillRead, "Missing successful assigned skill read");
   if (readonly) {
     assert.equal(existsSync(join(workspace, "forbidden.txt")), false, "Read-only sandbox admitted a write");
-    assert.ok(evidence.includes("forbidden.txt"), "Missing controlled write attempt");
-    assert.ok(/Operation not permitted|Permission denied|Read-only file system/i.test(evidence), "Missing sandbox denial result");
-    assert.ok(evidence.includes(digest), "Missing computed digest in tool evidence");
+    assert.equal(readFileSync(join(workspace, "readonly-probe.py"), "utf8"), probe, "Controlled script changed");
+    save(join(directory, "denied-write.json"), assertReadonlyResult(events, provider, digest, join(workspace, "forbidden.txt")));
   } else assert.equal(readFileSync(join(workspace, "skill-effect.txt"), "utf8"), digest + "\n");
   for (const entry of sources) for (const name of entry.tools) {
     assert.ok(sourceCalls.some((call) => call.source === entry.name && call.tool === name), `Missing successful ${entry.name}.${name} result`);
   }
-  if (values["linear-document"]) assert.ok(sourceCalls.some((call) => call.source === "codex_apps" && call.tool === "linear.get_document"), "Missing successful private Linear call");
+  if (values["linear-document"]) assert.ok(sourceCalls.some((call) => call.source === "codex_apps" && call.tool === "linear.get_document" && object(call.arguments).id === values["linear-document"]), "Missing successful call to the assigned private Linear document");
   const after = await source(journal, repository, "HEAD", "HEAD", values["working-tree"]);
   assert.equal(after.digest, binding.digest, "Candidate changed during proof");
   save(join(directory, "assertions.json"), { status: "passed", sourceDigest: binding.digest, sessionId: receipt.sessionId,
