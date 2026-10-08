@@ -53,5 +53,5 @@ Os itens da fila que o operador (Victor) nomeia como dele ("esse PR fica comigo"
 _Avoid_: hold, bloqueio, rótulo
 
 **Tick**:
-A auditoria que a Raiz faz sobre todos os Donos a cada hora. Ela relê o playbook, confere a operação contra ele, sonda cada Dono e recolhe as trilhas de decisão. No Claude Code, a Raiz arma o Tick como `/loop 1h`; no Codex, é você quem manda o prompt do Tick; na raiz Grok, um monitor o emite. A cadência nunca fica por conta da memória.
+A auditoria que a Raiz faz sobre todos os Donos a cada hora. Ela relê o playbook, confere a operação contra ele, sonda cada Dono e recolhe as trilhas de decisão. No Claude Code, a Raiz arma o Tick como `/loop 1h` numa raiz de terminal e como um comando em segundo plano de uma hora, re-armado a cada Tick, numa Raiz do app desktop; no Codex, é você quem manda o prompt do Tick; na raiz Grok, um monitor o emite. A cadência nunca fica por conta da memória.
 _Avoid_: cron, heartbeat, polling

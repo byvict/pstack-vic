@@ -4,6 +4,7 @@ import {
   UsageError,
   type AccessMode,
   type Effort,
+  type GrokSandbox,
   type Provider,
   type RunnerOptions,
 } from "./types.ts";
@@ -72,7 +73,8 @@ function codexSandbox(mode: AccessMode): string {
 // initialization failed: Operation not permitted", so the lane runs on Grok's
 // built-in `none` profile and the outer sandbox governs; plan mode and the
 // tool list still apply. Measured with Grok CLI 1.0.5 and Codex 0.154.0.
-function grokSandbox(mode: AccessMode, outerSeatbelt: boolean): string {
+export function grokSandbox(mode: RunnerOptions["mode"], outerSeatbelt: boolean): GrokSandbox {
+  if (mode === "full-access") return "off";
   if (outerSeatbelt) return "none";
   return mode === "read-only" ? "read-only" : "workspace";
 }
@@ -225,23 +227,27 @@ export function invocationCommand(
   }
 }
 
-export function grokAcpCommand(profilePath: string): CommandSpec {
+export function grokAcpCommand(profilePath: string, sandbox: GrokSandbox = "off"): CommandSpec {
   return {
     command: "grok",
-    args: ["--sandbox", "off", "agent", "--always-approve", "--no-leader", "--agent-profile", profilePath, "stdio"],
+    args: ["--sandbox", sandbox, "agent", "--always-approve", "--no-leader", "--agent-profile", profilePath, "stdio"],
     stdin: "interactive",
   };
 }
 
-export function grokAcpTools(forwardMcp: boolean): readonly string[] {
-  return ["run_terminal_command", "read_file", "search_replace", "list_dir", "grep",
-    ...(forwardMcp ? ["search_tool", "use_tool"] : [])];
+export function grokAcpTools(forwardMcp: boolean, mode: RunnerOptions["mode"] = "full-access", web = false): readonly string[] {
+  return grokAcpProfileTools(forwardMcp, mode, web).map((tool) => tool === "run_terminal_cmd" ? "run_terminal_command" : tool);
 }
 
-export function grokAcpProfile(forwardMcp: boolean): string {
-  const tools = ["read_file", "grep", "list_dir", "run_terminal_cmd", "search_replace", ...(forwardMcp ? ["search_tool", "use_tool"] : [])];
+function grokAcpProfileTools(forwardMcp: boolean, mode: RunnerOptions["mode"], web: boolean): string[] {
+  return [...grokTools(mode === "read-only" ? "read-only" : "isolated-write", web).split(","), ...(forwardMcp ? ["search_tool", "use_tool"] : [])];
+}
+
+export function grokAcpProfile(forwardMcp: boolean, mode: RunnerOptions["mode"] = "full-access", web = false): string {
+  const tools = grokAcpProfileTools(forwardMcp, mode, web);
   const denied = ["Agent", "Task", "spawn_subagent", "workflow", "monitor", "scheduler_create", "scheduler_delete", "scheduler_list",
-    "web_search", "web_fetch", "image_gen", "image_edit", "image_to_video", "reference_to_video", "ask_user_question", "enter_plan_mode", "exit_plan_mode",
+    "image_gen", "image_edit", "image_to_video", "reference_to_video", "ask_user_question", "enter_plan_mode", "exit_plan_mode",
+    ...(mode === "read-only" ? ["search_replace"] : []), ...(web ? [] : ["web_search", "web_fetch"]),
     ...(forwardMcp ? [] : ["search_tool", "use_tool"])];
   return ["---", "name: pstack-external-grok-lane", "description: Execute one assigned external lane.", "tools:",
     ...tools.map((tool) => `  - ${tool}`), "disallowedTools:", ...denied.map((tool) => `  - ${tool}`), "---",

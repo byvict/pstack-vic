@@ -78,11 +78,13 @@ describe("task-selected runner capabilities", () => {
     assert.equal(args[args.indexOf("--disallowed-tools") + 1], "Edit,Write,NotebookEdit");
   });
   it("opens Grok web without changing its sandbox, core environment or no-subagent role", () => {
-    const { args } = invocationCommand(options("grok", { schemaVersion: 1, web: true }), {});
+    const { args } = invocationCommand(options("grok", { schemaVersion: 1, web: true, skills: true }), {});
     assert.ok(args.includes("--no-subagents"));
     assert.ok(!args.includes("--disable-web-search"));
     assert.ok(args.includes("workspace"));
     assert.match(args[args.indexOf("--tools") + 1]!, /web_search,web_fetch/);
+    assert.ok(args[args.indexOf("--tools") + 1]!.includes("read_file"));
+    assert.ok(!args.includes("Skill"));
   });
   it("grants explicit additional directories to Claude and Codex sessions, one --add-dir per entry, and refuses them for Grok", () => {
     const sibling = join(directory, "sibling-worktree"), other = join(directory, "other");
@@ -112,8 +114,9 @@ describe("task-selected runner capabilities", () => {
       assert.throws(() => readCapabilities(profile(value)));
     }
     assert.throws(() => options("grok", { schemaVersion: 1, agentKind: "owner" }), /native owner/);
+    assert.throws(() => options("grok", { schemaVersion: 1, mcpSources: [source] }), /require --transport grok-acp/);
     const input = options("codex", { schemaVersion: 1 });
-    assert.throws(() => validateRoute({ ...input, parent: "codex", provider: "grok", mode: "full-access", transport: "grok-acp" }), /explicit attachment/);
+    assert.throws(() => validateRoute({ ...input, parent: "codex", provider: "grok", mode: "full-access", transport: "grok-acp", mcpConfigPath: "t3.json" }), /cannot be mixed/);
   });
   it("never uses a helper's model usage to attest the Claude owner's model", () => {
     const result = { type: "result", result: "Owner complete", modelUsage: { "claude-opus-5-5": { inputTokens: 5 } } };

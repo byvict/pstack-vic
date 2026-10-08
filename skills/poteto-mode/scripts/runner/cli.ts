@@ -14,10 +14,10 @@ import {
 } from "./types.ts";
 
 const HELP = `Usage: pstack-runner --parent <${PARENTS.join("|")}> --provider <${PROVIDERS.join("|")}> \\
-  --model <slug> --effort <${EFFORTS.join("|")}> --mode <${ACCESS_MODES.join("|")}> \\
+  --model <slug> --effort <${EFFORTS.join("|")}> --mode <${[...ACCESS_MODES, "full-access"].join("|")}> \\
   --prompt <file> --cwd <dir> --output <file> --receipt <file> [--timeout <seconds>]
   [--capabilities <task-capabilities.json>]
-  [--transport grok-acp --mode full-access [--mcp-config <file>]]
+  [--transport grok-acp [--mcp-config <T3-attachment.json>]]
 
 Runs one fresh top-level model session, including the parent's own provider.
 The default is a non-delegating lane. --capabilities selects task tools and an
@@ -29,9 +29,12 @@ it. Output and receipt paths must not already exist. There is no implicit
 timeout. Pass --timeout only when the user or task supplies a real deadline; it
 is one end-to-end launcher deadline shared by setup, preflight, and model
 execution.
-Grok ACP is an explicit full-access route for Codex and Claude parents. MCP
-configuration contains endpoint and bearer-token environment references. There
-is no default endpoint. Assign a separate preview tab for each preview lane.
+Grok ACP supports bounded modes and explicit full-access for Codex and Claude
+parents. Grok HTTP MCP task sources require ACP. Skills are accessible SKILL.md
+instructions read with read_file. Grok owner profiles are unsupported. The T3
+MCP attachment requires full-access and cannot be mixed with --capabilities;
+it contains endpoint and bearer-token environment references, with no default
+endpoint. Assign a separate preview tab for each T3 preview lane.
 `;
 
 interface Io {

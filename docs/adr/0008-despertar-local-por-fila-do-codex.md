@@ -19,3 +19,11 @@ Conservar o payload e a cadência do contrato upstream. Um novo tick exige nova 
 O [mapeamento de ferramentas](../../skills/poteto-mode/references/codex-local-wake.md) ganha uma alternativa comprovável ao tick manual referido historicamente no [ADR 0005](0005-autopilot-substitui-converge.md). Isso não conserva processos filhos de um `codex exec` que terminou, nem oferece retomada após reinicialização do computador. Sem sessão carregada e controlador com acesso ao socket, o tick continua explícito do operador.
 
 O recibo distingue aceitação e execução. Repetir a armação não repete o evento; perder a resposta de submissão exige inspeção, sem retry automático. Cancelar não desfaz um turno já iniciado. As [provas e tentativas preservadas](../research/2026-10-07-local-executor-contracts.md) delimitam o comportamento realmente observado.
+
+## Refinamento em 2026-10-08
+
+No desktop que anuncia `automation_update`, preferir um heartbeat nativo vinculado à thread exata da raiz. O app fez a retomada e a recorrência na prova isolada, sem exigir acesso ao socket pelo sandbox. Conservar o payload completo e a cadência do playbook: o pin vigente exige auditoria horária. A alternativa por fila permanece para hosts sem esse agendador ou sem a cadência necessária.
+
+O comando `observe` reconcilia o UUID do evento com a fila e as mensagens de usuário no histórico paginado, preservando o recibo original de transporte. Retorna IDs e estados dos turnos; a execução bem-sucedida exige também conferir o efeito real do payload. Ausência nas duas fontes não autoriza replay. Desconexão do host antes do disparo é falha, não cancelamento do operador.
+
+Rearmação e encerramento seguem o programa: heartbeat conserva o mesmo ID até stop/conclusão; a alternativa finita exige novo evento explicitamente, conservando o próximo horário devido e os handles próprios. Cancelar remove somente eventos pendentes e não interrompe um turno consumido. Nenhuma necessidade concreta do programa nem comportamento upstream exige durabilidade após reboot ou exatamente uma execução através de crashes. O [contrato final](../../skills/poteto-mode/references/codex-local-wake.md) e o [relatório reproduzível](../research/2026-10-08-codex-wake-lifecycle.md) registram a prova e as condições da integração.
