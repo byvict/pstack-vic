@@ -108,6 +108,80 @@ interface Manifest extends WakeRequest {
   readonly dueAt: string;
   readonly payloadSha256: string;
 }
+interface ArmedContext {
+  readonly threadId: string;
+  readonly eventId: string;
+  readonly pid: number;
+  readonly dueAt: string;
+  readonly modelEvidence: "host-configuration";
+  readonly configuredModel?: string | null;
+  readonly configuredEffort?: string | null;
+  readonly cwd?: string | null;
+}
+export type WakeReceipt =
+  | { readonly status: "starting" }
+  | (ArmedContext & { readonly status: "armed" })
+  | (ArmedContext & { readonly status: "cancelled"; readonly completedAt: string })
+  | (ArmedContext & { readonly status: "dispatching"; readonly dispatchAt: string })
+  | (ArmedContext & { readonly status: "queued"; readonly dispatchAt: string; readonly completedAt: string; readonly queuedSubmissionId: string })
+  | (ArmedContext & { readonly status: "delivery-unknown"; readonly dispatchAt: string; readonly completedAt: string; readonly error: string })
+  | (Partial<ArmedContext> & { readonly status: "failed"; readonly completedAt: string; readonly error: string });
+type QueueRemoval =
+  | { readonly status: "cancelled" | "already-consumed"; readonly queuedSubmissionId: string }
+  | { readonly status: "not-pending"; readonly note: string };
+type CancellationReceipt = QueueRemoval & { readonly at: string };
+export interface WakeStatus {
+  readonly state: string;
+  readonly eventId: string;
+  readonly threadId: string;
+  readonly receipt: WakeReceipt;
+  readonly cancellation: CancellationReceipt | null;
+  readonly workerCancellation: CancellationReceipt | null;
+}
+function timestamp(value: unknown): string {
+  const result = text(value);
+  if (!Number.isFinite(Date.parse(result))) throw new Error("Invalid wake timestamp");
+  return result;
+}
+function optionalText(value: unknown): string | null | undefined {
+  return value === undefined || value === null ? value : text(value);
+}
+function armedContext(value: ObjectValue): ArmedContext {
+  const threadId = text(value.threadId), eventId = text(value.eventId);
+  if (!UUID.test(threadId) || !UUID.test(eventId) || typeof value.pid !== "number" || !Number.isSafeInteger(value.pid) || value.pid <= 0
+    || value.modelEvidence !== "host-configuration") throw new Error("Invalid armed wake receipt");
+  return { threadId, eventId, pid: value.pid, dueAt: timestamp(value.dueAt), modelEvidence: "host-configuration",
+    configuredModel: optionalText(value.configuredModel), configuredEffort: optionalText(value.configuredEffort), cwd: optionalText(value.cwd) };
+}
+function readReceipt(state: string): WakeReceipt {
+  const path = join(state, "receipt.json");
+  if (!existsSync(path)) return { status: "starting" };
+  const value = read(path);
+  switch (value.status) {
+    case "starting": return { ...value, status: "starting" };
+    case "armed": return { ...value, ...armedContext(value), status: "armed" };
+    case "cancelled": return { ...value, ...armedContext(value), status: "cancelled", completedAt: timestamp(value.completedAt) };
+    case "dispatching": return { ...value, ...armedContext(value), status: "dispatching", dispatchAt: timestamp(value.dispatchAt) };
+    case "queued": return { ...value, ...armedContext(value), status: "queued", dispatchAt: timestamp(value.dispatchAt),
+      completedAt: timestamp(value.completedAt), queuedSubmissionId: text(value.queuedSubmissionId) };
+    case "delivery-unknown": return { ...value, ...armedContext(value), status: "delivery-unknown", dispatchAt: timestamp(value.dispatchAt),
+      completedAt: timestamp(value.completedAt), error: text(value.error) };
+    case "failed": return { ...value, ...(["threadId", "eventId", "pid", "dueAt", "modelEvidence", "configuredModel", "configuredEffort", "cwd"].some((key) => key in value) ? armedContext(value) : {}), status: "failed",
+      completedAt: timestamp(value.completedAt), error: text(value.error) };
+    default: throw new Error("Invalid wake receipt status");
+  }
+}
+function readCancellation(path: string): CancellationReceipt | null {
+  if (!existsSync(path)) return null;
+  const value = read(path), at = timestamp(value.at);
+  switch (value.status) {
+    case "cancelled": case "already-consumed": return { ...value, status: value.status, queuedSubmissionId: text(value.queuedSubmissionId), at };
+    case "not-pending": return { ...value, status: "not-pending", note: text(value.note), at };
+    default: throw new Error("Invalid wake cancellation status");
+  }
+}
+function saveReceipt(path: string, receipt: WakeReceipt): void { save(path, receipt); }
+function saveCancellation(path: string, removal: QueueRemoval): void { save(path, { ...removal, at: new Date().toISOString() }); }
 function manifest(state: string): Manifest {
   const value = read(join(state, "request.json"));
   if (value.schemaVersion !== 1 || typeof value.delayMs !== "number" || !Number.isSafeInteger(value.delayMs) || value.delayMs <= 0
@@ -115,15 +189,14 @@ function manifest(state: string): Manifest {
   return { schemaVersion: 1, threadId: text(value.threadId), socket: text(value.socket), payload: text(value.payload),
     delayMs: value.delayMs, eventId: text(value.eventId), armedAt: text(value.armedAt), dueAt: text(value.dueAt), payloadSha256: text(value.payloadSha256) };
 }
-export function wakeStatus(state: string): ObjectValue {
+export function wakeStatus(state: string): WakeStatus {
   const request = manifest(state);
   return { state, eventId: request.eventId, threadId: request.threadId,
-    receipt: existsSync(join(state, "receipt.json")) ? read(join(state, "receipt.json")) : { status: "starting" },
-    cancellation: existsSync(join(state, "cancellation.json")) ? read(join(state, "cancellation.json")) : null,
-    workerCancellation: existsSync(join(state, "worker-cancellation.json")) ? read(join(state, "worker-cancellation.json")) : null };
+    receipt: readReceipt(state), cancellation: readCancellation(join(state, "cancellation.json")),
+    workerCancellation: readCancellation(join(state, "worker-cancellation.json")) };
 }
 
-export async function armWake(state: string, request: WakeRequest): Promise<ObjectValue> {
+export async function armWake(state: string, request: WakeRequest): Promise<WakeStatus & { readonly duplicate?: true }> {
   if (process.platform === "win32") throw new Error("Local wake requires POSIX detached processes and a Unix socket");
   if (!isAbsolute(state) || !isAbsolute(request.socket) || !UUID.test(request.threadId)) throw new Error("Wake requires an absolute state directory, local socket path, and exact thread UUID");
   if (!Number.isSafeInteger(request.delayMs) || request.delayMs <= 0 || request.delayMs > 2_147_483_647) throw new Error("Delay must be a positive runtime-safe integer in milliseconds");
@@ -155,32 +228,37 @@ export async function armWake(state: string, request: WakeRequest): Promise<Obje
   return wakeStatus(state);
 }
 
-async function removePending(host: Host, request: Manifest): Promise<ObjectValue> {
+async function removePending(host: Host, request: Manifest): Promise<QueueRemoval> {
   let cursor: string | undefined;
   do {
     const page = await host.call("thread/queue/list", { threadId: request.threadId, ...(cursor ? { cursor } : {}) });
     if (!Array.isArray(page.data)) throw new Error("Invalid Codex queue page");
     for (const item of page.data.map(object)) {
       if (item.clientUserMessageId !== request.eventId) continue;
-      const deleted = await host.call("thread/queue/delete", { threadId: request.threadId, queuedSubmissionId: text(item.id) });
-      return { status: deleted.deleted === true ? "cancelled" : "already-consumed", queuedSubmissionId: item.id };
+      const queuedSubmissionId = text(item.id);
+      const deleted = await host.call("thread/queue/delete", { threadId: request.threadId, queuedSubmissionId });
+      return { status: deleted.deleted === true ? "cancelled" : "already-consumed", queuedSubmissionId };
     }
     cursor = typeof page.nextCursor === "string" ? page.nextCursor : undefined;
   } while (cursor);
   return { status: "not-pending", note: "No pending event found; an already started turn is not interrupted." };
 }
 
-export async function cancelWake(state: string): Promise<ObjectValue> {
+export async function cancelWake(state: string): Promise<WakeStatus & { readonly cancellationRequested?: true }> {
   const request = manifest(state);
   writeFileSync(join(state, "cancel.request"), "cancel\n", { mode: 0o600 });
-  const status = existsSync(join(state, "receipt.json")) ? read(join(state, "receipt.json")).status : "starting";
-  if (status === "armed" || status === "starting") return { ...wakeStatus(state), cancellationRequested: true };
-  if (status === "cancelled" || status === "failed") return wakeStatus(state);
+  const receipt = readReceipt(state);
+  switch (receipt.status) {
+    case "armed": case "starting": return { ...wakeStatus(state), cancellationRequested: true };
+    case "cancelled": case "failed": return wakeStatus(state);
+    case "dispatching": case "queued": case "delivery-unknown": break;
+    default: { const unexpected: never = receipt; throw new Error(`Unexpected wake receipt: ${unexpected}`); }
+  }
   const host = new Host(request.socket, state);
   try {
     await host.initialize();
     const cancellation = await removePending(host, request);
-    save(join(state, "cancellation.json"), { ...cancellation, at: new Date().toISOString() });
+    saveCancellation(join(state, "cancellation.json"), cancellation);
   } finally { await host.close(); }
   return wakeStatus(state);
 }
@@ -190,7 +268,8 @@ async function work(state: string): Promise<void> {
   closeSync(lock); // Retained after completion: this event is never replayed.
   const request = manifest(state), receiptPath = join(state, "receipt.json");
   const host = new Host(request.socket, state);
-  let dispatching = false;
+  let context: ArmedContext | undefined;
+  let dispatch: Extract<WakeReceipt, { status: "dispatching" }> | undefined;
   let cancel = (): void => {};
   const stop = (): void => { writeFileSync(join(state, "cancel.request"), "cancel\n", { mode: 0o600 }); cancel(); };
   process.once("SIGTERM", stop); process.once("SIGINT", stop);
@@ -200,8 +279,9 @@ async function work(state: string): Promise<void> {
     if (thread.id !== request.threadId || thread.ephemeral === true) throw new Error("Wake target must be the exact persisted thread");
     const status = object(thread.status).type;
     if (status !== "idle" && status !== "active") throw new Error("Wake target is not loaded in this local host. Resume it in the CLI on this socket before arming; queue alone cannot wake an unloaded session.");
-    save(receiptPath, { status: "armed", threadId: request.threadId, eventId: request.eventId, pid: process.pid, dueAt: request.dueAt,
-      configuredModel: thread.model, configuredEffort: thread.reasoningEffort, modelEvidence: "host-configuration", cwd: thread.cwd });
+    context = { threadId: request.threadId, eventId: request.eventId, pid: process.pid, dueAt: request.dueAt,
+      configuredModel: optionalText(thread.model), configuredEffort: optionalText(thread.reasoningEffort), modelEvidence: "host-configuration", cwd: optionalText(thread.cwd) };
+    saveReceipt(receiptPath, { ...context, status: "armed" });
     const waiting = new Promise<boolean>((done) => {
       let settled = false;
       const finish = (value: boolean): void => { if (settled) return; settled = true; clearTimeout(timer); watcher.close(); done(value); };
@@ -213,23 +293,23 @@ async function work(state: string): Promise<void> {
       if (existsSync(join(state, "cancel.request"))) finish(true);
     });
     const cancelled = await Promise.race([waiting, host.exited.then(() => { cancel(); throw new Error("Local Codex host disconnected before the event"); })]);
-    if (cancelled) { save(receiptPath, { ...read(receiptPath), status: "cancelled", completedAt: new Date().toISOString() }); return; }
+    if (cancelled) { saveReceipt(receiptPath, { ...context, status: "cancelled", completedAt: new Date().toISOString() }); return; }
     // Recheck the same host before dispatch. Never resume a closed target as a side effect.
     const current = object((await host.call("thread/read", { threadId: request.threadId, includeTurns: false })).thread);
     if (!["idle", "active"].includes(String(object(current.status).type))) throw new Error("Target unloaded before the event; no message was sent");
-    if (existsSync(join(state, "cancel.request"))) { save(receiptPath, { ...read(receiptPath), status: "cancelled", completedAt: new Date().toISOString() }); return; }
-    dispatching = true;
-    save(receiptPath, { ...read(receiptPath), status: "dispatching", dispatchAt: new Date().toISOString() });
+    if (existsSync(join(state, "cancel.request"))) { saveReceipt(receiptPath, { ...context, status: "cancelled", completedAt: new Date().toISOString() }); return; }
+    dispatch = { ...context, status: "dispatching", dispatchAt: new Date().toISOString() };
+    saveReceipt(receiptPath, dispatch);
     const result = await host.call("thread/queue/add", { threadId: request.threadId, clientUserMessageId: request.eventId,
       input: [{ type: "text", text: `[pstack local wake ${request.eventId}]\n${request.payload}` }] });
     const queued = object(result.queuedSubmission);
     if (queued.clientUserMessageId !== request.eventId) throw new Error("Codex returned a different queue event identity");
-    if (existsSync(join(state, "cancel.request"))) save(join(state, "worker-cancellation.json"), { ...await removePending(host, request), at: new Date().toISOString() });
-    save(receiptPath, { ...read(receiptPath), status: "queued", queuedSubmissionId: text(queued.id), completedAt: new Date().toISOString() });
+    if (existsSync(join(state, "cancel.request"))) saveCancellation(join(state, "worker-cancellation.json"), await removePending(host, request));
+    saveReceipt(receiptPath, { ...dispatch, status: "queued", queuedSubmissionId: text(queued.id), completedAt: new Date().toISOString() });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const prior = existsSync(receiptPath) ? read(receiptPath) : {};
-    save(receiptPath, { ...prior, status: dispatching ? "delivery-unknown" : "failed", error: message, completedAt: new Date().toISOString() });
+    const failure = { error: message, completedAt: new Date().toISOString() };
+    saveReceipt(receiptPath, dispatch ? { ...dispatch, ...failure, status: "delivery-unknown" } : { ...context, ...failure, status: "failed" });
     if (process.connected) process.send?.({ error: message });
     process.exitCode = 1;
   } finally {
