@@ -89,13 +89,21 @@ The legacy Cursor selector `grok-4.6-fast-{effort}` maps to CLI model `grok-4.6`
 
 The top-level harness resolves the route once. A child receives an assigned provider, model, effort, access mode, prompt, working directory, and output path. A child never detects the harness, chooses a provider, or launches another model. Environment markers may corroborate the top-level harness before fan-out, but nested processes inherit parent markers and must not use them for routing.
 
-An autopilot owner is the one child that dispatches. It is the parent of the lanes it starts, and it resolves their routes by this document on the harness its root runs on. A pool lane stays with the top-level session (see **Cross-family selection**).
+An autopilot owner is the one child that dispatches. It is the parent of the lanes it starts, and it resolves their routes on its own assigned harness. For example, a Grok root launches a Codex owner with `--parent grok`, and that owner dispatches its helpers as a Codex parent. Pass that assignment explicitly; inherited environment markers do not select the harness. A pool lane stays with the top-level session (see **Cross-family selection**).
 
 The route table rendered above from `model-matrix.json` selects the preferred route. A provider is native in exactly one parent. If that parent's native route cannot meet the task, apply [When native dispatch is unavailable](#when-native-dispatch-is-unavailable). The matrix and model sheet keep the configured provider, model, and effort.
 
 Swarm workers have one optional exception to descriptor preservation: the explicitly configured [`swarm fallback` policy](../../swarm/references/native-fallback.md). The parent applies it to eligible capability gaps and terminal execution failures. It adds no default model and grants no fallback to other roles or model comparisons.
 
 `inherit-parent` and `auto` remain aliases. They use the parent's current model and effort, preferring its native subagent primitive. Before using the runner, resolve the alias to an observed provider, registered model, and selectable effort. If any part is unknown or unsupported by the runner, record a gap instead of guessing. In a panel aliases still consume one lane, but they reduce provider diversity; say so in the synthesis record.
+
+### Autopilot owners
+
+Before Autopilot-full or Autopilot-stack launches an owner, resolve the PR's authoring row (`bug-fix` for a reported defect, `perf-issue` for measured slowness, `feature, refactoring` otherwise). The owner itself receives that row's normalized provider, model and effort. Prefer a native owner when the host can bind that descriptor and supply delegation, the required tools and the assigned worktree access. Native call mechanics are in the skill's Subagents section, [codex-tools.md](codex-tools.md#subagent-policy) and [grok-tools.md](grok-tools.md#native-lanes-and-owners).
+
+For an external descriptor, or when the native owner cannot meet those requirements, use the same descriptor through [External lanes](#external-lanes) with a [task-capabilities profile](runner-capabilities.md) containing `agentKind: "owner"`. Select `skills: true` when the owner's assigned workflow needs native skills, plus its required web and explicit MCP sources. Codex and Claude support this owner profile. Grok's CLI and current ACP route do not; a Grok owner needs a working native route, including its nesting proof. If no authorized route supplies the required capabilities and access, record that concrete gap under the calling playbook. An inherited owner is selected only by an explicit `inherit-parent` or `auto` row, never as a replacement for another descriptor. The configured swarm fallback remains limited to swarm workers.
+
+Give the owner its own worktree, complete brief, helper descriptors and the executing harness assignment. Check access for each writer's worktree before assigning it; the owner profile does not grant sibling write access. Retain the runner receipt and session ID for compatible same-task continuation under [Owners and lifecycle](runner-capabilities.md#owners-and-lifecycle). Drain live children before ending a headless session. Persistence, completed state and slot release remain distinct.
 
 ## Cross-family selection
 

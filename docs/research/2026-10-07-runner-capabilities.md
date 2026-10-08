@@ -16,6 +16,12 @@ Base: main `06745ce82e4b2d86b21a1881dfd27dbf2dfc2226`, após os PRs #99 e #100. 
 
 A interface está em [runner-capabilities.md](../../skills/poteto-mode/references/runner-capabilities.md), a implementação em [capabilities.ts](../../skills/poteto-mode/scripts/runner/capabilities.ts), e a decisão em [ADR 0009](../adr/0009-capacidades-por-tarefa-no-runner.md).
 
+### Integração das instruções de owners
+
+A revisão do PR #102 identificou que habilitar o perfil no runner ainda deixava as entradas do Autopilot presas aos caminhos antigos. Após a integração do #101 em main `8942793ebf878b49948d9d1aeb72bfa547a6193d`, `SKILL.md`, `codex-tools.md` e `grok-tools.md` passam a selecionar owners pela [mesma regra de provider-dispatch](../../skills/poteto-mode/references/provider-dispatch.md#autopilot-owners). O owner recebe o descritor da linha de autoria; uma linha externa ou uma rota nativa incapaz seleciona o perfil `agentKind: owner` quando suportado. A raiz Grok pode lançar um owner Codex com `--parent grok`; esse owner recebe explicitamente Codex como seu harness para despachar helpers.
+
+Aliases herdados continuam escolhas explícitas da configuração. A ausência de delegação Grok ou de escrita no worktree atribuído permanece uma lacuna quando nenhuma rota autorizada atende ao requisito. O perfil não concede escrita a helpers em worktrees irmãos. O código do runner e as provas reais anteriores permanecem inalterados; um exercício de leitura destas instruções avalia seleção de rota, sem substituir a prova de despacho nem executar os playbooks.
+
 ### Por que cada restrição muda ou permanece
 
 - **Delegação:** o bloqueio continua sendo adequado para uma lane comum, cuja cobertura e opinião são contabilizadas pelo parent. Não é adequado para o owner que tem o dever explícito de coordenar helpers. O perfil distingue os dois e não muda modelo/effort nem acrescenta um workflow. Worktrees, capacidade e coleta continuam no contrato de lifecycle. Desabilitar uma ferramenta nativa não é uma barreira de segurança contra todo programa que um shell possa executar.
