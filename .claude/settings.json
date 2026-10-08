@@ -1,0 +1,5 @@
+{
+  "enabledPlugins": {
+    "pstack@pstack-vic": true
+  }
+}
