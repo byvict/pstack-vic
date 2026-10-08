@@ -48,7 +48,7 @@ O código fica nas tags `v0.4.18` e `v0.4.19`, que já estão no GitHub. As tags
 - **A sessão da Raiz fica aberta até o último merge.** Se Victor fechar a sessão, os Donos param. Nada acontece até ele abrir de novo e retomar.
 - **Dependabot à mão.** Os PRs do Dependabot não mergeiam mais sozinhos. Ou Victor clica, ou um programa de autopilot adota a fila.
 - **O GitHub exige só o CI.** A garantia de que ninguém mergeia sem verificação independente sai dos checks obrigatórios. Ela passa para o playbook, com o Veredito da Raiz, e para a autorização permanente.
-- **No Codex não há relógio.** Victor pede o Tick a cada 30 minutos, e o Codex precisa de `multi_agent` ligado para ter Donos.
+- **No Codex não há relógio, naquele runtime.** Victor pede o Tick a cada 30 minutos, e o Codex precisa de `multi_agent` ligado para ter Donos. O [ADR 0008](0008-despertar-local-por-fila-do-codex.md) registra a alternativa local posterior para sessões persistidas e carregadas; o payload e a cadência continuam sendo os do playbook vigente.
 - **O texto do autopilot é o do upstream.** Uma frase que não é do upstream nem troca de harness é defeito. A partir da 0.5.1 um teste regenera do upstream os seis playbooks ligados ao autopilot (Autopilot-full, Autopilot-stack, Babysit, Opening a PR, Shipping e Multi-phase plan) e falha se sobrar diferença.
 
 ## Retorno à política upstream na 0.5.21
