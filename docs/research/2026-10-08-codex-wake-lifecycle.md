@@ -65,7 +65,9 @@ Primeira tentativa real: `live-development-1/`, desenvolvimento explicitamente i
 
 Também comprovados: repetir `arm` não cria evento; cancelar uma entrada real enquanto outro turno executa um comando de 15 segundos remove-a antes do consumo; cancelar timer impede a submissão; cancelar evento consumido retorna `not-pending` sem interromper trabalho; perda do host antes do disparo resulta em `failed`; fila final vazia. Os cinco PIDs de timer terminaram, assim como o app-server próprio. Os frames recebidos pelo host conservam o payload byte a byte, exceto o envelope declarado.
 
-Rodadas posteriores de commit, fonte e verificações são registradas abaixo. Uma alteração posterior na limpeza do driver fecha primeiro o host próprio para liberar RPCs pendentes antes de conferir os PIDs; a rodada de commit também observa a armação sob `codex sandbox` no macOS.
+**Rodada de commit:** `live-commit-1/`, SHA limpo `f5faae83ae77240ff233bf29a818016ae153819b`, handle supervisor **49181**, terminou com sucesso em 16:51:40 UTC. Sessão exata `01a11c6b-880c-7e70-bb68-d41f9cc8145d`. Repetiu todas as asserções e os dois efeitos, agora incluindo a tentativa de armação sob `codex sandbox`: falhou com `listen EPERM: operation not permitted 127.0.0.1`, antes de chegar ao socket Unix. O controlador externo armou normalmente. Isso localiza a barreira desta instalação na ponte loopback sob sandbox, além da condição de acesso ao socket; não basta presumir que permitir um caminho Unix resolve a ponte. `sandbox-access.json` conserva essa falha esperada e os streams.
+
+Os **seis PIDs próprios** dessa rodada (sonda de sandbox, dois ticks, dois cancelamentos e perda de host) foram confirmados encerrados em `result.json`; o recibo do app-server registra seu encerramento pelo supervisor. O driver fecha primeiro o host próprio na limpeza para liberar RPCs pendentes antes de conferir PIDs. Fonte e hashes estão em `source.json`; a captura é do checkout candidato, sem reinstalar plugin ou mudar permissões do worker. Os commits posteriores desta entrega só acrescentam o vínculo das provas ao relatório.
 
 ## Tentativas e verificação
 
@@ -73,6 +75,16 @@ Rodadas posteriores de commit, fonte e verificações são registradas abaixo. U
 - `observe-development-2.txt`: **13 testes passaram**, incluindo correlação paginada, falha/interrupção, UUID apenas citado, histórico incompleto, host desconectado e alvo descarregado. A limpeza da espera foi movida para `finally`.
 - Typecheck do wake e transporte passou com o comando existente `bun run typecheck`.
 - `verify-pstack-vic` foi usado a partir de `doctor`; a seleção para este diff é **repository-contracts** (comando/testes de wake e tooling de prova) mais typecheck. Não há mudança de runner, setup ou do próprio verificador que justifique suas receitas. A prova real específica acima complementa os contratos; runner-smoke não prova wake.
+- `classify-1/receipt.json`: seis caminhos, áreas `agent-instructions` e `tooling`, nenhum desconhecido. `verify-1/receipt.json`: **239 testes passaram, zero falhas**, incluindo os 13 de wake; fonte `exact-commit` em `f5faae83ae77240ff233bf29a818016ae153819b`, handle **20665**. O recibo terminal, observações e streams foram lidos. Os mesmos fontes TypeScript já tinham passado no typecheck; a checagem anterior não é apresentada como execução nova no commit.
+- `baseline-disconnect-1/`: reprodução vermelha contra os fontes originais de `75d0228be7699bd2f2e70e5961d7c74c97b6ee4f`, com apenas o teste de desconexão do candidato selecionado. Falhou exatamente com `cancelled` em vez de `failed`. O script `baseline-disconnect.mjs` registra a extração por `git show` e remove somente o import de `observeWake` inexistente na base. Fontes, teste e recibo foram retidos.
+
+Para repetir a checagem selecionada, substituir os diretórios por destinos novos:
+
+```sh
+npm run verify -- classify --base 75d0228be7699bd2f2e70e5961d7c74c97b6ee4f --output /absolute/classification
+npm run verify -- run --base 75d0228be7699bd2f2e70e5961d7c74c97b6ee4f --output /absolute/contracts --feature repository-contracts
+node scripts/prove-codex-wake.mjs --output /absolute/live-proof --model gpt-6-astra
+```
 
 ## Limites legítimos e lacunas resolvidas
 
