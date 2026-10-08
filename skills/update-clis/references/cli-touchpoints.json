@@ -153,7 +153,7 @@
       "id": "grok.acp-argv",
       "cli": "grok",
       "kind": "lane",
-      "contract": "`grok --sandbox off agent --always-approve --no-leader --agent-profile <private YAML-list profile> stdio`; no global --tools or --no-subagents claim for ACP",
+      "contract": "`grok --sandbox read-only|workspace|none|off agent --always-approve --no-leader --agent-profile <private YAML-list profile> stdio`; bounded modes share the CLI sandbox mapping, including none inside an outer Codex sandbox; off requires explicit full-access. No global --tools or --no-subagents claim for ACP.",
       "pointers": [
         {
           "file": "skills/poteto-mode/scripts/runner/commands.ts",
@@ -167,7 +167,7 @@
       "id": "grok.acp-policy",
       "cli": "grok",
       "kind": "lane",
-      "contract": "ACP agent-profile tools and disallowedTools are YAML lists. Profile input run_terminal_cmd becomes advertised run_terminal_command. Before one prompt and on catalog changes, available_commands_update._meta.tools must contain exactly five host builtins or seven with a T3 attachment. With attachment, configured-and-forwarded MCPs may expand the catalog with server__tool names; each segment starts with a letter or digit and contains only letters, digits, underscores, dots or hyphens. All names are recorded; duplicates, malformed names and unknown builtins fail. Host-only admits no MCP names. GROK_SUBAGENTS=0 and [subagents] enabled=false disable recursive agents; shell_environment_policy inherit=core remains staged.",
+      "contract": "ACP agent-profile tools and disallowedTools are YAML lists. Profile input run_terminal_cmd becomes advertised run_terminal_command. Before one prompt and on catalog changes, available_commands_update._meta.tools must match the selected host builtins: four in read-only, five in write/full-access, plus search_tool/use_tool with MCP sources and web_search/web_fetch when requested. Configured-and-forwarded MCPs may expand the catalog with server__tool names; each segment starts with a letter or digit and contains only letters, digits, underscores, dots or hyphens. All names are recorded; duplicates, malformed names and unknown builtins fail. Host-only admits no MCP names. GROK_SUBAGENTS=0 and [subagents] enabled=false disable recursive agents; shell_environment_policy inherit=core remains staged. Receipts retain the generated profile SHA-256 and actual sandbox.",
       "pointers": [
         {
           "file": "skills/poteto-mode/scripts/runner/commands.ts",
@@ -207,7 +207,7 @@
       "id": "grok.acp-t3",
       "cli": "grok",
       "kind": "lane",
-      "contract": "Optional versioned T3 attachment binds urlEnv, bearerTokenEnv and previewTabId. HTTP(S) loopback endpoint has no default port, userinfo, query or fragment. Authorization header is resolved only in memory; referenced variables are removed from child env; secrets and escaped values are redacted before output or evidence. Full access admits configured-and-forwarded Grok integrations and hooks.",
+      "contract": "Optional versioned T3 attachment binds urlEnv, bearerTokenEnv and previewTabId, requires explicit full-access and cannot be mixed with --capabilities. HTTP(S) loopback endpoint has no default port, userinfo, query or fragment. Authorization header is resolved only in memory; referenced variables are removed from child env; secrets and escaped values are redacted before output or evidence. Full access admits configured-and-forwarded Grok integrations and hooks.",
       "pointers": [
         {
           "file": "skills/poteto-mode/scripts/runner/grok-acp.ts",
@@ -572,6 +572,19 @@
       ],
       "coveredBy": [],
       "measuredOn": "0.161.0"
+    },
+    {
+      "id": "grok.task-capabilities",
+      "cli": "grok",
+      "kind": "lane",
+      "contract": "Task capability profiles preserve the assigned descriptor, sandbox and fresh session. HTTP mcpSources name/url entries become session/new.mcpServers attachments; explicit source.tools are requested scope injected in the brief, not an enforced effective-catalog allowlist. Ambient configured sources remain trusted; listing a tool is no proof of access. Skills true uses accessible SKILL.md instructions through read_file on CLI or ACP; no native Skill tool is claimed. MCP sources require ACP, Grok owners always fail, and T3 attachment mixing fails before reservation. Receipts retain requested capabilities and source-file SHA-256 separately from the observed catalog.",
+      "pointers": [
+        { "file": "skills/poteto-mode/scripts/runner/capabilities.ts", "anchor": "export function validateCapabilities" },
+        { "file": "skills/poteto-mode/scripts/runner/grok-acp.ts", "anchor": "function resolveServers" },
+        { "file": "skills/poteto-mode/scripts/runner/grok-acp.ts", "anchor": "function capabilityBrief" }
+      ],
+      "coveredBy": [],
+      "measuredOn": "1.0.46"
     },
     {
       "id": "grok.task-web",

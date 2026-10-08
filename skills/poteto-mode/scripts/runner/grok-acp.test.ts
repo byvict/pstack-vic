@@ -1,5 +1,6 @@
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -52,6 +53,9 @@ interface FixtureEvent {
   readonly model?: string;
   readonly effort?: string;
   readonly code?: number;
+  readonly args?: readonly string[];
+  readonly cwd?: string;
+  readonly forwarded?: readonly { readonly type: string; readonly name: string; readonly url: string; readonly headerPresent: boolean }[];
 }
 
 function events(): FixtureEvent[] {
@@ -98,6 +102,12 @@ async function launch(options: {
 
 const attachmentArgs = () => ["--mcp-config", join(scratch, "mcp.json")];
 const attachmentEnv = { PSTACK_T3_MCP_URL: "http://127.0.0.1:43210/mcp", T3_MCP_BEARER_TOKEN: 'fixture-secret-"split\\value' };
+const source = { name: "docs", url: "https://example.com/mcp", tools: ["lookup"] };
+function capabilityArgs(value: unknown = { schemaVersion: 1, web: true, skills: true, mcpSources: [source] }): string[] {
+  const path = join(scratch, "capabilities.json");
+  writeFileSync(path, JSON.stringify(value));
+  return ["--capabilities", path];
+}
 
 describe("Grok ACP through the real runner launcher", () => {
   it("isolates provider executables and cached credentials", () => {
@@ -136,6 +146,84 @@ describe("Grok ACP through the real runner launcher", () => {
     assert.equal(started?.subagents, "0");
     assert.match(started?.overlay ?? "", /inherit = "core"\n\[subagents\]\nenabled = false/);
     assert.match(events().find((event) => event.kind === "prompt")?.text ?? "", /assigned preview tab tab_fixture/);
+  });
+
+  for (const mode of ["read-only", "isolated-write"] as const) {
+    it(`forwards task sources, web and skill instructions through a fresh ${mode} session with the assigned descriptor`, async () => {
+      const extra = ["--mode", mode, ...capabilityArgs()];
+      const result = await launch({ scenario: "source-expansion", extra });
+      assert.equal(result.code, 0, result.stderr);
+      assert.equal(result.receipt?.mode, mode);
+      assert.equal(result.receipt?.model, "grok-4.7");
+      assert.equal(result.receipt?.effort, "xhigh");
+      assert.equal(result.receipt?.modelVerified, true);
+      assert.equal(result.receipt?.acp?.grokSandbox, mode === "read-only" ? "read-only" : "workspace");
+      assert.equal(result.receipt?.acp?.attachment, null);
+      assert.equal(result.receipt?.acp?.mcpScope, "configured-and-forwarded");
+      assert.deepEqual(result.receipt?.capabilities?.mcpSources, [source]);
+      assert.equal(result.receipt?.capabilities?.sha256, createHash("sha256").update(readFileSync(join(scratch, "capabilities.json"))).digest("hex"));
+      const started = events().find((event) => event.kind === "started")!;
+      assert.equal(started.args?.[started.args.indexOf("--sandbox") + 1], result.receipt?.acp?.grokSandbox);
+      assert.equal(result.receipt?.acp?.profileSha256, createHash("sha256").update(started.profile!).digest("hex"));
+      assert.equal(started.subagents, "0");
+      assert.match(started.overlay!, /inherit = "core"\n\[subagents\]\nenabled = false/);
+      const activeProfile = started.profile!.split("disallowedTools:")[0]!;
+      assert.match(activeProfile, /  - web_search\n  - web_fetch/);
+      assert.equal(activeProfile.includes("  - search_replace\n"), mode === "isolated-write");
+      assert.equal(activeProfile.includes("Skill"), false);
+      const session = events().find((event) => event.kind === "session")!;
+      assert.equal(session.cwd, scratch);
+      assert.deepEqual(session.forwarded, [{ type: "http", name: source.name, url: source.url, headerPresent: false }]);
+      assert.equal(events().filter((event) => event.method === "session/new").length, 1);
+      assert.equal(events().filter((event) => event.method === "session/prompt").length, 1);
+      assert.equal(events().some((event) => event.method === "session/load"), false);
+      const prompt = events().find((event) => event.kind === "prompt")!.text!;
+      assert.match(prompt, /SKILL.md with read_file/);
+      assert.ok(prompt.includes(JSON.stringify([source])));
+      assert.match(prompt, /not an enforced MCP tool allowlist/);
+      assert.match(prompt, /catalog listing does not prove access/);
+      assert.ok(result.receipt?.acp?.effectiveTools.includes("docs__unassigned"));
+      assert.ok(result.receipt?.acp?.effectiveTools.includes("trusted-other__read_file"));
+    });
+
+    it(`uses the existing outer Codex sandbox mapping for ACP ${mode}`, async () => {
+      const result = await launch({ extra: ["--mode", mode], env: { CODEX_SANDBOX: "seatbelt" } });
+      assert.equal(result.code, 0, result.stderr);
+      assert.equal(result.receipt?.acp?.grokSandbox, "none");
+      assert.ok(result.receipt?.argv.includes("none"));
+    });
+  }
+
+  it("allows accessible skill instructions on the bounded default Grok CLI without adding a native Skill tool", async () => {
+    const result = await launch({ extra: ["--transport", "cli", "--mode", "read-only", ...capabilityArgs({ schemaVersion: 1, skills: true })] });
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.receipt?.mode, "read-only");
+    assert.equal(result.receipt?.capabilities?.skills, true);
+    assert.equal(result.receipt?.acp, undefined);
+    assert.ok(result.receipt?.argv.includes("--no-subagents"));
+    assert.equal(result.receipt?.argv[result.receipt.argv.indexOf("--sandbox") + 1], "read-only");
+    assert.ok(result.receipt?.argv.includes("read_file,grep,list_dir,run_terminal_cmd"));
+    assert.ok(!result.receipt?.argv.includes("Skill"));
+    assert.match(events().find((event) => event.kind === "cli")?.overlay ?? "", /inherit = "core"/);
+  });
+
+  it("rejects Grok owners and mixed T3 capability profiles before any child or output reservation", async () => {
+    for (const kind of ["owner", "mixed"]) {
+      const extra = kind === "owner" ? capabilityArgs({ schemaVersion: 1, agentKind: "owner" }) : [...attachmentArgs(), ...capabilityArgs()];
+      const result = await launch({ extra, env: attachmentEnv });
+      assert.equal(result.code, 64);
+      assert.equal(result.receipt, null);
+      assert.equal(existsSync(join(scratch, "out.md")), false);
+      assert.deepEqual(events(), []);
+    }
+  });
+
+  it("keeps T3 attachments full-access-only", async () => {
+    const result = await launch({ extra: ["--mode", "read-only", ...attachmentArgs()], env: attachmentEnv });
+    assert.equal(result.code, 64);
+    assert.match(result.stderr, /T3 MCP attachment requires explicit --mode full-access/);
+    assert.equal(result.receipt, null);
+    assert.deepEqual(events(), []);
   });
 
   it("accepts late MCP tool expansion alongside the exact builtin catalog and records ambient names", async () => {
@@ -276,7 +364,7 @@ describe("Grok ACP through the real runner launcher", () => {
     assert.equal(events().some((event) => event.kind === "started"), false);
   });
 
-  for (const extra of [["--parent", "grok"], ["--provider", "codex"], ["--mode", "read-only"], ["--transport", "cli"], ["--preview-tab", "unbound"]]) {
+  for (const extra of [["--parent", "grok"], ["--provider", "codex"], ["--transport", "cli"], ["--preview-tab", "unbound"]]) {
     it(`rejects invalid route ${extra.join(" ")} before reservation`, async () => {
       const result = await launch({ extra });
       assert.equal(result.code, 64);
