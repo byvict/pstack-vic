@@ -102,6 +102,21 @@ describe("task-selected runner capabilities", () => {
     assert.ok(!invocationCommand(options("claude", { schemaVersion: 1 })).args.includes("--add-dir"));
     assert.throws(() => options("grok", { schemaVersion: 1, additionalDirectories: [sibling] }), /assigned cwd/);
   });
+  it("lets a Claude writer run git in each additional directory through one rule per subcommand, and a read-only session through none", () => {
+    const sibling = join(directory, "sibling-worktree"), other = join(directory, "other");
+    mkdirSync(sibling); mkdirSync(other);
+    const subcommands = ["status", "diff", "log", "show", "rev-parse", "add", "commit"];
+    const writer = options("claude", { schemaVersion: 1, agentKind: "owner", additionalDirectories: [sibling, other] });
+    const allowed = (input: RunnerOptions) => { const { args } = invocationCommand(input); return args.includes("--allowedTools") ? args[args.indexOf("--allowedTools") + 1]!.split(",") : []; };
+    assert.deepEqual(allowed(writer), ["Agent", "ListAgents", "TaskStop", "SendMessage",
+      ...[sibling, other].flatMap((path) => subcommands.map((command) => `Bash(git -C ${path} ${command} *)`))]);
+    assert.ok(!allowed(writer).includes(`Bash(git -C ${sibling} *)`));
+    assert.deepEqual(allowed({ ...options("claude", { schemaVersion: 1, additionalDirectories: [sibling] }), mode: "read-only" }), []);
+    assert.ok(!invocationCommand(options("codex", { schemaVersion: 1, additionalDirectories: [sibling] })).args.some((arg) => arg.includes("Bash(")));
+    const spaced = join(directory, "sibling worktree"); mkdirSync(spaced);
+    assert.throws(() => options("claude", { schemaVersion: 1, additionalDirectories: [spaced] }), /name literally/);
+    assert.deepEqual(options("codex", { schemaVersion: 1, additionalDirectories: [spaced] }).capabilities!.additionalDirectories, [spaced]);
+  });
   it("rejects unknown, secret-bearing or unsupported capability requests before dispatch", () => {
     const sibling = join(directory, "sibling-worktree"); mkdirSync(sibling);
     writeFileSync(join(directory, "a-file"), "");

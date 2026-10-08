@@ -159,7 +159,7 @@ export function invocationCommand(
           ...(capabilities?.agentKind === "owner" ? [] : ["--no-session-persistence"]),
           ...(capabilities?.skills ? [] : ["--disable-slash-commands"]),
           ...(claudeDeniedTools(mode, capabilities) ? ["--disallowed-tools", claudeDeniedTools(mode, capabilities)] : []),
-          ...claudeCapabilityArgs(capabilities),
+          ...claudeCapabilityArgs(capabilities, mode),
           "--output-format",
           "json",
         ],
