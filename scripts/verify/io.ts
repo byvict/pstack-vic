@@ -34,7 +34,17 @@ export interface CommandResult {
   readonly stderr: string;
   readonly receipt: string;
   readonly error?: string;
+  readonly cleanupErrors?: readonly CleanupError[];
 }
+
+type CleanupOperation = { readonly operation: "signal"; readonly target: number; readonly signal: NodeJS.Signals }
+  | { readonly operation: "close"; readonly descriptor: number };
+type CleanupError = CleanupOperation & {
+    readonly message: string;
+    readonly code?: string;
+    readonly errno?: number;
+    readonly syscall?: string;
+};
 
 export interface CommandOptions {
   readonly cwd: string;
@@ -76,10 +86,18 @@ export class Journal {
     let stopped: "timed-out" | "cancelled" | undefined;
     let exited: Promise<void> | undefined;
     let deadline: ReturnType<typeof setTimeout> | undefined, escalation: ReturnType<typeof setTimeout> | undefined;
+    const cleanupErrors: CleanupError[] = [];
+    const recordCleanupError = (failure: unknown, operation: CleanupOperation): void => {
+      const detail = failure as NodeJS.ErrnoException;
+      cleanupErrors.push({ ...operation, message: failure instanceof Error ? failure.message : String(failure),
+        code: detail?.code, errno: detail?.errno, syscall: detail?.syscall });
+    };
     const kill = (signal: NodeJS.Signals): void => {
       if (pid === null) return;
       try { process.kill(-pid, signal); }
-      catch (failure) { if ((failure as NodeJS.ErrnoException).code !== "ESRCH") throw failure; }
+      catch (failure) {
+        if ((failure as NodeJS.ErrnoException)?.code !== "ESRCH") recordCleanupError(failure, { operation: "signal", target: -pid, signal });
+      }
     };
     const stop = (reason: "timed-out" | "cancelled"): void => {
       if (stopped !== undefined) return;
@@ -114,13 +132,17 @@ export class Journal {
     } finally {
       clearTimeout(deadline); clearTimeout(escalation);
       this.signal.removeEventListener("abort", onAbort);
-      // A command cannot leave work behind after its terminal receipt.
+      // Always signal the group, even after its leader exits; a failure is evidence.
       kill("SIGKILL");
       await exited;
-      for (const descriptor of descriptors) closeSync(descriptor);
+      for (const descriptor of descriptors) {
+        try { closeSync(descriptor); }
+        catch (failure) { recordCleanupError(failure, { operation: "close", descriptor }); }
+      }
     }
     const result: CommandResult = { ...identity, pid, elapsedMs: Date.now() - started, exitCode, signal: exitSignal,
-      status: stopped ?? (error === undefined && exitCode === 0 ? "complete" : "failed"), ...(error === undefined ? {} : { error }) };
+      status: stopped ?? (error === undefined && exitCode === 0 && cleanupErrors.length === 0 ? "complete" : "failed"),
+      ...(error === undefined ? {} : { error }), ...(cleanupErrors.length === 0 ? {} : { cleanupErrors }) };
     save(receipt, result);
     return result;
   }
