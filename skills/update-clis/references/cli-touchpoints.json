@@ -496,14 +496,15 @@
       "id": "claude.plugin-commands",
       "cli": "claude",
       "kind": "harness",
-      "contract": "`claude plugin marketplace add|update`, `claude plugin install|update`, `claude --plugin-dir`; `claude plugin list --json` lists every install record (user, project, local) with its projectPath, and `claude plugin update --scope <scope>` moves the record of that scope for the cwd's project, except that from a linked worktree it resolves the local scope to the main checkout's record (`updateOutcome: up_to_date` against that record, measured 2026-10-08 on 2.1.295), so a worktree-keyed local record is out of its reach",
+      "contract": "`claude plugin marketplace add|update`, `claude plugin install|update|uninstall`, `claude --plugin-dir`; `claude plugin list --json` lists every install record (user, project, local) with its projectPath, and `claude plugin update --scope <scope>` moves the record of that scope for the cwd's project, except that from a linked worktree it resolves the local scope to the main checkout's local record when there is one (`updateOutcome: up_to_date` against that record, measured 2026-10-08), and to the worktree's own only without it; a session in a linked worktree loads the main checkout's local record, then its project record, and the worktree's own local record only without both, so a behind worktree-keyed local record next to a main-checkout record is inert (session init `plugins[].path`, desktop 2.1.293 and CLI 2.1.295); a session that starts in a linked worktree with no record keyed by it writes one when local settings enable the plugin, its own `.claude/settings.local.json` or the main checkout's, copying the version of an existing record; `claude plugin uninstall --scope <scope>` removes only the record keyed by the cwd but clears the plugin from the settings of the repository holding the cwd, which is the main checkout's `.claude/settings.local.json` from a linked worktree or from a plain folder inside a checkout, and only the cwd's own from a folder that is its own repository (measured 2026-10-09 against a copied config with `CLAUDE_CONFIG_DIR`); no option targets a record by path",
       "pointers": [
         { "file": "docs/reference.md", "anchor": "claude plugin marketplace add byvict/pstack-vic" },
         { "file": "docs/reference.md", "anchor": "claude --plugin-dir" },
-        { "file": "scripts/release.ts", "anchor": "function linkedWorktree" }
+        { "file": "scripts/release.ts", "anchor": "function mainCheckoutOf" },
+        { "file": "scripts/release.ts", "anchor": "function removeGone" }
       ],
       "coveredBy": [],
-      "measuredOn": "2.1.281"
+      "measuredOn": "2.1.295"
     },
     {
       "id": "claude.background-drain",
