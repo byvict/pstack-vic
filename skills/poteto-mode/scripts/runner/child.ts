@@ -103,7 +103,7 @@ function spawnChild(
 ): Spawned {
   const child = spawn(executable, [...spec.args], {
     cwd,
-    env,
+    env: { ...spec.environment, ...env },
     stdio: [spec.stdin === "none" ? "ignore" : "pipe", "pipe", "pipe"],
   });
   const exited = new Promise<number>((resolveExit, rejectExit) => {
