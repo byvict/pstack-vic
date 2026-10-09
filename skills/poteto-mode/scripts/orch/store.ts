@@ -45,6 +45,11 @@ export interface LedgerEntry {
 }
 
 export interface InboxPointer {
+  readonly id: string;
+  readonly request: string;
+  readonly attempt: string | null;
+  readonly pr: string;
+  readonly sha: string;
   readonly ts: string;
   readonly agent: string;
   readonly unit: string;
@@ -52,9 +57,49 @@ export interface InboxPointer {
   readonly report: string;
 }
 
-export interface InboxPushResult {
-  readonly pointer: InboxPointer;
-  readonly filename: string;
+export interface Attempt {
+  readonly id: string;
+  readonly request: string;
+  readonly unit: string;
+  readonly agent: string;
+  readonly pr: string;
+  readonly sha: string;
+  readonly settled: boolean;
+}
+
+export interface InboxBatch {
+  readonly id: string;
+  readonly events: readonly InboxPointer[];
+}
+
+export type CompletionOutcome = { readonly kind: "discard"; readonly reason: string } | {
+  readonly kind: "unit";
+  readonly state: string;
+  readonly branch?: string;
+  readonly pr?: number;
+  readonly sha?: string;
+  readonly ledger?: RecordLedgerParams;
+};
+
+export interface AckDecision {
+  readonly event: string;
+  readonly outcome: CompletionOutcome;
+}
+
+interface SavedDecision extends AckDecision {
+  readonly batch: string;
+  readonly before: Unit | null;
+  readonly after: Unit | null;
+  readonly ledger: LedgerEntry | null;
+  readonly completed: boolean;
+}
+
+interface InboxState {
+  readonly version: 1;
+  attempts: Attempt[];
+  events: InboxPointer[];
+  batches: { id: string; events: string[]; requests: string[] }[];
+  decisions: SavedDecision[];
 }
 
 export interface OpenGate {
@@ -147,6 +192,8 @@ export interface CheckLedgerParams {
 }
 
 export interface PushInboxParams {
+  readonly attempt: string;
+  readonly request: string;
   readonly agent: string;
   readonly unit: string;
   readonly status: string;
@@ -181,6 +228,9 @@ export interface OpenStoreOptions {
 }
 
 export interface Store {
+  readonly attempts: {
+    readonly begin: (params: { unit: string; agent: string; request: string }) => Promise<Attempt>;
+  };
   readonly units: {
     readonly add: (params: AddUnitParams) => Promise<Unit>;
     readonly set: (params: SetUnitParams) => Promise<Unit>;
@@ -194,8 +244,10 @@ export interface Store {
     readonly summary: () => Promise<Counts>;
   };
   readonly inbox: {
-    readonly push: (params: PushInboxParams) => Promise<InboxPushResult>;
-    readonly drain: () => Promise<readonly InboxPointer[]>;
+    readonly push: (params: PushInboxParams) => Promise<InboxPointer>;
+    readonly drain: (request: string) => Promise<InboxBatch>;
+    readonly ack: (batch: string, decisions: readonly AckDecision[]) => Promise<readonly SavedDecision[]>;
+    readonly history: () => Promise<InboxState>;
     readonly peek: () => Promise<readonly InboxPointer[]>;
     readonly count: () => Promise<number>;
   };
@@ -545,16 +597,6 @@ async function saveLedger(
   );
 }
 
-function pointerCells(pointer: InboxPointer): readonly string[] {
-  return [
-    pointer.ts,
-    pointer.agent,
-    pointer.unit,
-    pointer.status,
-    pointer.report,
-  ];
-}
-
 async function readPointers(
   directory: string
 ): Promise<readonly InboxPointer[]> {
@@ -583,6 +625,11 @@ async function readPointers(
       throw new UserError(`inbox pointer ${entry.name} is malformed`);
     }
     result.push({
+      id: `legacy:${entry.name}`,
+      request: `legacy:${entry.name}`,
+      attempt: null,
+      pr: "",
+      sha: "",
       ts: row[0] ?? "",
       agent: row[1] ?? "",
       unit: row[2] ?? "",
@@ -591,6 +638,118 @@ async function readPointers(
     });
   }
   return result;
+}
+
+function stringFields<Field extends string>(value: unknown, fields: readonly Field[]): value is Record<Field, string> {
+  return isRecord(value) && fields.every((field) => typeof value[field] === "string");
+}
+
+function isUnit(value: unknown): value is Unit {
+  return stringFields(value, ["id", "track", "state", "branch", "pr", "sha", "brief"]);
+}
+
+function isLedger(value: unknown): value is LedgerEntry {
+  return stringFields(value, ["pr", "sha", "verdict", "evidence", "verifier", "ts"]) && verdictOrNull(value.verdict ?? "") !== null;
+}
+
+function isAttempt(value: unknown): value is Attempt {
+  return isRecord(value) && typeof value.settled === "boolean" && stringFields(value, ["id", "request", "unit", "agent", "pr", "sha"]);
+}
+
+function isPointer(value: unknown): value is InboxPointer {
+  return isRecord(value) && (value.attempt === null || typeof value.attempt === "string") &&
+    stringFields(value, ["id", "request", "pr", "sha", "ts", "agent", "unit", "status", "report"]);
+}
+
+export function parseAckDecisions(value: unknown): readonly AckDecision[] {
+  if (!isUnknownArray(value)) throw new UserError("ack file must contain an array of decisions");
+  const result: AckDecision[] = value.map((entry) => {
+    if (!isRecord(entry) || typeof entry.event !== "string" || !isRecord(entry.outcome)) throw new UserError("invalid ack decision");
+    const event = requiredCell(entry.event, "event"), outcome = entry.outcome;
+    if (outcome.kind === "discard" && typeof outcome.reason === "string") {
+      return { event, outcome: { kind: "discard", reason: requiredCell(outcome.reason, "discard reason") } };
+    }
+    if (outcome.kind !== "unit" || typeof outcome.state !== "string") throw new UserError("invalid completion outcome");
+    for (const field of ["branch", "sha"] as const) {
+      if (outcome[field] !== undefined && typeof outcome[field] !== "string") throw new UserError(`invalid outcome ${field}`);
+    }
+    if (outcome.pr !== undefined && typeof outcome.pr !== "number") throw new UserError("invalid outcome PR");
+    let ledger: RecordLedgerParams | undefined;
+    if (outcome.ledger !== undefined) {
+      const row = outcome.ledger;
+      if (!isRecord(row) || typeof row.pr !== "number" || typeof row.sha !== "string" || typeof row.verdict !== "string" ||
+        typeof row.evidence !== "string" || (row.verifier !== undefined && typeof row.verifier !== "string")) throw new UserError("invalid outcome ledger");
+      ledger = { pr: positiveInteger(row.pr, "PR"), sha: requiredCell(row.sha, "SHA"), verdict: parseVerdict(row.verdict),
+        evidence: requiredCell(row.evidence, "evidence"), ...(row.verifier === undefined ? {} : { verifier: requiredCell(row.verifier, "verifier") }) };
+    }
+    return { event, outcome: { kind: "unit", state: requiredCell(outcome.state, "state"),
+      ...(outcome.branch === undefined ? {} : { branch: requiredCell(String(outcome.branch), "branch") }),
+      ...(outcome.pr === undefined ? {} : { pr: positiveInteger(outcome.pr, "PR") }),
+      ...(outcome.sha === undefined ? {} : { sha: requiredCell(String(outcome.sha), "SHA") }), ...(ledger === undefined ? {} : { ledger }) } };
+  });
+  if (new Set(result.map((entry) => entry.event)).size !== result.length) throw new UserError("duplicate event in ack");
+  return result;
+}
+
+function isSavedDecision(value: unknown): value is SavedDecision {
+  if (!isRecord(value) || typeof value.batch !== "string" || typeof value.completed !== "boolean" ||
+    !(value.before === null || isUnit(value.before)) || !(value.after === null || isUnit(value.after)) ||
+    !(value.ledger === null || isLedger(value.ledger))) return false;
+  try { parseAckDecisions([value]); return true; } catch { return false; }
+}
+
+async function readInboxState(store: string): Promise<InboxState> {
+  const path = join(store, "inbox-state.json");
+  let state: InboxState = { version: 1, attempts: [], events: [], batches: [], decisions: [] };
+  if (await exists(path)) {
+    let raw: unknown;
+    try { raw = JSON.parse(await readFile(path, "utf8")); } catch { throw new UserError("inbox-state.json is malformed"); }
+    if (!isRecord(raw) || raw.version !== 1 || !isUnknownArray(raw.attempts) || !raw.attempts.every(isAttempt) ||
+      !isUnknownArray(raw.events) || !raw.events.every(isPointer) || !isUnknownArray(raw.decisions) || !raw.decisions.every(isSavedDecision) ||
+      !isUnknownArray(raw.batches) || !raw.batches.every((batch): batch is InboxState["batches"][number] => isRecord(batch) && typeof batch.id === "string" &&
+        isUnknownArray(batch.events) && batch.events.every((id) => typeof id === "string") &&
+        isUnknownArray(batch.requests) && batch.requests.every((id) => typeof id === "string"))) throw new UserError("inbox-state.json has an invalid shape");
+    state = { version: 1, attempts: [...raw.attempts], events: [...raw.events], decisions: [...raw.decisions], batches: [...raw.batches] };
+  }
+  // Old TSV pointers have no trustworthy attempt/head. Retain them for explicit discard only.
+  for (const pointer of await readPointers(join(store, "inbox"))) {
+    if (!state.events.some((event) => event.id === pointer.id)) state.events.push(pointer);
+  }
+  return state;
+}
+
+async function saveInboxState(store: string, state: InboxState): Promise<void> {
+  await atomicWrite(join(store, "inbox-state.json"), JSON.stringify(state, null, 2) + "\n");
+}
+
+function pendingEvents(state: InboxState): InboxPointer[] {
+  return state.events.filter((event) => !state.decisions.some((decision) => decision.event === event.id && decision.completed));
+}
+
+async function applyDecision(store: string, state: InboxState, decision: SavedDecision): Promise<void> {
+  if (decision.completed) return;
+  if (decision.after !== null) {
+    const after = decision.after;
+    const units = [...await readUnits(store)], index = units.findIndex((unit) => unit.id === after.id), current = units[index];
+    if (JSON.stringify(current) !== JSON.stringify(decision.before) && JSON.stringify(current) !== JSON.stringify(decision.after)) {
+      throw new UserError("pending completion conflicts with unit; evidence retained");
+    }
+    units[index] = decision.after;
+    await saveUnits(store, units);
+  }
+  if (decision.ledger !== null) {
+    const rows = [...await readLedger(store)], row = decision.ledger;
+    const index = rows.findIndex((old) => old.pr === row.pr && old.sha === row.sha);
+    if (index < 0) rows.push(row); else rows[index] = row;
+    await saveLedger(store, rows);
+  }
+  const pointer = state.events.find((event) => event.id === decision.event);
+  if (decision.outcome.kind === "unit" && pointer !== undefined) {
+    const index = state.attempts.findIndex((attempt) => attempt.id === pointer.attempt), attempt = state.attempts[index];
+    if (attempt !== undefined) state.attempts[index] = { ...attempt, settled: true };
+  }
+  state.decisions[state.decisions.findIndex((entry) => entry.event === decision.event)] = { ...decision, completed: true };
+  await saveInboxState(store, state);
 }
 
 function renderGates(rows: readonly Gate[]): string {
@@ -1238,11 +1397,51 @@ export function openStore(
       );
     }
     await ensureLock();
+    await recoverPending();
   };
 
+  const recoverPending = async (): Promise<void> => {
+    if (!(await exists(join(store, "inbox-state.json")))) return;
+    let state = await readInboxState(store);
+    if (!state.decisions.some((decision) => !decision.completed)) return;
+    await ensureLock();
+    state = await readInboxState(store);
+    for (const decision of state.decisions) if (!decision.completed) await applyDecision(store, state, decision);
+  };
+
+  // One handle may receive overlapping API calls; serialize the same commands as the CLI.
+  let commands: Promise<unknown> = Promise.resolve();
+  const serial = <Args extends unknown[], Result>(operation: (...args: Args) => Promise<Result>, recover = true): ((...args: Args) => Promise<Result>) =>
+    (...args) => {
+      const next = commands.then(async () => {
+        if (!closed && recover) await recoverPending();
+        return operation(...args);
+      });
+      commands = next.catch(() => undefined);
+      return next;
+    };
+
   return {
+    attempts: {
+      begin: serial(async (params) => {
+        await beginWrite();
+        const state = await readInboxState(store);
+        const request = requiredCell(params.request, "attempt request"), unit = requiredCell(params.unit, "unit"), agent = requiredCell(params.agent, "agent");
+        const previous = state.attempts.find((attempt) => attempt.request === request);
+        if (previous !== undefined) {
+          if (previous.unit !== unit || previous.agent !== agent) throw new UserError("attempt request already used with different input");
+          return previous;
+        }
+        const row = (await readUnits(store)).find((entry) => entry.id === unit);
+        if (row === undefined) throw new NotFoundError(`unit ${unit} not found`);
+        const attempt: Attempt = { id: randomUUID(), request, unit, agent, pr: row.pr, sha: row.sha, settled: false };
+        state.attempts.push(attempt);
+        await saveInboxState(store, state);
+        return attempt;
+      }),
+    },
     units: {
-      add: async (params) => {
+      add: serial(async (params) => {
         await beginWrite();
         const row: Unit = {
           id: requiredCell(params.id, "unit id"),
@@ -1263,8 +1462,8 @@ export function openStore(
         rows.push(row);
         await saveUnits(store, rows);
         return row;
-      },
-      set: async (params) => {
+      }),
+      set: serial(async (params) => {
         await beginWrite();
         const id = requiredCell(params.id, "unit id");
         const state = requiredCell(params.state, "state");
@@ -1293,8 +1492,8 @@ export function openStore(
         rows[index] = row;
         await saveUnits(store, rows);
         return row;
-      },
-      get: async (id) => {
+      }),
+      get: serial(async (id) => {
         ensureOpen();
         const cleanId = requiredCell(id, "unit id");
         const row = (await readUnits(store)).find(
@@ -1304,8 +1503,8 @@ export function openStore(
           throw new NotFoundError(`unit ${cleanId} not found`);
         }
         return row;
-      },
-      list: async (params = {}) => {
+      }),
+      list: serial(async (params = {}) => {
         ensureOpen();
         const state =
           params.state === undefined
@@ -1320,16 +1519,16 @@ export function openStore(
             (state === undefined || unit.state === state) &&
             (track === undefined || unit.track === track)
         );
-      },
-      counts: async () => {
+      }),
+      counts: serial(async () => {
         ensureOpen();
         return countValues(
           (await readUnits(store)).map((unit) => unit.state)
         );
-      },
+      }),
     },
     ledger: {
-      record: async (params) => {
+      record: serial(async (params) => {
         await beginWrite();
         const verdict = parseVerdict(params.verdict);
         const row: LedgerEntry = {
@@ -1354,8 +1553,8 @@ export function openStore(
         }
         await saveLedger(store, rows);
         return row;
-      },
-      check: async (params) => {
+      }),
+      check: serial(async (params) => {
         ensureOpen();
         const pr = String(positiveInteger(params.pr, "PR"));
         const sha = requiredCell(params.sha, "SHA");
@@ -1369,68 +1568,108 @@ export function openStore(
           });
         }
         return row;
-      },
-      summary: async () => {
+      }),
+      summary: serial(async () => {
         ensureOpen();
         return countValues(
           (await readLedger(store)).map((row) => row.verdict)
         );
-      },
+      }),
     },
     inbox: {
-      push: async (params) => {
+      push: serial(async (params) => {
         await beginWrite();
-        const pointer: InboxPointer = {
-          ts: new Date().toISOString(),
-          agent: requiredCell(params.agent, "agent"),
-          unit: requiredCell(params.unit, "unit"),
-          status: requiredCell(params.status, "status"),
-          report:
-            params.report === undefined
-              ? ""
-              : requiredCell(params.report, "report"),
-        };
-        const inbox = join(store, "inbox");
-        if (!(await exists(inbox))) {
-          throw new UserError(
-            `store is not initialized at ${store}; run orch init`
-          );
+        const state = await readInboxState(store);
+        const request = requiredCell(params.request, "completion request"), attemptId = requiredCell(params.attempt, "attempt");
+        const agent = requiredCell(params.agent, "agent"), unit = requiredCell(params.unit, "unit"), status = requiredCell(params.status, "status");
+        const report = params.report === undefined ? "" : requiredCell(params.report, "report");
+        const previous = state.events.find((event) => event.request === request);
+        if (previous !== undefined) {
+          if (previous.attempt !== attemptId || previous.agent !== agent || previous.unit !== unit || previous.status !== status || previous.report !== report) throw new UserError("completion request already used with different input");
+          return previous;
         }
-        const timestamp = pointer.ts.replace(/[:.]/g, "-");
-        const filename = `${timestamp}-${process.pid}-${randomUUID()}.tsv`;
-        const contents = `${pointerCells(pointer).map(cleanCell).join("\t")}\n`;
-        await atomicWrite(join(inbox, filename), contents);
-        return { pointer, filename };
-      },
-      drain: async () => {
+        const attempt = state.attempts.find((row) => row.id === attemptId);
+        if (attempt === undefined || attempt.unit !== unit || attempt.agent !== agent) throw new UserError("unknown completion attempt or owner mismatch");
+        const pointer: InboxPointer = { id: randomUUID(), request, attempt: attempt.id, pr: attempt.pr, sha: attempt.sha,
+          ts: new Date().toISOString(), agent, unit, status, report };
+        state.events.push(pointer);
+        await saveInboxState(store, state);
+        return pointer;
+      }),
+      drain: serial(async (requestId) => {
         await beginWrite();
-        const inbox = join(store, "inbox");
-        const rows = await readPointers(inbox);
-        const drained = join(
-          store,
-          `.inbox-drain-${process.pid}-${randomUUID()}`
-        );
-        await rename(inbox, drained);
-        try {
-          await mkdir(inbox);
-        } catch (error) {
-          await rename(drained, inbox);
-          throw error;
+        const request = requiredCell(requestId, "drain request"), state = await readInboxState(store);
+        let batch = state.batches.find((row) => row.requests.includes(request));
+        if (batch === undefined) {
+          const pending = new Set(pendingEvents(state).map((event) => event.id));
+          batch = state.batches.find((row) => row.events.some((id) => pending.has(id)));
+          if (batch === undefined) {
+            batch = { id: randomUUID(), events: [...pending], requests: [] };
+            state.batches.push(batch);
+          }
+          batch.requests.push(request);
+          await saveInboxState(store, state);
         }
-        await rm(drained, { recursive: true, force: true });
-        return rows;
-      },
-      peek: async () => {
+        const ids = new Set(batch.events);
+        return { id: batch.id, events: state.events.filter((event) => ids.has(event.id)) };
+      }),
+      ack: serial(async (batchId, input) => {
+        await beginWrite();
+        const state = await readInboxState(store), decisions = parseAckDecisions(input);
+        const batch = state.batches.find((row) => row.id === requiredCell(batchId, "batch"));
+        if (batch === undefined) throw new NotFoundError("unknown inbox batch");
+        const accepted: SavedDecision[] = [];
+        for (const decision of decisions) {
+          if (!batch.events.includes(decision.event)) throw new UserError("event does not belong to batch");
+          const previous = state.decisions.find((row) => row.event === decision.event);
+          if (previous !== undefined) {
+            if (JSON.stringify(previous.outcome) !== JSON.stringify(decision.outcome)) throw new UserError("ack decision already recorded with different outcome");
+            accepted.push(previous);
+            continue;
+          }
+          const pointer = state.events.find((event) => event.id === decision.event);
+          if (pointer === undefined) throw new UserError("batch event missing; evidence retained");
+          let before: Unit | null = null, after: Unit | null = null, ledger: LedgerEntry | null = null;
+          if (decision.outcome.kind === "unit") {
+            const attempt = state.attempts.findLast((row) => row.unit === pointer.unit);
+            before = (await readUnits(store)).find((unit) => unit.id === pointer.unit) ?? null;
+            if (pointer.attempt === null) throw new UserError("completion has no attempt binding; retain or discard with reason");
+            if (attempt === undefined || attempt.id !== pointer.attempt || attempt.settled) throw new UserError("stale or settled completion attempt; evidence retained");
+            if (before === null || before.pr !== pointer.pr || before.sha !== pointer.sha) throw new UserError("completion head binding changed; evidence retained");
+            const outcome = decision.outcome;
+            const resultingUnit = { ...before, state: outcome.state, branch: outcome.branch ?? before.branch,
+              pr: outcome.pr === undefined ? before.pr : String(outcome.pr), sha: outcome.sha ?? before.sha };
+            after = resultingUnit;
+            const frontierHead = (await readFrontier(store)).prs.find((row) => String(row.pr) === resultingUnit.pr);
+            if (frontierHead !== undefined && frontierHead.sha !== resultingUnit.sha) throw new UserError("completion frontier head binding changed; evidence retained");
+            if (outcome.ledger !== undefined) {
+              if (String(outcome.ledger.pr) !== after.pr || outcome.ledger.sha !== after.sha) throw new UserError("completion ledger must match resulting unit head");
+              ledger = { ...outcome.ledger, pr: String(outcome.ledger.pr), verifier: outcome.ledger.verifier ?? "", ts: new Date().toISOString() };
+            }
+          }
+          const saved: SavedDecision = { ...decision, batch: batch.id, before, after, ledger, completed: false };
+          state.decisions.push(saved);
+          await saveInboxState(store, state);
+          await applyDecision(store, state, saved);
+          accepted.push({ ...saved, completed: true });
+        }
+        return accepted;
+      }),
+      peek: serial(async () => {
         ensureOpen();
-        return readPointers(join(store, "inbox"));
-      },
-      count: async () => {
+        return pendingEvents(await readInboxState(store));
+      }),
+      count: serial(async () => {
         ensureOpen();
-        return (await readPointers(join(store, "inbox"))).length;
-      },
+        return pendingEvents(await readInboxState(store)).length;
+      }),
+      history: serial(async () => {
+        ensureOpen();
+        return readInboxState(store);
+      }),
     },
     gates: {
-      park: async (params) => {
+      park: serial(async (params) => {
         await beginWrite();
         const gate: OpenGate = {
           kind: "open",
@@ -1451,14 +1690,14 @@ export function openStore(
         }
         await atomicWrite(join(store, "gates.md"), renderGates(rows));
         return gate;
-      },
-      list: async () => {
+      }),
+      list: serial(async () => {
         ensureOpen();
         return (await readGates(store)).filter(
           (gate): gate is OpenGate => gate.kind === "open"
         );
-      },
-      resolve: async (params) => {
+      }),
+      resolve: serial(async (params) => {
         await beginWrite();
         const id = requiredLine(params.id, "gate id");
         const rows = [...(await readGates(store))];
@@ -1478,10 +1717,10 @@ export function openStore(
         rows[index] = gate;
         await atomicWrite(join(store, "gates.md"), renderGates(rows));
         return gate;
-      },
+      }),
     },
     frontier: {
-      set: async (params) => {
+      set: serial(async (params) => {
         await beginWrite();
         const repo = resolve(requiredLine(params.repo, "repo directory"));
         const pin =
@@ -1509,18 +1748,18 @@ export function openStore(
           `${JSON.stringify(value, null, 2)}\n`
         );
         return value;
-      },
-      show: async () => {
+      }),
+      show: serial(async () => {
         ensureOpen();
         return readFrontier(store);
-      },
+      }),
     },
     standing: {
-      show: async () => {
+      show: serial(async () => {
         ensureOpen();
         return readStanding(store);
-      },
-      add: async (params) => {
+      }),
+      add: serial(async (params) => {
         await beginWrite();
         const rows = [...(await readStanding(store))];
         const item: StandingLine = {
@@ -1533,10 +1772,10 @@ export function openStore(
           `${rows.map((row) => `${row.number}. ${row.line}`).join("\n")}\n`
         );
         return item;
-      },
+      }),
     },
     status: {
-      render: async () => {
+      render: serial(async () => {
         await beginWrite();
         const unitRows = await readUnits(store);
         const ledgerRows = await readLedger(store);
@@ -1571,21 +1810,22 @@ export function openStore(
           summary: currentSummary,
           changed: change,
         };
-      },
+      }),
     },
-    init: async () => {
+    init: serial(async () => {
       ensureOpen();
       await mkdir(store, { recursive: true });
       await ensureLock();
       await writeIfMissing(join(store, "units.tsv"), `${UNIT_HEADER}\n`);
       await writeIfMissing(join(store, "ledger.tsv"), `${LEDGER_HEADER}\n`);
       await mkdir(join(store, "inbox"), { recursive: true });
+      await writeIfMissing(join(store, "inbox-state.json"), JSON.stringify({ version: 1, attempts: [], events: [], batches: [], decisions: [] }) + "\n");
       await writeIfMissing(join(store, "gates.md"), "");
       await writeIfMissing(join(store, "preferences.md"), "");
       await writeIfMissing(join(store, "frontier.json"), "{}\n");
       return { store };
-    },
-    close: async () => {
+    }),
+    close: serial(async () => {
       if (closed) {
         return;
       }
@@ -1602,6 +1842,6 @@ export function openStore(
       if (release !== null) {
         await release();
       }
-    },
+    }, false),
   };
 }

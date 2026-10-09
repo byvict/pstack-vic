@@ -156,7 +156,7 @@ Nada é declarado em manifest. O que as skills usam:
 - **CLIs `claude`, `codex` e `grok`** — autenticados, só os que o sheet de modelos usa. O pai prefere lanes nativas e pode usar o runner do mesmo provedor quando a rota nativa não atende à tarefa. A versão delas muda só pela skill `update-clis` (seção [Versões das CLIs](#versões-das-clis)).
 - **`gh`** — forge padrão dos playbooks; quando Origin está disponível e resolve o repositório, os playbooks seguem essa rota. `gt` só no playbook Orchestrate. A skill `update-clis` também usa `gh` para ler as releases do codex.
 - **`lsof`** — só para `update-clis`, que o usa para saber se alguém está rodando a CLI que ela trocaria.
-- **`bun`** — para `watch-pr` e `orch`, originados na Cursor, e para os testes deles e o typecheck do `watch-pr` (`npm run test:bun`). O watcher conserva observações adicionais de admissão, sem acrescentar gates: single/stack retornam readiness upstream; `--queued-stack` espera o merge efetivo. `LANDING` pode informar unknown, falha ou remoção mesmo com `READY`. A decisão e os limites estão no [ADR 0006](adr/0006-watcher-observa-admissao-sem-gates-extras.md).
+- **`bun`** — para `watch-pr` e `orch`, originados na Cursor, e para os testes deles e o typecheck dos dois (`npm run test:bun`). O watcher conserva observações adicionais de admissão, sem acrescentar gates: single/stack retornam readiness upstream; `--queued-stack` espera o merge efetivo. `LANDING` pode informar unknown, falha ou remoção mesmo com `READY`. A decisão e os limites estão no [ADR 0006](adr/0006-watcher-observa-admissao-sem-gates-extras.md).
 - **`jq` e `rg`** — só para `worktree-audit.sh` (playbook Worktree cleanup); sem eles o audit avisa e deixa colunas em branco.
 - **`run`, `verify`, `loop`** — built-ins do Claude Code; **`skill-creator`** — skill oficial da Anthropic para autoria de SKILL.md. Os quatro têm substituto em `codex-tools.md`. O `verify` nem sempre fica ao alcance do agente, e a seção [Autopilot](#autopilot) diz o que a lane de tela usa nesse caso.
 
@@ -474,6 +474,35 @@ Vinte e quatro skills de um princípio cada. `poteto-mode` indexa todas inline e
 - **`pstack-<família>-<effort>`** — lanes nativas do Claude Code para cada família com `agentStem` na matriz (hoje `fable` e `opus`) em cada effort selecionável, geradas por `npm run agents:generate` e verificadas por `agents:check`. Não são fluxos de usuário; `provider-dispatch.md` as despacha a partir do papel configurado. No Codex não há arquivo: `spawn_agent` recebe `model` e `reasoning_effort`.
 
 **A trava dos agentes embutidos.** O plugin registra um hook do Claude Code, `hooks/agent-guard.mjs`, que roda antes de cada chamada da ferramenta `Agent`. Ele recusa `Explore`, `Plan` e `general-purpose` quando quem chama é um agente do pstack (um Dono ou um `poteto-agent`), e a recusa diz o caminho certo. Esses três agentes rodam sem a skill `poteto-mode`, e o `Explore` e o `Plan` nem carregam a planilha de modelos. A sessão principal não é afetada: você continua podendo usar qualquer agente. O hook não injeta nada no início da sessão, então `poteto-mode` continua entrando só por comando. No Codex o hook não existe.
+
+## Completions do orch
+
+O `orch` conserva tentativas, eventos, lotes e decisões em `inbox-state.json`. Registre `orch attempt begin <unit> <agent-label> --request <dispatch-id>` antes de despachar e inclua no brief o ID retornado e o PR/head de entrada. A unidade precisa existir; seu head pode estar vazio antes do primeiro build. Um request repetido recupera a mesma tentativa; uma substituição ou novo head exige outro request. O registro não lança nem agenda agentes, e substituir a tentativa aceita não demonstra a morte da anterior.
+
+Envie `orch inbox push <agent-label> <unit> <status> --attempt <id> --request <completion-id> [--report PATH]` com o binding do despacho. O evento preserva esse PR/head, mesmo se a unidade já avançou. Push repetido com o mesmo request e payload retorna o mesmo evento; payload diferente é recusado. `orch inbox peek` e `count` mostram os eventos ainda sem confirmação.
+
+`orch --json inbox drain --request <drain-id>` retorna `{id, events}` e conserva o lote antes de emitir. O mesmo request sempre recupera o mesmo lote. Um lote incompleto volta antes das novas chegadas. Prepare um array de decisões e execute `orch inbox ack <batch-id> --file <path>`:
+
+```json
+[
+  {
+    "event": "ID_DO_EVENTO",
+    "outcome": {
+      "kind": "unit",
+      "state": "published",
+      "pr": 12,
+      "sha": "HEAD_RESULTANTE",
+      "ledger": { "pr": 12, "sha": "HEAD_RESULTANTE", "verdict": "unit-test-verified", "evidence": "report.md" }
+    }
+  }
+]
+```
+
+`branch`, `pr`, `sha` e `ledger` são opcionais; o ledger precisa corresponder ao head resultante. Cada evento é confirmado depois de aplicar sua decisão local. A intenção persistida conserva valores e timestamp; após um crash, a próxima operação recupera unidade e ledger antes de aceitar outro avanço. O ack idêntico já concluído retorna seu recibo sem reaplicar, mesmo após restack ou substituição. Um array pode confirmar parte do lote antes de falhar numa decisão posterior: confira `orch inbox history` e repita as decisões idênticas restantes.
+
+Uma tentativa supersedida ou já concluída, ou um head de entrada divergente, não pode aplicar estado/ledger. Para um PR presente na frontier, o head resultante também precisa coincidir com o SHA observado nela: atualize a frontier antes do ack, inclusive quando o build produzir um novo head. Após restack externo ou restart, reconcilie os heads das unidades com as branches atuais antes de despachar ou drenar. O evento e o lote permanecem inspecionáveis. Após inspecionar, confirme o descarte com `{"event":"ID","outcome":{"kind":"discard","reason":"motivo e evidência"}}`. Pointers TSV antigos continuam preservados como eventos sem binding e só permitem esse descarte explícito; a migração não inventa tentativa/head retroativos. O store mantém o histórico sem coleta automática.
+
+As garantias cobrem comandos locais serializados sob o lock do store, atomic rename e crashes de processo. Não use `--force` para concorrer com um escritor vivo. Edição direta dos arquivos, perda de disco/energia e efeitos externos ficam fora desse contrato. Antes de repetir um efeito externo com confirmação perdida, reconcilie sua operation key com um destino que ofereça idempotência/consulta; emitir stdout ou um ack local não garante exatamente uma escrita nesse destino.
 
 ## Verificação
 

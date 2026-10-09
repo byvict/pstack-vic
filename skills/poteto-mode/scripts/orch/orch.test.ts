@@ -204,6 +204,7 @@ describe("Store", () => {
       "frontier.json",
       "gates.md",
       "inbox",
+      "inbox-state.json",
       "ledger.tsv",
       "preferences.md",
       "units.tsv",
@@ -302,34 +303,108 @@ describe("Store", () => {
     });
   });
 
-  it("pushes, peeks, and atomically drains inbox pointers", async () => {
-    const { directory, store } = await initializedStore();
-
-    const first = await store.inbox.push({
-      agent: "worker-1",
-      unit: "u1",
-      status: "done",
-      report: "reports/u1.md",
-    });
-    expect(first.pointer).toMatchObject({ unit: "u1", status: "done" });
-    expect(first.filename).toEndWith(".tsv");
-    await store.inbox.push({
-      agent: "worker-2",
-      unit: "u2",
-      status: "failed",
-    });
-
-    expect(await store.inbox.count()).toBe(2);
-    expect(await store.inbox.peek()).toHaveLength(2);
-    expect(await store.inbox.count()).toBe(2);
-    expect(await store.inbox.drain()).toHaveLength(2);
+  it("retains batches until local decisions are applied and confirmed", async () => {
+    const { store } = await initializedStore();
+    await store.units.add({ id: "u1", track: "build" });
+    await store.units.set({ id: "u1", state: "running", pr: 12, sha: "head" });
+    const request = { unit: "u1", agent: "worker", request: "dispatch-1" };
+    const attempt = await store.attempts.begin(request);
+    expect(await store.attempts.begin(request)).toEqual(attempt);
+    const push = { agent: "worker", unit: "u1", status: "done", report: "report.md", attempt: attempt.id, request: "completion-1" };
+    const pointer = await store.inbox.push(push);
+    expect(await store.inbox.push(push)).toEqual(pointer);
+    const batch = await store.inbox.drain("drain-1");
+    expect(await store.inbox.drain("drain-1")).toEqual(batch);
+    expect(batch.events).toEqual([pointer]);
+    expect(await store.inbox.count()).toBe(1);
+    const decisions = [{ event: pointer.id, outcome: { kind: "unit" as const, state: "published",
+      ledger: { pr: 12, sha: "head", verdict: "unit-test-verified" as const, evidence: "report.md" } } }];
+    const ack = await store.inbox.ack(batch.id, decisions);
+    expect(ack[0]?.completed).toBe(true);
     expect(await store.inbox.count()).toBe(0);
-    expect(await readdir(join(directory, "inbox"))).toEqual([]);
-    expect(
-      (await readdir(directory)).filter((name) =>
-        name.startsWith(".inbox-drain-")
-      )
-    ).toEqual([]);
+    expect((await store.units.get("u1")).state).toBe("published");
+    await store.units.set({ id: "u1", state: "restacked", sha: "new-head" });
+    expect(await store.inbox.ack(batch.id, decisions)).toEqual(ack);
+    expect(await store.inbox.drain("drain-1")).toEqual(batch);
+    expect((await store.units.get("u1")).state).toBe("restacked");
+    expect((await store.inbox.history()).events).toEqual([pointer]);
+    expect(await store.ledger.summary()).toEqual({ "unit-test-verified": 1 });
+  });
+
+  it("rejects superseded attempts and changed heads while retaining their evidence", async () => {
+    const { store } = await initializedStore();
+    await store.units.add({ id: "u", track: "build" });
+    await store.units.set({ id: "u", state: "ready", pr: 12, sha: "head" });
+    const old = await store.attempts.begin({ unit: "u", agent: "worker", request: "old" });
+    const current = await store.attempts.begin({ unit: "u", agent: "worker", request: "new" });
+    const stale = await store.inbox.push({ unit: "u", agent: "worker", status: "done", request: "old-event", attempt: old.id });
+    const batch = await store.inbox.drain("d");
+    await expect(store.inbox.ack(batch.id, [{ event: stale.id, outcome: { kind: "unit", state: "obsolete" } }])).rejects.toThrow("stale or settled");
+    expect((await store.units.get("u")).state).toBe("ready");
+    expect(await store.inbox.count()).toBe(1);
+    await store.inbox.ack(batch.id, [{ event: stale.id, outcome: { kind: "discard", reason: "superseded attempt inspected" } }]);
+    const late = await store.inbox.push({ unit: "u", agent: "worker", status: "done", request: "late-event", attempt: current.id });
+    await store.units.set({ id: "u", state: "restacked", sha: "new-head" });
+    const later = await store.inbox.drain("d2");
+    await expect(store.inbox.ack(later.id, [{ event: late.id, outcome: { kind: "unit", state: "obsolete" } }])).rejects.toThrow("head binding changed");
+    expect((await store.units.get("u")).sha).toBe("new-head");
+    expect((await store.inbox.history()).events).toHaveLength(2);
+  });
+
+  it("rejects a result behind the known frontier head and accepts the observed resulting head", async () => {
+    const { directory, store } = await initializedStore();
+    const stack = await makeGitStack(directory);
+    await withFakeGt({ directory, output: "◯ stack/merged\n◯ stack/closed\n◉ stack/open\n", operation: async () => {
+      await store.frontier.set({ repo: stack.repo });
+      await store.units.add({ id: "u", track: "build" });
+      await store.units.set({ id: "u", state: "ready", pr: 11, sha: stack.openSha });
+      const attempt = await store.attempts.begin({ unit: "u", agent: "worker", request: "dispatch" });
+      const event = await store.inbox.push({ unit: "u", agent: "worker", status: "done", request: "result", attempt: attempt.id });
+      const batch = await store.inbox.drain("drain");
+      await writeFile(join(stack.repo, "result.txt"), "new head\n");
+      git({ repo: stack.repo, args: ["add", "."] });
+      git({ repo: stack.repo, args: ["commit", "-m", "new head"] });
+      const resultSha = git({ repo: stack.repo, args: ["rev-parse", "HEAD"] });
+      await store.frontier.set({ repo: stack.repo });
+      await expect(store.inbox.ack(batch.id, [{ event: event.id, outcome: { kind: "unit", state: "published",
+        ledger: { pr: 11, sha: stack.openSha, verdict: "unit-test-verified", evidence: "old.md" } } }])).rejects.toThrow("frontier head binding changed");
+      expect(await store.units.get("u")).toMatchObject({ state: "ready", sha: stack.openSha });
+      expect(await store.ledger.summary()).toEqual({});
+      expect(await store.inbox.count()).toBe(1);
+      expect((await store.inbox.history()).events).toEqual([event]);
+      await store.inbox.ack(batch.id, [{ event: event.id, outcome: { kind: "unit", state: "published", sha: resultSha,
+        ledger: { pr: 11, sha: resultSha, verdict: "unit-test-verified", evidence: "current.md" } } }]);
+      expect(await store.units.get("u")).toMatchObject({ state: "published", sha: resultSha });
+      expect((await store.ledger.check({ pr: 11, sha: resultSha })).evidence).toBe("current.md");
+      expect(await store.inbox.count()).toBe(0);
+    } });
+  });
+
+  it("serializes overlapping API requests and rejects conflicting replays", async () => {
+    const { store } = await initializedStore();
+    await store.units.add({ id: "u", track: "build" });
+    const request = { unit: "u", agent: "worker", request: "dispatch" };
+    const attempts = await Promise.all([store.attempts.begin(request), store.attempts.begin(request)]);
+    expect(attempts[0]).toEqual(attempts[1]);
+    await expect(store.attempts.begin({ ...request, agent: "other" })).rejects.toThrow("different input");
+    const completion = { unit: "u", agent: "worker", status: "done", attempt: attempts[0]!.id, request: "completion" };
+    const events = await Promise.all([store.inbox.push(completion), store.inbox.push(completion)]);
+    expect(events[0]).toEqual(events[1]);
+    await expect(store.inbox.push({ ...completion, status: "failed" })).rejects.toThrow("different input");
+    const batch = await store.inbox.drain("drain");
+    await store.inbox.ack(batch.id, [{ event: events[0]!.id, outcome: { kind: "discard", reason: "inspected" } }]);
+    await expect(store.inbox.ack(batch.id, [{ event: events[0]!.id, outcome: { kind: "discard", reason: "changed" } }])).rejects.toThrow("different outcome");
+  });
+
+  it("retains unbound legacy pointers and only permits explicit discard", async () => {
+    const { directory, store } = await initializedStore();
+    await writeFile(join(directory, "inbox", "old.tsv"), "now\tworker\tu\tdone\treport.md\n");
+    const batch = await store.inbox.drain("legacy");
+    expect(batch.events[0]?.attempt).toBeNull();
+    await expect(store.inbox.ack(batch.id, [{ event: batch.events[0]!.id, outcome: { kind: "unit", state: "published" } }])).rejects.toThrow("no attempt binding");
+    await store.inbox.ack(batch.id, [{ event: batch.events[0]!.id, outcome: { kind: "discard", reason: "legacy inspected; requires fresh attempt" } }]);
+    expect(await store.inbox.count()).toBe(0);
+    expect(await readFile(join(directory, "inbox", "old.tsv"), "utf8")).toContain("report.md");
   });
 
   it("replaces a stale lock whose holder pid is dead", async () => {
