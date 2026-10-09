@@ -43,6 +43,29 @@ test("native CLI and ACP updates preserve the same tool method and timestamps", 
   assert.equal(readFileSync(copied, "utf8"), "malformed native output");
 });
 
+test("malformed Grok envelopes name the input line and consumed field", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "pstack-invalid-tool-evidence-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const path = join(root, "updates.jsonl");
+  for (const [transport, frame, field] of [
+    ["cli", { method: "session/update", params: { update: { sessionUpdate: 42 } } }, /params.update.sessionUpdate/],
+    ["grok-acp", { kind: 42 }, /kind/],
+    ["grok-acp", { kind: "tool", at: false, update: {} }, /at/],
+  ] as const) {
+    const input = "\n" + JSON.stringify(frame) + "\n";
+    writeFileSync(path, input);
+    assert.throws(() => toolEvents(path, transport), (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.ok(error.message.includes(`${path}:2`));
+      assert.match(error.message, field);
+      return true;
+    });
+    assert.equal(readFileSync(path, "utf8"), input);
+  }
+  writeFileSync(path, "\n{broken\n");
+  assert.throws(() => toolEvents(path, "cli"), /:2: invalid JSON/);
+});
+
 test("the fixed probe command quotes paths without invoking shell substitutions", (t) => {
   const root = mkdtempSync(join(tmpdir(), "pstack-probe-quote-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));

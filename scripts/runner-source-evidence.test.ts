@@ -177,6 +177,7 @@ test("malformed receipt and event inputs retain failure assertions and original 
       ["codex-shape", '{"type":"item.completed","item":null}', (path: string) => sourceCalls(codexEvents(path), "codex")],
       ["grok-json", "{broken", (path: string) => sourceCalls(toolEvents(path, "grok-acp"), "grok")],
       ["grok-shape", '{"kind":"tool","at":"2026-10-08T00:00:00Z","update":null}', (path: string) => sourceCalls(toolEvents(path, "grok-acp"), "grok")],
+      ["grok-native-shape", '{"method":"session/update","params":{"update":{"sessionUpdate":42}}}', (path: string) => sourceCalls(toolEvents(path, "cli"), "grok")],
     ] as const) {
       const directory = join(root, name); mkdirSync(directory);
       const path = join(directory, "input"), stderr = join(directory, "stderr");
