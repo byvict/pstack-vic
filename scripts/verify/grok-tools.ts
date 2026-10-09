@@ -4,9 +4,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 export interface ToolEvent { at: number; update: Record<string, unknown> }
-function object(value: unknown): Record<string, unknown> {
-  assert.ok(value !== null && typeof value === "object" && !Array.isArray(value), "Expected a tool evidence object");
-  return value as Record<string, unknown>;
+function object(value: unknown, label = "tool evidence"): Record<string, unknown> {
+  assert.ok(value !== null && typeof value === "object" && !Array.isArray(value), `${label}: expected an object`);
+  return Object.fromEntries(Object.entries(value));
 }
 
 /** CLI streaming-messages-json omits inner tool calls in Grok 1.0.46. Preserve
@@ -23,21 +23,28 @@ export function captureGrokTools(directory: string, sessionId: string | null, gr
 
 export function toolEvents(path: string, transport: "cli" | "grok-acp"): ToolEvent[] {
   const events: ToolEvent[] = [];
-  for (const line of readFileSync(path, "utf8").trim().split("\n")) {
-    if (!line) continue;
-    const frame = object(JSON.parse(line));
+  for (const [index, line] of readFileSync(path, "utf8").split("\n").entries()) {
+    if (!line.trim()) continue;
+    const label = `${path}:${index + 1}`;
+    let raw: unknown;
+    try { raw = JSON.parse(line); }
+    catch { throw new Error(`${label}: invalid JSON`); }
+    const frame = object(raw, label);
     if (transport === "grok-acp") {
+      assert.ok(typeof frame.kind === "string" && frame.kind.trim(), `${label}.kind: expected a non-empty string`);
       if (frame.kind !== "tool") continue;
-      assert.equal(typeof frame.at, "string");
-      const at = Date.parse(String(frame.at));
-      assert.ok(Number.isFinite(at), "Missing ACP event timestamp");
-      events.push({ at, update: object(frame.update) });
+      assert.ok(typeof frame.at === "string", `${label}.at: expected a timestamp string`);
+      const at = Date.parse(frame.at);
+      assert.ok(Number.isFinite(at), `${label}: missing ACP event timestamp`);
+      events.push({ at, update: object(frame.update, `${label}.update`) });
     } else {
+      assert.ok(typeof frame.method === "string" && frame.method.trim(), `${label}.method: expected a non-empty string`);
       if (frame.method !== "session/update") continue;
-      const params = object(frame.params), update = object(params.update);
-      if (typeof update.sessionUpdate !== "string" || !update.sessionUpdate.startsWith("tool_call")) continue;
-      const at = object(params._meta).agentTimestampMs;
-      assert.ok(typeof at === "number" && Number.isFinite(at), "Missing native Grok event timestamp");
+      const params = object(frame.params, `${label}.params`), update = object(params.update, `${label}.params.update`);
+      assert.ok(typeof update.sessionUpdate === "string" && update.sessionUpdate.trim(), `${label}.params.update.sessionUpdate: expected a non-empty string`);
+      if (!update.sessionUpdate.startsWith("tool_call")) continue;
+      const at = object(params._meta, `${label}.params._meta`).agentTimestampMs;
+      assert.ok(typeof at === "number" && Number.isFinite(at), `${label}: missing native Grok event timestamp`);
       events.push({ at, update });
     }
   }
