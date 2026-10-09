@@ -202,7 +202,11 @@ describe("runProbeLane, simulated parent", () => {
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     assert.equal(seen.PSTACK_KEEP_ME, "kept");
     assert.equal(seen.CLAUDE_CODE_OAUTH_TOKEN, "fake-token");
-    assert.deepEqual(Object.keys(seen).filter((key) => key === "CLAUDECODE" || key.startsWith("CLAUDE_CODE_")), ["CLAUDE_CODE_OAUTH_TOKEN"]);
+    assert.deepEqual(
+      Object.keys(seen).filter((key) => key === "CLAUDECODE" || key.startsWith("CLAUDE_CODE_")).sort(),
+      ["CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"],
+    );
+    assert.equal(seen.CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS, "0");
   });
 
   it("clears session identity and preserves credentials when the real parent runs the lane", async () => {

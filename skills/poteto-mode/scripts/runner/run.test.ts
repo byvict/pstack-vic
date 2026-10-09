@@ -136,6 +136,10 @@ if (name === "grok" && stage === "model" && process.env.FAKE_GROK_CONFIG_RECORD_
     inline: process.env.GROK_CONFIG ?? null,
   }));
 }
+if (stage === "model" && process.env.FAKE_BG_CEILING_RECORD_PATH) {
+  writeFileSync(process.env.FAKE_BG_CEILING_RECORD_PATH,
+    JSON.stringify(process.env.CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS ?? null));
+}
 if (stage === "model" && process.env.FAKE_DESCENDANT_HOLDS_PIPES_MS) {
   const seconds = Number(process.env.FAKE_DESCENDANT_HOLDS_PIPES_MS) / 1000;
   // By absolute path: the PATH of a lane holds only the fakes and node.
@@ -384,6 +388,7 @@ const FAKE_ENV = [
   "FAKE_CASE",
   "FAKE_LOG",
   "FAKE_GROK_CONFIG_RECORD_PATH",
+  "FAKE_BG_CEILING_RECORD_PATH",
 ] as const;
 
 function clearFakeEnv(): void {
@@ -2277,6 +2282,45 @@ describe("Grok environment policy", () => {
       assert.ok(!seen.path.startsWith(input.cwd));
       assert.equal(existsSync(seen.path), false);
       assert.equal(existsSync(dirname(seen.path)), false);
+    });
+  }
+});
+
+describe("Claude background wait", () => {
+  const CEILING = "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS";
+  let saved: string | undefined;
+
+  beforeEach(() => {
+    saved = process.env[CEILING];
+    delete process.env[CEILING];
+  });
+
+  afterEach(() => {
+    if (saved === undefined) delete process.env[CEILING];
+    else process.env[CEILING] = saved;
+  });
+
+  async function ceilingSeenBy(provider: Provider): Promise<string | null> {
+    const record = join(scratch, `${provider}-ceiling.json`);
+    process.env.FAKE_BG_CEILING_RECORD_PATH = record;
+    const input = options(provider);
+    assert.equal((await runLane(input)).exitCode, 0);
+    assert.equal(receipt(input.receiptPath).status, "complete");
+    return JSON.parse(readFileSync(record, "utf8")) as string | null;
+  }
+
+  it("lets a Claude child wait for its background work without the CLI's 10-minute ceiling", async () => {
+    assert.equal(await ceilingSeenBy("claude"), "0");
+  });
+
+  it("keeps the ceiling the caller set", async () => {
+    process.env[CEILING] = "1800000";
+    assert.equal(await ceilingSeenBy("claude"), "1800000");
+  });
+
+  for (const provider of PROVIDERS.filter((candidate) => cliOf(candidate) !== "claude")) {
+    it(`leaves the variable out of a ${provider} child`, async () => {
+      assert.equal(await ceilingSeenBy(provider), null);
     });
   }
 });

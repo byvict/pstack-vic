@@ -13,6 +13,8 @@ export interface CommandSpec {
   readonly command: string;
   readonly args: readonly string[];
   readonly stdin: "prompt" | "none" | "interactive";
+  /** Variables the child gets when the caller's environment leaves them unset. */
+  readonly environment?: Readonly<Record<string, string>>;
 }
 
 /** A config file the child finds through `variable`, with the variables that would shadow it removed. */
@@ -127,6 +129,16 @@ function grokPermissionMode(): string {
   return "bypassPermissions";
 }
 
+/**
+ * `claude -p` waits at most 10 idle minutes after its turn for background
+ * commands and helpers, then stops them, runs no further turn and exits 0 with
+ * the earlier reply, which the receipt would record as complete (measured
+ * 2026-10-08 on 2.1.295). The runner has no implicit timeout, so a Claude child
+ * waits for its background work unless the caller sets its own ceiling; an
+ * explicit --timeout still bounds the run.
+ */
+const CLAUDE_ENVIRONMENT = { CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: "0" } as const;
+
 function effortOverride(effort: Effort): string {
   return `model_reasoning_effort=${JSON.stringify(effort)}`;
 }
@@ -164,6 +176,7 @@ export function invocationCommand(
           "json",
         ],
         stdin: "prompt",
+        environment: CLAUDE_ENVIRONMENT,
       };
     case "codex":
       return {
