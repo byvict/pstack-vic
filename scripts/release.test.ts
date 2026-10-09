@@ -9,9 +9,9 @@ import { fileURLToPath } from 'node:url';
 const script = fileURLToPath(new URL('./release.ts', import.meta.url));
 const commit = 'c'.repeat(40);
 const other = 'd'.repeat(40);
-/** One fake for git, claude and codex, dispatched on its own file name. It answers from FAKE_ROOT/state.json and appends each call to FAKE_ROOT/calls.jsonl. A call the release has no business making, such as `git tag` or `git push`, fails. The fake claude keeps one install record per scope and project, and `plugin update --scope` moves only the record of that scope whose project is the cwd (any cwd for user), as the real CLI does. */
+/** One fake for git, claude and codex, dispatched on its own file name. It answers from FAKE_ROOT/state.json and appends each call to FAKE_ROOT/calls.jsonl. A call the release has no business making, such as `git tag` or `git push`, fails. The fake claude keeps one install record per scope and project, and `plugin update --scope` moves only the record of that scope whose project is the cwd (any cwd for user), as the real CLI does. From a linked worktree (a `.git` file) the project is the main checkout, as Claude Code 2.1.295 resolves it. */
 const fake = `#!/usr/bin/env node
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 const root = process.env.FAKE_ROOT;
 const file = join(root, 'state.json');
@@ -47,7 +47,9 @@ if (name === 'git') {
   if (is('plugin', 'list', '--json')) out(JSON.stringify([{ id: 'other@elsewhere', version: '9.9.9', scope: 'user' }, ...state.claude.records.map(({ lands, ...record }) => ({ id: 'pstack@pstack-vic', ...record }))]));
   else if (is('plugin', 'marketplace', 'update', 'pstack-vic')) { state.claude.fetched = true; save(); }
   else if (is('plugin', 'update', 'pstack@pstack-vic', '--scope', args[4] ?? '')) {
-    const record = state.claude.records.find(r => r.scope === args[4] && (r.scope === 'user' || r.projectPath === process.cwd()));
+    const dotGit = join(process.cwd(), '.git');
+    const project = existsSync(dotGit) && statSync(dotGit).isFile() ? readFileSync(dotGit, 'utf8').trim().replace('gitdir: ', '').split('/.git/worktrees/')[0] : process.cwd();
+    const record = state.claude.records.find(r => r.scope === args[4] && (r.scope === 'user' || r.projectPath === project));
     if (!record) fail('plugin-not-installed');
     state.claude.updates.push([args[4], process.cwd()]);
     if (state.claude.fetched) record.version = record.lands ?? state.claude.latest;
@@ -168,6 +170,20 @@ test('every Claude Code record moves with its own scope, a project or local one 
   assert.deepEqual(s.moves().filter(call => call[0] === 'claude').map(call => call.slice(1).join(' ')), ['plugin marketplace update pstack-vic', 'plugin update pstack@pstack-vic --scope project', 'plugin update pstack@pstack-vic --scope user', 'plugin update pstack@pstack-vic --scope project', 'plugin update pstack@pstack-vic --scope local'], 'one marketplace refresh, then one update per live record');
   assert.deepEqual(s.state().claude.updates.filter(([scope]: string[]) => scope !== 'user'), [['project', clinext], ['project', vic], ['local', local]], 'each project or local update runs from its project');
   assert.deepEqual(s.state().claude.records.map((r: { version: string }) => r.version), ['0.4.8', '0.4.8', '0.4.7', '0.4.8', '0.4.8'], 'the skipped record is left as it was');
+});
+test('a local record of a linked worktree that is behind is skipped and named, because from there the CLI updates the main checkout, and Codex still moves', t => {
+  let vic = '', behind = '', current = '';
+  const s = setup(t, (state, project) => {
+    vic = project('pstack-vic');
+    const linked = (name: string) => { const path = project(name); mkdirSync(join(vic, '.git', 'worktrees', name), { recursive: true }); writeFileSync(join(path, '.git'), `gitdir: ${join(vic, '.git', 'worktrees', name)}\n`); return path; };
+    behind = linked('behind'); current = linked('current');
+    state.claude.records = [{ scope: 'local', projectPath: vic, version: '0.4.7' }, { scope: 'local', projectPath: behind, version: '0.4.7' }, { scope: 'local', projectPath: current, version: '0.4.8' }];
+  });
+  const result = s.run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, ['v0.4.8 is on origin', `Claude Code pstack@pstack-vic (local ${behind}) skipped: from a linked worktree, \`claude plugin update --scope local\` updates the main checkout's local record, so this one stays on 0.4.7`, `Claude Code on pstack@pstack-vic 0.4.8 (local ${vic})`, `Claude Code on pstack@pstack-vic 0.4.8 (local ${current})`, 'Codex on pstack@pstack-vic 0.4.8', ''].join('\n'));
+  assert.deepEqual(s.state().claude.updates, [['local', vic]], 'no update runs from a linked worktree');
+  assert.deepEqual(s.state().claude.records.map((r: { version: string }) => r.version), ['0.4.8', '0.4.7', '0.4.8']);
 });
 test('only the Claude Code records behind the version are updated, and every record is read back', t => {
   let clinext = '';

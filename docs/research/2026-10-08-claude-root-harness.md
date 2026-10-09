@@ -63,8 +63,19 @@ No app, nenhuma ferramenta desta sessão encerra o processo de uma sessão e a r
 - `docs/adr/0010-tick-em-segundo-plano-na-raiz-do-app-desktop.md`: a frase do `--resume` com a medida.
 - `skills/update-clis/references/cli-touchpoints.json`: cinco touchpoints `harness` do Claude: `claude.desktop-scheduler`, `claude.desktop-tick`, `claude.owner-channel`, `claude.todolist-tools` e `claude.subagent-transcript`.
 
+## A release 0.5.27 e os registros `local` de worktree
+
+A primeira execução do `node scripts/release.ts` para a 0.5.27 (23:59Z, de um worktree destacado em `17436658`) saiu com código 1:
+
+- **Na 0.5.27:** o `local` do checkout principal do pstack-vic e os dois `project`, do Clinext e do pstack-vic.
+- **Pulados:** dois registros `local` de worktrees que não existem mais.
+- **A falha:** o `local` do worktree `clever-dewdney-2970c7` ficou em 0.5.26, e o script parou antes do Codex.
+
+A causa foi medida no `claude` 2.1.295: rodado de dentro do worktree, `claude plugin update pstack@pstack-vic --scope local --json` respondeu `updateOutcome: up_to_date` e `oldVersion: 0.5.27`. Ou seja, de um worktree ligado o comando resolve o escopo `local` para o registro do checkout principal, e o registro do próprio worktree fica fora do alcance dele. Os registros `local` desses worktrees foram criados entre 22:14Z e 23:03Z por sessões abertas neles. O `release.ts` passa a pular e nomear um registro `local` de worktree ligado que ainda não está na versão, como já fazia com um worktree apagado, e assim segue até o Codex.
+
 ## Lacunas
 
+- Os registros `local` de worktrees criados pelas sessões continuam na versão anterior até a sessão ou a faxina os tirar. Não foi medido como uma sessão remove o registro do próprio worktree.
 - O `--resume` de uma sessão do app não foi exercitado nesta versão. A medida direta é do binário no terminal, com corroboração de duas sessões antigas do app.
 - A opção "Move to background and exit" do diálogo de saída não foi medida.
 - Nenhum programa rodou ainda com a pasta `subagents/` no brief dos Donos. O próximo programa confere se os Donos auditam a trilha contra o transcript (D9).
