@@ -95,6 +95,20 @@ Para read-only, o destino deve ficar fora de `/tmp`, `/var/tmp`, do temporário 
 
 O documento privado só é consultado quando `--linear-document` é fornecido; requer a conexão autenticada do próprio Codex CLI. O MCP público usado é `https://developers.openai.com/mcp`. Consulte `source-calls.json` e os resultados originais para conferir conteúdo e alvo, além de `assertions.json`. `--web` acrescenta uma chamada web nativa cuja conclusão deve ser inspecionada no stream. O comando não instala plugins, provisiona OAuth nem muda a sheet.
 
+### Validação do tooling de prova
+
+A ferramenta atual valida o JSON externo nos campos que consome. Receipt, eventos, argumentos e resultados inválidos produzem erro com o campo ou a linha, sem coerção de texto, booleanos ou objetos. Depois de reservar o diretório, falhas de preparação, parsing e validação também gravam `assertions.json` com `status: failed`. Receipt e streams originais permanecem na pasta; o CLI Grok conserva a cópia dos updates da própria sessão. Um destino indisponível não permite gravar esse diagnóstico.
+
+`source-calls.json` conserva os argumentos e o resultado junto da fonte, ferramenta e ID da chamada. No Grok, os argumentos vêm dos updates anteriores com o mesmo `toolCallId`; o nome pedido deve corresponder à fonte/ferramenta retornada. A ausência desses argumentos não é preenchida com os de outra chamada.
+
+A busca pública exige uma query sobre Codex/MCP e hits com URLs HTTPS nos hosts documentais OpenAI conhecidos (`developers.openai.com`, `platform.openai.com`, `learn.chatgpt.com`). O fetch deve pedir uma página desses hits de uma busca anterior e retornar Markdown com título e corpo, sem erro. Quando há resposta estruturada com `url` e `content`, a URL retornada também deve corresponder; texto JSON e `structuredContent` não podem contradizer a identidade. Fragmentos de URL são ignorados na comparação da página.
+
+O Markdown simples de `fetch_openai_doc` não identifica a página retornada. Nesse formato, `docsEvidence.identity` registra `unavailable-in-markdown`: a prova confirma a chamada correlacionada e o corpo documental, mas não atesta a identidade da resposta. Não infere essa identidade de links no corpo. Formatos fora dessas formas conhecidas exigem adaptação e fixtures; conteúdo não vazio, sozinho, não estabelece sucesso.
+
+O documento privado exige `content` não vazio e identidade retornada correspondente ao alvo pedido: `id`, `slugId` ou URL completa. Um ID curto precisa do `slugId` retornado; apenas aparecer nos argumentos ou em texto livre não basta. `privateDocument` registra a identidade conferida. Esta validação cobre somente as operações atribuídas pela ferramenta, não audita transcripts arbitrários nem comprova isolamento de MCP.
+
+Essas regras são melhoria opcional N3 identificada independentemente na auditoria. Não revalidam as provas históricas nem convertem a prova Codex readonly incompleta em sucesso. A verificação do tooling usa fixtures locais, sem repetir chamadas autenticadas.
+
 Para repetir a prova nativa, despache um helper fresco `gpt-6.1-sol`, esforço `xhigh`, sem histórico herdado, forneça os caminhos absolutos da skill e do checkout, e peça as operações Linear/GitHub da tabela. Conserve o resultado das ferramentas e seu rollout; a resposta final do helper não basta. Na sheet vigente esse é um explorador, não um swarm worker.
 
 ## Contratos disponíveis e lacunas restantes
