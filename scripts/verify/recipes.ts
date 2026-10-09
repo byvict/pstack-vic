@@ -130,22 +130,34 @@ export function innerProbeScript(durationMs = INNER_PROBE_MS): string {
   return `const fs = require('node:fs');
 const path = require('node:path');
 const log = path.join(__dirname, 'probe-events.jsonl');
-const append = (kind) => fs.appendFileSync(log, JSON.stringify({kind, at: Date.now(), pid: process.pid}) + '\\n', {mode: 0o600});
+const append = (kind) => {
+  const monotonicMs = performance.now();
+  fs.appendFileSync(log, JSON.stringify({kind, at: Date.now(), monotonicMs, pid: process.pid}) + '\\n', {mode: 0o600});
+  return monotonicMs;
+};
 // An accidental extra invocation is evidence, even if it fails the exclusive lock.
 append('invoked');
 fs.writeFileSync(path.join(__dirname, 'probe.lock'), String(process.pid), {flag: 'wx', mode: 0o600});
-append('started');
+const started = append('started');
 process.on('SIGTERM', () => { append('SIGTERM'); process.exit(143); });
-setTimeout(() => { append('completed'); console.log('PSTACK_INNER_TIMEOUT_COMPLETED'); }, ${durationMs});
+// Timers count whole milliseconds and may fire just short of the duration; completion waits for the recorded clock.
+const complete = () => {
+  const remaining = started + ${durationMs} - performance.now();
+  if (remaining > 0) return void setTimeout(complete, Math.ceil(remaining));
+  append('completed');
+  console.log('PSTACK_INNER_TIMEOUT_COMPLETED');
+};
+setTimeout(complete, ${durationMs});
 `;
 }
 
-export function assertInnerEvents(events: { kind: string; at: number }[], durationMs = INNER_PROBE_MS): number {
+export function assertInnerEvents(events: { kind: string; at: number; monotonicMs: number }[], durationMs = INNER_PROBE_MS): number {
   assert.equal(events.filter((event) => event.kind === "invoked").length, 1, "inner probe must run exactly once; no warmup or retry");
   const starts = events.filter((event) => event.kind === "started"), ends = events.filter((event) => event.kind === "completed");
   assert.equal(starts.length, 1, "missing inner command start");
   assert.equal(ends.length, 1, "inner command did not survive the requested duration; inspect tool events before attributing the limit");
-  const elapsedMs = ends[0].at - starts[0].at;
+  // The wall clock has whole-millisecond stamps and can be adjusted mid-run; the probe's monotonic clock cannot.
+  const elapsedMs = ends[0].monotonicMs - starts[0].monotonicMs;
   assert.ok(elapsedMs >= durationMs, "inner probe ended before its declared duration");
   return elapsedMs;
 }

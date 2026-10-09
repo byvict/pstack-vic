@@ -66,7 +66,26 @@ test("the inner probe proves real elapsed work and records prohibited extra invo
   assert.ok(assertInnerEvents(events(), 30) >= 30);
   assert.throws(() => execFileSync(process.execPath, [script], { stdio: "pipe" }));
   assert.throws(() => assertInnerEvents(events(), 30), /exactly once/);
-  assert.throws(() => assertInnerEvents([{ kind: "invoked", at: 0 }, { kind: "started", at: 0 }], 30), /did not survive/);
+  assert.throws(() => assertInnerEvents([{ kind: "invoked", at: 0, monotonicMs: 0 }, { kind: "started", at: 0, monotonicMs: 0 }], 30), /did not survive/);
+});
+
+test("the inner probe measures its duration on the timer's monotonic clock, never the wall clock", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "pstack-inner-clock-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const script = join(root, "probe.cjs"), early = join(root, "early-timers.cjs");
+  writeFileSync(script, innerProbeScript(30));
+  // Fires every timer 5 ms early, an exaggeration of Node's whole-millisecond timers.
+  writeFileSync(early, "const arm = setTimeout; globalThis.setTimeout = (fn, ms, ...args) => arm(fn, Math.max(0, ms - 5), ...args);\n");
+  execFileSync(process.execPath, ["--require", early, script]);
+  const events = readFileSync(join(root, "probe-events.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  assert.ok(assertInnerEvents(events, 30) >= 30);
+  const run = (startedAt: number, completedAt: number, completedMonotonicMs: number) => [
+    { kind: "invoked", at: 0, monotonicMs: 0 },
+    { kind: "started", at: startedAt, monotonicMs: 1 },
+    { kind: "completed", at: completedAt, monotonicMs: completedMonotonicMs },
+  ];
+  assert.equal(assertInnerEvents(run(1, 30, 31), 30), 30);
+  assert.throws(() => assertInnerEvents(run(1, 31, 30.9), 30), /before its declared duration/);
 });
 
 test("commit proofs compare bytes and modes even when Git status hides changes", async (t) => {
