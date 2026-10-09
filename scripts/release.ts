@@ -1,6 +1,6 @@
 // pstack-vic's release on the operator's Mac: moves Claude Code and Codex to the version CI tagged. Run it in the main checkout after `git pull --ff-only`. Every step reads what is already done before it acts, so a second run is safe.
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -40,12 +40,17 @@ const recordName = (r: ClaudeRecord) => r.projectPath ? `${r.scope} ${r.projectP
 function claudeRecords(): ClaudeRecord[] {
   return (JSON.parse(run('claude', ['plugin', 'list', '--json'])) as (ClaudeRecord & { id: string })[]).filter(p => p.id === PLUGIN);
 }
-/** Moves every Claude Code install record of the plugin, each with its own scope and, for a project or local record, from its project. A record whose project is gone is skipped and named. */
+/** A linked worktree has a `.git` file where a main checkout has a directory. */
+function linkedWorktree(path: string): boolean {
+  try { return statSync(join(path, '.git')).isFile(); } catch { return false; }
+}
+/** Moves every Claude Code install record of the plugin, each with its own scope and, for a project or local record, from its project. A record whose project is gone is skipped and named, and so is a local record of a linked worktree that is behind: from there Claude Code 2.1.295 resolves `plugin update --scope local` to the main checkout's local record. */
 function updateClaude(version: string): void {
   const live: ClaudeRecord[] = [];
   for (const record of claudeRecords()) {
     if (!['user', ...PROJECT_SCOPES].includes(record.scope)) throw new Error(`Claude Code has ${PLUGIN} in ${recordName(record)}, a scope this release does not update`);
     if (PROJECT_SCOPES.includes(record.scope) && !existsSync(record.projectPath ?? '')) say(`Claude Code ${PLUGIN} (${recordName(record)}) skipped: the project no longer exists`);
+    else if (record.scope === 'local' && record.version !== version && linkedWorktree(record.projectPath ?? '')) say(`Claude Code ${PLUGIN} (${recordName(record)}) skipped: from a linked worktree, \`claude plugin update --scope local\` updates the main checkout's local record, so this one stays on ${record.version}`);
     else live.push(record);
   }
   if (live.length === 0) throw new Error(`Claude Code reports ${PLUGIN} not installed`);

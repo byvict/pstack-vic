@@ -496,10 +496,11 @@
       "id": "claude.plugin-commands",
       "cli": "claude",
       "kind": "harness",
-      "contract": "`claude plugin marketplace add|update`, `claude plugin install|update`, `claude --plugin-dir`",
+      "contract": "`claude plugin marketplace add|update`, `claude plugin install|update`, `claude --plugin-dir`; `claude plugin list --json` lists every install record (user, project, local) with its projectPath, and `claude plugin update --scope <scope>` moves the record of that scope for the cwd's project, except that from a linked worktree it resolves the local scope to the main checkout's record (`updateOutcome: up_to_date` against that record, measured 2026-10-08 on 2.1.295), so a worktree-keyed local record is out of its reach",
       "pointers": [
         { "file": "docs/reference.md", "anchor": "claude plugin marketplace add byvict/pstack-vic" },
-        { "file": "docs/reference.md", "anchor": "claude --plugin-dir" }
+        { "file": "docs/reference.md", "anchor": "claude --plugin-dir" },
+        { "file": "scripts/release.ts", "anchor": "function linkedWorktree" }
       ],
       "coveredBy": [],
       "measuredOn": "2.1.281"
