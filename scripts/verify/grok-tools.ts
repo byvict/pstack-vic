@@ -31,16 +31,17 @@ export function toolEvents(path: string, transport: "cli" | "grok-acp"): ToolEve
     catch { throw new Error(`${label}: invalid JSON`); }
     const frame = object(raw, label);
     if (transport === "grok-acp") {
-      assert.ok(typeof frame.kind === "string", `${label}.kind: expected a string`);
+      assert.ok(typeof frame.kind === "string" && frame.kind.trim(), `${label}.kind: expected a non-empty string`);
       if (frame.kind !== "tool") continue;
       assert.ok(typeof frame.at === "string", `${label}.at: expected a timestamp string`);
       const at = Date.parse(frame.at);
       assert.ok(Number.isFinite(at), `${label}: missing ACP event timestamp`);
       events.push({ at, update: object(frame.update, `${label}.update`) });
     } else {
+      assert.ok(typeof frame.method === "string" && frame.method.trim(), `${label}.method: expected a non-empty string`);
       if (frame.method !== "session/update") continue;
       const params = object(frame.params, `${label}.params`), update = object(params.update, `${label}.params.update`);
-      assert.ok(typeof update.sessionUpdate === "string", `${label}.params.update.sessionUpdate: expected a string`);
+      assert.ok(typeof update.sessionUpdate === "string" && update.sessionUpdate.trim(), `${label}.params.update.sessionUpdate: expected a non-empty string`);
       if (!update.sessionUpdate.startsWith("tool_call")) continue;
       const at = object(params._meta, `${label}.params._meta`).agentTimestampMs;
       assert.ok(typeof at === "number" && Number.isFinite(at), `${label}: missing native Grok event timestamp`);

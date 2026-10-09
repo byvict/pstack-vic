@@ -99,6 +99,8 @@ for (const provider of ["codex", "grok"] as const) {
       docs(undefined, undefined, undefined, "# Error\n\nFetch failed."),
       docs(undefined, undefined, undefined, '{"error":"not found"}'),
       docs(undefined, undefined, undefined, JSON.stringify({ url: otherUrl, content: markdown })),
+      docs(undefined, JSON.stringify({ hits: [{ url }], error: "permission denied" })),
+      docs(undefined, undefined, undefined, JSON.stringify({ url, content: markdown, error: "permission denied" })),
       [...call("fetch", "fetch_openai_doc", { url }, markdown), ...call("search", "search_openai_docs", { query: "Codex MCP" }, search)],
     ]) assert.throws(() => assertDocsSource(sourceCalls(events, provider), "pstack_docs"));
     assert.throws(() => assertDocsSource(sourceCalls(docs(), provider), "another_source"), /Missing successful/);
@@ -139,6 +141,9 @@ test("private Codex document requires returned identity and document content", (
   assert.equal(assertPrivateDocument(calls({ id: "short-id" }), "short-id").id, "document-uuid");
   for (const entries of [calls(undefined, { ...document, id: "another-document" }), calls(undefined, { ...document, content: "  " }),
     calls(undefined, { content: document.content }), calls(undefined, { error: "not found" }),
+    calls(undefined, { ...document, content: "Failed to load document", error: "permission denied" }),
+    calls(undefined, { ...document, isError: true }), calls(undefined, { ...document, is_error: true }),
+    calls(undefined, { ...document, isError: "false" }),
     calls({ id: "another-document" }), calls(undefined, document, "another_source")]) {
     assert.throws(() => assertPrivateDocument(entries, "document-uuid"));
   }
@@ -195,6 +200,7 @@ test("malformed receipt and event inputs retain failure assertions and original 
       ["grok-json", "{broken", (path: string) => sourceCalls(toolEvents(path, "grok-acp"), "grok")],
       ["grok-shape", '{"kind":"tool","at":"2026-10-08T00:00:00Z","update":null}', (path: string) => sourceCalls(toolEvents(path, "grok-acp"), "grok")],
       ["grok-native-shape", '{"method":"session/update","params":{"update":{"sessionUpdate":42}}}', (path: string) => sourceCalls(toolEvents(path, "cli"), "grok")],
+      ["grok-method-shape", '{"method":42,"params":{"update":{"sessionUpdate":"tool_call"}}}', (path: string) => sourceCalls(toolEvents(path, "cli"), "grok")],
     ] as const) {
       const directory = join(root, name); mkdirSync(directory);
       const path = join(directory, "input"), stderr = join(directory, "stderr");

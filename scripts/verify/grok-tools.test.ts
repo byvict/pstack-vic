@@ -48,6 +48,9 @@ test("malformed Grok envelopes name the input line and consumed field", (t) => {
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const path = join(root, "updates.jsonl");
   for (const [transport, frame, field] of [
+    ["cli", { method: 42, params: { update: { sessionUpdate: "tool_call" } } }, /method/],
+    ["cli", { params: { update: { sessionUpdate: "tool_call" } } }, /method/],
+    ["cli", { method: "session/update", params: { update: { sessionUpdate: "" } } }, /sessionUpdate/],
     ["cli", { method: "session/update", params: { update: { sessionUpdate: 42 } } }, /params.update.sessionUpdate/],
     ["grok-acp", { kind: 42 }, /kind/],
     ["grok-acp", { kind: "tool", at: false, update: {} }, /at/],

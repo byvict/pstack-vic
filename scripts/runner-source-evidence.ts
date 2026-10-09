@@ -135,6 +135,15 @@ function officialPage(value: unknown): string {
   return url.href;
 }
 
+function assertResponseSuccess(result: Record<string, unknown>, label: string): void {
+  assert.ok(result.error === undefined || result.error === null, `${label}: error response`);
+  for (const key of ["isError", "is_error"]) {
+    if (result[key] === undefined) continue;
+    assert.ok(typeof result[key] === "boolean", `${label}.${key}: expected a boolean`);
+    assert.equal(result[key], false, `${label}: error response`);
+  }
+}
+
 function documentResults(call: SourceCall): Record<string, unknown>[] {
   const results: Record<string, unknown>[] = [];
   for (const key of ["structured_content", "structuredContent"]) {
@@ -143,6 +152,7 @@ function documentResults(call: SourceCall): Record<string, unknown>[] {
   }
   if (!results.length || call.text.trim().startsWith("{")) results.push(object(parseEvidenceJson(call.text, `${call.id}.document`), `${call.id}.document`));
   else if (call.text.trim()) assert.equal(call.text, string(results[0].content, `${call.id}.document.content`), `${call.id}: conflicting document content`);
+  for (const result of results) assertResponseSuccess(result, `${call.id}.document`);
   return results;
 }
 
@@ -152,6 +162,7 @@ export function assertDocsSource(calls: SourceCall[], source: string) {
     const query = string(object(call.arguments, `${call.id}.arguments`).query, `${call.id}.query`);
     if (!/\bcodex\b/i.test(query) || !/\bmcp\b/i.test(query)) return [];
     const result = object(parseEvidenceJson(call.text, `${call.id}.search result`), `${call.id}.search result`);
+    assertResponseSuccess(result, `${call.id}.search result`);
     assert.ok(Array.isArray(result.hits) && result.hits.length, `${call.id}: missing documentation search hits`);
     return [{ id: call.id, index, urls: result.hits.map((hit) => officialPage(object(hit, `${call.id}.hit`).url)) }];
   });
