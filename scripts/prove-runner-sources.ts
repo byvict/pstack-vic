@@ -11,16 +11,18 @@ import {
   parseEvidenceJson, retainSourceFailure, skillWasRead, sourceCalls as extractSourceCalls, sourceReceipt,
 } from "./runner-source-evidence.ts";
 
-const { values } = parseArgs({ options: {
-  route: { type: "string" }, model: { type: "string" }, effort: { type: "string" },
-  output: { type: "string" }, mode: { type: "string", default: "isolated-write" },
-  web: { type: "boolean", default: false },
-  "linear-document": { type: "string" }, "working-tree": { type: "boolean", default: false },
-} });
-assert.ok(values.output, "Pass a new absolute --output directory");
+const { values: { output } } = parseArgs({ strict: false, allowPositionals: true, options: { output: { type: "string" } } });
+assert.ok(typeof output === "string" && output, "Pass a new absolute --output directory");
 const repository = resolve(dirname(import.meta.filename), "..");
-const directory = freshRoot(values.output, repository);
+const directory = freshRoot(output, repository);
 await retainSourceFailure(directory, async () => {
+  save(join(directory, "arguments.json"), { argv: process.argv.slice(2) });
+  const { values } = parseArgs({ options: {
+    route: { type: "string" }, model: { type: "string" }, effort: { type: "string" },
+    output: { type: "string" }, mode: { type: "string", default: "isolated-write" },
+    web: { type: "boolean", default: false },
+    "linear-document": { type: "string" }, "working-tree": { type: "boolean", default: false },
+  } });
   assert.ok(values.route === "codex-cli" || values.route === "grok-cli" || values.route === "grok-acp", "Pass --route codex-cli|grok-cli|grok-acp");
   assert.ok(values.model && values.effort, "Pass the assigned --model and --effort");
   assert.ok(values.mode === "isolated-write" || values.mode === "read-only", "This proof uses bounded modes only");

@@ -77,6 +77,12 @@ function mcpText(result: Record<string, unknown>, label: string): string {
   }).join("\n");
 }
 
+function grokOutput(value: unknown, label: string): Record<string, unknown> {
+  const output = object(value, label);
+  if (output.type !== undefined) string(output.type, `${label}.type`);
+  return output;
+}
+
 export function sourceCalls(events: unknown[], provider: "codex" | "grok"): SourceCall[] {
   const inputs = new Map<string, { tool: string; arguments: Record<string, unknown> }>();
   return events.flatMap((raw, index) => {
@@ -109,7 +115,7 @@ export function sourceCalls(events: unknown[], provider: "codex" | "grok"): Sour
     }
     if (update.status !== undefined) assert.ok(["pending", "in_progress", "completed", "failed"].includes(string(update.status, `${label}.update.status`)), `${label}.update.status: invalid tool status`);
     if (update.rawOutput === undefined) return [];
-    const output = object(update.rawOutput, `${label}.update.rawOutput`);
+    const output = grokOutput(update.rawOutput, `${label}.update.rawOutput`);
     if (output.type !== "MCP") return [];
     const source = string(output.server_name, `${label}.update.rawOutput.server_name`), tool = string(output.tool_name, `${label}.update.rawOutput.tool_name`);
     const input = inputs.get(id);
@@ -130,7 +136,11 @@ function officialPage(value: unknown): string {
 }
 
 function documentResults(call: SourceCall): Record<string, unknown>[] {
-  const results = call.result.structuredContent === undefined ? [] : [object(call.result.structuredContent, `${call.id}.structuredContent`)];
+  const results: Record<string, unknown>[] = [];
+  for (const key of ["structured_content", "structuredContent"]) {
+    const value = call.result[key];
+    if (value !== undefined && value !== null) results.push(object(value, `${call.id}.${key}`));
+  }
   if (!results.length || call.text.trim().startsWith("{")) results.push(object(parseEvidenceJson(call.text, `${call.id}.document`), `${call.id}.document`));
   else if (call.text.trim()) assert.equal(call.text, string(results[0].content, `${call.id}.document.content`), `${call.id}: conflicting document content`);
   return results;
@@ -152,7 +162,7 @@ export function assertDocsSource(calls: SourceCall[], source: string) {
     const search = searches.find((entry) => entry.index < index && entry.urls.includes(url));
     if (!search) continue;
     let text = call.text, returnedUrl: string | null = null;
-    if (call.result.structuredContent !== undefined || text.trim().startsWith("{")) {
+    if (call.result.structured_content != null || call.result.structuredContent != null || text.trim().startsWith("{")) {
       const documents = documentResults(call);
       text = string(documents[0].content, `${call.id}.fetch content`);
       for (const document of documents) {
@@ -217,7 +227,7 @@ export function terminalResults(events: unknown[], provider: "codex" | "grok") {
     }
     const update = object(event.update, `${label}.update`);
     if (update.status !== "completed" && update.status !== "failed") return [];
-    const output = object(update.rawOutput, `${label}.update.rawOutput`);
+    const output = grokOutput(update.rawOutput, `${label}.update.rawOutput`);
     if (output.type !== "Bash") return [];
     assert.ok(typeof output.output_for_prompt === "string", `${label}.update.rawOutput.output_for_prompt: expected a string`);
     return [{ id: string(update.toolCallId, `${label}.update.toolCallId`), command: string(output.command, `${label}.update.rawOutput.command`),
@@ -230,7 +240,7 @@ export function skillWasRead(events: unknown[], provider: "codex" | "grok", skil
   return events.some((raw, index) => {
     const label = `event[${index}]`, update = object(object(raw, label).update, `${label}.update`);
     if (update.status !== "completed") return false;
-    const output = object(update.rawOutput, `${label}.update.rawOutput`);
+    const output = grokOutput(update.rawOutput, `${label}.update.rawOutput`);
     if (output.FileContent === undefined) return false;
     const file = object(output.FileContent, `${label}.FileContent`);
     return string(file.absolute_path, `${label}.FileContent.absolute_path`) === skill

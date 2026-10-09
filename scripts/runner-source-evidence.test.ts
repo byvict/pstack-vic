@@ -159,12 +159,29 @@ test("structured and textual document identities cannot contradict each other", 
     }),
   ], "codex");
   assert.throws(() => assertDocsSource(docsCalls, "pstack_docs"), /another target/);
+  const nativeDocs = sourceCalls([
+    codexCall("search", "search_openai_docs", { query: "Codex MCP" }, search, "pstack_docs", { content: [{ type: "text", text: search }], structured_content: null }),
+    codexCall("fetch", "fetch_openai_doc", { url }, "", "pstack_docs", { content: [{ type: "text", text: markdown }], structured_content: { url: otherUrl, content: markdown } }),
+  ], "codex");
+  assert.throws(() => assertDocsSource(nativeDocs, "pstack_docs"), /another target/);
+  const nativePrivate = sourceCalls([codexCall("private", "linear.get_document", { id: "short-id" }, "", "codex_apps", {
+    content: [{ type: "text", text: JSON.stringify(document) }], structured_content: { ...document, id: "another-uuid", slugId: "different-id" },
+  })], "codex");
+  assert.throws(() => assertPrivateDocument(nativePrivate, "short-id"), /does not match/);
+  assert.equal(assertPrivateDocument(sourceCalls([codexCall("private", "linear.get_document", { id: "short-id" }, "", "codex_apps", {
+    content: [{ type: "text", text: JSON.stringify(document) }], structured_content: null,
+  })], "codex"), "short-id").id, "document-uuid");
 });
 
 test("terminal and skill evidence reject malformed fields instead of coercing them", () => {
   assert.throws(() => terminalResults([{ type: "item.completed", item: { type: "command_execution", aggregated_output: {} } }], "codex"), /aggregated_output/);
   assert.throws(() => terminalResults([{ update: { status: "completed", rawOutput: { type: "Bash", output_for_prompt: 42 } } }], "grok"), /output_for_prompt/);
   assert.throws(() => skillWasRead([{ update: { status: "completed", rawOutput: { FileContent: { absolute_path: "/skill", raw_output: {} } } } }], "grok", "/skill", "skill text"), /raw_output/);
+  const malformed = [{ update: { toolCallId: "bad", status: "completed", rawOutput: { type: 42 } } }];
+  assert.throws(() => sourceCalls(malformed, "grok"), /rawOutput.type/);
+  assert.throws(() => terminalResults(malformed, "grok"), /rawOutput.type/);
+  assert.throws(() => skillWasRead(malformed, "grok", "/skill", "skill text"), /rawOutput.type/);
+  assert.equal(skillWasRead([{ update: { status: "completed", rawOutput: { FileContent: { absolute_path: "/skill", raw_output: "skill text" } } } }], "grok", "/skill", "skill text"), true);
 });
 
 test("malformed receipt and event inputs retain failure assertions and original streams", async () => {
@@ -195,13 +212,17 @@ test("malformed receipt and event inputs retain failure assertions and original 
 test("proof CLI retains argument validation failure after reserving a new output directory", () => {
   const root = mkdtempSync(join(tmpdir(), "source-proof-cli-"));
   try {
-    const directory = join(root, "invalid-route");
-    const result = spawnSync(process.execPath, [join(import.meta.dirname, "prove-runner-sources.ts"), "--route", "unsupported", "--output", directory], { encoding: "utf8" });
-    assert.equal(result.status, 1);
-    const assertions = JSON.parse(readFileSync(join(directory, "assertions.json"), "utf8"));
-    assert.equal(assertions.status, "failed");
-    assert.match(assertions.error, /Pass --route/);
-    assert.match(result.stderr, /Pass --route/);
+    for (const [name, args, message] of [["invalid-route", ["--route", "unsupported"], /Pass --route/],
+      ["invalid-option", ["--unknown-option"], /Unknown option/]] as const) {
+      const directory = join(root, name), argv = [...args, "--output", directory];
+      const result = spawnSync(process.execPath, [join(import.meta.dirname, "prove-runner-sources.ts"), ...argv], { encoding: "utf8" });
+      assert.equal(result.status, 1);
+      const assertions = JSON.parse(readFileSync(join(directory, "assertions.json"), "utf8"));
+      assert.equal(assertions.status, "failed");
+      assert.match(assertions.error, message);
+      assert.match(result.stderr, message);
+      assert.deepEqual(JSON.parse(readFileSync(join(directory, "arguments.json"), "utf8")), { argv });
+    }
   } finally { rmSync(root, { recursive: true }); }
 });
 
@@ -222,7 +243,7 @@ writeFileSync("skill-effect.txt", digest + "\\n");
 writeSync(2, "retained fixture stderr\\n");
 out({ type: "thread.started", thread_id: "source-fixture" });
 out({ type: "item.completed", item: { id: "read", type: "command_execution", command: "cat .agents/skills/source-proof/SKILL.md", exit_code: 0, aggregated_output: skill } });
-const call = (id, tool, args, text) => out({ type: "item.completed", item: { id, type: "mcp_tool_call", server: "pstack_docs", tool, arguments: args, status: "completed", error: null, result: { content: [{ type: "text", text }] } } });
+const call = (id, tool, args, text) => out({ type: "item.completed", item: { id, type: "mcp_tool_call", server: "pstack_docs", tool, arguments: args, status: "completed", error: null, result: { content: [{ type: "text", text }], structured_content: null } } });
 call("search", "search_openai_docs", { query: "Codex MCP configuration" }, ${JSON.stringify(search)});
 call("fetch", "fetch_openai_doc", { url: ${JSON.stringify(url)} }, process.env.SOURCE_FIXTURE === "empty" ? "" : process.env.SOURCE_FIXTURE === "wrong-target" ? JSON.stringify({ url: ${JSON.stringify(otherUrl)}, content: ${JSON.stringify(markdown)} }) : ${JSON.stringify(markdown)});
 if (process.env.SOURCE_FIXTURE === "malformed") writeSync(1, "{malformed\\n");
