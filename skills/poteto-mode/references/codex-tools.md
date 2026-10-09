@@ -21,6 +21,20 @@ The Claude integration is the one `@` import line in `<config-home>/CLAUDE.md` w
 
 Only when `CLAUDE_CONFIG_DIR` redirects the home, render exactly `@./pstack-models.md`. This relative import resolves from the importing file's directory, where the sheet also lives, so the import line contains no config-directory characters. On a rerun, replace that one line in place, preserving all unrelated bytes. If zero matching import lines exist, append one. If more than one exists, stop and report inconsistent state before either write; do not append another import or guess which one to replace. A `CLAUDE_CONFIG_DIR` that names `$HOME/.claude` is still the default home and keeps the legacy line. The script reads `CLAUDE.md` with the block rules of marked 16, the Markdown lexer of Claude Code 2.1.289. An import on a plain line, in a plain list item or in a plain quote counts. One in front matter, a fenced or indented code block, an HTML block, a code span or a link definition does not. A mention the script cannot place the way Claude Code does stops setup as inconsistent state, for example one glued to emphasis, one inside a link, or one after a list that holds a fenced code block. A new import goes at the end of the file, after a blank line when the last paragraph would leave it in doubt. When the script cannot be sure that the end loads, as inside a code block, an HTML block or a comment, it goes at the top, after any front matter and followed by a blank line.
 
+## Active transcripts
+
+On Codex, Reflect and transcript audits resolve the known UUID of the conversation being read with [resolve-codex-transcript.py](../scripts/resolve-codex-transcript.py). Use the UUID established by the host or retained parent handle; an inherited environment variable can name the root instead of a subagent. Resolve `plugin_root` from the loaded plugin. When the exact opening user text is known, compute `opening_sha256` from its concatenated text parts without adding a separator or newline, then run:
+
+```bash
+python3 "$plugin_root/skills/poteto-mode/scripts/resolve-codex-transcript.py" "$chat_id" --expected-opening-sha256 "$opening_sha256"
+```
+
+If opening evidence is unavailable, omit the hash option. The helper accepts only the first user message after matching `session_meta` ownership. Complete AGENTS instruction envelopes (including `for /path`) and environment envelopes require the expected hash to distinguish injected context from identical human text. Without that evidence it returns `opening_message_ambiguous`; a matching hash can bind a legitimate human message that itself looks like instructions. An ordinary opening mismatch is rejected rather than searching later requests for a match.
+
+The helper queries one exact chat ID in one compatible SQLite index under nonempty `CODEX_HOME`, otherwise `$HOME/.codex`. It resolves the rollout within that home's `sessions/` or `archived_sessions/` after symlink resolution. It prints metadata only: path, chat ID and opening line, format, length and SHA256. Directory, schema and SQLite query work are bounded, as are rollout records, bytes and line size; `--help` names the limits and options to lower them.
+
+Pass a transcript path only after a successful resolution and verification of the returned opening metadata against known evidence. When the UUID, opening, index, ownership or path is unavailable, mismatched or ambiguous, pass a tight session digest with decisions, corrections, evidence paths and unresolved work. Keep discovery within the known conversation; a fallback is not permission to search titles, latest timestamps or other chats. This lookup does not measure or correct Why/Reflect latency.
+
 ## Tool actions
 
 Resolve these actions against the current session's advertised tools and schemas. Codex hosts expose different lifecycle operations. Before dispatching or reusing agents, read [native-lifecycle.md](native-lifecycle.md).
@@ -44,7 +58,7 @@ Resolve these actions against the current session's advertised tools and schemas
 | Track tasks (the todolist / `TodoWrite`) | `update_plan` |
 | The program's agent list (the audit tick of the autopilot playbooks) and the background task list (Orchestrate's read-only probe) | `list_agents` when advertised, reconciled with retained subagent handles and persistent exec sessions |
 | Ask the human a fixed-choice question (`AskUserQuestion`) | Ask in plain text and let the user answer. Codex has no structured-choice tool. |
-| Transcript directory (show-me-your-work audit, session pickup) | `~/.codex/sessions/`, same no-glob rule |
+| Active transcript (Reflect, show-me-your-work audit, known session pickup) | Follow [Active transcripts](#active-transcripts) for the known conversation UUID and opening binding |
 
 Subagent dispatch needs `multi_agent` enabled. Add to `<config-home>/config.toml`, using Codex's [config-home rule](#harness-config-homes):
 
