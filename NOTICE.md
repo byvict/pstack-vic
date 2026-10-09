@@ -70,6 +70,8 @@ Escrita nova, sem origem upstream (a preencher conforme as fases fecham):
 
 ## Modificações
 
+- Resolver Codex por conversa conhecida: `skills/poteto-mode/scripts/resolve-codex-transcript.py` e `tests/reflect-transcript-repro.py` são adaptações auditadas de `dnncha/open-pstack`, branch `fix/reflect-codex-transcript`, commit `23ddb8cc2af0bd3ed07379adba93f40b0038e7d3` (PR #140 do Open). Licença MIT/copyright Lauren Tan preservados em `LICENSE-open-pstack`. O reconhecimento do envelope atual parte do protótipo delimitado da investigação local de 2026-10-09. O port acrescenta ambiguidade explícita sem hash para envelopes indistinguíveis de texto humano, exige envelope completo e integra somente os callers de transcripts, sem trocar o workflow ou os modelos de Why/Reflect.
+
 Conforme a licença MIT, modificações são permitidas. Avisos de copyright presentes nos arquivos de origem são preservados.
 
 - Fidelidade ao upstream (0.5.21, 2026-10-06): os seis playbooks e o fluxo Why voltam ao pin Cursor `4e5b1cf2ccb0ea3716f08c8ee0a5856b5ab93536`, com adaptações de ambiente. Foram retiradas as políticas T21–T26, a T27 redundante e a auditoria nativa de consumo de fontes. Os cinco arquivos de Why passam à mesma geração por paridade. As descrições e os metadados Codex delimitam a entrada dos fluxos por nome ou roteamento, preservando as chamadas internas. A autorização v3 acompanha esse fluxo. Attack the Premise mantém a cópia do open registrada na 0.5.20.

@@ -17,7 +17,9 @@ Invoke when the user says "reflect" or "/reflect". Skip when the conversation is
 
 ### 1. Locate the active transcript
 
-The parent finds its own transcript file before fanning out. The system prompt names Claude Code's per-project transcripts directory at `~/.claude/projects/<encoded-cwd>/`. Use that path. Do not glob across `~/.claude/projects/`. That crosses workspace boundaries and reads private chats from unrelated projects.
+The parent finds its own transcript file before fanning out. On Codex, follow [Active transcripts](../poteto-mode/references/codex-tools.md#active-transcripts) with this conversation's known UUID and opening evidence. Use the verified path or the session digest returned by that procedure.
+
+On Claude Code, the system prompt names the per-project transcripts directory at `~/.claude/projects/<encoded-cwd>/`. Use that path. Do not glob across `~/.claude/projects/`. That crosses workspace boundaries and reads private chats from unrelated projects.
 
 ```bash
 ls -t ~/.claude/projects/<encoded-cwd>/*.jsonl 2>/dev/null | head -10
