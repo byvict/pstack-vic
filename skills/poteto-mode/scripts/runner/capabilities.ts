@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
-import { UsageError } from "./types.ts";
+import { UsageError, type AccessMode } from "./types.ts";
 
 export interface McpSource {
   readonly name: string;
@@ -78,6 +78,8 @@ export function readCapabilities(path: string): CliCapabilities {
     web: flag(value.web, "web"), skills: flag(value.skills, "skills"), mcpSources, additionalDirectories };
 }
 
+const RULE_PATH = /^\/[A-Za-z0-9._@%+=:/-]*$/;
+
 export function validateCapabilities(provider: string, capabilities: CliCapabilities | undefined, transport = "cli"): void {
   if (capabilities === undefined) return;
   if (provider === "grok") {
@@ -85,11 +87,27 @@ export function validateCapabilities(provider: string, capabilities: CliCapabili
     if (capabilities.mcpSources.length && transport !== "grok-acp") throw new UsageError("Grok MCP task capabilities require --transport grok-acp");
     if (capabilities.additionalDirectories.length) throw new UsageError("Grok task capabilities do not support additionalDirectories; use the lane's assigned cwd for directory access");
   }
+  if (provider === "claude") {
+    const unnamed = capabilities.additionalDirectories.find((path) => !RULE_PATH.test(path));
+    if (unnamed !== undefined) throw new UsageError(`Claude additionalDirectories entries must be paths a git permission rule can name literally (letters, digits and / . _ @ % + = : -): ${unnamed}`);
+  }
 }
 
 /** One `--add-dir` per directory: repeated flags accumulate in Claude Code 2.1.292 and Codex 0.161.0 (measured 2026-10-08). */
 function addDirArgs(capabilities: CliCapabilities): string[] {
   return capabilities.additionalDirectories.flatMap((path) => ["--add-dir", path]);
+}
+
+const GIT_SUBCOMMANDS = ["status", "diff", "log", "show", "rev-parse", "add", "commit"];
+
+/**
+ * Headless acceptEdits asks before any git in an `--add-dir` directory, and a lane cannot answer. One rule per
+ * subcommand: `Bash(git -C <dir> *)` also ran `git -C <dir> -c alias.x=!<cmd> x` (measured 2026-10-08 on 2.1.295).
+ * Plan mode already ran read-only git there without a rule, so a read-only session gets none.
+ */
+function claudeGitRules(capabilities: CliCapabilities, mode: AccessMode): string[] {
+  if (mode !== "isolated-write") return [];
+  return capabilities.additionalDirectories.flatMap((path) => GIT_SUBCOMMANDS.map((command) => `Bash(git -C ${path} ${command} *)`));
 }
 
 export function codexCapabilityArgs(capabilities: CliCapabilities | undefined): string[] {
@@ -114,11 +132,12 @@ export function claudeCapabilityTools(capabilities: CliCapabilities | undefined)
   };
 }
 
-export function claudeCapabilityArgs(capabilities: CliCapabilities | undefined): string[] {
+export function claudeCapabilityArgs(capabilities: CliCapabilities | undefined, mode: AccessMode): string[] {
   if (capabilities === undefined) return [];
   const allowed = [
     ...claudeCapabilityTools(capabilities).available,
     ...capabilities.mcpSources.flatMap((source) => source.tools.map((tool) => `mcp__${source.name}__${tool}`)),
+    ...claudeGitRules(capabilities, mode),
   ];
   const servers = Object.fromEntries(capabilities.mcpSources.map((source) => [source.name, { type: "http", url: source.url }]));
   return [...(capabilities.agentKind === "owner" ? ["--verbose"] : []),

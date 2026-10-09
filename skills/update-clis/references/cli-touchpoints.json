@@ -509,34 +509,39 @@
       "id": "claude.background-drain",
       "cli": "claude",
       "kind": "harness",
-      "contract": "a non-interactive `claude -p` owner whose turn ends with a live background native helper is re-invoked by that helper's completion inside the same process, producing more than one `result` event in one invocation (measured 2026-10-08 on 2.1.292); a finished background Bash task did not wake a `claude -p` parent on 2.1.281 (2026-09-18) and was not re-measured, so keep the turn open or hold the handle until each notification arrives (`TaskOutput` was removed in 2.1.277); an interactive root is re-invoked by background Bash completions and Monitor events (measured 2026-10-08 on 2.1.293 in the desktop app)",
-      "pointers": [{ "file": "skills/poteto-mode/references/provider-dispatch.md", "anchor": "Draining is the parent's job in every harness mode" }],
+      "contract": "a non-interactive `claude -p` owner whose turn ends with a live background native helper or a live background Bash command of its own stays open and is re-invoked when that work finishes, producing more than one `result` event in one invocation, and the runner keeps the last; after 10 minutes of idle waiting it stops whatever is still running, helpers and the main conversation's commands alike, prints `Background tasks still running 10m after the last turn (…); stopping them. Set CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 to wait indefinitely.` on stderr, runs no further turn and exits 0 with the earlier reply, which the runner records as complete; with CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 an 11-minute command was awaited and its turn ran (measured 2026-10-08 on 2.1.295; the helper re-invocation first on 2.1.292). Keep the turn open until each notification arrives (`TaskOutput` was removed in 2.1.277); an interactive root is re-invoked by background Bash completions and Monitor events (measured 2026-10-08 on 2.1.293 in the desktop app)",
+      "pointers": [
+        { "file": "skills/poteto-mode/references/provider-dispatch.md", "anchor": "Draining is the parent's job in every harness mode" },
+        { "file": "skills/poteto-mode/references/runner-capabilities.md", "anchor": "Background tasks still running 10m after the last turn" }
+      ],
       "coveredBy": [],
-      "measuredOn": "2.1.281"
+      "measuredOn": "2.1.295"
     },
     {
       "id": "claude.add-dir",
       "cli": "claude",
       "kind": "lane",
-      "contract": "`--add-dir <dir>`, one flag per additionalDirectories entry (repeated flags accumulate), grants the file tools read and write access to a directory outside the cwd in a headless `claude -p` session regardless of workspace trust, and the session's background helpers inherit it; `permissions.additionalDirectories` in an untrusted project's .claude/settings.json is ignored with the stderr warning `this workspace has not been trusted`. Bash commands in the added directory still follow the permission mode: `git -C <dir> status` is denied in headless acceptEdits while `ls` passes.",
+      "contract": "`--add-dir <dir>`, one flag per additionalDirectories entry (repeated flags accumulate), grants the file tools read and write access to a directory outside the cwd in a headless `claude -p` session regardless of workspace trust, and the session's background helpers inherit it; `permissions.additionalDirectories` in an untrusted project's .claude/settings.json is ignored with the stderr warning `this workspace has not been trusted`. Bash commands in the added directory still follow the permission mode: headless acceptEdits denies `git -C <dir> status` (`This command requires approval`) while `ls` passes. In isolated-write the runner adds one `--allowedTools` rule `Bash(git -C <dir> <subcommand> *)` per entry for status, diff, log, show, rev-parse, add and commit; the lane, the owner and its background helpers run those, while other subcommands, `cd <dir> && git`, git options before the subcommand and other commands stay denied, and a broad `Bash(git -C <dir> *)` would also run `git -C <dir> -c alias.x=!<cmd> x`. Plan mode runs read-only git there without a rule.",
       "pointers": [
         { "file": "skills/poteto-mode/scripts/runner/capabilities.ts", "anchor": "function addDirArgs" },
+        { "file": "skills/poteto-mode/scripts/runner/capabilities.ts", "anchor": "function claudeGitRules" },
         { "file": "skills/poteto-mode/references/runner-capabilities.md", "anchor": "Additional directories must be absolute, existing directories" }
       ],
       "coveredBy": [],
-      "measuredOn": "2.1.292"
+      "measuredOn": "2.1.295"
     },
     {
       "id": "claude.subagent-capacity",
       "cli": "claude",
       "kind": "harness",
-      "contract": "Agent fails with `Concurrent subagent limit reached. You can run N subagents at once. Do not retry. If the user wants more concurrent subagents, ask them to increase CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS.` once N subagents (default 20) are running in the session, and creates no handle; a completed or TaskStop-stopped helper frees its slot at once (the next spawn was admitted before the completion notification arrived); ListAgents states no limit (measured 2026-10-08 on 2.1.292 headless with N=2 and on the 2.1.293 desktop root with the default)",
+      "contract": "Agent fails with `Concurrent subagent limit reached. You can run N subagents at once. Do not retry. If the user wants more concurrent subagents, ask them to increase CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS.` once N subagents (default 20) are running in the session, and creates no handle; a completed or TaskStop-stopped helper frees its slot at once (the next spawn was admitted before the completion notification arrived); SendMessage resumes a completed or TaskStop-stopped helper even while N are running, the resumed helper counts as running, and spawns are rejected until the count drops below N; ListAgents states no limit (measured 2026-10-08 on 2.1.292 headless with N=2 and on the 2.1.293 desktop root with the default; the resume on 2.1.295 headless with N=2)",
       "pointers": [
         { "file": "skills/poteto-mode/references/native-lifecycle.md", "anchor": "Concurrent subagent limit reached" },
+        { "file": "skills/poteto-mode/references/native-lifecycle.md", "anchor": "A resume is admitted past the limit" },
         { "file": "skills/poteto-mode/references/provider-dispatch.md", "anchor": "states that number only in its rejection text" }
       ],
       "coveredBy": [],
-      "measuredOn": "2.1.292"
+      "measuredOn": "2.1.295"
     },
     {
       "id": "claude.desktop-scheduler",
