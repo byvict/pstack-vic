@@ -1,11 +1,13 @@
 #!/usr/bin/env bun
 
 import { ensureDependenciesInstalled } from "../bootstrap.ts";
+import { readFile } from "node:fs/promises";
 import {
   NotFoundError,
   UsageError,
   openStore,
   parseVerdict,
+  parseAckDecisions,
   type Counts,
   type Frontier,
   type InboxPointer,
@@ -62,11 +64,13 @@ interface LedgerRecordOptions {
 }
 
 interface InboxPushOptions {
+  readonly attempt: string;
+  readonly request: string;
   readonly report?: string;
 }
 
 interface InboxDrainOptions {
-  readonly peek: boolean;
+  readonly request: string;
 }
 
 interface GateParkOptions {
@@ -125,6 +129,10 @@ function unitLine(unit: Unit): string {
 
 function pointerLine(pointer: InboxPointer): string {
   return [
+    pointer.id,
+    pointer.attempt ?? "unbound",
+    pointer.pr,
+    pointer.sha,
     pointer.ts,
     pointer.agent,
     pointer.unit,
@@ -380,11 +388,19 @@ function createProgram(io: Io): Command {
     runStore(program, io, (store) => store.ledger.summary(), countLine)
   );
 
+  const attempts = program.command("attempt").description("bind a dispatch to its unit head").action(() => requireSubcommand(program));
+  leaf(attempts, "begin <unit> <agent>", "record a new attempt before dispatch")
+    .requiredOption("--request <id>", "stable dispatch request ID")
+    .action((unit: string, agent: string, options: { request: string }) => runStore(program, io,
+      (store) => store.attempts.begin({ unit, agent, request: options.request }), (attempt) => JSON.stringify(attempt)));
+
   const inbox = program
     .command("inbox")
     .description("manage agent pointers")
     .action(() => requireSubcommand(program));
   leaf(inbox, "push <agent> <unit> <status>", "push an inbox pointer")
+    .requiredOption("--attempt <id>", "attempt ID given in the dispatch brief")
+    .requiredOption("--request <id>", "stable completion request ID")
     .option("--report <path>", "report path")
     .action(
       (
@@ -398,27 +414,34 @@ function createProgram(io: Io): Command {
           io,
           (store) =>
             store.inbox.push({
+              attempt: options.attempt,
+              request: options.request,
               agent,
               unit: unitId,
               status,
               report: options.report,
             }),
-          (result) =>
-            `${result.pointer.unit}\t${result.pointer.status}\t${result.filename}`,
-          (result) => result.pointer
+          pointerLine
         )
     );
-  leaf(inbox, "drain", "drain inbox pointers")
-    .option("--peek", "read without draining", false)
+  leaf(inbox, "drain", "retain and return a completion batch")
+    .requiredOption("--request <id>", "stable drain request ID")
     .action((options: InboxDrainOptions) =>
       runStore(
         program,
         io,
-        (store) =>
-          options.peek ? store.inbox.peek() : store.inbox.drain(),
-        (rows) => compactRows(rows, pointerLine, "(empty)", null)
+        (store) => store.inbox.drain(options.request),
+        (batch) => `batch=${batch.id}\n${compactRows(batch.events, pointerLine, "(empty)", null)}`
       )
     );
+  leaf(inbox, "peek", "read pending completions without claiming a batch").action(() => runStore(program, io,
+    (store) => store.inbox.peek(), (rows) => compactRows(rows, pointerLine, "(empty)", null)));
+  leaf(inbox, "ack <batch>", "apply local decisions, then confirm the retained events")
+    .requiredOption("--file <path>", "JSON decision array")
+    .action((batch: string, options: { file: string }) => runStore(program, io, async (store) =>
+      store.inbox.ack(batch, parseAckDecisions(JSON.parse(await readFile(options.file, "utf8")))), (rows) => JSON.stringify(rows)));
+  leaf(inbox, "history", "inspect retained attempts, batches, events and decisions").action(() => runStore(program, io,
+    (store) => store.inbox.history(), (history) => JSON.stringify(history, null, 2)));
   leaf(inbox, "count", "count inbox pointers").action(() =>
     runStore(
       program,
