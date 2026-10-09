@@ -1,8 +1,8 @@
-// pstack-vic's release on the operator's Mac: moves Claude Code and Codex to the version CI tagged. Run it in the main checkout after `git pull --ff-only`. Every step reads what is already done before it acts, so a second run is safe.
+// pstack-vic's release on the operator's Mac: moves Claude Code and Codex to the version CI tagged, then removes the Claude Code records whose project is gone. Run it in the main checkout after `git pull --ff-only`. Every step reads what is already done before it acts, so a second run is safe.
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 const PLUGIN = 'pstack@pstack-vic';
 const MARKETPLACE = 'pstack-vic';
@@ -40,17 +40,23 @@ const recordName = (r: ClaudeRecord) => r.projectPath ? `${r.scope} ${r.projectP
 function claudeRecords(): ClaudeRecord[] {
   return (JSON.parse(run('claude', ['plugin', 'list', '--json'])) as (ClaudeRecord & { id: string })[]).filter(p => p.id === PLUGIN);
 }
-/** A linked worktree has a `.git` file where a main checkout has a directory. */
-function linkedWorktree(path: string): boolean {
-  try { return statSync(join(path, '.git')).isFile(); } catch { return false; }
+/** The main checkout of a linked worktree, read from the worktree's `.git` file (`gitdir: <main>/.git/worktrees/<name>`); undefined for any other folder. */
+function mainCheckoutOf(path: string): string | undefined {
+  try {
+    const [main, name] = readFileSync(join(path, '.git'), 'utf8').trim().replace(/^gitdir: /, '').split('/.git/worktrees/');
+    return name === undefined ? undefined : main;
+  } catch { return undefined; }
 }
-/** Moves every Claude Code install record of the plugin, each with its own scope and, for a project or local record, from its project. A record whose project is gone is skipped and named, and so is a local record of a linked worktree that is behind: from there Claude Code 2.1.295 resolves `plugin update --scope local` to the main checkout's local record. */
-function updateClaude(version: string): void {
+/** Moves every Claude Code install record of the plugin, each with its own scope and, for a project or local record, from its project, and returns the records whose project is gone, for `removeGone`. A behind local record of a linked worktree is named and left when its main checkout has a record of its own: a session in the worktree loads the main checkout's local record, then its project record, and the worktree's own only without both (measured on Claude Code 2.1.293 and 2.1.295), and from the worktree `plugin update --scope local` moves the main checkout's local record. */
+function updateClaude(version: string): ClaudeRecord[] {
+  const records = claudeRecords();
   const live: ClaudeRecord[] = [];
-  for (const record of claudeRecords()) {
+  const gone: ClaudeRecord[] = [];
+  for (const record of records) {
     if (!['user', ...PROJECT_SCOPES].includes(record.scope)) throw new Error(`Claude Code has ${PLUGIN} in ${recordName(record)}, a scope this release does not update`);
-    if (PROJECT_SCOPES.includes(record.scope) && !existsSync(record.projectPath ?? '')) say(`Claude Code ${PLUGIN} (${recordName(record)}) skipped: the project no longer exists`);
-    else if (record.scope === 'local' && record.version !== version && linkedWorktree(record.projectPath ?? '')) say(`Claude Code ${PLUGIN} (${recordName(record)}) skipped: from a linked worktree, \`claude plugin update --scope local\` updates the main checkout's local record, so this one stays on ${record.version}`);
+    const main = record.scope === 'local' ? mainCheckoutOf(record.projectPath ?? '') : undefined;
+    if (PROJECT_SCOPES.includes(record.scope) && !existsSync(record.projectPath ?? '')) gone.push(record);
+    else if (record.version !== version && main !== undefined && records.some(r => PROJECT_SCOPES.includes(r.scope) && r.projectPath === main)) say(`Claude Code ${PLUGIN} (${recordName(record)}) stays on ${record.version}: a session in this linked worktree loads the main checkout's record`);
     else live.push(record);
   }
   if (live.length === 0) throw new Error(`Claude Code reports ${PLUGIN} not installed`);
@@ -65,6 +71,27 @@ function updateClaude(version: string): void {
     if (installed !== version) throw new Error(`Claude Code reports ${PLUGIN} ${installed ?? 'not installed'} (${recordName(record)}), not ${version}`);
     say(`Claude Code on ${PLUGIN} ${version} (${recordName(record)})`);
   }
+  return gone;
+}
+/** Removes the records whose project is gone. `plugin uninstall --scope <scope>` removes the record keyed by its cwd and also clears the plugin from the settings of the repository holding that cwd, which for a folder inside a checkout is that checkout's (measured on 2.1.295). So each removal runs from a fresh repository made at the gone path, and the folders made for it are deleted afterwards. */
+function removeGone(gone: ClaudeRecord[]): void {
+  for (const record of gone) {
+    const path = record.projectPath ?? '';
+    let made = path;
+    while (!existsSync(dirname(made))) made = dirname(made);
+    mkdirSync(made);
+    try {
+      mkdirSync(path, { recursive: true });
+      run('git', ['init', '--quiet', path]);
+      run('claude', ['plugin', 'uninstall', PLUGIN, '--scope', record.scope, '--keep-data'], path);
+    } finally {
+      rmSync(made, { recursive: true, force: true });
+    }
+    say(`Claude Code ${PLUGIN} (${recordName(record)}) removed: the project no longer exists`);
+  }
+  if (gone.length === 0) return;
+  const left = new Set(claudeRecords().map(recordKey));
+  for (const record of gone) if (left.has(recordKey(record))) throw new Error(`Claude Code still has ${PLUGIN} (${recordName(record)}) after its removal`);
 }
 function codexVersion(cwd: string, env: NodeJS.ProcessEnv): string | null {
   return (JSON.parse(run('codex', ['plugin', 'list', '--json'], cwd, env)) as { installed: { pluginId: string; version: string }[] }).installed.find(p => p.pluginId === PLUGIN)?.version ?? null;
@@ -111,8 +138,9 @@ function updateCodex(version: string, home: string): void {
 function main(): void {
   const version = (JSON.parse(readFileSync('package.json', 'utf8')) as { version: string }).version;
   requireTaggedTrunk(version);
-  updateClaude(version);
+  const gone = updateClaude(version);
   updateCodex(version, homedir());
+  removeGone(gone);
 }
 try { main(); }
 catch (error) { process.stderr.write((error instanceof Error ? error.message : String(error)) + '\n'); process.exitCode = 1; }

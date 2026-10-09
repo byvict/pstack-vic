@@ -3,16 +3,16 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const script = fileURLToPath(new URL('./release.ts', import.meta.url));
 const commit = 'c'.repeat(40);
 const other = 'd'.repeat(40);
-/** One fake for git, claude and codex, dispatched on its own file name. It answers from FAKE_ROOT/state.json and appends each call to FAKE_ROOT/calls.jsonl. A call the release has no business making, such as `git tag` or `git push`, fails. The fake claude keeps one install record per scope and project, and `plugin update --scope` moves only the record of that scope whose project is the cwd (any cwd for user), as the real CLI does. From a linked worktree (a `.git` file) the project is the main checkout, as Claude Code 2.1.295 resolves it. */
+/** One fake for git, claude and codex, dispatched on its own file name. It answers from FAKE_ROOT/state.json and appends each call to FAKE_ROOT/calls.jsonl. A call the release has no business making, such as `git tag` or `git push`, fails. The fake claude keeps one install record per scope and project, and `plugin update --scope` moves only the record of that scope whose project is the cwd (any cwd for user), as the real CLI does. From a linked worktree (a `.git` file) it moves the main checkout's record, and the worktree's own only when the main checkout has none, as Claude Code 2.1.295 resolves it. `plugin uninstall --scope` removes the record keyed by the cwd and notes the repository whose settings the real CLI would clear: the nearest folder up from the cwd that has a `.git`. */
 const fake = `#!/usr/bin/env node
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 const root = process.env.FAKE_ROOT;
 const file = join(root, 'state.json');
 const state = JSON.parse(readFileSync(file, 'utf8'));
@@ -42,17 +42,28 @@ if (name === 'git') {
   else if (is('rev-parse', 'HEAD')) out(state.head + '\\n');
   else if (is('rev-parse', 'origin/main')) out(state.tip + '\\n');
   else if (args.length === 5 && is('ls-remote', '--exit-code', '--tags', 'origin', args[4]) && args[4].startsWith('refs/tags/')) { const tag = args[4].slice('refs/tags/'.length); if (!state.remoteTags[tag]) process.exit(2); out(state.remoteTags[tag] + '\\t' + args[4] + '\\n'); }
+  else if (is('init', '--quiet', args[2] ?? '')) mkdirSync(join(args[2], '.git'), { recursive: true });
   else fail('fake git: ' + args.join(' '));
 } else if (name === 'claude') {
   if (is('plugin', 'list', '--json')) out(JSON.stringify([{ id: 'other@elsewhere', version: '9.9.9', scope: 'user' }, ...state.claude.records.map(({ lands, ...record }) => ({ id: 'pstack@pstack-vic', ...record }))]));
   else if (is('plugin', 'marketplace', 'update', 'pstack-vic')) { state.claude.fetched = true; save(); }
   else if (is('plugin', 'update', 'pstack@pstack-vic', '--scope', args[4] ?? '')) {
     const dotGit = join(process.cwd(), '.git');
-    const project = existsSync(dotGit) && statSync(dotGit).isFile() ? readFileSync(dotGit, 'utf8').trim().replace('gitdir: ', '').split('/.git/worktrees/')[0] : process.cwd();
-    const record = state.claude.records.find(r => r.scope === args[4] && (r.scope === 'user' || r.projectPath === project));
+    const main = existsSync(dotGit) && statSync(dotGit).isFile() ? readFileSync(dotGit, 'utf8').trim().replace('gitdir: ', '').split('/.git/worktrees/')[0] : process.cwd();
+    const of = project => state.claude.records.find(r => r.scope === args[4] && (r.scope === 'user' || r.projectPath === project));
+    const record = of(main) ?? of(process.cwd());
     if (!record) fail('plugin-not-installed');
     state.claude.updates.push([args[4], process.cwd()]);
     if (state.claude.fetched) record.version = record.lands ?? state.claude.latest;
+    save();
+  }
+  else if (is('plugin', 'uninstall', 'pstack@pstack-vic', '--scope', args[4] ?? '', '--keep-data')) {
+    const index = state.claude.records.findIndex(r => r.scope === args[4] && r.projectPath === process.cwd());
+    if (index < 0) fail('plugin-not-installed');
+    let repository = process.cwd();
+    while (!existsSync(join(repository, '.git')) && dirname(repository) !== repository) repository = dirname(repository);
+    state.claude.uninstalls.push([args[4], process.cwd(), repository]);
+    if (!state.claude.uninstallKeeps) state.claude.records.splice(index, 1);
     save();
   }
   else fail('fake claude: ' + args.join(' '));
@@ -81,7 +92,7 @@ function setup(t: { after: (fn: () => void) => void }, change: (state: Record<st
   symlinkSync(process.execPath, join(bin, 'node'));
   const home = join(root, 'home'); mkdirSync(join(home, '.codex'), { recursive: true }); writeFileSync(join(home, '.codex', 'config.toml'), original);
   const work = join(root, 'work'); mkdirSync(work); writeFileSync(join(work, 'package.json'), JSON.stringify({ version: '0.4.8' }));
-  const state: Record<string, any> = { head: commit, tip: commit, remoteTags: { 'v0.4.8': commit }, claude: { records: [{ scope: 'user', version: '0.4.7' }], latest: '0.4.8', updates: [] }, codex: { version: '0.4.7', ref: 'v0.4.7' } };
+  const state: Record<string, any> = { head: commit, tip: commit, remoteTags: { 'v0.4.8': commit }, claude: { records: [{ scope: 'user', version: '0.4.7' }], latest: '0.4.8', updates: [], uninstalls: [] }, codex: { version: '0.4.7', ref: 'v0.4.7' } };
   change(state, project);
   state.codex.root = join(home, '.codex', '.tmp', 'marketplaces', 'pstack-vic');
   if (state.codex.ref) mkdirSync(state.codex.root, { recursive: true });
@@ -157,7 +168,7 @@ test('a Claude Code command that fails exits 1 and leaves Codex alone', t => {
   assert.equal(result.stderr, 'claude plugin update pstack@pstack-vic --scope user failed: fake claude: unable to access remote\n');
   assert.deepEqual(s.parentCalls().filter(call => call[0] === 'codex'), []);
 });
-test('every Claude Code record moves with its own scope, a project or local one from its project, and one whose project is gone is skipped and named', t => {
+test('every Claude Code record moves with its own scope, a project or local one from its project, and one whose project is gone is removed and named after Codex moves', t => {
   let clinext = '', vic = '', local = '';
   const s = setup(t, (state, project) => {
     clinext = project('clinext'); vic = project('pstack-vic'); local = project('scratch');
@@ -166,12 +177,45 @@ test('every Claude Code record moves with its own scope, a project or local one 
   const gone = join(s.root, 'projects', 'removed-worktree');
   const result = s.run();
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout, ['v0.4.8 is on origin', `Claude Code pstack@pstack-vic (project ${gone}) skipped: the project no longer exists`, `Claude Code on pstack@pstack-vic 0.4.8 (project ${clinext})`, 'Claude Code on pstack@pstack-vic 0.4.8 (user)', `Claude Code on pstack@pstack-vic 0.4.8 (project ${vic})`, `Claude Code on pstack@pstack-vic 0.4.8 (local ${local})`, 'Codex on pstack@pstack-vic 0.4.8', ''].join('\n'));
-  assert.deepEqual(s.moves().filter(call => call[0] === 'claude').map(call => call.slice(1).join(' ')), ['plugin marketplace update pstack-vic', 'plugin update pstack@pstack-vic --scope project', 'plugin update pstack@pstack-vic --scope user', 'plugin update pstack@pstack-vic --scope project', 'plugin update pstack@pstack-vic --scope local'], 'one marketplace refresh, then one update per live record');
+  assert.equal(result.stdout, ['v0.4.8 is on origin', `Claude Code on pstack@pstack-vic 0.4.8 (project ${clinext})`, 'Claude Code on pstack@pstack-vic 0.4.8 (user)', `Claude Code on pstack@pstack-vic 0.4.8 (project ${vic})`, `Claude Code on pstack@pstack-vic 0.4.8 (local ${local})`, 'Codex on pstack@pstack-vic 0.4.8', `Claude Code pstack@pstack-vic (project ${gone}) removed: the project no longer exists`, ''].join('\n'));
+  assert.deepEqual(s.moves().filter(call => call[0] === 'claude').map(call => call.slice(1).join(' ')), ['plugin marketplace update pstack-vic', 'plugin update pstack@pstack-vic --scope project', 'plugin update pstack@pstack-vic --scope user', 'plugin update pstack@pstack-vic --scope project', 'plugin update pstack@pstack-vic --scope local', 'plugin uninstall pstack@pstack-vic --scope project --keep-data'], 'one marketplace refresh, one update per live record, then one removal per gone record');
   assert.deepEqual(s.state().claude.updates.filter(([scope]: string[]) => scope !== 'user'), [['project', clinext], ['project', vic], ['local', local]], 'each project or local update runs from its project');
-  assert.deepEqual(s.state().claude.records.map((r: { version: string }) => r.version), ['0.4.8', '0.4.8', '0.4.7', '0.4.8', '0.4.8'], 'the skipped record is left as it was');
+  assert.deepEqual(s.state().claude.uninstalls, [['project', gone, gone]], 'the removal runs from a fresh repository at the gone path');
+  assert.equal(existsSync(gone), false, 'the folder made for the removal is deleted');
+  assert.deepEqual(s.state().claude.records.map((r: { projectPath?: string }) => r.projectPath), [clinext, undefined, vic, local]);
 });
-test('a local record of a linked worktree that is behind is skipped and named, because from there the CLI updates the main checkout, and Codex still moves', t => {
+test('a gone worktree inside a checkout is removed from a fresh repository at its path, so the checkout settings stay out of reach, and only the folders the release made are deleted', t => {
+  let vic = '', inside = '', deep = '', sibling = '';
+  const s = setup(t, (state, project) => {
+    vic = project('pstack-vic'); mkdirSync(join(vic, '.git'));
+    sibling = join(vic, '.claude', 'worktrees', 'live'); mkdirSync(sibling, { recursive: true }); writeFileSync(join(sibling, 'work.txt'), 'kept\n');
+    inside = join(vic, '.claude', 'worktrees', 'removed'); deep = join(dirname(dirname(vic)), 'elsewhere', 'worktree', 'pstack-vic');
+    state.claude.records = [{ scope: 'local', projectPath: vic, version: '0.4.8' }, { scope: 'local', projectPath: inside, version: '0.4.7' }, { scope: 'local', projectPath: deep, version: '0.4.7' }];
+  });
+  const result = s.run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, ['v0.4.8 is on origin', `Claude Code on pstack@pstack-vic 0.4.8 (local ${vic})`, 'Codex on pstack@pstack-vic 0.4.8', `Claude Code pstack@pstack-vic (local ${inside}) removed: the project no longer exists`, `Claude Code pstack@pstack-vic (local ${deep}) removed: the project no longer exists`, ''].join('\n'));
+  assert.deepEqual(s.state().claude.uninstalls, [['local', inside, inside], ['local', deep, deep]], 'no removal reaches the settings of the checkout around it');
+  assert.deepEqual(s.state().claude.records.map((r: { projectPath: string }) => r.projectPath), [vic]);
+  assert.deepEqual([existsSync(inside), existsSync(join(s.root, 'elsewhere')), readFileSync(join(sibling, 'work.txt'), 'utf8'), existsSync(join(vic, '.git'))], [false, false, 'kept\n', true]);
+});
+test('a removal that fails exits 1 naming the command after both parents moved, and deletes the folder it made', t => {
+  let gone = '';
+  const s = setup(t, (state, project) => { gone = join(project('projects-root'), 'removed'); state.claude.records.push({ scope: 'local', projectPath: gone, version: '0.4.7' }); state.failing = ['claude plugin uninstall']; });
+  const result = s.run();
+  assert.equal(result.status, 1);
+  assert.equal(result.stderr, 'claude plugin uninstall pstack@pstack-vic --scope local --keep-data failed: fake claude: unable to access remote\n');
+  assert.deepEqual([s.state().claude.records[0].version, s.state().codex.version], ['0.4.8', '0.4.8']);
+  assert.equal(existsSync(gone), false);
+});
+test('a gone record the CLI leaves in place after its removal exits 1 naming it', t => {
+  let gone = '';
+  const s = setup(t, (state, project) => { gone = join(project('projects-root'), 'removed'); state.claude.records.push({ scope: 'local', projectPath: gone, version: '0.4.7' }); state.claude.uninstallKeeps = true; });
+  const result = s.run();
+  assert.equal(result.status, 1);
+  assert.equal(result.stderr, `Claude Code still has pstack@pstack-vic (local ${gone}) after its removal\n`);
+});
+test('a behind local record of a linked worktree whose main checkout has a record is named and left, because sessions there load the main checkout record, and Codex still moves', t => {
   let vic = '', behind = '', current = '';
   const s = setup(t, (state, project) => {
     vic = project('pstack-vic');
@@ -181,9 +225,21 @@ test('a local record of a linked worktree that is behind is skipped and named, b
   });
   const result = s.run();
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout, ['v0.4.8 is on origin', `Claude Code pstack@pstack-vic (local ${behind}) skipped: from a linked worktree, \`claude plugin update --scope local\` updates the main checkout's local record, so this one stays on 0.4.7`, `Claude Code on pstack@pstack-vic 0.4.8 (local ${vic})`, `Claude Code on pstack@pstack-vic 0.4.8 (local ${current})`, 'Codex on pstack@pstack-vic 0.4.8', ''].join('\n'));
+  assert.equal(result.stdout, ['v0.4.8 is on origin', `Claude Code pstack@pstack-vic (local ${behind}) stays on 0.4.7: a session in this linked worktree loads the main checkout's record`, `Claude Code on pstack@pstack-vic 0.4.8 (local ${vic})`, `Claude Code on pstack@pstack-vic 0.4.8 (local ${current})`, 'Codex on pstack@pstack-vic 0.4.8', ''].join('\n'));
   assert.deepEqual(s.state().claude.updates, [['local', vic]], 'no update runs from a linked worktree');
   assert.deepEqual(s.state().claude.records.map((r: { version: string }) => r.version), ['0.4.8', '0.4.7', '0.4.8']);
+});
+test('a behind local record of a linked worktree whose main checkout has no record is the one its sessions load, and moves from the worktree', t => {
+  let vic = '', linked = '';
+  const s = setup(t, (state, project) => {
+    vic = project('pstack-vic'); linked = project('linked');
+    mkdirSync(join(vic, '.git', 'worktrees', 'linked'), { recursive: true }); writeFileSync(join(linked, '.git'), `gitdir: ${join(vic, '.git', 'worktrees', 'linked')}\n`);
+    state.claude.records = [{ scope: 'user', version: '0.4.8' }, { scope: 'local', projectPath: linked, version: '0.4.7' }];
+  });
+  const result = s.run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, ['v0.4.8 is on origin', 'Claude Code on pstack@pstack-vic 0.4.8 (user)', `Claude Code on pstack@pstack-vic 0.4.8 (local ${linked})`, 'Codex on pstack@pstack-vic 0.4.8', ''].join('\n'));
+  assert.deepEqual(s.state().claude.updates, [['local', linked]]);
 });
 test('only the Claude Code records behind the version are updated, and every record is read back', t => {
   let clinext = '';
