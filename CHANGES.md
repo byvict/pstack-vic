@@ -2027,3 +2027,12 @@ Reflect e show-me-your-work passam a resolver um chat Codex conhecido pelo UUID,
 O orch vincula cada conclusão à tentativa, ao Dono e aos dados de entrada. O drain conserva o lote até o ack, que persiste a decisão antes de atualizar a unidade e o ledger; uma retomada conclui essa decisão sem duplicar a linha do ledger. Resultados de tentativas substituídas ou com heads divergentes são recusados com a evidência preservada; o descarte exige motivo (#137). Dez ensaios com SIGKILL cobrem a retomada nos limites de persistência. A garantia vale para o estado local do orch; não promete efeitos externos executados uma única vez nem durabilidade contra falha de disco ou perda de energia.
 
 A release mantém o pin upstream, as fichas de modelos e as escolhas de modelo e esforço.
+
+# Tick em segundo plano também na Raiz Claude do T3 Code — 2026-10-09
+
+O T3 Code inicia o `claude` pelo Agent SDK, e numa Raiz Claude aberta nele `CLAUDE_CODE_ENTRYPOINT` vale `sdk-ts`. Esse valor não é `claude-desktop` nem `cli`, então a Raiz caía no texto genérico dos playbooks, o `/loop 1h`. Medido em 2026-10-09 no Claude Code 2.1.295, sob o Agent SDK 0.3.276 e o T3 Code 0.0.45, o host retém um cron como o app retém. Com um `sleep` ou um subagente em segundo plano, o cron esperou 8 min e 3 min 48 s pelo primeiro fim de turno sem tarefa viva. Sem nada em segundo plano, chegou na hora. O fim de um comando em segundo plano acordou a Raiz no mesmo segundo. Um programa Autopilot-full de três itens rodou do "go" ao último merge com o Tick do [ADR 0010](docs/adr/0010-tick-em-segundo-plano-na-raiz-do-app-desktop.md) ([relatório](docs/research/2026-10-09-autopilot-claude-root-t3.md)).
+
+- `skills/poteto-mode/SKILL.md` (*Platform Adaptation*), `docs/reference.md`, `CONTEXT.md` e `docs/guide/07-overnight.md` passam a dizer que a Raiz Claude do T3 Code arma o Tick como a do app, e por qual valor de entrypoint ela se reconhece.
+- O ADR 0010 ganha um parágrafo de 2026-10-09 que estende a mesma decisão ao `sdk-ts`.
+- A troca T13 de `upstream-substitutions.json` aponta para o `SKILL.md` uma Raiz Claude "inside the desktop app or T3 Code". Os dois playbooks regenerados por `node scripts/upstream-parity.ts --write` continuam a dizer `/loop 1h`.
+- Os pontos de contato `claude.desktop-scheduler` e `claude.desktop-tick` de `cli-touchpoints.json` citam a medição do T3, e a âncora do segundo segue a frase reescrita do `SKILL.md`.

@@ -30,7 +30,7 @@ O [Autonomous run](../../skills/poteto-mode/playbooks/autonomous-run.md) usa a c
 
 | Ambiente | Como o port acompanha |
 | --- | --- |
-| Claude Code | O `/loop` do ambiente fornece a cadência numa raiz de terminal; numa Raiz do app desktop, um comando em segundo plano de uma hora, re-armado a cada vez ([referência](../reference.md#o-que-a-raiz-faz-a-cada-hora)). O programa registra o que deve conferir. |
+| Claude Code | O `/loop` do ambiente fornece a cadência numa raiz de terminal; numa Raiz do app desktop ou do T3 Code, um comando em segundo plano de uma hora, re-armado a cada vez ([referência](../reference.md#o-que-a-raiz-faz-a-cada-hora)). O programa registra o que deve conferir. |
 | Codex | Para despertares com hora marcada, prefere heartbeat nativo na thread exata, quando adequado; a alternativa é fila CLI com controlador, host em execução e thread carregada, com rearmação explícita. Só sem mecanismo válido depende do prompt do operador. Preserva o payload e a cadência do fluxo; no Autopilot, uma hora ([contrato de despertar](../../skills/poteto-mode/references/codex-local-wake.md)). |
 | Grok Build | O coordenador usa o mecanismo descrito em [Autopilot audit](../../skills/poteto-mode/references/grok-tools.md#autopilot-audit); o `/loop` do Grok executa um subagente separado. |
 
