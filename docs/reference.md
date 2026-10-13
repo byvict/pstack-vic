@@ -66,7 +66,9 @@ Para desfazer no Codex, rode `codex plugin remove pstack@pstack-vic` e depois `c
 
 No Codex, a configuração local de modelos do projeto tem precedência sobre a global, seguida dos defaults da matriz. Setup e `pick` resolvem a mesma fonte e informam seu caminho. Worktrees usam sua própria cadeia de instruções; uma referência explícita permite compartilhar a fonte. O [contrato de fontes](../skills/setup-pstack/references/model-sources.md) define precedência, recuperação, `--cwd` e a cadeia `--instruction-source` para descoberta não padrão.
 
-Rode `/setup-pstack` em cada pai para escrever a fonte resolvida de modelos. No escopo global, os caminhos padrão são `~/.claude/pstack-models.md` e `~/.codex/pstack-models.md`. Com `CLAUDE_CONFIG_DIR` ou `CODEX_HOME` definido, os destinos globais de sheet, ledger de probes e integração vão para esse diretório (um `CODEX_HOME` vazio conta como não definido; um `CLAUDE_CONFIG_DIR` vazio para o script, porque o Claude Code 2.1.289 então lê o `settings.json` e o `CLAUDE.md` da pasta onde abriu), e `authorize.ts` confere o `settings.json` ou o `config.toml` de lá ([Harness config homes](../skills/poteto-mode/references/codex-tools.md#harness-config-homes)). O último passo dele confere a [autorização permanente](#autorização-permanente), que o autopilot e o playbook Shipping exigem para mergear sem aprovação humana. Depois, `/poteto-mode` é o ponto de entrada para qualquer tarefa que peça rigor.
+Rode `/setup-pstack` em cada pai para escrever a fonte resolvida de modelos. No escopo global, os caminhos padrão são `~/.claude/pstack-models.md` e `~/.codex/pstack-models.md`. Com `CLAUDE_CONFIG_DIR` ou `CODEX_HOME` definido, os destinos globais de sheet e ledger de probes vão para esse diretório (um `CODEX_HOME` vazio conta como não definido; um `CLAUDE_CONFIG_DIR` vazio para o script, porque o Claude Code 2.1.289 então lê o `settings.json` e o `CLAUDE.md` da pasta onde abriu), e `authorize.ts` confere o `settings.json` ou o `config.toml` de lá ([Harness config homes](../skills/poteto-mode/references/codex-tools.md#harness-config-homes)). O último passo dele confere a [autorização permanente](#autorização-permanente), que o autopilot e o playbook Shipping exigem para mergear sem aprovação humana. Depois, `/poteto-mode` é o ponto de entrada para qualquer tarefa que peça rigor.
+
+O sheet é dado do plugin. Nenhum `CLAUDE.md` ou `AGENTS.md` o carrega: as skills o leem na hora de despachar um papel, com `setup-pstack.ts roles` ([Role defaults](../skills/poteto-mode/references/provider-dispatch.md#role-defaults)).
 
 ### Ativar o Codex por projeto
 
@@ -78,6 +80,28 @@ enabled = true
 ```
 
 O marketplace do usuário fixa a tag atual. Os projetos usam esse catálogo sem repetir a tag, então uma release atualiza a fonte de todos eles. Novos worktrees herdam a ativação pelo Git; o Codex precisa confiar no projeto para carregar a configuração. A ativação do plugin e a fonte de modelos são contratos distintos. Setup e seleção seguem o [contrato de fontes](../skills/setup-pstack/references/model-sources.md): fonte do projeto, global em `CODEX_HOME`/`~/.codex`, depois defaults.
+
+### Desligar e desinstalar
+
+Desligar ou desinstalar o plugin tira todo o efeito dele. O sheet (`pstack-models.md`) e o ledger de probes (`pstack-probes.json`) ficam no diretório de configuração de cada pai como dados. Só as skills do plugin os leem, então ficam sem efeito com o plugin desligado, e as escolhas voltam quando ele volta.
+
+- **Claude Code.** `claude plugin list --json` mostra cada registro, com escopo e pasta. Desligue pelo `/plugin` ou com `claude plugin disable pstack@pstack-vic`. Para remover, rode `claude plugin uninstall pstack@pstack-vic --scope <escopo> --keep-data` de dentro da pasta de cada registro. Um registro `project` é a linha `enabledPlugins` do `.claude/settings.json` do repositório, que é versionado, e o comando reescreve esse arquivo.
+- **Codex.** `codex plugin remove pstack@pstack-vic` tira o plugin e o cache; `codex plugin marketplace remove pstack-vic` tira o catálogo. A ativação por projeto em `.codex/config.toml` fica apontando para um plugin ausente até você apagar a linha.
+- **Grok Build.** Segue os registros do Claude Code. Não há instalação separada.
+
+Três ajustes fora do plugin são seus, pedidos pela instalação, e nenhum comando de plugin os desfaz:
+
+- a [autorização permanente](#autorização-permanente) em `~/.claude/settings.json` (`autoMode.allow`, a entrada `pstack standing authorization v3`). O Claude Code só a lê das configurações do usuário, por isso o plugin não pode trazê-la nem tirá-la. Apague a entrada para retirá-la;
+- no Codex, `[features] multi_agent` e `[sandbox_workspace_write]` (`network_access`, `writable_roots`) em `~/.codex/config.toml`;
+- no Grok, `[subagents] max_depth` em `~/.grok/config.toml`.
+
+Até a 0.5.31, o setup gravava o sheet nas instruções: uma linha `@~/.claude/pstack-models.md` no `~/.claude/CLAUDE.md` e um bloco `<!-- pstack:models:begin -->` no `AGENTS.md` do Codex e do Grok. Isso fazia toda sessão carregar o sheet, com o plugin ligado ou não. `setup-pstack.ts state` e `roles` mostram o que sobrou em `legacyWiring`. Para tirar, rode uma vez em cada pai, de uma pasta fora de qualquer projeto (a pasta pessoal serve), antes de desligar. `<plugin>` é a pasta do plugin instalado ou um clone deste repositório:
+
+```shell
+node <plugin>/skills/setup-pstack/scripts/setup-pstack.ts unwire --parent <claude|codex|grok>
+```
+
+O `unwire` mantém todas as escolhas. Quando o sheet só existia dentro do bloco, ele primeiro o grava como arquivo. Depois apaga a linha ou o bloco e não mexe no resto do arquivo. O próximo `/setup-pstack` faz o mesmo. Um projeto Codex com bloco próprio no `AGENTS.md` pede um `unwire` de dentro dele, e o sheet do projeto que substitui o bloco precisa entrar num commit. Cada perfil de `CLAUDE_CONFIG_DIR` pede o seu. Sem o script, apague à mão a linha do `CLAUDE.md` e o bloco, com os dois marcadores.
 
 ### Publicar uma versão
 
@@ -141,7 +165,7 @@ Nada é gerado nem bifurcado por pai. As referências fazem a tradução em temp
 
 ## Grok como raiz no T3 Code
 
-Grok Build é o terceiro pai. O [mapa de ferramentas Grok](../skills/poteto-mode/references/grok-tools.md) cobre filhos nativos, owners, esperas, cancelamento, permissões e a retomada do autopilot. Claude e Codex vão pelo runner com `--parent grok`. O setup guarda sheet e probes em `~/.grok`, com um bloco em `~/.grok/AGENTS.md`. Os agents gerados fixam modelo e esforço; o frontmatter das skills não faz essa seleção.
+Grok Build é o terceiro pai. O [mapa de ferramentas Grok](../skills/poteto-mode/references/grok-tools.md) cobre filhos nativos, owners, esperas, cancelamento, permissões e a retomada do autopilot. Claude e Codex vão pelo runner com `--parent grok`. O setup guarda sheet e probes em `~/.grok` e não escreve no `~/.grok/AGENTS.md`. Os agents gerados fixam modelo e esforço; o frontmatter das skills não faz essa seleção.
 
 O fluxo raiz → owner → helper exige `[subagents] max_depth = 2` ou maior no `~/.grok/config.toml` e uma sessão reiniciada. O setup exige os IDs dos dois níveis e o marcador observado antes de gravar a configuração.
 

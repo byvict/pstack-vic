@@ -5,8 +5,10 @@
 // that must be exact: reading and normalizing the current sheet, rendering the
 // new one from model-matrix.json, running the external probes through the
 // runner, refusing to write while any probe is missing, and the snapshot /
-// write / read-back / restore of the sheet, the parent integration, and the
-// probe ledger. Effort belongs to the lane, not the family: two lanes of one
+// write / read-back / restore of the sheet and the probe ledger. The sheet is
+// plugin data: no instruction file loads it, so disabling the plugin disables
+// it. Versions before 0.5.32 wired it into CLAUDE.md or AGENTS.md; `write` and
+// `unwire` remove that wiring. Effort belongs to the lane, not the family: two lanes of one
 // family may differ. The probe unit is the family (provider and model): the
 // parent's ledger records every family it has verified, and only a family
 // missing from it (a new provider or a new model) is probed, once, at its
@@ -23,10 +25,13 @@
 //   setup-pstack.ts attest --dir <run dir> --pair <family>@<effort> --observed <text>
 //   setup-pstack.ts write  --dir <run dir> [--home <dir>]
 //   setup-pstack.ts pick   --parent <p> --role "<pool role>" [--executor <provider>]... [--home <dir>]
+//   setup-pstack.ts roles  --parent <p> [--home <dir>]
+//   setup-pstack.ts unwire --parent <p> [--home <dir>]
 //
-// `pick` is the one subcommand a skill calls at dispatch time: it applies the
-// Cross-family selection rule of provider-dispatch.md to a pool row, so the
-// session whose work is under review does not choose its own reviewer.
+// `roles` and `pick` are the subcommands a skill calls at dispatch time.
+// `roles` resolves every role to its lanes. `pick` applies the Cross-family
+// selection rule of provider-dispatch.md to a pool row, so the session whose
+// work is under review does not choose its own reviewer.
 //
 // Node 24, type stripping, no dependencies: erasable TypeScript only.
 
@@ -74,6 +79,7 @@ interface HomeVariable {
 interface Target {
   readonly defaultDir: string;
   readonly variable: HomeVariable | null;
+  /** The instruction file where versions before 0.5.32 wired the sheet. Setup only reads and removes that wiring now. */
   readonly integration: string;
   readonly wiring: "import" | "block";
 }
@@ -91,8 +97,8 @@ const TARGETS: Readonly<Record<string, Target>> = {
 
 export const SHEET_FILE = "pstack-models.md";
 export const LEDGER_FILE = "pstack-probes.json";
+/** The wiring versions before 0.5.32 wrote: this import in CLAUDE.md, or the block between the markers in AGENTS.md. */
 export const CLAUDE_INCLUDE_LINE = "@~/.claude/pstack-models.md";
-const CLAUDE_RELATIVE_INCLUDE_LINE = `@./${SHEET_FILE}`;
 export const CODEX_BLOCK_BEGIN = "<!-- pstack:models:begin -->";
 export const CODEX_BLOCK_END = "<!-- pstack:models:end -->";
 
@@ -204,11 +210,13 @@ function locate(parent: string, home: string, env: ConfigEnv, context: SourceCon
     const integration = snapshotOf(integrationPath, "instruction file");
     if (path !== null && integration === null) fail(`loaded instruction source ${path} does not exist`);
     const sheetDirectory = directory === configHome ? configHome : join(directory, ".codex");
+    // The folder whose .codex is the config home (the user's home) holds the global sheet, not a project one.
+    const ownSheet = directory === configHome || sheetDirectory !== configHome;
     const reference = referencedSheet(integration ?? "", integrationPath, home);
     const sheetPath = reference ?? join(sheetDirectory, SHEET_FILE);
     const block = findBlock(integration ?? "", integrationPath);
     if (reference !== null && !existsSync(reference)) fail(`${integrationPath} references missing model sheet ${reference}`);
-    if (reference !== null || block !== null || existsSync(sheetPath)) {
+    if (reference !== null || block !== null || (ownSheet && existsSync(sheetPath))) {
       return { ...global, sheetPath, integrationPath, ledgerPath: join(dirname(sheetPath), LEDGER_FILE) };
     }
   }
@@ -599,31 +607,53 @@ function importTarget(path: string, where: Location): string {
   return resolve(dirname(where.integrationPath), path);
 }
 
-function includeLineFor(where: Location): string {
-  return where.configHome === resolve(where.home, TARGETS.claude.defaultDir) ? CLAUDE_INCLUDE_LINE : CLAUDE_RELATIVE_INCLUDE_LINE;
-}
-
-function placeImport(where: Location, text: string): { readonly current: SheetImport | null; readonly rendered: string } {
-  const path = where.integrationPath;
+/** The one sheet import Claude Code loads from this CLAUDE.md, or null; anything less certain stops. */
+function currentImport(path: string, text: string): SheetImport | null {
   const scan = scanSheetImports(text);
   if (scan.unsure.length > 0) {
-    fail(`inconsistent state: ${path} line ${scan.unsure[0].line} mentions an import of ${SHEET_FILE} that this script cannot read the way Claude Code does (${scan.unsure[0].reason}); move the import to the top of the file as a line of its own, or remove the mention`);
+    fail(`inconsistent state: ${path} line ${scan.unsure[0].line} mentions an import of ${SHEET_FILE} that this script cannot read the way Claude Code does (${scan.unsure[0].reason}); remove the mention`);
   }
   if (scan.imports.length > 1) tooManyImports(path, scan.imports);
-  const current = scan.imports[0] ?? null;
-  const include = includeLineFor(where);
-  const separator = text.length === 0 || text.endsWith("\n") ? "" : "\n";
+  return scan.imports[0] ?? null;
+}
+
+const LINE_BREAK_RE = /\r\n|\n|\r/g;
+const EMPTY_LINE_RE = /^[ \t]*(?:(?:[-*+>]|\d{1,9}[.)])[ \t]*)?$/;
+const INDENTED_LINE_RE = /^(?: {4}|\t)[ \t]*\S/;
+const PARAGRAPH_BREAK_RE = /^(?:[ \t]*| {0,3}#{1,6}(?:[ \t].*)?)$/;
+
+/**
+ * Remove the import that earlier versions wrote and keep every other byte. The
+ * import's line goes whole when nothing but a list or quote marker would stay on
+ * it. When that line opens a paragraph and the next line is indented, removing
+ * it would turn the next line into a code block, which Claude Code reads
+ * differently, so that removal stops instead.
+ */
+function withoutImport(path: string, text: string, current: SheetImport): string {
   const { top } = bodyStart(text);
-  const layouts = current === null
-    ? [`${text}${separator}${include}\n`, `${text}${separator}\n${include}\n`, `${text.slice(0, top)}${include}\n\n${text.slice(top)}`]
-    : [`${text.slice(0, current.start)}${include}${text.slice(current.end)}`];
-  let detail = "a code block, an HTML block or a comment hides it";
-  for (const rendered of layouts) {
-    const after = scanSheetImports(rendered);
-    if (after.unsure.length === 0 && after.imports.length === 1 && importTarget(after.imports[0].target, where) === where.sheetPath) return { current, rendered };
-    if (after.unsure.length > 0) detail = after.unsure[0].reason;
+  const lineStart = Math.max(text.lastIndexOf("\n", current.start - 1) + 1, text.lastIndexOf("\r", current.start - 1) + 1, top);
+  LINE_BREAK_RE.lastIndex = current.end;
+  const lineBreak = LINE_BREAK_RE.exec(text);
+  const lineEnd = lineBreak === null ? text.length : lineBreak.index;
+  const rest = text.slice(lineStart, current.start) + text.slice(current.end, lineEnd);
+  if (!EMPTY_LINE_RE.test(rest)) return text.slice(0, current.start) + text.slice(current.end);
+  const after = text.slice(lineBreak === null ? text.length : lineBreak.index + lineBreak[0].length);
+  const previous = text.slice(top, lineStart).replace(/(?:\r\n|\n|\r)$/, "").split(/\r\n|\n|\r/).at(-1) ?? "";
+  if (PARAGRAPH_BREAK_RE.test(previous) && INDENTED_LINE_RE.test(after)) {
+    fail(`inconsistent state: removing the import on line ${current.line} of ${path} would turn the indented line after it into a code block; remove the import by hand`);
   }
-  fail(`inconsistent state: Claude Code would not load ${include} written into ${path} (${detail}); put the import where Claude Code loads it yourself, then run setup again`);
+  return text.slice(0, lineStart) + after;
+}
+
+/** The instruction file without the sheet wiring that versions before 0.5.32 wrote into it. */
+function unwireIntegration(where: Location, text: string): string {
+  if (where.wiring === "import") {
+    const current = currentImport(where.integrationPath, text);
+    return current === null ? text : withoutImport(where.integrationPath, text, current);
+  }
+  const found = findBlock(text, where.integrationPath);
+  if (found === null) return text;
+  return `${text.slice(0, found.start)}${text.slice(found.end).replace(/^\r?\n/, "")}`;
 }
 
 interface Block {
@@ -642,7 +672,7 @@ function findBlock(text: string, path: string): Block | null {
   const start = text.indexOf(CODEX_BLOCK_BEGIN);
   const stop = text.indexOf(CODEX_BLOCK_END);
   if (stop < start) fail(`${path} pstack:models markers are reversed`);
-  return { start, end: stop + CODEX_BLOCK_END.length, sheet: text.slice(start + CODEX_BLOCK_BEGIN.length, stop).replace(/^\n/, "") };
+  return { start, end: stop + CODEX_BLOCK_END.length, sheet: text.slice(start + CODEX_BLOCK_BEGIN.length, stop).replace(/^\r?\n/, "") };
 }
 
 // --- Sheet parsing -----------------------------------------------------------
@@ -801,6 +831,8 @@ export interface State {
   readonly exists: boolean;
   readonly source: SheetSource;
   readonly missingImport: string | null;
+  /** The instruction file that still carries wiring from a version before 0.5.32; `write` and `unwire` remove it. */
+  readonly legacyWiring: string | null;
   /** Normalized rows in sheet order (first run: empty). */
   readonly rows: readonly SheetRow[];
   readonly migrations: readonly Migration[];
@@ -843,8 +875,15 @@ function describeSource(source: LoadedSource, where: Location): string {
   return source.path;
 }
 
-function selectSource(where: Location, matrix: ModelMatrix): { readonly loaded: Loaded | null; readonly missingImport: string | null } {
-  if (where.readSource === false) return { loaded: null, missingImport: null };
+interface Selected {
+  readonly loaded: Loaded | null;
+  readonly missingImport: string | null;
+  /** The instruction file still carries wiring from a version before 0.5.32. */
+  readonly wired: boolean;
+}
+
+function selectSource(where: Location, matrix: ModelMatrix): Selected {
+  if (where.readSource === false) return { loaded: null, missingImport: null, wired: false };
   if (existsSync(where.configHome) && !statSync(where.configHome).isDirectory()) {
     const variable = targetFor(where.parent).variable;
     fail(`inconsistent state: the config home ${where.configHome} is a file, not a directory; move it aside${variable === null ? "" : ` or point ${variable.name} at a directory`}`);
@@ -854,9 +893,12 @@ function selectSource(where: Location, matrix: ModelMatrix): { readonly loaded: 
   const sheet: Loaded | null = sheetText === null ? null : { source: { kind: "sheet", path: where.sheetPath }, text: sheetText };
   let other: Loaded | null = null;
   let missingImport: string | null = null;
+  let wired = false;
   if (where.wiring === "import") {
-    const { current } = placeImport(where, integration);
+    const current = currentImport(where.integrationPath, integration);
     if (current !== null) {
+      wired = true;
+      withoutImport(where.integrationPath, integration, current);
       const target = importTarget(current.target, where);
       const text = target === where.sheetPath ? sheetText : snapshotOf(target, "imported sheet");
       if (text === null) missingImport = target;
@@ -864,7 +906,10 @@ function selectSource(where: Location, matrix: ModelMatrix): { readonly loaded: 
     }
   } else {
     const block = findBlock(integration, where.integrationPath);
-    if (block !== null) other = { source: { kind: "block", path: where.integrationPath }, text: block.sheet };
+    if (block !== null) {
+      wired = true;
+      other = { source: { kind: "block", path: where.integrationPath }, text: block.sheet };
+    }
   }
   if (sheet !== null && other !== null) {
     const differences = laneDifferences(
@@ -875,11 +920,11 @@ function selectSource(where: Location, matrix: ModelMatrix): { readonly loaded: 
     if (differences.length > 0) {
       const keep = other.source.kind === "block"
         ? "delete the sheet to recover the block, or remove the block to keep the sheet"
-        : `delete the sheet to carry the imported one over, or change the import to ${CLAUDE_RELATIVE_INCLUDE_LINE} to keep the sheet`;
+        : "delete the sheet to carry the imported one over, or remove the import to keep the sheet";
       fail(`inconsistent state: ${describeSource(sheet.source, where)} and ${describeSource(other.source, where)} assign different lanes to ${differences.join(", ")}; ${keep}`);
     }
   }
-  return { loaded: sheet ?? other, missingImport };
+  return { loaded: sheet ?? other, missingImport, wired };
 }
 
 /** Normalize every lane of every row, collecting migrations. */
@@ -942,7 +987,7 @@ export function loadState(input: StateInput): State {
   const parent = input.parent;
   if (!(parent in matrix.parents)) fail(`unknown parent ${JSON.stringify(parent)}; expected one of ${Object.keys(matrix.parents).join(", ")}`);
   const where = locate(parent, input.home ?? homedir(), input.env ?? {}, input);
-  const { loaded, missingImport } = selectSource(where, matrix);
+  const { loaded, missingImport, wired } = selectSource(where, matrix);
   const located = {
     parent,
     configHome: where.configHome,
@@ -952,6 +997,7 @@ export function loadState(input: StateInput): State {
     exists: loaded?.source.kind === "sheet",
     source: loaded?.source ?? { kind: "first-run" as const },
     missingImport,
+    legacyWiring: wired ? where.integrationPath : null,
   };
   if (loaded === null) {
     const defaults = matrix.roles.map((r) => ({ role: r.role, lanes: roleDefault(matrix, r.role, parent) }));
@@ -1607,16 +1653,6 @@ export function verifyProbes(plan: Plan, dir: string): { readonly ok: boolean; r
 
 // --- Write -----------------------------------------------------------------
 
-function renderIntegration(where: Location, current: string | null, sheet: string): string {
-  const text = current ?? "";
-  if (where.wiring === "import") return placeImport(where, text).rendered;
-  const separator = text.length === 0 || text.endsWith("\n") ? "" : "\n";
-  const block = `${CODEX_BLOCK_BEGIN}\n${sheet}${CODEX_BLOCK_END}\n`;
-  const found = findBlock(text, where.integrationPath);
-  if (found === null) return `${text}${separator}${block}`;
-  return `${text.slice(0, found.start)}${block}${text.slice(found.end).replace(/^\n/, "")}`;
-}
-
 export type WriteOutcome = "created" | "updated" | "unchanged";
 
 export interface WriteResult {
@@ -1670,10 +1706,10 @@ interface WriteTarget {
   readonly after: string | null;
 }
 
+/** Only a target whose bytes change needs to be writable; the others are never touched. */
 function assertSetupTargetsWritable(targets: readonly WriteTarget[]): void {
-  if (targets.every((target) => target.before === target.after)) return;
   for (const target of targets) {
-    if (target.label === "probe ledger" && target.before === target.after) continue;
+    if (target.before === target.after) continue;
     let checked = target.path;
     try {
       const current = statIfExists(checked);
@@ -1721,7 +1757,7 @@ export function writeSheet(plan: Plan, dir: string, options: { readonly home?: s
   const sheetBefore = snapshotOf(sheetPath, "sheet");
   const integrationBefore = snapshotOf(integrationPath, "integration file");
   const ledgerBefore = snapshotOf(ledgerPath, "probe ledger");
-  const integrationAfter = renderIntegration(where, integrationBefore, plan.sheet);
+  const integrationAfter = integrationBefore === null ? null : unwireIntegration(where, integrationBefore);
   const ledgerAfter = recordProbes(ledgerBefore, ledgerPath, plan, dir);
 
   const targets: readonly WriteTarget[] = [
@@ -1729,9 +1765,8 @@ export function writeSheet(plan: Plan, dir: string, options: { readonly home?: s
     { label: "parent integration", path: integrationPath, before: integrationBefore, after: integrationAfter },
     { label: "probe ledger", path: ledgerPath, before: ledgerBefore, after: ledgerAfter },
   ];
-  const outcome = (before: string | null, after: string | null): WriteOutcome =>
-    before === after ? "unchanged" : before === null ? "created" : "updated";
-  const result: WriteResult = {
+  commitTargets(targets);
+  return {
     sheetPath,
     integrationPath,
     ledgerPath,
@@ -1739,7 +1774,14 @@ export function writeSheet(plan: Plan, dir: string, options: { readonly home?: s
     integration: outcome(integrationBefore, integrationAfter),
     ledger: outcome(ledgerBefore, ledgerAfter),
   };
+}
 
+function outcome(before: string | null, after: string | null): WriteOutcome {
+  return before === after ? "unchanged" : before === null ? "created" : "updated";
+}
+
+/** Admit every target, write what changed, read it back, and restore every snapshot on any failure. */
+function commitTargets(targets: readonly WriteTarget[]): void {
   assertSetupTargetsWritable(targets);
   try {
     for (const { path, before, after } of targets) {
@@ -1762,12 +1804,86 @@ export function writeSheet(plan: Plan, dir: string, options: { readonly home?: s
     const tail = failures.length === 0 ? "every snapshot restored" : `snapshot restore failed for ${failures.join("; ")}`;
     fail(`write failed (${(error as Error).message}); ${tail}`);
   }
-  return result;
+}
+
+export interface UnwireResult {
+  readonly sheetPath: string;
+  readonly integrationPath: string;
+  readonly sheet: WriteOutcome;
+  readonly integration: WriteOutcome;
+  /** The target of a removed import that no longer existed: no sheet came from it. */
+  readonly missingImport: string | null;
+}
+
+/**
+ * Remove the wiring a version before 0.5.32 wrote, keeping the sheet's lanes.
+ * A sheet that only lived in the wiring (a block, or an import of a sheet in
+ * another directory) is first written to the sheet path byte for byte, so
+ * nothing changes but where the bytes sit. No model changes, so no probe.
+ */
+export function unwireSheet(input: StateInput): UnwireResult {
+  const matrix = input.matrix ?? loadMatrix();
+  loadState({ ...input, matrix });
+  const where = locate(input.parent, input.home ?? homedir(), input.env ?? {}, input);
+  if (where.readSource === false) fail("refusing to unwire without a loaded instruction source; pass the instruction chain the runtime loaded");
+  const { loaded, missingImport } = selectSource(where, matrix);
+  const sheetBefore = snapshotOf(where.sheetPath, "sheet");
+  const integrationBefore = snapshotOf(where.integrationPath, "integration file");
+  const sheetAfter = sheetBefore ?? loaded?.text ?? null;
+  const integrationAfter = integrationBefore === null ? null : unwireIntegration(where, integrationBefore);
+  commitTargets([
+    { label: "sheet", path: where.sheetPath, before: sheetBefore, after: sheetAfter },
+    { label: "parent integration", path: where.integrationPath, before: integrationBefore, after: integrationAfter },
+  ]);
+  return {
+    sheetPath: where.sheetPath,
+    integrationPath: where.integrationPath,
+    sheet: outcome(sheetBefore, sheetAfter),
+    integration: outcome(integrationBefore, integrationAfter),
+    missingImport,
+  };
+}
+
+export interface ResolvedRole {
+  readonly role: string;
+  readonly lanes: readonly string[];
+  /** The parent's sheet, or the role-table default when the sheet has no such row. */
+  readonly source: "sheet" | "default";
+}
+
+export interface RolesResult {
+  readonly parent: string;
+  readonly configurationSource: SheetSource;
+  readonly sheetPath: string;
+  readonly legacyWiring: string | null;
+  /** Every role in matrix order, then the swarm fallback when the sheet enables it. */
+  readonly roles: readonly ResolvedRole[];
+}
+
+/** Resolve every role of the parent to its lanes: the dispatch-time read of the sheet. */
+export function resolveRoles(input: StateInput): RolesResult {
+  const matrix = input.matrix ?? loadMatrix();
+  const state = loadState({ ...input, matrix });
+  const roles: ResolvedRole[] = matrix.roles.map(({ role }) => {
+    const row = state.rows.find((r) => r.role === role);
+    return row === undefined
+      ? { role, lanes: roleDefault(matrix, role, state.parent), source: "default" }
+      : { role, lanes: row.lanes, source: "sheet" };
+  });
+  const fallback = state.rows.find((r) => r.role === SWARM_FALLBACK);
+  if (fallback !== undefined) roles.push({ role: SWARM_FALLBACK, lanes: fallback.lanes, source: "sheet" });
+  return {
+    parent: state.parent,
+    configurationSource: state.source,
+    sheetPath: state.sheetPath,
+    legacyWiring: state.legacyWiring,
+    roles,
+  };
 }
 
 // --- Command line ---------------------------------------------------------------
 
-const USAGE = `Usage: setup-pstack <state|plan|probe|attest|write|pick> [options]
+const USAGE = `Usage: setup-pstack <state|plan|probe|attest|write|pick|roles|unwire> [options]
 
   state  --parent <${Object.keys(TARGETS).join("|")}> [--home <dir>]
          Read the parent's sheet, normalize rolling aliases, derive per-lane efforts grouped by family.
@@ -1786,15 +1902,22 @@ const USAGE = `Usage: setup-pstack <state|plan|probe|attest|write|pick> [options
          Grok also requires --owner-id <id> --child-id <id> from its nested probe.
          --pair owner-nesting attests the fresh Grok capability, even with no new families.
   write  --dir <run dir> [--home <dir>]
-         Verify the plan's probes, then write the sheet, the parent integration, and the probe
-         ledger (byte-identical rerun writes nothing).
+         Verify the plan's probes, then write the sheet and the probe ledger and remove the
+         sheet wiring an earlier version left in CLAUDE.md or AGENTS.md (byte-identical rerun
+         writes nothing).
   pick   --parent <p> --role "<pool role>" [--executor <provider>]... [--home <dir>]
          Pick in the operator's order. Trail review excludes only the root's provider;
          --executor is validated but does not exclude coauthors from that role. Arena also
          excludes the providers named with --executor. Exit 1 means no eligible lane;
          it does not waive the trail review.
+  roles  --parent <p> [--home <dir>]
+         Resolve every role to its lanes: the sheet's row, else the role-table default.
+         Run it before dispatching configured roles; no instruction file loads the sheet.
+  unwire --parent <p> [--home <dir>]
+         Remove the sheet wiring a version before 0.5.32 wrote into CLAUDE.md or AGENTS.md,
+         keeping every lane. A sheet that lived only in that wiring moves to the sheet path.
 
-Codex state, plan, pick and write accept --cwd <project directory> (default: current directory)
+Codex state, plan, pick, roles, unwire and write accept --cwd <project directory> (default: current directory)
 and repeated --instruction-source <file> in the runtime's global-to-local loaded order.
 Use --no-instruction-sources for an empty observed chain (defaults; setup cannot write).
 For custom instruction discovery, pass that exact chain instead of guessing. The nearest
@@ -1802,10 +1925,10 @@ Codex project sheet/block/reference wins, then the global source, then role-tabl
 An absent row in the selected source uses its role-table default, not a broader sheet.
 The result identifies the source and destinations. A plan retains its source context for write.
 
-The global sheet, ledger and integration use the parent's config home: CLAUDE_CONFIG_DIR
+The global sheet and ledger use the parent's config home: CLAUDE_CONFIG_DIR
 (claude) or CODEX_HOME (codex), an absolute path, else <home>/.claude, <home>/.codex, <home>/.grok.
-An empty CODEX_HOME counts as unset. An empty CLAUDE_CONFIG_DIR stops state, plan, write and
-pick for the claude parent.
+An empty CODEX_HOME counts as unset. An empty CLAUDE_CONFIG_DIR stops every subcommand for
+the claude parent.
 
 Exit codes: 0 ok, 1 a probe failed, the write was refused, or no lane is eligible, 64 usage.
 `;
@@ -1966,6 +2089,14 @@ export async function main(argv: readonly string[], io: Io = {
         const result = pickLane({ parent: requireParent(), home, env, ...context, role: role[0], executors });
         emit(result);
         return result.chosen === null ? 1 : 0;
+      }
+      case "roles": {
+        emit(resolveRoles({ parent: requireParent(), home, env, ...context }));
+        return 0;
+      }
+      case "unwire": {
+        emit(unwireSheet({ parent: requireParent(), home, env, ...context }));
+        return 0;
       }
       case undefined:
         usage("a subcommand is required");

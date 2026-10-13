@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadMatrix } from "../../../scripts/model-matrix.ts";
-import { buildPlan, loadState, pickLane, writeSheet, CODEX_BLOCK_BEGIN, CODEX_BLOCK_END } from "./setup-pstack.ts";
+import { buildPlan, loadState, pickLane, unwireSheet, writeSheet, CODEX_BLOCK_BEGIN, CODEX_BLOCK_END } from "./setup-pstack.ts";
 
 let root: string;
 let home: string;
@@ -177,6 +177,19 @@ describe("Codex project model sources", () => {
     assert.equal(pickLane({ parent: "codex", home, cwd: worktree, role }).chosen?.descriptor, "claude:fable@max");
   });
 
+  it("unwire moves a project's block into the project's own sheet and leaves the global profile alone", () => {
+    const cwd = join(root, "a");
+    mkdirSync(join(cwd, ".git"), { recursive: true });
+    const instructions = put(join(cwd, "AGENTS.md"), `# project\n${block(rowA)}`);
+    const global = put(join(home, ".codex/AGENTS.md"), `# mine\n${block(rowB)}`);
+    const result = unwireSheet({ parent: "codex", home, cwd });
+    assert.deepEqual([result.sheetPath, result.sheet, result.integration], [join(cwd, ".codex/pstack-models.md"), "created", "updated"]);
+    assert.equal(readFileSync(join(cwd, ".codex/pstack-models.md"), "utf8"), sheet(rowA));
+    assert.equal(readFileSync(instructions, "utf8"), "# project\n");
+    assert.equal(readFileSync(global, "utf8"), `# mine\n${block(rowB)}`, "a broader scope is cleaned from outside the project");
+    assert.equal(pickLane({ parent: "codex", home, cwd, role }).chosen?.descriptor, "grok:grok-4.7@high");
+  });
+
   it("plans and writes back to the same project source, preserving choices and personal files", () => {
     const cwd = project("a", rowA);
     const personal = put(join(home, ".codex/pstack-models.md"), sheet(rowB));
@@ -193,10 +206,12 @@ describe("Codex project model sources", () => {
     assert.equal(plan.pairs.length, 0);
     const dir = join(root, "run");
     mkdirSync(dir);
-    writeSheet(plan, dir, { home });
+    assert.equal(writeSheet(plan, dir, { home }).integration, "updated");
     assert.equal(readFileSync(personal, "utf8"), sheet(rowB));
+    assert.equal(readFileSync(join(cwd, "AGENTS.md"), "utf8"), "", "the project's mirror block is gone, and nothing replaces it");
     assert.equal(pickLane({ parent: "codex", home, cwd, role }).chosen?.descriptor, "grok:grok-4.7@high");
-    assert.equal(writeSheet(plan, dir, { home }).sheet, "unchanged");
+    const rerun = writeSheet(plan, dir, { home });
+    assert.deepEqual([rerun.sheet, rerun.integration, rerun.ledger], ["unchanged", "unchanged", "unchanged"]);
     assert.throws(() => writeSheet(plan, dir, { home, cwd: project("other", rowB) }), /was made for/);
   });
 });
