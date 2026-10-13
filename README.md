@@ -10,21 +10,17 @@ Este port mantém a prosa da Cursor onde ela não depende da Cursor e substitui 
 
 ## Começar
 
-1. Instale o plugin por marketplace, a partir de uma tag (detalhes na [referência](docs/reference.md#instalação)):
-
-   ```text
-   /plugin marketplace add byvict/pstack-vic
-   /plugin install pstack@pstack-vic
-   ```
+1. Instale com um comando, no checkout principal deste repositório, numa versão publicada (detalhes na [referência](docs/reference.md#instalação)):
 
    ```shell
-   codex plugin marketplace add byvict/pstack-vic --ref v0.5.32
-   codex plugin add pstack@pstack-vic
+   node scripts/pstack.ts install
    ```
 
-   No Grok Build, o plugin instalado no Claude Code também é descoberto pela compatibilidade do CLI. Uma sessão Grok no T3 Code usa as rotas do pai Grok. Configure `[subagents] max_depth = 2` no `~/.grok/config.toml` e reinicie a sessão para permitir owner → helper. A [adaptação](skills/poteto-mode/references/grok-tools.md) explica ferramentas, permissões e retomada do autopilot.
+   Ele instala o plugin no Claude Code (escopo `user`) e no Codex, sem tocar em nenhum projeto. Por baixo, o Codex recebe `codex plugin marketplace add byvict/pstack-vic --ref v0.6.0` e `codex plugin add pstack@pstack-vic`. O Grok Build roda o plugin que o Claude Code instalou; o comando grava em `~/.grok/config.toml` os dois ajustes que o plugin pede ao Grok. Uma sessão Grok no T3 Code usa as rotas do pai Grok. A [adaptação](skills/poteto-mode/references/grok-tools.md) explica ferramentas, permissões e retomada do autopilot.
 
-2. Rode `/setup-pstack` uma vez em cada pai para escolher os modelos por papel. No fim, ele confere a [autorização permanente](docs/reference.md#autorização-permanente), que o autopilot e o playbook Shipping exigem para mergear sem aprovação humana. No Claude Code, ele entrega o comando que você roda uma vez para concedê-la.
+   Para uma pausa, desligue no próprio app (`claude plugin disable pstack@pstack-vic`, `codex plugin remove pstack@pstack-vic`). Para tirar tudo, sem deixar nada, rode `node scripts/pstack.ts uninstall` ([Desligar e desinstalar](docs/reference.md#desligar-e-desinstalar)).
+
+2. Se quiser escolher os modelos por papel, rode `/setup-pstack` uma vez em cada pai; sem ele, cada papel usa o default. No fim, ele confere a [autorização permanente](docs/reference.md#autorização-permanente), que o autopilot e o playbook Shipping exigem para mergear sem aprovação humana. No Claude Code, ele entrega o comando que você roda uma vez para concedê-la.
 3. Use `/poteto-mode` sempre que a tarefa pedir rigor. O modo só entra por esse comando; o agente não o liga sozinho.
 
 ```text
