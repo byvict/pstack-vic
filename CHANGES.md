@@ -2036,3 +2036,9 @@ O T3 Code inicia o `claude` pelo Agent SDK, e numa Raiz Claude aberta nele `CLAU
 - O ADR 0010 ganha um parágrafo de 2026-10-09 que estende a mesma decisão ao `sdk-ts`.
 - A troca T13 de `upstream-substitutions.json` aponta para o `SKILL.md` uma Raiz Claude "inside the desktop app or T3 Code". Os dois playbooks regenerados por `node scripts/upstream-parity.ts --write` continuam a dizer `/loop 1h`.
 - Os pontos de contato `claude.desktop-scheduler` e `claude.desktop-tick` de `cli-touchpoints.json` citam a medição do T3, e a âncora do segundo segue a frase reescrita do `SKILL.md`.
+
+## 0.5.31 — Tick em segundo plano também na Raiz Claude do T3 Code
+
+Reúne o PR #139. Uma Raiz Claude aberta no T3 Code roda sob o Agent SDK, e `CLAUDE_CODE_ENTRYPOINT` vale `sdk-ts` nela. A Raiz passa a armar o Tick como um comando em segundo plano de uma hora, re-armado a cada Tick, como a do app desktop, e não mais como `/loop 1h`. A medição de 2026-10-09 (Claude Code 2.1.295, Agent SDK 0.3.276, T3 Code 0.0.45) e o programa Autopilot-full de três itens que rodou assim estão no [relatório](docs/research/2026-10-09-autopilot-claude-root-t3.md). O `SKILL.md` do poteto-mode, o `docs/reference.md`, o `CONTEXT.md`, o guia, o ADR 0010, a troca T13 com os dois playbooks regenerados e os pontos de contato `claude.desktop-scheduler` e `claude.desktop-tick` acompanham a mudança. `sdk-ts` é o valor de qualquer host do Agent SDK em TypeScript, e só o T3 Code foi medido.
+
+A release mantém o pin upstream, as fichas de modelos, as escolhas de modelo e esforço, o fallback de swarm e as políticas de Arena e de trilha.
