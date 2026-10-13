@@ -469,3 +469,14 @@ test('uninstall clears untracked project files, including a linked worktree\'s l
   assert.equal(result.stdout.split('\n').filter(line => line.startsWith('- ')).join('\n'), `- ${join(project, '.claude', 'settings.json')}: turns pstack@pstack-vic on or off (versioned: remove it in that repository)`, 'the home folder Claude Code lists as a project is not one: its .claude and .codex are the user\'s');
   assert.match(result.stdout, new RegExp(`${join(s.home, '.codex', 'pstack-models.md').replace(/[.]/g, '\\.')}: deleted\n`));
 });
+
+test('install creates the Grok config when Grok has never run, and uninstall takes the folder back', t => {
+  const s = setup(t);
+  rmSync(join(s.home, '.grok'), { recursive: true, force: true });
+  const before = s.tree();
+  const result = s.run('install');
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(readFileSync(join(s.home, '.grok', 'config.toml'), 'utf8'), '[subagents] # pstack-vic: added\nmax_depth = 2 # pstack-vic: was unset\n\n[toolset.bash] # pstack-vic: added\ntimeout_secs = 3600 # pstack-vic: was unset\nmax_timeout_secs = 3600 # pstack-vic: was unset\n');
+  assert.equal(s.run('uninstall').status, 0);
+  assert.deepEqual(s.tree(), before);
+});

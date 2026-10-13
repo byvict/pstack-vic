@@ -15,7 +15,7 @@
 //
 // Node 24, type stripping, no dependencies.
 
-import { accessSync, constants, existsSync, lstatSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -369,7 +369,10 @@ function install(p: Paths, version: string): void {
       if (outcome.kind === 'set') say(`Grok Build: [${setting.table}] ${setting.key} = ${setting.value} (was ${outcome.before ?? 'unset'})`);
       if (outcome.kind === 'unsupported') say(`Grok Build: [${setting.table}] ${setting.key} left alone, set it to ${setting.value} or more by hand: ${outcome.reason}`);
     }
-    if (grokOutcomes.some(o => o.outcome.kind === 'set')) writeFileSync(grokConfig, joinLines(grok));
+    if (grokOutcomes.some(o => o.outcome.kind === 'set')) {
+      mkdirSync(p.grok, { recursive: true });
+      writeFileSync(grokConfig, joinLines(grok));
+    }
     say('Grok Build: runs the plugin Claude Code installed');
   }
   say('Choose models per role with /setup-pstack in each parent (optional: without it every role uses its default)');
@@ -426,9 +429,11 @@ function uninstall(p: Paths): Finding[] {
     for (const line of said) say(line);
     const after = joinLines(grok);
     if (after !== grokText) {
-      // A config.toml that held only what install wrote did not exist before it.
-      if (after.trim() === '') remove(grokConfig);
-      else writeFileSync(grokConfig, after);
+      // A config.toml that held only what install wrote did not exist before it, nor did a ~/.grok left empty.
+      if (after.trim() === '') {
+        remove(grokConfig);
+        if (listDir(p.grok).length === 0) remove(p.grok);
+      } else writeFileSync(grokConfig, after);
     }
   }
 
