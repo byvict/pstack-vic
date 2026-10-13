@@ -212,7 +212,7 @@ function codexHeld(p: Paths): { activated: boolean; marketplace: boolean } {
 /** One thing of the plugin on this machine. A versioned file in a project leaves through a PR in that repository, not through uninstall. */
 interface Finding { readonly path: string; readonly what: string; readonly versioned?: boolean }
 
-/** Folders a host knows: every project Claude Code has opened, every project Codex trusts, and the folder of every install record. */
+/** Folders a host knows: every project Claude Code has opened, every project Codex trusts, and the folder of every install record, except the home folder. */
 function knownFolders(p: Paths, records: readonly ClaudeRecord[]): string[] {
   const folders = new Set<string>();
   for (const file of [join(p.home, '.claude.json'), join(p.claude, '.claude.json')]) {
@@ -223,7 +223,8 @@ function knownFolders(p: Paths, records: readonly ClaudeRecord[]): string[] {
     if (project) folders.add(JSON.parse(`"${project[1]}"`) as string);
   }
   for (const record of records) if (record.projectPath) folders.add(record.projectPath);
-  return [...folders].filter(folder => existsSync(folder)).sort();
+  // The folder whose .claude or .codex is a host's config home (the user's home) holds user settings, not a project's.
+  return [...folders].filter(folder => existsSync(folder) && join(folder, '.claude') !== p.claude && join(folder, '.codex') !== p.codex).sort();
 }
 /** The project files that name the plugin. A linked worktree's committed files are its branch's, so only its untracked local settings count. */
 const PROJECT_FILES = [join('.claude', 'settings.json'), join('.claude', 'settings.local.json'), join('.codex', 'config.toml'), join('.codex', SHEET_FILE), join('.codex', LEDGER_FILE)];

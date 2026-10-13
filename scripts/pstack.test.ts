@@ -458,12 +458,14 @@ test('uninstall clears untracked project files, including a linked worktree\'s l
   writeFileSync(join(project, '.codex', 'pstack-models.md'), '# sheet\n');
   mkdirSync(join(project, '.claude'), { recursive: true });
   writeFileSync(join(project, '.claude', 'settings.json'), `${JSON.stringify({ enabledPlugins: { 'pstack@pstack-vic': true } }, null, 2)}\n`);
-  s.put('.claude.json', JSON.stringify({ projects: { [project]: {}, [worktree]: {} } }));
+  s.put('.claude.json', JSON.stringify({ projects: { [project]: {}, [worktree]: {}, [s.home]: {} } }));
+  s.put('.codex/pstack-models.md', '# an older version\'s global sheet\n');
   s.write({ ...s.state(), tracked: [join(project, '.claude', 'settings.json')] });
   const result = s.run('uninstall');
   assert.equal(result.status, 1, result.stdout + result.stderr);
   assert.deepEqual(JSON.parse(readFileSync(join(worktree, '.claude', 'settings.local.json'), 'utf8')), { permissions: { allow: [] } });
   assert.equal(readFileSync(join(project, '.codex', 'config.toml'), 'utf8'), 'approval_policy = "never"\n');
   assert.equal(existsSync(join(project, '.codex', 'pstack-models.md')), false);
-  assert.equal(result.stdout.split('\n').filter(line => line.startsWith('- ')).join('\n'), `- ${join(project, '.claude', 'settings.json')}: turns pstack@pstack-vic on or off (versioned: remove it in that repository)`);
+  assert.equal(result.stdout.split('\n').filter(line => line.startsWith('- ')).join('\n'), `- ${join(project, '.claude', 'settings.json')}: turns pstack@pstack-vic on or off (versioned: remove it in that repository)`, 'the home folder Claude Code lists as a project is not one: its .claude and .codex are the user\'s');
+  assert.match(result.stdout, new RegExp(`${join(s.home, '.codex', 'pstack-models.md').replace(/[.]/g, '\\.')}: deleted\n`));
 });
