@@ -10,16 +10,18 @@
 // 0.162.1). So these steps live here. Grok Build runs the plugin Claude Code installs, so it has no install of
 // its own. To switch the plugin off for a while, use each host's own switch (`claude plugin disable`, `codex
 // plugin remove`): the model choices stay in the data folder until uninstall. The operator's standing
-// authorization in ~/.claude/settings.json is theirs, not the plugin's: no step here reads or touches it.
+// authorization is theirs, not the plugin's: uninstall rewrites ~/.claude/settings.json only to drop the plugin's
+// own entries, and keeps every other key, that one included.
 //
 // Node 24, type stripping, no dependencies.
 
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, lstatSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { configHomeFor, dataHomeFor, LEDGER_FILE, removeLegacyWiring, SHEET_FILE } from '../skills/setup-pstack/scripts/setup-pstack.ts';
+import { configHomeFor, dataHomeFor, LEDGER_FILE, legacyWiringOf, removeLegacyWiring, SHEET_FILE } from '../skills/setup-pstack/scripts/setup-pstack.ts';
 import { attempt, claudeRecords, codexActivated, hasCli as probeCli, mainCheckoutOf, MARKETPLACE, PLUGIN, recordName, removeGoneRecord, REPOSITORY, run, say, type ClaudeRecord } from './plugin-hosts.ts';
+import { cutTable, joinLines, keyPath, locate, removeTables, roles, splitLines, tableEnd, tableIsEmpty, valueOf, type Lines } from './toml-lines.ts';
 
 /** A Grok Build setting the plugin needs: the root → owner → helper tree needs depth two, and a lane's test suite needs commands longer than Grok's 300 s ceiling. */
 interface GrokSetting { readonly table: string; readonly key: string; readonly value: number }
@@ -28,12 +30,8 @@ export const GROK_SETTINGS: readonly GrokSetting[] = [
   { table: 'toolset.bash', key: 'timeout_secs', value: 3600 },
   { table: 'toolset.bash', key: 'max_timeout_secs', value: 3600 },
 ];
-
-/** What install changed outside the hosts' plugin commands, kept in the plugin's data folder so uninstall can put each value back. */
-interface Manifest {
-  readonly schemaVersion: 1;
-  readonly grok: readonly { readonly table: string; readonly key: string; readonly before: string | null; readonly value: string; readonly createdTable: boolean }[];
-}
+/** The comment install puts beside each Grok line it writes. It records the line it replaced, so uninstall puts that line back byte for byte even after a host deleted the plugin's data folder, and `check` never mistakes a value the operator set for the plugin's. */
+export const GROK_MARK = '# pstack-vic:';
 
 interface Paths {
   readonly home: string;
@@ -42,15 +40,18 @@ interface Paths {
   readonly grok: string;
   readonly claudeData: string;
   readonly codexData: string;
-  readonly manifest: string;
 }
 
 function paths(): Paths {
   const home = homedir();
-  const claude = configHomeFor('claude', home, process.env);
-  const codex = configHomeFor('codex', home, process.env);
-  const claudeData = dataHomeFor('claude', home, process.env);
-  return { home, claude, codex, grok: join(home, '.grok'), claudeData, codexData: dataHomeFor('codex', home, process.env), manifest: join(claudeData, 'install.json') };
+  return {
+    home,
+    claude: configHomeFor('claude', home, process.env),
+    codex: configHomeFor('codex', home, process.env),
+    grok: join(home, '.grok'),
+    claudeData: dataHomeFor('claude', home, process.env),
+    codexData: dataHomeFor('codex', home, process.env),
+  };
 }
 
 const clis = new Map<string, boolean>();
@@ -61,100 +62,104 @@ function hasCli(binary: string): boolean {
 function readIfExists(path: string): string | null {
   try { return readFileSync(path, 'utf8'); } catch { return null; }
 }
-function remove(path: string): boolean {
-  if (!existsSync(path) && !isLink(path)) return false;
-  rmSync(path, { recursive: true, force: true });
-  return true;
-}
 function isLink(path: string): boolean {
   try { return lstatSync(path).isSymbolicLink(); } catch { return false; }
+}
+/** Deletes a file or folder; a symbolic link goes as a link, never its target. */
+function remove(path: string): void {
+  if (existsSync(path) || isLink(path)) rmSync(path, { recursive: true, force: true });
 }
 function listDir(path: string): string[] {
   try { return readdirSync(path); } catch { return []; }
 }
+function tracked(folder: string, file: string): boolean {
+  return attempt('git', ['-C', folder, 'ls-files', '--error-unmatch', file]).status === 0;
+}
 
-// --- TOML, line by line --------------------------------------------------------
-// Only what these settings need: a table's header line and `key = value` lines at its top level. A line inside a
-// multi-line value never starts with `[name]` or `name =` for the names used here.
+// --- Grok Build settings -----------------------------------------------------------
 
-function headerOf(line: string): string | null {
-  if (/^\s*\[\[/.test(line)) return '[[array]]';
-  const header = /^\s*\[\s*([^[\]]+?)\s*\]\s*(?:#.*)?$/.exec(line);
-  return header ? header[1].replace(/\s*\.\s*/g, '.') : null;
-}
-/** The lines of a table, from its header to the next header, or null when it is absent. */
-function tableRange(lines: readonly string[], table: string): [number, number] | null {
-  let start = -1;
-  for (let i = 0; i < lines.length; i++) {
-    const header = headerOf(lines[i]);
-    if (header === null) continue;
-    if (start >= 0) return [start, i];
-    if (header === table) start = i;
+type GrokOutcome = { readonly kind: 'set'; readonly before: string | null } | { readonly kind: 'kept' } | { readonly kind: 'unsupported'; readonly reason: string };
+
+/** Sets one setting to at least the plugin's value, marking the line with the line it replaced. A value that already allows it stays as it is. */
+export function grokSet(split: Lines, setting: GrokSetting): GrokOutcome {
+  const found = locate(split.lines, setting.table, setting.key);
+  if (found.kind === 'unsupported') return found;
+  if (found.kind === 'found') {
+    if (Number(found.value) >= setting.value) return { kind: 'kept' };
+    const before = split.lines[found.index];
+    split.lines[found.index] = `${setting.key} = ${setting.value} ${GROK_MARK} was ${JSON.stringify(before)}`;
+    return { kind: 'set', before: found.value };
   }
-  return start >= 0 ? [start, lines.length] : null;
-}
-function keyLine(lines: readonly string[], range: [number, number], key: string): { index: number; value: string } | null {
-  for (let i = range[0] + 1; i < range[1]; i++) {
-    const match = new RegExp(`^\\s*${key.replace(/[.]/g, '\\.')}\\s*=\\s*(.*?)\\s*(?:#.*)?$`).exec(lines[i]);
-    if (match) return { index: i, value: match[1] };
+  const line = `${setting.key} = ${setting.value} ${GROK_MARK} was unset`;
+  if (found.header === null) {
+    if (split.lines.length > 0 && split.lines.at(-1)!.trim() !== '') split.lines.push('');
+    split.lines.push(`[${setting.table}] ${GROK_MARK} added`, line);
+    split.finalEol = true;
+  } else {
+    let at = tableEnd(split.lines, found.header);
+    while (at > found.header + 1 && split.lines[at - 1].trim() === '') at--;
+    split.lines.splice(at, 0, line);
   }
-  return null;
+  return { kind: 'set', before: null };
 }
-export function tomlValue(text: string, table: string, key: string): string | null {
-  const lines = text.split('\n');
-  const range = tableRange(lines, table);
-  return range === null ? null : keyLine(lines, range, key)?.value ?? null;
-}
-/** Sets one key, appending its table at the end when absent. */
-export function tomlSet(text: string, table: string, key: string, value: string): { text: string; before: string | null; createdTable: boolean } {
-  const lines = text.split('\n');
-  const range = tableRange(lines, table);
-  if (range === null) {
-    const body = text === '' || text.endsWith('\n') ? text : `${text}\n`;
-    return { text: `${body}${body.trim() === '' ? '' : '\n'}[${table}]\n${key} = ${value}\n`, before: null, createdTable: true };
+
+const KEY_MARK = new RegExp(`\\s*${GROK_MARK} was (unset|".*")$`);
+const TABLE_MARK = new RegExp(`\\s*${GROK_MARK} added$`);
+
+/** The lines install marked, and the tables it added. */
+export function grokMarks(split: Lines): { keys: { index: number; table: string; key: string; value: string; before: string | null }[]; tables: number[] } {
+  const keys: { index: number; table: string; key: string; value: string; before: string | null }[] = [];
+  const tables: number[] = [];
+  const all = roles(split.lines);
+  for (let i = 0; i < all.length; i++) {
+    const role = all[i];
+    const line = split.lines[i];
+    if (role.kind === 'header' && TABLE_MARK.test(line)) tables.push(i);
+    if (role.kind !== 'assignment') continue;
+    const mark = KEY_MARK.exec(line);
+    if (!mark) continue;
+    keys.push({ index: i, table: role.table, key: keyPath(role.key), value: valueOf(line.slice(0, mark.index), role.valueStart), before: mark[1] === 'unset' ? null : JSON.parse(mark[1]) as string });
   }
-  const found = keyLine(lines, range, key);
-  if (found !== null) {
-    lines[found.index] = `${key} = ${value}`;
-    return { text: lines.join('\n'), before: found.value, createdTable: false };
+  return { keys, tables };
+}
+
+/** Puts back every line install marked. A marked value the operator changed stays, without the mark; a table install added goes once nothing but its marks was in it. */
+export function grokRestore(split: Lines): string[] {
+  const said: string[] = [];
+  const { keys } = grokMarks(split);
+  for (const entry of [...keys].reverse()) {
+    const setting = GROK_SETTINGS.find(s => s.table === entry.table && s.key === entry.key);
+    const line = split.lines[entry.index];
+    if (setting === undefined || entry.value !== String(setting.value)) {
+      split.lines[entry.index] = line.replace(KEY_MARK, '');
+      said.push(`Grok Build: [${entry.table}] ${entry.key} = ${entry.value} left as you set it`);
+    } else if (entry.before === null) {
+      split.lines.splice(entry.index, 1);
+      said.push(`Grok Build: [${entry.table}] ${entry.key} removed`);
+    } else {
+      split.lines[entry.index] = entry.before;
+      said.push(`Grok Build: [${entry.table}] ${entry.key} put back as it was`);
+    }
   }
-  let at = range[1];
-  while (at > range[0] + 1 && lines[at - 1].trim() === '') at--;
-  lines.splice(at, 0, `${key} = ${value}`);
-  return { text: lines.join('\n'), before: null, createdTable: false };
-}
-/** Removes one key, and its table when the table was created for it and is left empty, with the blank line before it. */
-export function tomlUnset(text: string, table: string, key: string, dropEmptyTable: boolean): string {
-  const lines = text.split('\n');
-  const range = tableRange(lines, table);
-  if (range === null) return text;
-  const found = keyLine(lines, range, key);
-  if (found === null) return text;
-  lines.splice(found.index, 1);
-  const after = tableRange(lines, table)!;
-  const empty = lines.slice(after[0] + 1, after[1]).every(line => line.trim() === '');
-  if (!dropEmptyTable || !empty) return lines.join('\n');
-  cutTable(lines, after[0], after[1]);
-  return lines.join('\n');
-}
-/** Cuts a table's lines, keeping the blank lines after it as the separator before what follows, and the blank line before it goes. */
-function cutTable(lines: string[], header: number, next: number): void {
-  let end = next;
-  while (end > header + 1 && lines[end - 1].trim() === '') end--;
-  const start = header > 0 && lines[header - 1].trim() === '' ? header - 1 : header;
-  lines.splice(start, end - start);
-}
-/** Removes every table whose header matches, each with the blank line before it. */
-export function tomlRemoveTables(text: string, matches: (header: string) => boolean): string {
-  const lines = text.split('\n');
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const header = headerOf(lines[i]);
-    if (header === null || !matches(header)) continue;
-    let end = i + 1;
-    while (end < lines.length && headerOf(lines[end]) === null) end++;
-    cutTable(lines, i, end);
+  for (const index of [...grokMarks(split).tables].reverse()) {
+    if (tableIsEmpty(split.lines, index)) cutTable(split.lines, index);
+    else split.lines[index] = split.lines[index].replace(TABLE_MARK, '');
   }
-  return lines.join('\n');
+  return said.reverse();
+}
+
+/** Versions before 0.6.0 wrote these settings without a mark. Only on a machine the plugin was on, a value equal to the plugin's is taken as the plugin's, and its table goes when nothing else is left in it. */
+function grokRestoreUnmarked(split: Lines): string[] {
+  const said: string[] = [];
+  for (const setting of [...GROK_SETTINGS].reverse()) {
+    const found = locate(split.lines, setting.table, setting.key);
+    if (found.kind !== 'found' || found.value !== String(setting.value)) continue;
+    split.lines.splice(found.index, 1);
+    said.push(`Grok Build: [${setting.table}] ${setting.key} = ${setting.value} removed (an earlier version set it)`);
+    const header = locate(split.lines, setting.table, setting.key);
+    if (header.kind === 'absent' && header.header !== null && tableIsEmpty(split.lines, header.header)) cutTable(split.lines, header.header);
+  }
+  return said.reverse();
 }
 
 // --- JSON settings -------------------------------------------------------------
@@ -180,35 +185,61 @@ function namesPlugin(text: string | null): boolean {
   } catch { return false; }
 }
 
+// --- What a host holds ------------------------------------------------------------
+
+/** Claude Code's install records of the plugin, from the CLI, else from its own file when the CLI is not on PATH. */
+function claudeHeld(p: Paths): { records: ClaudeRecord[]; marketplace: boolean } {
+  if (hasCli('claude')) {
+    const marketplaces = JSON.parse(run('claude', ['plugin', 'marketplace', 'list', '--json'], p.home)) as { name: string }[];
+    return { records: claudeRecords(), marketplace: marketplaces.some(m => m.name === MARKETPLACE) };
+  }
+  let records: ClaudeRecord[] = [];
+  try { records = ((JSON.parse(readFileSync(join(p.claude, 'plugins', 'installed_plugins.json'), 'utf8')) as { plugins?: Record<string, ClaudeRecord[]> }).plugins?.[PLUGIN] ?? []); } catch { /* none */ }
+  let marketplace = false;
+  try { marketplace = Object.hasOwn(JSON.parse(readFileSync(join(p.claude, 'plugins', 'known_marketplaces.json'), 'utf8')) as object, MARKETPLACE); } catch { /* none */ }
+  return { records, marketplace };
+}
+function codexHeld(p: Paths): { activated: boolean; marketplace: boolean } {
+  const lines = splitLines(readIfExists(join(p.codex, 'config.toml')) ?? '').lines;
+  return {
+    activated: codexActivated(lines.join('\n')),
+    marketplace: roles(lines).some(role => role.kind === 'header' && role.path === `marketplaces.${MARKETPLACE}`),
+  };
+}
+
 // --- What the plugin leaves on a machine --------------------------------------
 
 /** One thing of the plugin on this machine. A versioned file in a project leaves through a PR in that repository, not through uninstall. */
 interface Finding { readonly path: string; readonly what: string; readonly versioned?: boolean }
 
-/** Folders a host knows: every project Claude Code has opened, every project Codex trusts, and the folder of every install record. A linked worktree shares its checkout's files and goes with it, so it is skipped. */
+/** Folders a host knows: every project Claude Code has opened, every project Codex trusts, and the folder of every install record. */
 function knownFolders(p: Paths, records: readonly ClaudeRecord[]): string[] {
   const folders = new Set<string>();
   for (const file of [join(p.home, '.claude.json'), join(p.claude, '.claude.json')]) {
     try { for (const folder of Object.keys((JSON.parse(readFileSync(file, 'utf8')) as { projects?: object }).projects ?? {})) folders.add(folder); } catch { /* none */ }
   }
-  for (const match of (readIfExists(join(p.codex, 'config.toml')) ?? '').matchAll(/^\s*\[\s*projects\s*\.\s*"([^"]+)"\s*\]/gm)) folders.add(match[1]);
-  for (const record of records) if (record.projectPath) folders.add(record.projectPath);
-  return [...folders].filter(folder => existsSync(folder) && mainCheckoutOf(folder) === undefined).sort();
-}
-function tracked(folder: string, file: string): boolean {
-  return attempt('git', ['-C', folder, 'ls-files', '--error-unmatch', file]).status === 0;
-}
-function projectFindings(folder: string): Finding[] {
-  const findings: Finding[] = [];
-  for (const file of [join('.claude', 'settings.json'), join('.claude', 'settings.local.json')]) {
-    if (namesPlugin(readIfExists(join(folder, file)))) findings.push({ path: join(folder, file), what: `turns ${PLUGIN} on or off`, versioned: tracked(folder, file) });
+  for (const role of roles(splitLines(readIfExists(join(p.codex, 'config.toml')) ?? '').lines)) {
+    const project = role.kind === 'header' ? /^projects\."(.+)"$/.exec(role.path) : null;
+    if (project) folders.add(JSON.parse(`"${project[1]}"`) as string);
   }
-  const codex = join('.codex', 'config.toml');
-  const text = readIfExists(join(folder, codex));
-  if (text !== null && codexActivated(text)) findings.push({ path: join(folder, codex), what: `turns ${PLUGIN} on or off`, versioned: tracked(folder, codex) });
+  for (const record of records) if (record.projectPath) folders.add(record.projectPath);
+  return [...folders].filter(folder => existsSync(folder)).sort();
+}
+/** The project files that name the plugin. A linked worktree's committed files are its branch's, so only its untracked local settings count. */
+const PROJECT_FILES = [join('.claude', 'settings.json'), join('.claude', 'settings.local.json'), join('.codex', 'config.toml'), join('.codex', SHEET_FILE), join('.codex', LEDGER_FILE)];
+function projectFindings(folder: string): Finding[] {
+  const linked = mainCheckoutOf(folder) !== undefined;
+  const findings: Finding[] = [];
+  for (const file of PROJECT_FILES) {
+    if (linked && file !== join('.claude', 'settings.local.json')) continue;
+    const text = readIfExists(join(folder, file));
+    if (text === null) continue;
+    const names = file.endsWith('.json') && file.startsWith('.claude') ? namesPlugin(text) : file.endsWith('config.toml') ? codexActivated(text) : true;
+    if (names) findings.push({ path: join(folder, file), what: file.startsWith(join('.codex', 'pstack-')) ? 'a model sheet or ledger the plugin wrote for this project' : `turns ${PLUGIN} on or off`, versioned: tracked(folder, file) });
+  }
   return findings;
 }
-/** Files the plugin and its older versions left in each config home, and the caches the hosts keep after removal. */
+/** Files and folders that belong to the plugin or to an older version of it, outside any project. */
 function leftovers(p: Paths): string[] {
   const found: string[] = [];
   const add = (path: string) => { if (existsSync(path) || isLink(path)) found.push(path); };
@@ -222,7 +253,6 @@ function leftovers(p: Paths): string[] {
   add(join(p.claude, 'plugins', 'cache', MARKETPLACE));
   add(join(p.claude, 'plugins', 'marketplaces', MARKETPLACE));
   add(p.claudeData);
-  add(join(p.claude, 'plugins', 'data', 'pstack-inline'));
   add(join(p.codex, 'plugins', 'cache', MARKETPLACE));
   add(p.codexData);
   add(join(p.codex, '.tmp', 'marketplaces', MARKETPLACE));
@@ -233,47 +263,52 @@ function leftovers(p: Paths): string[] {
     add(`${clone}.lock`);
   }
   add(join(p.home, 'Library', 'Caches', 'pstack-vic'));
-  for (const file of [join(p.claude, 'CLAUDE.md'), join(p.codex, 'AGENTS.md'), join(p.grok, 'AGENTS.md')]) {
-    const text = readIfExists(file);
-    if (text !== null && text.trim() === '') found.push(file);
-  }
   return found;
 }
+/** Signs that the plugin is or was installed here. Only with them is an unmarked Grok value equal to the plugin's taken as the plugin's. */
+function wasInstalled(p: Paths, records: readonly ClaudeRecord[]): boolean {
+  const codex = codexHeld(p);
+  return records.length > 0 || codex.activated || codex.marketplace || leftovers(p).some(path => path !== join(p.home, 'Library', 'Caches', 'pstack-vic'))
+    || namesPlugin(readIfExists(join(p.claude, 'settings.json')));
+}
+
 function check(p: Paths): Finding[] {
   const findings: Finding[] = [];
-  const records = hasCli('claude') ? claudeRecords() : [];
-  for (const record of records) findings.push({ path: record.projectPath ?? p.claude, what: `Claude Code install record (${recordName(record)})` });
+  const claude = claudeHeld(p);
+  for (const record of claude.records) findings.push({ path: record.projectPath ?? p.claude, what: `Claude Code install record (${recordName(record)})` });
+  if (claude.marketplace) findings.push({ path: p.claude, what: `Claude Code knows the ${MARKETPLACE} marketplace` });
   const settings = join(p.claude, 'settings.json');
   if (namesPlugin(readIfExists(settings))) findings.push({ path: settings, what: `names ${PLUGIN} or the ${MARKETPLACE} marketplace` });
-  const claudeMd = readIfExists(join(p.claude, 'CLAUDE.md')) ?? '';
-  if (claudeMd.includes(`/${SHEET_FILE}`)) findings.push({ path: join(p.claude, 'CLAUDE.md'), what: 'imports the model sheet' });
-  for (const home of [p.codex, p.grok]) if ((readIfExists(join(home, 'AGENTS.md')) ?? '').includes('<!-- pstack:models:begin -->')) findings.push({ path: join(home, 'AGENTS.md'), what: 'holds the model sheet block' });
+  for (const parent of ['claude', 'codex', 'grok']) {
+    try {
+      const wired = legacyWiringOf(parent, p.home, process.env);
+      if (wired !== null) findings.push({ path: wired, what: 'loads the model sheet the way versions before 0.5.32 wired it' });
+    } catch (error) {
+      findings.push({ path: parent, what: `holds a model sheet import this command cannot read (${(error as Error).message})` });
+    }
+  }
   const codexConfig = join(p.codex, 'config.toml');
-  const codexText = readIfExists(codexConfig) ?? '';
-  if (codexActivated(codexText)) findings.push({ path: codexConfig, what: `the ${PLUGIN} entry` });
-  if (tableRange(codexText.split('\n'), `marketplaces.${MARKETPLACE}`) !== null) findings.push({ path: codexConfig, what: `the ${MARKETPLACE} marketplace` });
-  if (codexText.split('\n').some(line => (headerOf(line) ?? '').startsWith(`hooks.state."${PLUGIN}:`))) findings.push({ path: codexConfig, what: `trust records of ${PLUGIN} hooks` });
-  const manifest = readManifest(p);
-  const grokText = readIfExists(join(p.grok, 'config.toml')) ?? '';
-  for (const entry of manifest?.grok ?? []) {
-    if (tomlValue(grokText, entry.table, entry.key) === entry.value) findings.push({ path: join(p.grok, 'config.toml'), what: `[${entry.table}] ${entry.key} = ${entry.value}, set by install` });
+  const codex = codexHeld(p);
+  if (codex.activated) findings.push({ path: codexConfig, what: `the ${PLUGIN} entry` });
+  if (codex.marketplace) findings.push({ path: codexConfig, what: `the ${MARKETPLACE} marketplace` });
+  if (roles(splitLines(readIfExists(codexConfig) ?? '').lines).some(role => role.kind === 'header' && role.path.startsWith(`hooks.state."${PLUGIN}:`))) findings.push({ path: codexConfig, what: `trust records of ${PLUGIN} hooks` });
+  const grok = splitLines(readIfExists(join(p.grok, 'config.toml')) ?? '');
+  const marks = grokMarks(grok);
+  for (const entry of marks.keys) findings.push({ path: join(p.grok, 'config.toml'), what: `[${entry.table}] ${entry.key} = ${entry.value}, set by install` });
+  if (marks.keys.length === 0 && marks.tables.length === 0 && wasInstalled(p, claude.records)) {
+    for (const setting of GROK_SETTINGS) {
+      const found = locate(grok.lines, setting.table, setting.key);
+      if (found.kind === 'found' && found.value === String(setting.value)) findings.push({ path: join(p.grok, 'config.toml'), what: `[${setting.table}] ${setting.key} = ${setting.value}, set by an earlier version` });
+    }
   }
   for (const path of leftovers(p)) findings.push({ path, what: 'belongs to the plugin or an older version of it' });
-  for (const folder of knownFolders(p, records)) findings.push(...projectFindings(folder));
+  for (const folder of knownFolders(p, claude.records)) findings.push(...projectFindings(folder));
   if (findings.length === 0) say(`Nothing of ${PLUGIN} is left on this machine`);
   for (const f of findings) say(`- ${f.path}: ${f.what}${f.versioned ? ' (versioned: remove it in that repository)' : ''}`);
   return findings;
 }
 
 // --- Install --------------------------------------------------------------------
-
-function readManifest(p: Paths): Manifest | null {
-  const text = readIfExists(p.manifest);
-  if (text === null) return null;
-  const manifest = JSON.parse(text) as Manifest;
-  if (manifest.schemaVersion !== 1 || !Array.isArray(manifest.grok)) throw new Error(`${p.manifest} is not a schemaVersion 1 install record; fix or remove it`);
-  return manifest;
-}
 
 function install(p: Paths, version: string): void {
   const claude = hasCli('claude');
@@ -282,82 +317,64 @@ function install(p: Paths, version: string): void {
   const tag = `v${version}`;
   const lookup = attempt('git', ['ls-remote', '--exit-code', '--tags', `https://github.com/${REPOSITORY}.git`, `refs/tags/${tag}`]);
   if (lookup.status !== 0) throw new Error(lookup.status === 2 ? `${tag} is not tagged on ${REPOSITORY}; run install from a released checkout` : lookup.failure);
+  const grokConfig = join(p.grok, 'config.toml');
+  const grok = claude && (hasCli('grok') || existsSync(p.grok)) ? splitLines(readIfExists(grokConfig) ?? '') : null;
+  const grokOutcomes = grok === null ? [] : GROK_SETTINGS.map(setting => ({ setting, outcome: grokSet(grok, setting) }));
 
   if (claude) {
-    const records = claudeRecords();
-    const scoped = records.filter(r => r.scope !== 'user');
+    const held = claudeHeld(p);
+    const scoped = held.records.filter(r => r.scope !== 'user');
     if (scoped.length > 0) throw new Error(`Claude Code has ${PLUGIN} installed per project (${scoped.map(recordName).join('; ')}); run \`node scripts/pstack.ts uninstall\` first, then install`);
-    const marketplaces = JSON.parse(run('claude', ['plugin', 'marketplace', 'list', '--json'], p.home)) as { name: string }[];
-    if (!marketplaces.some(m => m.name === MARKETPLACE)) run('claude', ['plugin', 'marketplace', 'add', REPOSITORY], p.home);
-    const user = records.find(r => r.scope === 'user');
+    if (held.marketplace) run('claude', ['plugin', 'marketplace', 'update', MARKETPLACE], p.home);
+    else run('claude', ['plugin', 'marketplace', 'add', REPOSITORY], p.home);
+    const user = held.records.find(r => r.scope === 'user');
     if (!user) run('claude', ['plugin', 'install', PLUGIN, '--scope', 'user'], p.home);
-    else if (user.enabled === false) run('claude', ['plugin', 'enable', PLUGIN, '--scope', 'user'], p.home);
+    else {
+      if (user.version !== version) run('claude', ['plugin', 'update', PLUGIN, '--scope', 'user'], p.home);
+      if (user.enabled === false) run('claude', ['plugin', 'enable', PLUGIN, '--scope', 'user'], p.home);
+    }
     const after = claudeRecords().find(r => r.scope === 'user');
     if (!after || after.enabled === false) throw new Error(`Claude Code does not report ${PLUGIN} installed and enabled at user scope`);
+    if (after.version !== version) throw new Error(`Claude Code installed ${PLUGIN} ${after.version}, not ${version}: this checkout is not the latest release; run \`git pull --ff-only\` and install again`);
     say(`Claude Code: ${PLUGIN} ${after.version} installed and enabled (user)`);
   }
 
   if (codex) {
-    const marketplaces = (JSON.parse(run('codex', ['plugin', 'marketplace', 'list', '--json'], p.home)) as { marketplaces: { name: string }[] }).marketplaces;
-    if (!marketplaces.some(m => m.name === MARKETPLACE)) run('codex', ['plugin', 'marketplace', 'add', REPOSITORY, '--ref', tag], p.home);
     const config = join(p.codex, 'config.toml');
+    const lines = splitLines(readIfExists(config) ?? '').lines;
+    const ref = locate(lines, `marketplaces.${MARKETPLACE}`, 'ref');
+    const held = codexHeld(p);
+    // A marketplace pinned to another tag is swapped, and an installed plugin of another version goes first, while its marketplace is still there.
+    const stalePin = held.marketplace && (ref.kind !== 'found' || ref.value !== JSON.stringify(tag));
+    const installedVersion = () => (JSON.parse(run('codex', ['plugin', 'list', '--json'], p.home)) as { installed: { pluginId: string; version: string }[] }).installed.find(i => i.pluginId === PLUGIN)?.version;
+    if (held.activated && (stalePin || installedVersion() !== version)) run('codex', ['plugin', 'remove', PLUGIN], p.home);
+    if (stalePin) run('codex', ['plugin', 'marketplace', 'remove', MARKETPLACE], p.home);
+    if (!codexHeld(p).marketplace) run('codex', ['plugin', 'marketplace', 'add', REPOSITORY, '--ref', tag], p.home);
+    if (!codexHeld(p).activated) run('codex', ['plugin', 'add', PLUGIN], p.home);
     const text = readIfExists(config) ?? '';
-    if (!codexActivated(text)) run('codex', ['plugin', 'add', PLUGIN], p.home);
-    else if (tomlValue(text, `plugins."${PLUGIN}"`, 'enabled') === 'false') writeFileSync(config, tomlSet(text, `plugins."${PLUGIN}"`, 'enabled', 'true').text);
-    const installed = (JSON.parse(run('codex', ['plugin', 'list', '--json'], p.home)) as { installed: { pluginId: string; version: string }[] }).installed.find(i => i.pluginId === PLUGIN);
-    if (!installed) throw new Error(`Codex does not report ${PLUGIN} installed`);
-    say(`Codex: ${PLUGIN} ${installed.version} installed and enabled`);
+    const enabled = locate(splitLines(text).lines, `plugins."${PLUGIN}"`, 'enabled');
+    if (enabled.kind === 'found' && enabled.value === 'false') {
+      const split = splitLines(text);
+      split.lines[enabled.index] = 'enabled = true';
+      writeFileSync(config, joinLines(split));
+    }
+    const installed = installedVersion();
+    if (installed !== version) throw new Error(`Codex reports ${PLUGIN} ${installed ?? 'not installed'}, not ${version}`);
+    say(`Codex: ${PLUGIN} ${installed} installed and enabled`);
   }
 
-  if (claude && (hasCli('grok') || existsSync(p.grok))) {
-    const config = join(p.grok, 'config.toml');
-    let text = readIfExists(config) ?? '';
-    const changes: Manifest['grok'][number][] = [...(readManifest(p)?.grok ?? [])];
-    for (const setting of GROK_SETTINGS) {
-      const current = tomlValue(text, setting.table, setting.key);
-      if (current !== null && Number(current) >= setting.value) continue;
-      const set = tomlSet(text, setting.table, setting.key, String(setting.value));
-      text = set.text;
-      changes.push({ table: setting.table, key: setting.key, before: set.before, value: String(setting.value), createdTable: set.createdTable });
-      say(`Grok Build: [${setting.table}] ${setting.key} = ${setting.value} (was ${set.before ?? 'unset'})`);
+  if (grok !== null) {
+    for (const { setting, outcome } of grokOutcomes) {
+      if (outcome.kind === 'set') say(`Grok Build: [${setting.table}] ${setting.key} = ${setting.value} (was ${outcome.before ?? 'unset'})`);
+      if (outcome.kind === 'unsupported') say(`Grok Build: [${setting.table}] ${setting.key} left alone, set it to ${setting.value} or more by hand: ${outcome.reason}`);
     }
-    if (changes.length > 0) {
-      mkdirSync(p.grok, { recursive: true });
-      writeFileSync(config, text);
-      mkdirSync(p.claudeData, { recursive: true });
-      writeFileSync(p.manifest, `${JSON.stringify({ schemaVersion: 1, grok: changes } satisfies Manifest, null, 2)}\n`, { mode: 0o600 });
-    }
+    if (grokOutcomes.some(o => o.outcome.kind === 'set')) writeFileSync(grokConfig, joinLines(grok));
     say('Grok Build: runs the plugin Claude Code installed');
   }
   say('Choose models per role with /setup-pstack in each parent (optional: without it every role uses its default)');
 }
 
 // --- Uninstall ------------------------------------------------------------------
-
-/** Signs that the plugin was installed here, so a Grok value equal to the plugin's is the plugin's even without an install record (versions before 0.6.0 kept none). */
-function wasInstalled(p: Paths, records: readonly ClaudeRecord[]): boolean {
-  return records.length > 0 || leftovers(p).length > 0 || namesPlugin(readIfExists(join(p.claude, 'settings.json'))) || codexActivated(readIfExists(join(p.codex, 'config.toml')) ?? '');
-}
-
-function restoreGrok(p: Paths, manifest: Manifest | null, records: readonly ClaudeRecord[]): void {
-  const config = join(p.grok, 'config.toml');
-  let text = readIfExists(config);
-  if (text === null) return;
-  const entries = manifest?.grok ?? (wasInstalled(p, records)
-    ? GROK_SETTINGS.map(s => ({ table: s.table, key: s.key, before: null, value: String(s.value), createdTable: true }))
-    : []);
-  for (const entry of [...entries].reverse()) {
-    const current = tomlValue(text, entry.table, entry.key);
-    if (current === null) continue;
-    if (current !== entry.value) { say(`Grok Build: [${entry.table}] ${entry.key} = ${current} left as you set it`); continue; }
-    text = entry.before === null ? tomlUnset(text, entry.table, entry.key, entry.createdTable) : tomlSet(text, entry.table, entry.key, entry.before).text;
-    say(`Grok Build: [${entry.table}] ${entry.key} ${entry.before === null ? 'removed' : `back to ${entry.before}`}`);
-  }
-  if (text === readIfExists(config)) return;
-  // A config.toml that held only what install wrote did not exist before it.
-  if (manifest !== null && text.trim() === '') remove(config);
-  else writeFileSync(config, text);
-}
 
 /** Removes one Claude Code record from its own folder. A project record's removal rewrites the folder's versioned .claude/settings.json (it reorders it, or creates it), so a file that did not name the plugin is put back byte for byte. */
 function uninstallClaudeRecord(record: ClaudeRecord, p: Paths): void {
@@ -373,17 +390,48 @@ function uninstallClaudeRecord(record: ClaudeRecord, p: Paths): void {
   else writeFileSync(settings, before);
 }
 
+/** Everything that would stop uninstall halfway is checked before anything changes. */
+function preflight(p: Paths, records: readonly ClaudeRecord[], claudeMarketplace: boolean): void {
+  if (!hasCli('claude') && (records.length > 0 || claudeMarketplace)) throw new Error(`Claude Code still has ${PLUGIN} or its marketplace, and claude is not on PATH; put the claude CLI on PATH and run uninstall again`);
+  const codex = codexHeld(p);
+  if (!hasCli('codex') && (codex.activated || codex.marketplace)) throw new Error(`Codex still has ${PLUGIN} or its marketplace, and codex is not on PATH; put the codex CLI on PATH and run uninstall again`);
+  for (const record of records) {
+    if (!record.projectPath || existsSync(record.projectPath)) continue;
+    let parent = dirname(record.projectPath);
+    while (!existsSync(parent)) parent = dirname(parent);
+    try { accessSync(parent, constants.W_OK | constants.X_OK); }
+    catch { throw new Error(`Claude Code has ${PLUGIN} (${recordName(record)}), whose folder is gone, and ${parent} is not writable, so the record cannot be removed from a fresh repository there; mount or unlock it and run uninstall again`); }
+  }
+  for (const parent of ['claude', 'codex', 'grok']) legacyWiringOf(parent, p.home, process.env);
+}
+
 function uninstall(p: Paths): Finding[] {
-  const claude = hasCli('claude');
-  const records = claude ? claudeRecords() : [];
-  const manifest = readManifest(p);
-  restoreGrok(p, manifest, records);
+  const claude = claudeHeld(p);
+  const records = claude.records;
+  preflight(p, records, claude.marketplace);
+  const installedHere = wasInstalled(p, records);
+  const folders = knownFolders(p, records);
+
   for (const parent of ['claude', 'codex', 'grok']) {
     const changed = removeLegacyWiring(parent, p.home, process.env);
     if (changed !== null) say(`${changed}: model sheet wiring removed`);
   }
+  const grokConfig = join(p.grok, 'config.toml');
+  const grokText = readIfExists(grokConfig);
+  if (grokText !== null) {
+    const grok = splitLines(grokText);
+    const marked = grokMarks(grok);
+    const said = marked.keys.length > 0 || marked.tables.length > 0 ? grokRestore(grok) : installedHere ? grokRestoreUnmarked(grok) : [];
+    for (const line of said) say(line);
+    const after = joinLines(grok);
+    if (after !== grokText) {
+      // A config.toml that held only what install wrote did not exist before it.
+      if (after.trim() === '') remove(grokConfig);
+      else writeFileSync(grokConfig, after);
+    }
+  }
 
-  if (claude) {
+  if (hasCli('claude')) {
     // Project and local records first, the user record last: Claude Code deletes the data folder with the last record.
     for (const record of [...records].sort((a, b) => Number(a.scope === 'user') - Number(b.scope === 'user'))) {
       uninstallClaudeRecord(record, p);
@@ -391,8 +439,7 @@ function uninstall(p: Paths): Finding[] {
     }
     const left = claudeRecords();
     if (left.length > 0) throw new Error(`Claude Code still has ${PLUGIN} after its removal: ${left.map(recordName).join('; ')}`);
-    const marketplaces = JSON.parse(run('claude', ['plugin', 'marketplace', 'list', '--json'], p.home)) as { name: string }[];
-    if (marketplaces.some(m => m.name === MARKETPLACE)) { run('claude', ['plugin', 'marketplace', 'remove', MARKETPLACE], p.home); say(`Claude Code: ${MARKETPLACE} marketplace removed`); }
+    if (claude.marketplace) { run('claude', ['plugin', 'marketplace', 'remove', MARKETPLACE], p.home); say(`Claude Code: ${MARKETPLACE} marketplace removed`); }
   }
   const settings = join(p.claude, 'settings.json');
   const text = readIfExists(settings);
@@ -404,30 +451,47 @@ function uninstall(p: Paths): Finding[] {
   }
 
   if (hasCli('codex')) {
-    const config = join(p.codex, 'config.toml');
-    if (codexActivated(readIfExists(config) ?? '')) { run('codex', ['plugin', 'remove', PLUGIN], p.home); say(`Codex: ${PLUGIN} removed`); }
-    const marketplaces = (JSON.parse(run('codex', ['plugin', 'marketplace', 'list', '--json'], p.home)) as { marketplaces: { name: string }[] }).marketplaces;
-    if (marketplaces.some(m => m.name === MARKETPLACE)) { run('codex', ['plugin', 'marketplace', 'remove', MARKETPLACE], p.home); say(`Codex: ${MARKETPLACE} marketplace removed`); }
+    if (codexHeld(p).activated) { run('codex', ['plugin', 'remove', PLUGIN], p.home); say(`Codex: ${PLUGIN} removed`); }
+    if (codexHeld(p).marketplace) { run('codex', ['plugin', 'marketplace', 'remove', MARKETPLACE], p.home); say(`Codex: ${MARKETPLACE} marketplace removed`); }
   }
   const codexConfig = join(p.codex, 'config.toml');
   const codexText = readIfExists(codexConfig);
   if (codexText !== null) {
-    const cleaned = tomlRemoveTables(codexText, header => header.startsWith(`hooks.state."${PLUGIN}:`));
-    if (cleaned !== codexText) { writeFileSync(codexConfig, cleaned); say(`${codexConfig}: trust records of ${PLUGIN} hooks removed`); }
+    const cleaned = removeTables(codexText, path => path.startsWith(`hooks.state."${PLUGIN}:`));
+    if (cleaned !== codexText) say(`${codexConfig}: trust records of ${PLUGIN} hooks removed`);
     // A config.toml the marketplace and the plugin alone made is empty once they are gone.
     if (cleaned.trim() === '') remove(codexConfig);
+    else if (cleaned !== codexText) writeFileSync(codexConfig, cleaned);
   }
 
-  // The folders of the removed records get the empty objects the CLI leaves dropped too; any other folder only loses the plugin's own entry.
+  // Untracked project files lose the plugin here; a versioned one is named by check, for a PR in its repository.
   const recordFolders = new Set(records.flatMap(r => r.projectPath ? [r.projectPath, mainCheckoutOf(r.projectPath) ?? r.projectPath] : []));
-  for (const folder of new Set([...knownFolders(p, records), ...[...recordFolders].filter(existsSync)])) {
-    const local = join(folder, '.claude', 'settings.local.json');
-    const before = readIfExists(local);
-    if (before === null || !(namesPlugin(before) || recordFolders.has(folder))) continue;
-    const after = withoutPluginSettings(before);
-    if (after !== before) { writeFileSync(local, after); say(`${local}: ${PLUGIN} removed`); }
+  for (const folder of new Set([...folders, ...[...recordFolders].filter(existsSync)])) {
+    const linked = mainCheckoutOf(folder) !== undefined;
+    for (const file of PROJECT_FILES) {
+      if (linked && file !== join('.claude', 'settings.local.json')) continue;
+      const path = join(folder, file);
+      const before = readIfExists(path);
+      if (before === null) continue;
+      let after: string | null = before;
+      if (file.startsWith(join('.codex', 'pstack-'))) after = null;
+      else if (file.endsWith('config.toml')) after = codexActivated(before) ? removeTables(before, path => path === `plugins."${PLUGIN}"` || path.startsWith(`plugins."${PLUGIN}".`)) : before;
+      // The folders of the removed records also lose the empty objects the CLI leaves.
+      else if (namesPlugin(before) || recordFolders.has(folder)) after = withoutPluginSettings(before);
+      if (after === before || tracked(folder, file)) continue;
+      if (after === null || after.trim() === '' || (file === join('.claude', 'settings.json') && after.trim() === '{}')) remove(path);
+      else writeFileSync(path, after);
+      say(`${path}: ${PLUGIN} removed`);
+    }
   }
+
   for (const path of leftovers(p)) { remove(path); say(`${path}: deleted`); }
+  // The instruction files the old wiring alone filled, now empty, go too, on a machine the plugin was on.
+  if (installedHere) {
+    for (const file of [join(p.claude, 'CLAUDE.md'), join(p.codex, 'AGENTS.md'), join(p.grok, 'AGENTS.md')]) {
+      if (readIfExists(file) === '') { remove(file); say(`${file}: deleted (empty)`); }
+    }
+  }
   // Codex makes these folders for the plugin's data, cache and marketplace clone and leaves them empty, innermost first.
   for (const folder of [join(p.codex, 'plugins', 'data'), join(p.codex, 'plugins', 'cache'), join(p.codex, 'plugins'), join(p.codex, '.tmp', 'marketplaces', '.staging'), join(p.codex, '.tmp', 'marketplaces'), join(p.codex, '.tmp')]) {
     if (existsSync(folder) && listDir(folder).length === 0) remove(folder);

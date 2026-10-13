@@ -2339,14 +2339,13 @@ describe("loadState sources", () => {
     assert.deepEqual(loadState({ parent: "claude", home, env, matrix }).source, { kind: "legacy", path: legacy });
   });
 
-  it("ignores a different sheet and ledger an earlier version left in the config home once the data folder holds its own, and write deletes them", () => {
+  it("ignores a same-lane sheet and a ledger an earlier version left in the config home once the data folder holds its own, and write deletes them", () => {
     const sheet = putSheet("claude", firstRunSheet("claude"));
     const ledger = putLedger("claude", matrix.families.map((family) => family.family));
-    const legacySheet = put(join(configHomeFor("claude", home), "pstack-models.md"), sheetWithHighHillclimb());
+    const legacySheet = put(join(configHomeFor("claude", home), "pstack-models.md"), firstRunSheet("claude"));
     const legacyLedger = putLedger("claude", [], join(configHomeFor("claude", home), "pstack-probes.json"));
     const state = loadState({ parent: "claude", home, matrix });
     assert.deepEqual([state.source, state.exists, state.legacyFiles], [{ kind: "sheet", path: sheet }, true, [legacySheet, legacyLedger]]);
-    assert.deepEqual(state.rows.find((r) => r.role === "hillclimb")?.lanes, ["claude:claude-opus-5-5@xhigh"]);
 
     const plan = buildPlan({ parent: "claude", home, matrix });
     assert.equal(plan.sheet, firstRunSheet("claude"));
@@ -2358,6 +2357,15 @@ describe("loadState sources", () => {
     assert.equal(readFileSync(sheet, "utf8"), firstRunSheet("claude"));
     assert.equal(readFileSync(ledger, "utf8"), ledgerBytes);
     assert.deepEqual(loadState({ parent: "claude", home, matrix }).legacyFiles, []);
+  });
+
+  it("stops when an earlier version's sheet in the config home and the data folder's sheet assign different lanes, and deletes neither", () => {
+    const sheet = putSheet("claude", firstRunSheet("claude"));
+    const legacySheet = put(join(configHomeFor("claude", home), "pstack-models.md"), sheetWithHighHillclimb());
+    for (const action of [() => loadState({ parent: "claude", home, matrix }), () => unwireSheet({ parent: "claude", home, matrix })]) {
+      assert.throws(action, (error: unknown) => error instanceof SetupError && error.message.startsWith(`inconsistent state: ${sheet} and ${legacySheet} (an earlier version's sheet) assign different lanes to hillclimb`) && error.message.endsWith(`delete ${legacySheet} to keep the data folder's sheet, or delete ${sheet} to carry the earlier one over`));
+    }
+    assert.deepEqual([readFileSync(sheet, "utf8"), readFileSync(legacySheet, "utf8")], [firstRunSheet("claude"), sheetWithHighHillclimb()]);
   });
 
   it("recovers the Codex rows from the AGENTS.md block when the sheet is missing, writes the sheet back and removes the block", async () => {

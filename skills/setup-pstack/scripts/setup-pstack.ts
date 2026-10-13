@@ -924,8 +924,14 @@ function selectSource(where: Location, matrix: ModelMatrix): Selected {
     fail(`inconsistent state: the config home ${where.configHome} is a file, not a directory; move it aside${variable === null ? "" : ` or point ${variable.name} at a directory`}`);
   }
   const sheetText = snapshotOf(where.sheetPath, "sheet");
-  // Once the data folder holds the sheet, a leftover legacy file is not read: `write` and `unwire` delete it.
-  const legacyText = sheetText === null && where.legacySheetPath !== null ? snapshotOf(where.legacySheetPath, "sheet") : null;
+  const legacyText = where.legacySheetPath === null ? null : snapshotOf(where.legacySheetPath, "sheet");
+  // Once the data folder holds the sheet, a leftover legacy file with the same lanes is not read, and `write` and `unwire` delete it. Different lanes are two live choices: the operator keeps one.
+  if (sheetText !== null && legacyText !== null && where.legacySheetPath !== null) {
+    const differences = laneDifferences(parseFrom(sheetText, where.sheetPath, matrix), parseFrom(legacyText, where.legacySheetPath, matrix), "legacy");
+    if (differences.length > 0) {
+      fail(`inconsistent state: ${where.sheetPath} and ${where.legacySheetPath} (an earlier version's sheet) assign different lanes to ${differences.join(", ")}; delete ${where.legacySheetPath} to keep the data folder's sheet, or delete ${where.sheetPath} to carry the earlier one over`);
+    }
+  }
   const integration = snapshotOf(where.integrationPath, "integration file") ?? "";
   const sheet: Loaded | null = sheetText !== null
     ? { source: { kind: "sheet", path: where.sheetPath }, text: sheetText }
@@ -1943,6 +1949,13 @@ export function unwireSheet(input: StateInput): UnwireResult {
  * since the data folder goes with the plugin. Returns the file it changed, or
  * null when there was nothing to remove.
  */
+/** The parent's global instruction file when it still holds the sheet wiring a version before 0.5.32 wrote, else null. Reads only. */
+export function legacyWiringOf(parent: string, home: string = homedir(), env: ConfigEnv = {}): string | null {
+  const where = locate(parent, home, env, parent === "codex" ? { cwd: home } : {});
+  const text = snapshotOf(where.integrationPath, "integration file");
+  return text !== null && unwireIntegration(where, text) !== text ? where.integrationPath : null;
+}
+
 export function removeLegacyWiring(parent: string, home: string = homedir(), env: ConfigEnv = {}): string | null {
   const where = locate(parent, home, env, parent === "codex" ? { cwd: home } : {});
   const before = snapshotOf(where.integrationPath, "integration file");

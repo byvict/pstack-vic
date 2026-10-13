@@ -5,7 +5,8 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { tomlRemoveTables, tomlSet, tomlUnset, tomlValue, withoutPluginSettings } from './pstack.ts';
+import { GROK_SETTINGS, grokRestore, grokSet, withoutPluginSettings } from './pstack.ts';
+import { joinLines, locate, removeTables, splitLines } from './toml-lines.ts';
 
 const script = fileURLToPath(new URL('./pstack.ts', import.meta.url));
 const version = (JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')) as { version: string }).version;
@@ -56,6 +57,8 @@ if (name === 'git') {
     const cache = join(home, '.claude', 'plugins', 'cache', 'pstack-vic', 'pstack', state.latest); mkdirSync(cache, { recursive: true }); writeFileSync(join(cache, 'plugin.json'), '{}' + nl);
     save();
   }
+  else if (is('plugin', 'marketplace', 'update', 'pstack-vic')) { state.claude.refreshed = true; save(); }
+  else if (is('plugin', 'update', 'pstack@pstack-vic', '--scope', 'user')) { records.find(r => r.scope === 'user').version = state.latest; save(); }
   else if (is('plugin', 'enable', 'pstack@pstack-vic', '--scope', 'user')) {
     records.find(r => r.scope === 'user').enabled = true;
     const settings = json(claudeSettings); settings.enabledPlugins['pstack@pstack-vic'] = true; writeJson(claudeSettings, settings);
@@ -91,13 +94,14 @@ if (name === 'git') {
 } else if (name === 'codex') {
   const activated = toml().split(nl).includes('[plugins."pstack@pstack-vic"]');
   if (is('plugin', 'marketplace', 'list', '--json')) out(JSON.stringify({ marketplaces: toml().split(nl).includes('[marketplaces.pstack-vic]') ? [{ name: 'pstack-vic', root: join(home, '.codex', '.tmp', 'marketplaces', 'pstack-vic') }] : [] }));
-  else if (is('plugin', 'list', '--json')) out(JSON.stringify({ installed: activated ? [{ pluginId: 'pstack@pstack-vic', version: state.latest }] : [], available: [] }));
+  else if (is('plugin', 'list', '--json')) out(JSON.stringify({ installed: activated ? [{ pluginId: 'pstack@pstack-vic', version: state.codexVersion ?? state.latest }] : [], available: [] }));
   else if (is('plugin', 'marketplace', 'add', 'byvict/pstack-vic', '--ref', '*')) {
     mkdirSync(dirname(codexConfig), { recursive: true });
     writeFileSync(codexConfig, toml() + nl + '[marketplaces.pstack-vic]' + nl + 'source_type = "git"' + nl + 'source = "https://github.com/byvict/pstack-vic.git"' + nl + 'ref = "' + args[5] + '"' + nl);
     const clone = join(home, '.codex', '.tmp', 'marketplaces', 'pstack-vic'); mkdirSync(clone, { recursive: true }); writeFileSync(join(clone, 'README.md'), 'clone' + nl);
   }
   else if (is('plugin', 'add', 'pstack@pstack-vic')) {
+    state.codexVersion = state.latest; save();
     writeFileSync(codexConfig, toml() + nl + '[plugins."pstack@pstack-vic"]' + nl + 'enabled = true' + nl);
     const cache = join(home, '.codex', 'plugins', 'cache', 'pstack-vic', 'pstack', state.latest); mkdirSync(cache, { recursive: true }); writeFileSync(join(cache, 'plugin.json'), '{}' + nl);
   }
@@ -168,7 +172,7 @@ test('install puts the plugin in Claude Code at user scope and in Codex, and the
     '',
   ].join('\n'));
   assert.deepEqual(s.state().claude.records, [{ scope: 'user', version, enabled: true }]);
-  assert.equal(readFileSync(join(s.home, '.grok', 'config.toml'), 'utf8'), `${grokOwn}\n[subagents]\nmax_depth = 2\n\n[toolset.bash]\ntimeout_secs = 3600\nmax_timeout_secs = 3600\n`);
+  assert.equal(readFileSync(join(s.home, '.grok', 'config.toml'), 'utf8'), `${grokOwn}\n[subagents] # pstack-vic: added\nmax_depth = 2 # pstack-vic: was unset\n\n[toolset.bash] # pstack-vic: added\ntimeout_secs = 3600 # pstack-vic: was unset\nmax_timeout_secs = 3600 # pstack-vic: was unset\n`, 'each line install writes carries what it replaced');
   assert.match(readFileSync(join(s.home, '.codex', 'config.toml'), 'utf8'), /\[plugins\."pstack@pstack-vic"\]\nenabled = true\n/);
   assert.ok(s.calls().some(call => call.slice(0, 7).join(' ') === `codex plugin marketplace add byvict/pstack-vic --ref v${version}`), 'Codex pins the marketplace to the tag of this version');
   assert.deepEqual(s.calls().filter(call => call[0] !== 'git' && !call.includes('--json') && call[1] !== '--version').every(call => call.at(-1) === `@${s.home}`), true, 'every host command runs from the home folder, outside any project');
@@ -273,9 +277,10 @@ test('uninstall clears a machine an older version set up per project, and names 
   assert.deepEqual(JSON.parse(readFileSync(join(lab, '.claude', 'settings.local.json'), 'utf8')), {});
   assert.equal(readFileSync(join(s.home, '.grok', 'config.toml'), 'utf8'), grokOwn, 'without an install record, the values the plugin sets are the plugin\'s');
   assert.equal(readFileSync(join(s.home, '.codex', 'AGENTS.md'), 'utf8'), '# mine\n\n');
+  assert.equal(existsSync(join(s.home, '.claude', 'plugins', 'data', 'pstack-inline', 'x')), true, 'an inline run\'s data folder may belong to any plugin named pstack, so it stays');
   assert.equal(readFileSync(join(s.home, '.claude', 'settings.json'), 'utf8'), userSettings, 'the standing authorization and the other plugins stay');
   assert.equal(readFileSync(join(s.home, '.codex', 'config.toml'), 'utf8'), codexOwn);
-  for (const gone of ['.claude/pstack-models.md', '.codex/pstack-probes.json', '.grok/pstack-models.md', '.claude/pstack-probes.json.pre-5.4', '.claude/CLAUDE.md', '.grok/AGENTS.md', '.codex/config.toml.pre-0.5.31', '.grok/config.toml.pre-pstack-grok-root-2026-10-05T18-32-19-512Z', '.claude/plugins/cache/pstack-vic', '.claude/plugins/data/pstack-inline', '.claude/plugins/marketplaces/pstack-vic', 'Library/Caches/pstack-vic']) {
+  for (const gone of ['.claude/pstack-models.md', '.codex/pstack-probes.json', '.grok/pstack-models.md', '.claude/pstack-probes.json.pre-5.4', '.claude/CLAUDE.md', '.grok/AGENTS.md', '.codex/config.toml.pre-0.5.31', '.grok/config.toml.pre-pstack-grok-root-2026-10-05T18-32-19-512Z', '.claude/plugins/cache/pstack-vic', '.claude/plugins/marketplaces/pstack-vic', 'Library/Caches/pstack-vic']) {
     assert.equal(existsSync(join(s.home, gone)), false, gone);
   }
   assert.match(result.stdout, new RegExp(`${join(clinext, '.claude', 'settings.json').replace(/[.]/g, '\\.')}: the line that turned pstack@pstack-vic on is gone; commit that change in its repository\n`), 'Claude Code removed the versioned line from the working tree only');
@@ -325,21 +330,36 @@ test('an unknown command prints the usage and exits 64', t => {
   assert.equal(result.stderr, 'Usage: node scripts/pstack.ts <install|uninstall|check>\n');
 });
 
-test('the TOML edits put a file back byte for byte, keep comments and other tables, and remove only the named tables', () => {
-  const own = '# top\n[ui]\nyolo = false # keep\n\n[[marketplace.sources]]\nname = "x"\n';
-  let text = own;
-  const changes = [];
-  for (const [table, key, value] of [['subagents', 'max_depth', '2'], ['toolset.bash', 'timeout_secs', '3600'], ['toolset.bash', 'max_timeout_secs', '3600'], ['ui', 'yolo', 'true']] as const) {
-    const set = tomlSet(text, table, key, value);
-    changes.push({ table, key, ...set });
-    text = set.text;
+test('the Grok edits put a file back byte for byte, comments and line endings included, and leave a value the operator changed', () => {
+  const own = '# top\r\n[ui]\r\nyolo = false # keep\r\n\r\n[toolset.bash]\r\ntimeout_secs = 600 # mine\r\nallow = [\r\n  ["a", "b"],\r\n]\r\n\r\n[[marketplace.sources]]\r\nname = "x"\r\n';
+  const split = splitLines(own);
+  const outcomes = GROK_SETTINGS.map(setting => grokSet(split, setting).kind);
+  assert.deepEqual(outcomes, ['set', 'set', 'set']);
+  const installed = joinLines(split);
+  assert.equal(installed, '# top\r\n[ui]\r\nyolo = false # keep\r\n\r\n[toolset.bash]\r\ntimeout_secs = 3600 # pstack-vic: was "timeout_secs = 600 # mine"\r\nallow = [\r\n  ["a", "b"],\r\n]\r\nmax_timeout_secs = 3600 # pstack-vic: was unset\r\n\r\n[[marketplace.sources]]\r\nname = "x"\r\n\r\n[subagents] # pstack-vic: added\r\nmax_depth = 2 # pstack-vic: was unset\r\n', 'a line inside a multi-line array is never read as a table');
+  const back = splitLines(installed);
+  grokRestore(back);
+  assert.equal(joinLines(back), own);
+  const changed = splitLines(installed.replace('max_depth = 2', 'max_depth = 5'));
+  assert.deepEqual(grokRestore(changed), ['Grok Build: [toolset.bash] timeout_secs put back as it was', 'Grok Build: [toolset.bash] max_timeout_secs removed', 'Grok Build: [subagents] max_depth = 5 left as you set it']);
+  assert.match(joinLines(changed), /\r\n\r\n\[subagents\]\r\nmax_depth = 5\r\n$/);
+});
+
+test('a Grok setting written as a dotted key, an inline table or twice is left alone', () => {
+  for (const text of ['subagents.max_depth = 1\n', '[toolset]\nbash = { timeout_secs = 10 }\n', 'toolset = { bash = { timeout_secs = 10 } }\n', '[subagents]\nmax_depth = 1\n\n[subagents]\nx = 1\n']) {
+    const split = splitLines(text);
+    const outcomes = GROK_SETTINGS.map(setting => grokSet(split, setting));
+    assert.ok(outcomes.some(outcome => outcome.kind === 'unsupported'), text);
+    for (const [i, outcome] of outcomes.entries()) if (outcome.kind === 'unsupported') assert.equal(locate(splitLines(text).lines, GROK_SETTINGS[i].table, GROK_SETTINGS[i].key).kind, 'unsupported');
   }
-  assert.equal(tomlValue(text, 'ui', 'yolo'), 'true');
-  assert.equal(tomlValue(text, 'toolset.bash', 'max_timeout_secs'), '3600');
-  for (const change of changes.reverse()) text = change.before === null ? tomlUnset(text, change.table, change.key, change.createdTable) : tomlSet(text, change.table, change.key, change.before).text;
-  assert.equal(text.replace('yolo = false\n', 'yolo = false # keep\n'), own, 'a value put back loses only its trailing comment');
-  const codex = 'a = 1\n\n[hooks.state."pstack@pstack-vic:hooks/hooks.json:pre_tool_use:0:0"]\ntrusted_hash = "x"\n\n[hooks.state."other@elsewhere:h"]\ntrusted_hash = "y"\n';
-  assert.equal(tomlRemoveTables(codex, header => header.startsWith('hooks.state."pstack@pstack-vic:')), 'a = 1\n\n[hooks.state."other@elsewhere:h"]\ntrusted_hash = "y"\n');
+  const quoted = splitLines('[subagents]\n"max_depth" = 1\n');
+  assert.deepEqual(grokSet(quoted, GROK_SETTINGS[0]), { kind: 'set', before: '1' });
+  assert.equal(joinLines(quoted), '[subagents]\nmax_depth = 2 # pstack-vic: was "\\"max_depth\\" = 1"\n');
+});
+
+test('removing a Codex table keeps a following table whose quoted header holds brackets, and the comment that leads it', () => {
+  const codex = 'a = 1\n\n[hooks.state."pstack@pstack-vic:hooks/hooks.json:pre_tool_use:0:0"]\ntrusted_hash = "x"\n\n# my projects\n[projects."/Users/v/Dev/[x]"]\ntrust_level = "trusted"\n';
+  assert.equal(removeTables(codex, path => path.startsWith('hooks.state."pstack@pstack-vic:')), 'a = 1\n\n# my projects\n[projects."/Users/v/Dev/[x]"]\ntrust_level = "trusted"\n');
 });
 
 test('the settings edit drops only the plugin, its marketplace and the empty objects the hosts leave', () => {
@@ -347,4 +367,103 @@ test('the settings edit drops only the plugin, its marketplace and the empty obj
   assert.deepEqual(JSON.parse(withoutPluginSettings(JSON.stringify(settings))), { enabledPlugins: { 'other@elsewhere': true }, theme: 'dark' });
   const untouched = '{"theme":"dark"}';
   assert.equal(withoutPluginSettings(untouched), untouched);
+});
+
+test('on a machine that never had the plugin, uninstall leaves the operator\'s own Grok values and empty instruction files alone', t => {
+  const s = setup(t);
+  const own = `${grokOwn}\n[subagents]\nmax_depth = 2\n`;
+  writeFileSync(join(s.home, '.grok', 'config.toml'), own);
+  s.put('.grok/AGENTS.md', '');
+  s.put('.claude/CLAUDE.md', 'Old setups kept a file called /pstack-models.md next to this one.\n');
+  const before = s.tree();
+  const result = s.run('uninstall');
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(result.stdout, 'Nothing of pstack@pstack-vic is left on this machine\n', 'prose that names the sheet is not the old wiring');
+  assert.deepEqual(s.tree(), before);
+});
+
+test('a value install replaced comes back even after the host deleted the plugin\'s data folder', t => {
+  const s = setup(t);
+  writeFileSync(join(s.home, '.grok', 'config.toml'), `${grokOwn}\n[toolset.bash]\ntimeout_secs = 600 # mine\n`);
+  const before = s.tree();
+  assert.equal(s.run('install').status, 0);
+  rmSync(join(s.home, '.claude', 'plugins', 'data', 'pstack-pstack-vic'), { recursive: true, force: true });
+  const result = s.run('uninstall');
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /Grok Build: \[toolset\.bash\] timeout_secs put back as it was\n/);
+  assert.deepEqual(s.tree(), before);
+});
+
+test('uninstall refuses, changing nothing, while a host still has the plugin and its CLI is not on PATH', t => {
+  const s = setup(t);
+  assert.equal(s.run('install').status, 0);
+  s.put('.claude/plugins/installed_plugins.json', JSON.stringify({ version: 2, plugins: { 'pstack@pstack-vic': [{ scope: 'user', version }] } }));
+  rmSync(join(s.root, 'bin', 'claude'));
+  const before = s.tree();
+  const result = s.run('uninstall');
+  assert.equal(result.status, 1);
+  assert.equal(result.stderr, 'Claude Code still has pstack@pstack-vic or its marketplace, and claude is not on PATH; put the claude CLI on PATH and run uninstall again\n');
+  assert.deepEqual(s.tree(), before);
+  const check = s.run('check');
+  assert.equal(check.status, 1);
+  assert.match(check.stdout, /Claude Code install record \(user\)/, 'check reads the records from Claude Code\'s own file without the CLI');
+});
+
+test('uninstall refuses, changing nothing, when a gone record sits under a folder it cannot write', t => {
+  const s = setup(t);
+  const locked = join(s.root, 'locked'); mkdirSync(locked);
+  const state = s.state();
+  state.claude.records = [{ scope: 'local', projectPath: join(locked, 'gone', 'worktree'), version: '0.5.30', enabled: false }];
+  s.write(state);
+  writeFileSync(join(s.home, '.grok', 'config.toml'), `${grokOwn}\n[subagents]\nmax_depth = 2\n`);
+  chmodSync(locked, 0o555);
+  try {
+    const before = s.tree();
+    const result = s.run('uninstall');
+    assert.equal(result.status, 1);
+    assert.equal(result.stderr, `Claude Code has pstack@pstack-vic (local ${join(locked, 'gone', 'worktree')}), whose folder is gone, and ${locked} is not writable, so the record cannot be removed from a fresh repository there; mount or unlock it and run uninstall again\n`);
+    assert.deepEqual(s.tree(), before);
+  } finally {
+    chmodSync(locked, 0o755);
+  }
+});
+
+test('install moves a stale Codex marketplace and plugin, and a stale Claude Code record, to this version', t => {
+  const s = setup(t);
+  const state = s.state();
+  state.claude.marketplaces.push('pstack-vic');
+  state.claude.records = [{ scope: 'user', version: '0.5.30', enabled: false }];
+  state.codexVersion = '0.5.30';
+  s.write(state);
+  writeFileSync(join(s.home, '.codex', 'config.toml'), `${codexOwn}\n[marketplaces.pstack-vic]\nsource_type = "git"\nsource = "https://github.com/byvict/pstack-vic.git"\nref = "v0.5.30"\n\n[plugins."pstack@pstack-vic"]\nenabled = false\n`);
+  const result = s.run('install');
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const moves = s.calls().filter(call => call[0] !== 'git' && !call.includes('--json') && call[1] !== '--version').map(call => call.slice(0, -1).join(' '));
+  assert.deepEqual(moves, [
+    'claude plugin marketplace update pstack-vic', 'claude plugin update pstack@pstack-vic --scope user', 'claude plugin enable pstack@pstack-vic --scope user',
+    'codex plugin remove pstack@pstack-vic', 'codex plugin marketplace remove pstack-vic', `codex plugin marketplace add byvict/pstack-vic --ref v${version}`, 'codex plugin add pstack@pstack-vic',
+  ]);
+  assert.match(result.stdout, new RegExp(`Claude Code: pstack@pstack-vic ${version.replace(/[.]/g, '\\.')} installed and enabled \\(user\\)\\nCodex: pstack@pstack-vic ${version.replace(/[.]/g, '\\.')} installed and enabled\\n`));
+});
+
+test('uninstall clears untracked project files, including a linked worktree\'s local settings, and names the versioned ones', t => {
+  const s = setup(t);
+  const project = join(s.root, 'dev', 'app'); mkdirSync(join(project, '.git'), { recursive: true });
+  const worktree = join(project, '.claude', 'worktrees', 'w'); mkdirSync(worktree, { recursive: true }); mkdirSync(join(project, '.git', 'worktrees', 'w'), { recursive: true });
+  writeFileSync(join(worktree, '.git'), `gitdir: ${join(project, '.git', 'worktrees', 'w')}\n`);
+  mkdirSync(join(worktree, '.claude'), { recursive: true });
+  writeFileSync(join(worktree, '.claude', 'settings.local.json'), `${JSON.stringify({ permissions: { allow: [] }, enabledPlugins: { 'pstack@pstack-vic': true } }, null, 2)}\n`);
+  mkdirSync(join(project, '.codex'), { recursive: true });
+  writeFileSync(join(project, '.codex', 'config.toml'), 'approval_policy = "never"\n\n[plugins."pstack@pstack-vic"]\nenabled = true\n\n[plugins."pstack@pstack-vic".mcp_servers.x]\nenabled = false\n');
+  writeFileSync(join(project, '.codex', 'pstack-models.md'), '# sheet\n');
+  mkdirSync(join(project, '.claude'), { recursive: true });
+  writeFileSync(join(project, '.claude', 'settings.json'), `${JSON.stringify({ enabledPlugins: { 'pstack@pstack-vic': true } }, null, 2)}\n`);
+  s.put('.claude.json', JSON.stringify({ projects: { [project]: {}, [worktree]: {} } }));
+  s.write({ ...s.state(), tracked: [join(project, '.claude', 'settings.json')] });
+  const result = s.run('uninstall');
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.deepEqual(JSON.parse(readFileSync(join(worktree, '.claude', 'settings.local.json'), 'utf8')), { permissions: { allow: [] } });
+  assert.equal(readFileSync(join(project, '.codex', 'config.toml'), 'utf8'), 'approval_policy = "never"\n');
+  assert.equal(existsSync(join(project, '.codex', 'pstack-models.md')), false);
+  assert.equal(result.stdout.split('\n').filter(line => line.startsWith('- ')).join('\n'), `- ${join(project, '.claude', 'settings.json')}: turns pstack@pstack-vic on or off (versioned: remove it in that repository)`);
 });

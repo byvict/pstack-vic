@@ -20,7 +20,7 @@ node scripts/pstack.ts install
 
 - **Claude Code.** Adiciona o catálogo e instala o plugin no escopo `user` (os comandos abaixo). Nenhum arquivo de projeto muda: o plugin não faz parte do repositório de nenhum projeto.
 - **Codex.** Adiciona o catálogo fixado na tag desta versão e instala o plugin no usuário (os comandos abaixo).
-- **Grok Build.** Não tem instalação própria: roda o plugin que o Claude Code instalou, em qualquer pasta. O comando grava em `~/.grok/config.toml` os dois ajustes que o plugin pede ao Grok, `[subagents] max_depth = 2` (raiz → owner → helper) e `[toolset.bash] timeout_secs` e `max_timeout_secs = 3600` (uma suíte de testes numa lane passa dos 300 s do Grok). Um valor que já basta fica como está. O valor anterior de cada ajuste fica em `install.json`, na pasta de dados do plugin, para o `uninstall` devolver.
+- **Grok Build.** Não tem instalação própria: roda o plugin que o Claude Code instalou, em qualquer pasta. O comando grava em `~/.grok/config.toml` os dois ajustes que o plugin pede ao Grok, `[subagents] max_depth = 2` (raiz → owner → helper) e `[toolset.bash] timeout_secs` e `max_timeout_secs = 3600` (uma suíte de testes numa lane passa dos 300 s do Grok). Um valor que já basta fica como está, e um ajuste escrito de outro jeito (chave com ponto, tabela na mesma linha) fica intocado, com aviso para você ajustar à mão. Cada linha que o comando grava leva um comentário `# pstack-vic: was …` com a linha que substituiu. Assim o `uninstall` devolve a linha original byte a byte, mesmo depois que o app apagou a pasta do plugin. E um valor que você mesmo pôs nunca é confundido com o do plugin.
 
 O comando recusa, sem mexer em nada, uma versão que ainda não tem tag e uma máquina onde o Claude Code ainda tem o plugin instalado por projeto, como as versões até a 0.5.32 faziam: rode `node scripts/pstack.ts uninstall` antes. Rodar `install` de novo não muda nada.
 
@@ -101,7 +101,7 @@ O comando devolve os ajustes do Grok ao valor de antes. Depois remove o plugin e
 node scripts/pstack.ts check
 ```
 
-O `check` lista o que ainda for do plugin, com a pasta de cada item, e sai com código 1 quando acha algo. Ele procura nas configurações dos três pais e nos projetos que o Claude Code e o Codex conhecem. Uma linha versionada num projeto, como o `enabledPlugins` de um `.claude/settings.json` ou o `[plugins."pstack@pstack-vic"]` de um `.codex/config.toml` das versões até a 0.5.32, sai por PR naquele repositório. Na remoção de um registro `project`, o Claude Code tira a linha só da cópia de trabalho, e o comando avisa para fazer o commit.
+O `check` lista o que ainda for do plugin, com a pasta de cada item, e sai com código 1 quando acha algo. Ele procura nas configurações dos três pais e nos projetos que o Claude Code e o Codex conhecem, inclusive o `settings.local.json` de cada worktree. O `uninstall` limpa um arquivo de projeto que não está no git: o `settings.local.json`, uma ativação ou um sheet do Codex no projeto. Uma linha versionada num projeto, como o `enabledPlugins` de um `.claude/settings.json` ou o `[plugins."pstack@pstack-vic"]` de um `.codex/config.toml` das versões até a 0.5.32, sai por PR naquele repositório. Na remoção de um registro `project`, o Claude Code tira a linha só da cópia de trabalho, e o comando avisa para fazer o commit.
 
 Ficam, porque são seus e não do plugin:
 
@@ -109,7 +109,7 @@ Ficam, porque são seus e não do plugin:
 - as permissões de sandbox do Codex, se você as concedeu;
 - os arquivos de controle que o Claude Code e o Codex mantêm para qualquer plugin (como `installed_plugins.json`), sem nenhuma linha do pstack.
 
-Os apps não rodam nada de um plugin ao instalar ou remover, e nenhum plugin consegue trazer um ajuste do Grok. Por isso instalar e desinstalar são comandos deste repositório. O que cada app deixa para trás foi medido em 2026-10-13 no Claude Code 2.1.296, no Codex 0.162.1 e no Grok Build 1.0.50. Remover pelo `/plugin` do Claude Code apaga a pasta de dados, mas deixa os ajustes do Grok; o `check` os nomeia.
+Os apps não rodam nada de um plugin ao instalar ou remover, e nenhum plugin consegue trazer um ajuste do Grok. Por isso instalar e desinstalar são comandos deste repositório. O que cada app deixa para trás foi medido em 2026-10-13 no Claude Code 2.1.296, no Codex 0.162.1 e no Grok Build 1.0.50. Remover pelo `/plugin` do Claude Code apaga a pasta de dados, mas deixa os ajustes do Grok, com a marca de cada linha: o `check` os nomeia e o `uninstall` os devolve. O comando para antes de mudar qualquer coisa quando falta o CLI de um app que ainda tem o plugin, ou quando um registro aponta para uma pasta sumida dentro de uma pasta sem permissão de escrita.
 
 ### Publicar uma versão
 
