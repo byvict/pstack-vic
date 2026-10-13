@@ -6,9 +6,12 @@
 // new one from model-matrix.json, running the external probes through the
 // runner, refusing to write while any probe is missing, and the snapshot /
 // write / read-back / restore of the sheet and the probe ledger. The sheet is
-// plugin data: no instruction file loads it, so disabling the plugin disables
-// it. Versions before 0.5.32 wired it into CLAUDE.md or AGENTS.md; `write` and
-// `unwire` remove that wiring. Effort belongs to the lane, not the family: two lanes of one
+// plugin data and lives in the plugin's data folder, which the host deletes
+// when the plugin is uninstalled (`dataHomeFor`): no instruction file loads it,
+// so disabling the plugin disables it. Versions before 0.6.0 kept the sheet and
+// the ledger in the parent's config home, and versions before 0.5.32 also wired
+// the sheet into CLAUDE.md or AGENTS.md; `write` and `unwire` move those files
+// into the data folder and remove that wiring. Effort belongs to the lane, not the family: two lanes of one
 // family may differ. The probe unit is the family (provider and model): the
 // parent's ledger records every family it has verified, and only a family
 // missing from it (a new provider or a new model) is probed, once, at its
@@ -97,6 +100,8 @@ const TARGETS: Readonly<Record<string, Target>> = {
 
 export const SHEET_FILE = "pstack-models.md";
 export const LEDGER_FILE = "pstack-probes.json";
+/** The folder name Claude Code gives `pstack@pstack-vic` under `plugins/data/` (`${CLAUDE_PLUGIN_DATA}`); Codex gets the same name under its own `plugins/data/`. */
+export const PLUGIN_DATA_DIR = "pstack-pstack-vic";
 /** The wiring versions before 0.5.32 wrote: this import in CLAUDE.md, or the block between the markers in AGENTS.md. */
 export const CLAUDE_INCLUDE_LINE = "@~/.claude/pstack-models.md";
 export const CODEX_BLOCK_BEGIN = "<!-- pstack:models:begin -->";
@@ -117,6 +122,22 @@ export function configHomeFor(parent: string, home: string = homedir(), env: Con
   return resolve(value);
 }
 
+/**
+ * The plugin's data folder for a parent: the folder the host deletes with the
+ * plugin. Claude Code deletes `<config home>/plugins/data/pstack-pstack-vic`
+ * when the last install record goes (measured on 2.1.296). Grok Build runs the
+ * plugin Claude Code installed, so its data sits in a `grok` folder inside
+ * Claude Code's. Codex keeps plugin data under its own `plugins/data/` and does
+ * not delete it on `plugin remove` (measured on 0.162.1), so
+ * `scripts/pstack.ts uninstall` deletes it.
+ */
+export function dataHomeFor(parent: string, home: string = homedir(), env: ConfigEnv = {}): string {
+  targetFor(parent);
+  if (parent === "codex") return join(configHomeFor("codex", home, env), "plugins", "data", PLUGIN_DATA_DIR);
+  const claude = join(configHomeFor("claude", home, env), "plugins", "data", PLUGIN_DATA_DIR);
+  return parent === "grok" ? join(claude, "grok") : claude;
+}
+
 interface Location {
   readonly parent: string;
   readonly home: string;
@@ -124,6 +145,9 @@ interface Location {
   readonly sheetPath: string;
   readonly integrationPath: string;
   readonly ledgerPath: string;
+  /** Where versions before 0.6.0 kept the global sheet and ledger: the config home. Null for a Codex project source. */
+  readonly legacySheetPath: string | null;
+  readonly legacyLedgerPath: string | null;
   readonly wiring: Target["wiring"];
   readonly readSource?: boolean;
 }
@@ -180,13 +204,16 @@ function referencedSheet(text: string, path: string, home: string): string | nul
 function locate(parent: string, home: string, env: ConfigEnv, context: SourceContext = {}): Location {
   const target = targetFor(parent);
   const configHome = configHomeFor(parent, home, env);
+  const data = dataHomeFor(parent, home, env);
   const global: Location = {
     parent,
     home,
     configHome,
-    sheetPath: join(configHome, SHEET_FILE),
+    sheetPath: join(data, SHEET_FILE),
     integrationPath: join(configHome, target.integration),
-    ledgerPath: join(configHome, LEDGER_FILE),
+    ledgerPath: join(data, LEDGER_FILE),
+    legacySheetPath: join(configHome, SHEET_FILE),
+    legacyLedgerPath: join(configHome, LEDGER_FILE),
     wiring: target.wiring,
   };
   if (parent !== "codex") {
@@ -194,6 +221,8 @@ function locate(parent: string, home: string, env: ConfigEnv, context: SourceCon
     return global;
   }
 
+  const project = (integrationPath: string, sheetPath: string): Location =>
+    ({ ...global, sheetPath, integrationPath, ledgerPath: join(dirname(sheetPath), LEDGER_FILE), legacySheetPath: null, legacyLedgerPath: null });
   const directories = projectDirectories(context.cwd ?? process.cwd());
   // Local standalone sheets retain setup's recovery contract. An explicit chain
   // restricts recovery to its directories, including custom runtime filenames.
@@ -205,28 +234,30 @@ function locate(parent: string, home: string, env: ConfigEnv, context: SourceCon
     });
   for (const candidate of [...candidates].reverse()) {
     const { directory } = candidate;
-    const path = candidate.path === undefined ? instructionFile(directory, directory === configHome) : candidate.path;
+    const isGlobal = directory === configHome;
+    const path = candidate.path === undefined ? instructionFile(directory, isGlobal) : candidate.path;
     const integrationPath = path ?? join(directory, "AGENTS.md");
     const integration = snapshotOf(integrationPath, "instruction file");
     if (path !== null && integration === null) fail(`loaded instruction source ${path} does not exist`);
-    const sheetDirectory = directory === configHome ? configHome : join(directory, ".codex");
-    // The folder whose .codex is the config home (the user's home) holds the global sheet, not a project one.
-    const ownSheet = directory === configHome || sheetDirectory !== configHome;
     const reference = referencedSheet(integration ?? "", integrationPath, home);
-    const sheetPath = reference ?? join(sheetDirectory, SHEET_FILE);
     const block = findBlock(integration ?? "", integrationPath);
     if (reference !== null && !existsSync(reference)) fail(`${integrationPath} references missing model sheet ${reference}`);
-    if (reference !== null || block !== null || (ownSheet && existsSync(sheetPath))) {
-      return { ...global, sheetPath, integrationPath, ledgerPath: join(dirname(sheetPath), LEDGER_FILE) };
+    if (reference !== null) return project(integrationPath, reference);
+    // The folder whose .codex is the config home (the user's home) holds the global sheet, not a project one.
+    if (isGlobal || join(directory, ".codex") === configHome) {
+      if (block !== null || (isGlobal && (existsSync(global.sheetPath) || existsSync(global.legacySheetPath ?? "")))) return { ...global, integrationPath };
+      continue;
     }
+    const sheetPath = join(directory, ".codex", SHEET_FILE);
+    if (block !== null || existsSync(sheetPath)) return project(integrationPath, sheetPath);
   }
   if (context.instructionSources !== undefined) {
     const last = context.instructionSources.at(-1);
     if (last === undefined) return { ...global, readSource: false };
     const integrationPath = resolve(last);
     const directory = dirname(integrationPath);
-    const sheetDirectory = directory === configHome ? configHome : join(directory, ".codex");
-    return { ...global, integrationPath, sheetPath: join(sheetDirectory, SHEET_FILE), ledgerPath: join(sheetDirectory, LEDGER_FILE) };
+    if (directory === configHome || join(directory, ".codex") === configHome) return { ...global, integrationPath };
+    return project(integrationPath, join(directory, ".codex", SHEET_FILE));
   }
   // First-run global setup still uses the instruction file Codex would load.
   return { ...global, integrationPath: instructionFile(configHome, true) ?? global.integrationPath };
@@ -818,6 +849,8 @@ export interface Migration {
 
 export type SheetSource =
   | { readonly kind: "sheet"; readonly path: string }
+  /** The sheet a version before 0.6.0 kept in the config home; `write` and `unwire` move it into the data folder. */
+  | { readonly kind: "legacy"; readonly path: string }
   | { readonly kind: "import"; readonly path: string }
   | { readonly kind: "block"; readonly path: string }
   | { readonly kind: "first-run" };
@@ -833,6 +866,8 @@ export interface State {
   readonly missingImport: string | null;
   /** The instruction file that still carries wiring from a version before 0.5.32; `write` and `unwire` remove it. */
   readonly legacyWiring: string | null;
+  /** Files a version before 0.6.0 left in the config home (sheet, ledger); `write` and `unwire` move them into the data folder. */
+  readonly legacyFiles: readonly string[];
   /** Normalized rows in sheet order (first run: empty). */
   readonly rows: readonly SheetRow[];
   readonly migrations: readonly Migration[];
@@ -889,8 +924,12 @@ function selectSource(where: Location, matrix: ModelMatrix): Selected {
     fail(`inconsistent state: the config home ${where.configHome} is a file, not a directory; move it aside${variable === null ? "" : ` or point ${variable.name} at a directory`}`);
   }
   const sheetText = snapshotOf(where.sheetPath, "sheet");
+  // Once the data folder holds the sheet, a leftover legacy file is not read: `write` and `unwire` delete it.
+  const legacyText = sheetText === null && where.legacySheetPath !== null ? snapshotOf(where.legacySheetPath, "sheet") : null;
   const integration = snapshotOf(where.integrationPath, "integration file") ?? "";
-  const sheet: Loaded | null = sheetText === null ? null : { source: { kind: "sheet", path: where.sheetPath }, text: sheetText };
+  const sheet: Loaded | null = sheetText !== null
+    ? { source: { kind: "sheet", path: where.sheetPath }, text: sheetText }
+    : legacyText !== null && where.legacySheetPath !== null ? { source: { kind: "legacy", path: where.legacySheetPath }, text: legacyText } : null;
   let other: Loaded | null = null;
   let missingImport: string | null = null;
   let wired = false;
@@ -900,9 +939,9 @@ function selectSource(where: Location, matrix: ModelMatrix): Selected {
       wired = true;
       withoutImport(where.integrationPath, integration, current);
       const target = importTarget(current.target, where);
-      const text = target === where.sheetPath ? sheetText : snapshotOf(target, "imported sheet");
+      const text = target === sheet?.source.path ? sheet.text : snapshotOf(target, "imported sheet");
       if (text === null) missingImport = target;
-      else if (target !== where.sheetPath) other = { source: { kind: "import", path: target }, text };
+      else if (target !== sheet?.source.path) other = { source: { kind: "import", path: target }, text };
     }
   } else {
     const block = findBlock(integration, where.integrationPath);
@@ -982,6 +1021,17 @@ export interface StateInput extends SourceContext {
   readonly matrix?: ModelMatrix;
 }
 
+function legacyFiles(where: Location): string[] {
+  return [where.legacySheetPath, where.legacyLedgerPath].filter((path): path is string => path !== null && snapshotOf(path, "legacy file") !== null);
+}
+
+/** The ledger as the data folder holds it, else as a version before 0.6.0 left it in the config home. */
+function ledgerSnapshot(where: Pick<Location, "ledgerPath" | "legacyLedgerPath">): { readonly path: string; readonly text: string | null } {
+  const text = snapshotOf(where.ledgerPath, "probe ledger");
+  if (text !== null || where.legacyLedgerPath === null) return { path: where.ledgerPath, text };
+  return { path: where.legacyLedgerPath, text: snapshotOf(where.legacyLedgerPath, "probe ledger") };
+}
+
 export function loadState(input: StateInput): State {
   const matrix = input.matrix ?? loadMatrix();
   const parent = input.parent;
@@ -998,6 +1048,7 @@ export function loadState(input: StateInput): State {
     source: loaded?.source ?? { kind: "first-run" as const },
     missingImport,
     legacyWiring: wired ? where.integrationPath : null,
+    legacyFiles: legacyFiles(where),
   };
   if (loaded === null) {
     const defaults = matrix.roles.map((r) => ({ role: r.role, lanes: roleDefault(matrix, r.role, parent) }));
@@ -1266,7 +1317,8 @@ export function buildPlan(input: PlanInput): Plan {
 
   const sheet = renderSheetDocument(rows.map((r) => `${r.role}: ${r.lanes.join(", ")}`).join("\n"));
   const ledgerPath = state.ledgerPath;
-  const ledger = parseLedger(snapshotOf(ledgerPath, "probe ledger"), ledgerPath);
+  const stored = ledgerSnapshot(locate(parent, home, env, input));
+  const ledger = parseLedger(stored.text, stored.path);
   const finalEfforts = familyEfforts(rows, matrix);
   const networkWarning = externalNetworkWarning(parent, env, finalEfforts, matrix);
   if (networkWarning !== null) warnings.push(networkWarning);
@@ -1662,6 +1714,8 @@ export interface WriteResult {
   readonly sheet: WriteOutcome;
   readonly integration: WriteOutcome;
   readonly ledger: WriteOutcome;
+  /** Files a version before 0.6.0 kept in the config home, deleted once their content sits in the data folder. */
+  readonly removedLegacy: readonly string[];
 }
 
 /** Put a target back to its snapshot; a target whose bytes did not change is left alone. */
@@ -1700,18 +1754,24 @@ function statIfExists(path: string): Stats | null {
 }
 
 interface WriteTarget {
-  readonly label: "sheet" | "parent integration" | "probe ledger";
+  readonly label: "sheet" | "parent integration" | "probe ledger" | "legacy sheet" | "legacy probe ledger";
   readonly path: string;
   readonly before: string | null;
+  /** Null deletes the file. */
   readonly after: string | null;
 }
 
-/** Only a target whose bytes change needs to be writable; the others are never touched. */
+/** Only a target whose bytes change needs to be writable; the others are never touched. Deleting a file needs its folder writable, not the file. */
 function assertSetupTargetsWritable(targets: readonly WriteTarget[]): void {
   for (const target of targets) {
     if (target.before === target.after) continue;
     let checked = target.path;
     try {
+      if (target.after === null) {
+        checked = dirname(target.path);
+        accessSync(checked, fsConstants.W_OK | fsConstants.X_OK);
+        continue;
+      }
       const current = statIfExists(checked);
       if (current !== null) {
         if (!current.isFile()) throw new Error("not a regular file");
@@ -1744,7 +1804,7 @@ export function writeSheet(plan: Plan, dir: string, options: { readonly home?: s
   if (plan.sheetPath !== sheetPath || plan.integrationPath !== integrationPath || plan.ledgerPath !== ledgerPath) {
     const variable = targetFor(plan.parent).variable;
     if (plan.parent !== "codex") {
-      fail(`${join(dir, PLAN_FILE)} was made for the config home ${dirname(plan.sheetPath)}, but this write resolves ${where.configHome}; run write with the --home${variable === null ? "" : ` and ${variable.name}`} that plan used, or run plan again`);
+      fail(`${join(dir, PLAN_FILE)} was made for the config home ${dirname(plan.integrationPath)}, but this write resolves ${where.configHome}; run write with the --home${variable === null ? "" : ` and ${variable.name}`} that plan used, or run plan again`);
     }
     fail(`${join(dir, PLAN_FILE)} was made for the config home/source ${plan.sheetPath} and ${plan.integrationPath}, but this write resolves ${sheetPath} and ${integrationPath}; run write with the --home${variable === null ? "" : ` and ${variable.name}`} and source context that plan used, or run plan again`);
   }
@@ -1757,13 +1817,16 @@ export function writeSheet(plan: Plan, dir: string, options: { readonly home?: s
   const sheetBefore = snapshotOf(sheetPath, "sheet");
   const integrationBefore = snapshotOf(integrationPath, "integration file");
   const ledgerBefore = snapshotOf(ledgerPath, "probe ledger");
+  const stored = ledgerSnapshot(where);
   const integrationAfter = integrationBefore === null ? null : unwireIntegration(where, integrationBefore);
-  const ledgerAfter = recordProbes(ledgerBefore, ledgerPath, plan, dir);
+  const ledgerAfter = recordProbes(stored.text, stored.path, plan, dir);
 
+  const legacy = legacyTargets(where);
   const targets: readonly WriteTarget[] = [
     { label: "sheet", path: sheetPath, before: sheetBefore, after: plan.sheet },
     { label: "parent integration", path: integrationPath, before: integrationBefore, after: integrationAfter },
     { label: "probe ledger", path: ledgerPath, before: ledgerBefore, after: ledgerAfter },
+    ...legacy,
   ];
   commitTargets(targets);
   return {
@@ -1773,24 +1836,40 @@ export function writeSheet(plan: Plan, dir: string, options: { readonly home?: s
     sheet: outcome(sheetBefore, plan.sheet),
     integration: outcome(integrationBefore, integrationAfter),
     ledger: outcome(ledgerBefore, ledgerAfter),
+    removedLegacy: legacy.map((target) => target.path),
   };
+}
+
+/** Deletion targets for the files a version before 0.6.0 kept in the config home, once their content sits in the data folder. */
+function legacyTargets(where: Location): WriteTarget[] {
+  const targets: WriteTarget[] = [];
+  for (const [label, path] of [["legacy sheet", where.legacySheetPath], ["legacy probe ledger", where.legacyLedgerPath]] as const) {
+    if (path === null) continue;
+    const before = snapshotOf(path, label);
+    if (before !== null) targets.push({ label, path, before, after: null });
+  }
+  return targets;
 }
 
 function outcome(before: string | null, after: string | null): WriteOutcome {
   return before === after ? "unchanged" : before === null ? "created" : "updated";
 }
 
-/** Admit every target, write what changed, read it back, and restore every snapshot on any failure. */
+/** Admit every target, write or delete what changed, read it back, and restore every snapshot on any failure. */
 function commitTargets(targets: readonly WriteTarget[]): void {
   assertSetupTargetsWritable(targets);
   try {
     for (const { path, before, after } of targets) {
-      if (after === null || after === before) continue;
+      if (after === before) continue;
+      if (after === null) {
+        unlinkSync(path);
+        continue;
+      }
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, after, { mode: 0o600 });
     }
     for (const { path, after } of targets) {
-      if (after !== null && readFileSync(path, "utf8") !== after) throw new Error(`${path} read back differs from the render`);
+      if (after === null ? existsSync(path) : readFileSync(path, "utf8") !== after) throw new Error(`${path} read back differs from the render`);
     }
   } catch (error) {
     const failures: string[] = [];
@@ -1809,17 +1888,23 @@ function commitTargets(targets: readonly WriteTarget[]): void {
 export interface UnwireResult {
   readonly sheetPath: string;
   readonly integrationPath: string;
+  readonly ledgerPath: string;
   readonly sheet: WriteOutcome;
   readonly integration: WriteOutcome;
+  readonly ledger: WriteOutcome;
   /** The target of a removed import that no longer existed: no sheet came from it. */
   readonly missingImport: string | null;
+  /** Files a version before 0.6.0 kept in the config home, deleted once their content sits in the data folder. */
+  readonly removedLegacy: readonly string[];
 }
 
 /**
- * Remove the wiring a version before 0.5.32 wrote, keeping the sheet's lanes.
- * A sheet that only lived in the wiring (a block, or an import of a sheet in
- * another directory) is first written to the sheet path byte for byte, so
- * nothing changes but where the bytes sit. No model changes, so no probe.
+ * Move what older versions left outside the data folder, keeping the sheet's
+ * lanes: the wiring a version before 0.5.32 wrote, and the sheet and ledger a
+ * version before 0.6.0 kept in the config home. A sheet that lived only in the
+ * wiring or in the config home is first written to the sheet path byte for
+ * byte, so nothing changes but where the bytes sit. No model changes, so no
+ * probe.
  */
 export function unwireSheet(input: StateInput): UnwireResult {
   const matrix = input.matrix ?? loadMatrix();
@@ -1829,19 +1914,43 @@ export function unwireSheet(input: StateInput): UnwireResult {
   const { loaded, missingImport } = selectSource(where, matrix);
   const sheetBefore = snapshotOf(where.sheetPath, "sheet");
   const integrationBefore = snapshotOf(where.integrationPath, "integration file");
+  const ledgerBefore = snapshotOf(where.ledgerPath, "probe ledger");
   const sheetAfter = sheetBefore ?? loaded?.text ?? null;
   const integrationAfter = integrationBefore === null ? null : unwireIntegration(where, integrationBefore);
+  const ledgerAfter = ledgerSnapshot(where).text;
+  const legacy = legacyTargets(where);
   commitTargets([
     { label: "sheet", path: where.sheetPath, before: sheetBefore, after: sheetAfter },
     { label: "parent integration", path: where.integrationPath, before: integrationBefore, after: integrationAfter },
+    { label: "probe ledger", path: where.ledgerPath, before: ledgerBefore, after: ledgerAfter },
+    ...legacy,
   ]);
   return {
     sheetPath: where.sheetPath,
     integrationPath: where.integrationPath,
+    ledgerPath: where.ledgerPath,
     sheet: outcome(sheetBefore, sheetAfter),
     integration: outcome(integrationBefore, integrationAfter),
+    ledger: outcome(ledgerBefore, ledgerAfter),
     missingImport,
+    removedLegacy: legacy.map((target) => target.path),
   };
+}
+
+/**
+ * For an uninstall: remove the sheet wiring a version before 0.5.32 wrote into
+ * the parent's global instruction file, without carrying the sheet anywhere,
+ * since the data folder goes with the plugin. Returns the file it changed, or
+ * null when there was nothing to remove.
+ */
+export function removeLegacyWiring(parent: string, home: string = homedir(), env: ConfigEnv = {}): string | null {
+  const where = locate(parent, home, env, parent === "codex" ? { cwd: home } : {});
+  const before = snapshotOf(where.integrationPath, "integration file");
+  if (before === null) return null;
+  const after = unwireIntegration(where, before);
+  if (after === before) return null;
+  commitTargets([{ label: "parent integration", path: where.integrationPath, before, after }]);
+  return where.integrationPath;
 }
 
 export interface ResolvedRole {
@@ -1902,8 +2011,9 @@ const USAGE = `Usage: setup-pstack <state|plan|probe|attest|write|pick|roles|unw
          Grok also requires --owner-id <id> --child-id <id> from its nested probe.
          --pair owner-nesting attests the fresh Grok capability, even with no new families.
   write  --dir <run dir> [--home <dir>]
-         Verify the plan's probes, then write the sheet and the probe ledger and remove the
-         sheet wiring an earlier version left in CLAUDE.md or AGENTS.md (byte-identical rerun
+         Verify the plan's probes, then write the sheet and the probe ledger in the plugin's
+         data folder, remove the sheet wiring an earlier version left in CLAUDE.md or AGENTS.md,
+         and delete the sheet and ledger it left in the config home (byte-identical rerun
          writes nothing).
   pick   --parent <p> --role "<pool role>" [--executor <provider>]... [--home <dir>]
          Pick in the operator's order. Trail review excludes only the root's provider;
@@ -1915,7 +2025,8 @@ const USAGE = `Usage: setup-pstack <state|plan|probe|attest|write|pick|roles|unw
          Run it before dispatching configured roles; no instruction file loads the sheet.
   unwire --parent <p> [--home <dir>]
          Remove the sheet wiring a version before 0.5.32 wrote into CLAUDE.md or AGENTS.md,
-         keeping every lane. A sheet that lived only in that wiring moves to the sheet path.
+         and move the sheet and ledger a version before 0.6.0 kept in the config home into the
+         plugin's data folder, keeping every lane.
 
 Codex state, plan, pick, roles, unwire and write accept --cwd <project directory> (default: current directory)
 and repeated --instruction-source <file> in the runtime's global-to-local loaded order.
@@ -1925,10 +2036,12 @@ Codex project sheet/block/reference wins, then the global source, then role-tabl
 An absent row in the selected source uses its role-table default, not a broader sheet.
 The result identifies the source and destinations. A plan retains its source context for write.
 
-The global sheet and ledger use the parent's config home: CLAUDE_CONFIG_DIR
-(claude) or CODEX_HOME (codex), an absolute path, else <home>/.claude, <home>/.codex, <home>/.grok.
-An empty CODEX_HOME counts as unset. An empty CLAUDE_CONFIG_DIR stops every subcommand for
-the claude parent.
+The global sheet and ledger live in the plugin's data folder, which the host deletes with
+the plugin: <claude config home>/plugins/data/pstack-pstack-vic (claude), its grok folder
+(grok), and <codex config home>/plugins/data/pstack-pstack-vic (codex). The config home is
+CLAUDE_CONFIG_DIR (claude) or CODEX_HOME (codex), an absolute path, else <home>/.claude or
+<home>/.codex. An empty CODEX_HOME counts as unset. An empty CLAUDE_CONFIG_DIR stops every
+subcommand for the claude and grok parents.
 
 Exit codes: 0 ok, 1 a probe failed, the write was refused, or no lane is eligible, 64 usage.
 `;

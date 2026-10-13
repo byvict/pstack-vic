@@ -77,7 +77,8 @@ if (name === 'git') {
   else fail('fake codex: ' + args.join(' '));
 } else fail('fake: ' + name);
 `;
-const original = 'ref = "v0.4.7"\n';
+/** The user's config.toml as `codex plugin add` left it: the activation that marks Codex as having the plugin. */
+const original = '[plugins."pstack@pstack-vic"]\nenabled = true\n';
 const checks = [['git', 'fetch', 'origin'], ['git', 'rev-parse', 'HEAD'], ['git', 'rev-parse', 'origin/main'], ['git', 'ls-remote', '--exit-code', '--tags', 'origin', 'refs/tags/v0.4.8']];
 const claudeUpdate = [['claude', 'plugin', 'marketplace', 'update', 'pstack-vic'], ['claude', 'plugin', 'update', 'pstack@pstack-vic', '--scope', 'user']];
 const codexAdds = [['codex', 'plugin', 'marketplace', 'add', 'byvict/pstack-vic', '--ref', 'v0.4.8'], ['codex', 'plugin', 'add', 'pstack@pstack-vic']];
@@ -119,7 +120,8 @@ test('with the checkout at the trunk tip and the tag on origin, a release moves 
   assert.deepEqual(s.calls().slice(0, checks.length), checks, 'the checks run before any parent is read');
   assert.deepEqual(s.git(), checks, 'the release never tags or pushes; CI does');
   assert.deepEqual(s.moves(), [...claudeUpdate, ...codexQuartet]);
-  assert.equal(readFileSync(s.backup, 'utf8'), original);
+  assert.equal(existsSync(s.backup), false, 'the copy of config.toml goes once the swap finishes');
+  assert.equal(readFileSync(s.config, 'utf8'), original);
   assert.deepEqual([s.state().claude.records[0].version, s.state().codex.version, s.state().codex.ref], ['0.4.8', '0.4.8', 'v0.4.8']);
 });
 test('run again once both parents are on the version, it changes nothing', t => {
@@ -258,14 +260,20 @@ test('a project record that lands on another version names that record, exits 1 
   assert.equal(result.stderr, `Claude Code reports pstack@pstack-vic 0.4.7 (project ${vic}), not 0.4.8\n`);
   assert.deepEqual(s.parentCalls().filter(call => call[0] === 'codex'), []);
 });
-test('without a live Claude Code record, the release says the plugin is not installed and leaves Codex alone', t => {
-  for (const records of [[], [{ scope: 'project', projectPath: '/nonexistent/pstack-release-project', version: '0.4.7' }]]) {
-    const s = setup(t, state => { state.claude.records = records; });
-    const result = s.run();
-    assert.equal(result.status, 1);
-    assert.equal(result.stderr, 'Claude Code reports pstack@pstack-vic not installed\n');
-    assert.deepEqual(s.moves(), []);
-  }
+test('without a Claude Code record, the release says there is nothing to move there and still moves Codex', t => {
+  const s = setup(t, state => { state.claude.records = []; });
+  const result = s.run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'v0.4.8 is on origin\nClaude Code has no pstack@pstack-vic install to move\nCodex on pstack@pstack-vic 0.4.8\n');
+  assert.deepEqual(s.moves(), codexQuartet);
+});
+test('with only a record whose project is gone, the release moves no Claude Code record and removes that one after Codex moves', t => {
+  let gone = '';
+  const s = setup(t, (state, project) => { gone = join(project('projects-root'), 'removed'); state.claude.records = [{ scope: 'project', projectPath: gone, version: '0.4.7' }]; });
+  const result = s.run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, ['v0.4.8 is on origin', 'Claude Code has no pstack@pstack-vic install to move', 'Codex on pstack@pstack-vic 0.4.8', `Claude Code pstack@pstack-vic (project ${gone}) removed: the project no longer exists`, ''].join('\n'));
+  assert.deepEqual(s.state().claude.records, []);
 });
 test('a Claude Code record in a scope the release does not update stops it before anything moves', t => {
   const s = setup(t, state => { state.claude.records.push({ scope: 'managed', version: '0.4.7' }); });
@@ -274,13 +282,13 @@ test('a Claude Code record in a scope the release does not update stops it befor
   assert.equal(result.stderr, 'Claude Code has pstack@pstack-vic in managed, a scope this release does not update\n');
   assert.deepEqual(s.moves(), []);
 });
-test('a Codex swap interrupted after the marketplace removal resumes with the two adds and keeps the first backup', t => {
+test('a Codex swap interrupted after the marketplace removal resumes with the two adds and, once it finishes, deletes the backup the interrupted run left', t => {
   const s = setup(t, state => { state.codex = { version: null, ref: null }; });
   writeFileSync(s.backup, 'first\n');
   const result = s.run();
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(s.moves().filter(call => call[0] === 'codex'), codexAdds);
-  assert.equal(readFileSync(s.backup, 'utf8'), 'first\n');
+  assert.equal(existsSync(s.backup), false);
 });
 test('a Codex swap that fails halfway exits 1 with the way back, and the next run finishes it', t => {
   const s = setup(t, state => { state.failing = ['codex plugin marketplace add']; });
@@ -289,13 +297,13 @@ test('a Codex swap that fails halfway exits 1 with the way back, and the next ru
   assert.equal(failed.stderr, `codex plugin marketplace add byvict/pstack-vic --ref v0.4.8 failed: fake codex: unable to access remote\n${wayBack(s.backup)}`);
   assert.deepEqual([s.state().claude.records[0].version, s.state().codex.version, s.state().codex.ref], ['0.4.8', null, null], 'Claude Code moved; Codex is left without the plugin and its marketplace');
   assert.equal(readFileSync(s.backup, 'utf8'), original);
-  writeFileSync(s.config, 'half swapped\n');
+  writeFileSync(s.config, `${original}\n[marketplaces.half-swapped]\n`);
   s.write({ ...s.state(), failing: [] });
   const before = s.moves().length;
   const result = s.run();
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(s.moves().slice(before), codexAdds, 'the rerun skips what is done: no Claude Code update, no second removal');
-  assert.equal(readFileSync(s.backup, 'utf8'), original, 'the first backup is the one to go back to');
+  assert.equal(existsSync(s.backup), false, 'the backup goes once the swap finishes');
   assert.equal(s.state().codex.version, '0.4.8');
 });
 test('a Codex swap that lands on another version exits 1 with the way back', t => {
@@ -304,13 +312,14 @@ test('a Codex swap that lands on another version exits 1 with the way back', t =
   assert.equal(result.status, 1);
   assert.equal(result.stderr, `Codex reports pstack@pstack-vic 0.4.9, not 0.4.8\n${wayBack(s.backup)}`);
 });
-test('without a config.toml there is no backup to go back to, and the failure says only to run again', t => {
-  const s = setup(t, state => { state.failing = ['codex plugin add']; });
+test('without a config.toml Codex has no install of the plugin: the release moves nothing there and writes no file', t => {
+  const s = setup(t);
   rmSync(s.config);
   const result = s.run();
-  assert.equal(result.status, 1);
-  assert.equal(result.stderr, 'codex plugin add pstack@pstack-vic failed: fake codex: unable to access remote\nThe Codex swap did not finish. Run this script again to finish it\n');
-  assert.equal(existsSync(s.backup), false);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /\nCodex has no pstack@pstack-vic install to move\n$/);
+  assert.deepEqual(s.moves().filter(call => call[0] === 'codex'), []);
+  assert.deepEqual([existsSync(s.config), existsSync(s.backup)], [false, false]);
 });
 
 test('a Codex cache update preserves disabled user activation and plugin tool policy', t => {
@@ -338,15 +347,23 @@ test('a project-only Codex installation stays disabled for the user after failur
   writeFileSync(s.config, policy);
   assert.equal(s.run().status, 1);
   assert.ok(readFileSync(s.config, 'utf8').includes(policy));
+  assert.equal(readFileSync(s.backup, 'utf8'), policy, 'a failed swap keeps the way back');
   s.write({ ...s.state(), failing: [] });
   assert.equal(s.run().status, 0);
   assert.ok(readFileSync(s.config, 'utf8').includes(policy));
-  assert.equal(readFileSync(s.backup, 'utf8'), policy);
+  assert.equal(existsSync(s.backup), false);
 });
-test('a missing Codex user policy remains absent after installing the shared cache', t => {
-  const s = setup(t);
-  assert.equal(s.run().status, 0);
-  assert.equal(readFileSync(s.config, 'utf8'), original);
+test('a Codex whose user removed the plugin keeps it removed: the release neither installs it nor writes config.toml', t => {
+  const s = setup(t, state => { state.codex.version = null; });
+  const removed = '[marketplaces.pstack-vic]\nsource_type = "git"\n';
+  writeFileSync(s.config, removed);
+  writeFileSync(s.backup, 'left by an older release\n');
+  const result = s.run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(s.moves().filter(call => call[0] === 'codex'), []);
+  assert.equal(readFileSync(s.config, 'utf8'), removed);
+  assert.equal(existsSync(s.backup), false, 'a backup an older release left behind goes too');
+  assert.equal(s.state().codex.version, null);
 });
 
 test('Codex cache commands use a disposable config home and marketplace commands use the user home', t => {

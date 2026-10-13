@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadMatrix } from "../../../scripts/model-matrix.ts";
-import { buildPlan, loadState, pickLane, unwireSheet, writeSheet, CODEX_BLOCK_BEGIN, CODEX_BLOCK_END } from "./setup-pstack.ts";
+import { buildPlan, dataHomeFor, loadState, pickLane, unwireSheet, writeSheet, CODEX_BLOCK_BEGIN, CODEX_BLOCK_END } from "./setup-pstack.ts";
 
 let root: string;
 let home: string;
@@ -69,8 +69,9 @@ describe("Codex project model sources", () => {
     const nested = join(cwd, "packages/api");
     mkdirSync(nested, { recursive: true });
     const customHome = join(root, "custom profile");
-    const global = put(join(customHome, "pstack-models.md"), sheet(rowB));
     const env = { CODEX_HOME: customHome };
+    const global = put(join(dataHomeFor("codex", home, env), "pstack-models.md"), sheet(rowB));
+    assert.ok(global.startsWith(`${customHome}/`), global);
     assert.equal(pickLane({ parent: "codex", home, cwd: nested, env, role }).chosen?.descriptor, "grok:grok-4.7@high");
     put(join(nested, "AGENTS.override.md"), block(rowB));
     assert.equal(pickLane({ parent: "codex", home, cwd: nested, env, role }).chosen?.descriptor, "claude:fable@max");

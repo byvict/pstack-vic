@@ -4,9 +4,13 @@ Instale o plugin no ambiente em que vai trabalhar, escolha os modelos e rode uma
 
 ## Instale o plugin
 
-Siga os comandos do [README](../../README.md#começar), que mantém a tag da versão publicada. A [referência de instalação](../reference.md#instalação) explica instalação por marketplace, uso de um clone e configuração dos subagentes.
+Um comando instala o plugin no Claude Code e no Codex, e o Grok Build passa a usar o que o Claude Code instalou. Rode no checkout principal deste repositório, numa versão publicada:
 
-Claude Code e Codex têm instalações próprias. No Grok Build, este port usa a compatibilidade que descobre o plugin instalado no Claude Code. Instalar o plugin não configura os modelos de todos os ambientes de uma vez.
+```shell
+node scripts/pstack.ts install
+```
+
+Nenhum projeto muda: o plugin vale para todas as pastas, e nada acontece até você chamar `/poteto-mode`. Para uma pausa, desligue no próprio app. Para tirar tudo sem deixar nada, rode `node scripts/pstack.ts uninstall`. A [referência de instalação](../reference.md#instalação) explica o que cada comando faz, o uso de um clone e a configuração dos subagentes. Instalar o plugin não configura os modelos de todos os ambientes de uma vez.
 
 ## Escolha os modelos
 
@@ -20,7 +24,7 @@ Cada atribuição identifica provedor, modelo e esforço. Os valores aceitos e o
 
 Um papel com `auto` ou `inherit-parent` usa o modelo da conversa principal. Em um painel, cada entrada representa uma participante. Encurtar a lista reduz o painel. O papel `swarm workers` escolhe o modelo dos trabalhadores de um swarm, salvo quando a tarefa define explicitamente modelos por tentativa.
 
-Execute o setup uma vez em cada ambiente que usar. A planilha fica no diretório de configuração de cada ambiente, e só o plugin a lê, na hora de despachar um papel. Nenhum `CLAUDE.md` ou `AGENTS.md` a carrega, então desligar o plugin a deixa sem efeito. Os arquivos estão na [referência](../reference.md#desligar-e-desinstalar) e nas [regras dos diretórios de configuração](../../skills/poteto-mode/references/codex-tools.md#harness-config-homes).
+Execute o setup uma vez em cada ambiente que usar. A planilha fica na pasta de dados do plugin, e só o plugin a lê, na hora de despachar um papel. Nenhum `CLAUDE.md` ou `AGENTS.md` a carrega, então desligar o plugin a deixa sem efeito, e desinstalar a apaga junto com ele. Os arquivos estão na [referência](../reference.md#desligar-e-desinstalar) e nas [regras dos diretórios de configuração](../../skills/poteto-mode/references/codex-tools.md#harness-config-homes).
 
 ## Prepare a verificação do projeto
 

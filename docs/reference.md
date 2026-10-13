@@ -12,14 +12,28 @@ Skills e playbooks sincronizados com Cursor pstack **0.15.10** (`4e5b1cf`) e com
 
 O plugin é a raiz deste repositório. Ele se instala por marketplace a partir de uma tag (`vX.Y.Z`), nunca de `main`: no Claude Code a entrada do marketplace fixa a tag (`ref`); no Codex o `--ref` fixa o snapshot inteiro.
 
+Um comando instala o plugin nos três pais, e outro o tira sem deixar nada ([Desligar e desinstalar](#desligar-e-desinstalar)). Rode no checkout principal deste repositório, numa versão publicada:
+
+```shell
+node scripts/pstack.ts install
+```
+
+- **Claude Code.** Adiciona o catálogo e instala o plugin no escopo `user` (os comandos abaixo). Nenhum arquivo de projeto muda: o plugin não faz parte do repositório de nenhum projeto.
+- **Codex.** Adiciona o catálogo fixado na tag desta versão e instala o plugin no usuário (os comandos abaixo).
+- **Grok Build.** Não tem instalação própria: roda o plugin que o Claude Code instalou, em qualquer pasta. O comando grava em `~/.grok/config.toml` os dois ajustes que o plugin pede ao Grok, `[subagents] max_depth = 2` (raiz → owner → helper) e `[toolset.bash] timeout_secs` e `max_timeout_secs = 3600` (uma suíte de testes numa lane passa dos 300 s do Grok). Um valor que já basta fica como está. O valor anterior de cada ajuste fica em `install.json`, na pasta de dados do plugin, para o `uninstall` devolver.
+
+O comando recusa, sem mexer em nada, uma versão que ainda não tem tag e uma máquina onde o Claude Code ainda tem o plugin instalado por projeto, como as versões até a 0.5.32 faziam: rode `node scripts/pstack.ts uninstall` antes. Rodar `install` de novo não muda nada.
+
 ### Claude Code
+
+O `install` roda `claude plugin marketplace add byvict/pstack-vic` e `claude plugin install pstack@pstack-vic --scope user`, da pasta pessoal. Dentro do Claude Code, o equivalente é:
 
 ```text
 /plugin marketplace add byvict/pstack-vic
 /plugin install pstack@pstack-vic
 ```
 
-No shell, `claude plugin marketplace add byvict/pstack-vic` e `claude plugin install pstack@pstack-vic`. As skills aparecem com o prefixo do plugin (`/pstack:poteto-mode`).
+As skills aparecem com o prefixo do plugin (`/pstack:poteto-mode`).
 
 `poteto-mode` é um modo que você liga com `/pstack:poteto-mode`. A skill tem `disable-model-invocation: true`, como no original da Cursor, então o modelo não entra nela sozinho, nem num bug fix. O plugin não registra hook. Até a 0.1.4, um hook SessionStart copiado do open-pstack mandava toda tarefa de engenharia não trivial entrar por `poteto-mode`; saiu na 0.1.5 ([`CHANGES.md`](../CHANGES.md)).
 
@@ -27,23 +41,24 @@ As outras skills de fluxo entram quando você as nomeia ou quando um fluxo pstac
 
 ### Codex
 
+O `install` roda, da pasta pessoal:
+
 ```shell
-codex plugin marketplace add byvict/pstack-vic --ref v0.5.32
+codex plugin marketplace add byvict/pstack-vic --ref v0.6.0
 codex plugin add pstack@pstack-vic
 ```
 
-O Codex descobre as skills sob o namespace `pstack` (`pstack:poteto-mode`, `pstack:tdd`…), que vem de `.codex-plugin/plugin.json`; os `principle-*` também aparecem, porque `user-invocable: false` é do Claude Code. As skills de fluxo entram por nome ou quando um fluxo pstack ativo as chama. Seus arquivos `agents/openai.yaml` desligam a descoberta implícita (`allow_implicit_invocation: false`); o roteador lê o arquivo da skill chamada. `setup-pstack` e `poteto-help` continuam disponíveis por pedidos comuns. Para as skills que fazem fan-out (`interrogate`, `arena`, `how`, `why`, `reflect`, `architect`, `swarm`), ligue subagents em `~/.codex/config.toml`. Quando faltam ferramentas nativas ou vagas, o coordenador pode usar uma sessão nova do mesmo provedor pelo runner, preservando modelo e esforço. A alternativa precisa atender às ferramentas e ao isolamento da tarefa; siga [Provider dispatch](../skills/poteto-mode/references/provider-dispatch.md#when-native-dispatch-is-unavailable). Uma tarefa sem rota válida fica como lacuna:
+O Codex descobre as skills sob o namespace `pstack` (`pstack:poteto-mode`, `pstack:tdd`…), que vem de `.codex-plugin/plugin.json`; os `principle-*` também aparecem, porque `user-invocable: false` é do Claude Code. As skills de fluxo entram por nome ou quando um fluxo pstack ativo as chama. Seus arquivos `agents/openai.yaml` desligam a descoberta implícita (`allow_implicit_invocation: false`); o roteador lê o arquivo da skill chamada. `setup-pstack` e `poteto-help` continuam disponíveis por pedidos comuns. As skills que fazem fan-out (`interrogate`, `arena`, `how`, `why`, `reflect`, `architect`, `swarm`) usam os subagents do Codex, que vêm ligados (`[features] multi_agent`, estável e ligado por padrão no Codex 0.162.1). Quando faltam ferramentas nativas ou vagas, o coordenador pode usar uma sessão nova do mesmo provedor pelo runner, preservando modelo e esforço. A alternativa precisa atender às ferramentas e ao isolamento da tarefa; siga [Provider dispatch](../skills/poteto-mode/references/provider-dispatch.md#when-native-dispatch-is-unavailable). Uma tarefa sem rota válida fica como lacuna:
+
+Num Codex que roda com sandbox (`workspace-write`), as lanes externas precisam de duas permissões que só você concede, como a [autorização permanente](#autorização-permanente) no Claude Code. Elas ficam em `~/.codex/config.toml`, e o `install` não as grava:
 
 ```toml
-[features]
-multi_agent = true
-
 [sandbox_workspace_write]
 network_access = true
 writable_roots = ["/Users/<você>/.grok"]
 ```
 
-As duas linhas de `sandbox_workspace_write` são para as lanes externas: o runner roda dentro do seatbelt do Codex, e as CLIs `claude` e `grok` precisam de rede; o `grok` ainda grava a sessão em `~/.grok`, que o seatbelt bloqueia. Sem elas a lane Grok cai como dropout com receipt (`unavailable-model`, `FS_PERMISSION_DENIED`). Dentro do seatbelt o runner passa `--sandbox none` ao Grok, porque um seatbelt aninhado não inicializa; o sandbox do Codex continua valendo. Os valores também podem ir por sessão com `-c`.
+As duas linhas são para as lanes externas: o runner roda dentro do seatbelt do Codex, e as CLIs `claude` e `grok` precisam de rede; o `grok` ainda grava a sessão em `~/.grok`, que o seatbelt bloqueia. Sem elas a lane Grok cai como dropout com receipt (`unavailable-model`, `FS_PERMISSION_DENIED`). Dentro do seatbelt o runner passa `--sandbox none` ao Grok, porque um seatbelt aninhado não inicializa; o sandbox do Codex continua valendo. Os valores também podem ir por sessão com `-c`.
 
 ### A partir do clone
 
@@ -66,42 +81,35 @@ Para desfazer no Codex, rode `codex plugin remove pstack@pstack-vic` e depois `c
 
 No Codex, a configuração local de modelos do projeto tem precedência sobre a global, seguida dos defaults da matriz. Setup e `pick` resolvem a mesma fonte e informam seu caminho. Worktrees usam sua própria cadeia de instruções; uma referência explícita permite compartilhar a fonte. O [contrato de fontes](../skills/setup-pstack/references/model-sources.md) define precedência, recuperação, `--cwd` e a cadeia `--instruction-source` para descoberta não padrão.
 
-Rode `/setup-pstack` em cada pai para escrever a fonte resolvida de modelos. No escopo global, os caminhos padrão são `~/.claude/pstack-models.md` e `~/.codex/pstack-models.md`. Com `CLAUDE_CONFIG_DIR` ou `CODEX_HOME` definido, os destinos globais de sheet e ledger de probes vão para esse diretório (um `CODEX_HOME` vazio conta como não definido; um `CLAUDE_CONFIG_DIR` vazio para o script, porque o Claude Code 2.1.289 então lê o `settings.json` e o `CLAUDE.md` da pasta onde abriu), e `authorize.ts` confere o `settings.json` ou o `config.toml` de lá ([Harness config homes](../skills/poteto-mode/references/codex-tools.md#harness-config-homes)). O último passo dele confere a [autorização permanente](#autorização-permanente), que o autopilot e o playbook Shipping exigem para mergear sem aprovação humana. Depois, `/poteto-mode` é o ponto de entrada para qualquer tarefa que peça rigor.
+Rode `/setup-pstack` em cada pai para escrever a fonte resolvida de modelos. Sem ele, cada papel usa o default da matriz. No escopo global, o sheet e o ledger de probes ficam na pasta de dados do plugin, que o app apaga com o plugin: `~/.claude/plugins/data/pstack-pstack-vic/` no Claude Code, a pasta `grok/` dentro dela no Grok Build e `~/.codex/plugins/data/pstack-pstack-vic/` no Codex. Com `CLAUDE_CONFIG_DIR` ou `CODEX_HOME` definido, essas pastas ficam sob esse diretório (um `CODEX_HOME` vazio conta como não definido; um `CLAUDE_CONFIG_DIR` vazio para o script, porque o Claude Code 2.1.289 então lê o `settings.json` e o `CLAUDE.md` da pasta onde abriu), e `authorize.ts` confere o `settings.json` ou o `config.toml` de lá ([Harness config homes](../skills/poteto-mode/references/codex-tools.md#harness-config-homes)). O último passo dele confere a [autorização permanente](#autorização-permanente), que o autopilot e o playbook Shipping exigem para mergear sem aprovação humana. Depois, `/poteto-mode` é o ponto de entrada para qualquer tarefa que peça rigor.
 
-O sheet é dado do plugin. Nenhum `CLAUDE.md` ou `AGENTS.md` o carrega: as skills o leem na hora de despachar um papel, com `setup-pstack.ts roles` ([Role defaults](../skills/poteto-mode/references/provider-dispatch.md#role-defaults)).
-
-### Ativar o Codex por projeto
-
-O catálogo e o cache ficam compartilhados no usuário. Para limitar o pstack aos projetos escolhidos, mantenha `[plugins."pstack@pstack-vic"]` com `enabled = false` no `config.toml` do usuário e versione somente a ativação no `.codex/config.toml` de cada projeto:
-
-```toml
-[plugins."pstack@pstack-vic"]
-enabled = true
-```
-
-O marketplace do usuário fixa a tag atual. Os projetos usam esse catálogo sem repetir a tag, então uma release atualiza a fonte de todos eles. Novos worktrees herdam a ativação pelo Git; o Codex precisa confiar no projeto para carregar a configuração. A ativação do plugin e a fonte de modelos são contratos distintos. Setup e seleção seguem o [contrato de fontes](../skills/setup-pstack/references/model-sources.md): fonte do projeto, global em `CODEX_HOME`/`~/.codex`, depois defaults.
+O sheet é dado do plugin. Nenhum `CLAUDE.md` ou `AGENTS.md` o carrega: as skills o leem na hora de despachar um papel, com `setup-pstack.ts roles` ([Role defaults](../skills/poteto-mode/references/provider-dispatch.md#role-defaults)). Até a 0.5.32 ele ficava no diretório de configuração de cada pai (`~/.claude/pstack-models.md`, `~/.codex/…`, `~/.grok/…`). O setup ainda lê esse arquivo e, ao gravar, move o sheet e o ledger para a pasta de dados e apaga os antigos.
 
 ### Desligar e desinstalar
 
-Desligar ou desinstalar o plugin tira todo o efeito dele. O sheet (`pstack-models.md`) e o ledger de probes (`pstack-probes.json`) ficam no diretório de configuração de cada pai como dados. Só as skills do plugin os leem, então ficam sem efeito com o plugin desligado, e as escolhas voltam quando ele volta.
+Desligar é para uma pausa. Use o interruptor de plugins do próprio app: no Claude Code, `/plugin` ou `claude plugin disable pstack@pstack-vic`; no Codex, `codex plugin remove pstack@pstack-vic`. O Grok Build segue o Claude Code. Desligado, o plugin não tem efeito nenhum, e as escolhas de modelo ficam guardadas na pasta de dados. Para ligar de novo, use `claude plugin enable pstack@pstack-vic` e `codex plugin add pstack@pstack-vic`.
 
-- **Claude Code.** `claude plugin list --json` mostra cada registro, com escopo e pasta. Desligue pelo `/plugin` ou com `claude plugin disable pstack@pstack-vic`. Para remover, rode `claude plugin uninstall pstack@pstack-vic --scope <escopo> --keep-data` de dentro da pasta de cada registro. Um registro `project` é a linha `enabledPlugins` do `.claude/settings.json` do repositório, que é versionado, e o comando reescreve esse arquivo.
-- **Codex.** `codex plugin remove pstack@pstack-vic` tira o plugin e o cache; `codex plugin marketplace remove pstack-vic` tira o catálogo. A ativação por projeto em `.codex/config.toml` fica apontando para um plugin ausente até você apagar a linha.
-- **Grok Build.** Segue os registros do Claude Code. Não há instalação separada.
-
-Três ajustes fora do plugin são seus, pedidos pela instalação, e nenhum comando de plugin os desfaz:
-
-- a [autorização permanente](#autorização-permanente) em `~/.claude/settings.json` (`autoMode.allow`, a entrada `pstack standing authorization v3`). O Claude Code só a lê das configurações do usuário, por isso o plugin não pode trazê-la nem tirá-la. Apague a entrada para retirá-la;
-- no Codex, `[features] multi_agent` e `[sandbox_workspace_write]` (`network_access`, `writable_roots`) em `~/.codex/config.toml`;
-- no Grok, `[subagents] max_depth` em `~/.grok/config.toml`.
-
-Até a 0.5.31, o setup gravava o sheet nas instruções: uma linha `@~/.claude/pstack-models.md` no `~/.claude/CLAUDE.md` e um bloco `<!-- pstack:models:begin -->` no `AGENTS.md` do Codex e do Grok. Isso fazia toda sessão carregar o sheet, com o plugin ligado ou não. `setup-pstack.ts state` e `roles` mostram o que sobrou em `legacyWiring`. Para tirar, rode uma vez em cada pai, de uma pasta fora de qualquer projeto (a pasta pessoal serve), antes de desligar. `<plugin>` é a pasta do plugin instalado ou um clone deste repositório:
+Desinstalar tira tudo:
 
 ```shell
-node <plugin>/skills/setup-pstack/scripts/setup-pstack.ts unwire --parent <claude|codex|grok>
+node scripts/pstack.ts uninstall
 ```
 
-O `unwire` mantém todas as escolhas. Quando o sheet só existia dentro do bloco, ele primeiro o grava como arquivo. Depois apaga a linha ou o bloco e não mexe no resto do arquivo. O próximo `/setup-pstack` faz o mesmo. Um projeto Codex com bloco próprio no `AGENTS.md` pede um `unwire` de dentro dele, e o sheet do projeto que substitui o bloco precisa entrar num commit. Cada perfil de `CLAUDE_CONFIG_DIR` pede o seu. Sem o script, apague à mão a linha do `CLAUDE.md` e o bloco, com os dois marcadores.
+O comando devolve os ajustes do Grok ao valor de antes. Depois remove o plugin e o catálogo do Claude Code e do Codex e apaga a pasta de dados (escolhas de modelo e probes), as versões que o Claude Code só apagaria semanas depois e o que o Codex deixa. Também tira as sobras das versões antigas: os registros por projeto e por worktree, o sheet e o ledger no diretório de configuração, a ligação no `CLAUDE.md` e no `AGENTS.md`, as cópias `config.toml.pre-X.Y.Z` do release e o cache de `update-clis`. No fim, ele confere a máquina. Para conferir a qualquer hora:
+
+```shell
+node scripts/pstack.ts check
+```
+
+O `check` lista o que ainda for do plugin, com a pasta de cada item, e sai com código 1 quando acha algo. Ele procura nas configurações dos três pais e nos projetos que o Claude Code e o Codex conhecem. Uma linha versionada num projeto, como o `enabledPlugins` de um `.claude/settings.json` ou o `[plugins."pstack@pstack-vic"]` de um `.codex/config.toml` das versões até a 0.5.32, sai por PR naquele repositório. Na remoção de um registro `project`, o Claude Code tira a linha só da cópia de trabalho, e o comando avisa para fazer o commit.
+
+Ficam, porque são seus e não do plugin:
+
+- a [autorização permanente](#autorização-permanente) em `~/.claude/settings.json`. Apague a entrada para retirá-la;
+- as permissões de sandbox do Codex, se você as concedeu;
+- os arquivos de controle que o Claude Code e o Codex mantêm para qualquer plugin (como `installed_plugins.json`), sem nenhuma linha do pstack.
+
+Os apps não rodam nada de um plugin ao instalar ou remover, e nenhum plugin consegue trazer um ajuste do Grok. Por isso instalar e desinstalar são comandos deste repositório. O que cada app deixa para trás foi medido em 2026-10-13 no Claude Code 2.1.296, no Codex 0.162.1 e no Grok Build 1.0.50. Remover pelo `/plugin` do Claude Code apaga a pasta de dados, mas deixa os ajustes do Grok; o `check` os nomeia.
 
 ### Publicar uma versão
 
@@ -116,9 +124,9 @@ git pull --ff-only
 node scripts/release.ts
 ```
 
-O script confere antes de mexer. Ele roda `git fetch origin` e recusa se o `HEAD` não for a ponta da `origin/main`. Depois procura a tag `vX.Y.Z` no GitHub. Se o CI ainda não a criou, o script sai com erro e manda olhar `gh run list -R byvict/pstack-vic --branch main --limit 1`. Nas duas recusas ele não toca em nada. Com a tag no lugar, ele atualiza o Claude Code. O plugin pode estar instalado em vários escopos ao mesmo tempo: `user`, e um registro `project` ou `local` por projeto (o Clinext e o próprio pstack-vic usam `project`). O script lê todos os registros de `claude plugin list --json`, roda `claude plugin marketplace update pstack-vic` uma vez e depois `claude plugin update pstack@pstack-vic --scope <escopo>` para cada registro que ainda não está na versão; num registro `project` ou `local`, o comando roda de dentro do `projectPath` dele. Um registro `local` de um worktree ligado que ainda não está na versão fica como está quando o checkout principal tem registro próprio, e o script diz qual foi. Uma sessão no worktree carrega o registro `local` do checkout principal, depois o `project` dele, e só sem os dois o do próprio worktree. De dentro do worktree, o `claude plugin update --scope local` atualiza o registro `local` do checkout principal, e não o do worktree. Os dois comportamentos foram medidos em 2026-10-09 no 2.1.293 do app desktop e no 2.1.295. Sem registro no checkout principal, quem vale é o registro do worktree, e o script o atualiza de dentro do worktree. Um registro cujo `projectPath` não existe mais (por exemplo, um worktree apagado) fica para o fim. Outro escopo, como `managed`, faz o script parar antes de mexer. No fim ele lê de volta a versão de cada registro atualizado e falha nomeando o registro que não chegou. Só então troca o cache compartilhado do Codex, que fixa o marketplace numa tag e por isso precisa de quatro comandos: `plugin remove`, `marketplace remove`, `marketplace add byvict/pstack-vic --ref vX.Y.Z` e `plugin add`. Os comandos de marketplace rodam fora do projeto e atualizam o catálogo do usuário. Os comandos `plugin remove` e `plugin add` usam um `CODEX_HOME` temporário cujo diretório `plugins` aponta para o cache compartilhado: eles nunca escrevem a ativação real do usuário, mesmo numa interrupção abrupta. A configuração temporária é removida ao terminar. Antes da troca ele copia o `config.toml` de `CODEX_HOME` (ou `~/.codex`) para `config.toml.pre-X.Y.Z`. A política original do plugin permanece intacta, inclusive comentários e restrições de ferramentas; uma política ausente continua ausente. Por último, o script remove os registros do Claude Code cujo `projectPath` não existe mais e diz quais removeu. O `claude plugin uninstall --scope <escopo>` remove o registro da pasta onde roda e também tira o plugin das configurações do repositório que contém essa pasta. Numa pasta de dentro de um checkout, como `.claude/worktrees/<nome>`, essas configurações são as do checkout, inclusive o `.claude/settings.local.json` do checkout principal. Por isso o script recria a pasta apagada como um repositório git vazio, roda de lá `claude plugin uninstall pstack@pstack-vic --scope <escopo> --keep-data` e apaga as pastas que criou. Assim nenhum arquivo de configuração de outro projeto é tocado. Uma falha nessa etapa sai com código 1, com os dois pais já na versão.
+O script confere antes de mexer. Ele roda `git fetch origin` e recusa se o `HEAD` não for a ponta da `origin/main`. Depois procura a tag `vX.Y.Z` no GitHub. Se o CI ainda não a criou, o script sai com erro e manda olhar `gh run list -R byvict/pstack-vic --branch main --limit 1`. Nas duas recusas ele não toca em nada. Com a tag no lugar, ele atualiza o Claude Code. O plugin pode estar instalado em vários escopos ao mesmo tempo: `user`, que é o único que o `install` usa desde a 0.6.0, e registros `project` ou `local` que versões antigas deixaram. Sem nenhum registro, o script diz que não há o que mover no Claude Code e segue. O script lê todos os registros de `claude plugin list --json`, roda `claude plugin marketplace update pstack-vic` uma vez e depois `claude plugin update pstack@pstack-vic --scope <escopo>` para cada registro que ainda não está na versão; num registro `project` ou `local`, o comando roda de dentro do `projectPath` dele. Um registro `local` de um worktree ligado que ainda não está na versão fica como está quando o checkout principal tem registro próprio, e o script diz qual foi. Uma sessão no worktree carrega o registro `local` do checkout principal, depois o `project` dele, e só sem os dois o do próprio worktree. De dentro do worktree, o `claude plugin update --scope local` atualiza o registro `local` do checkout principal, e não o do worktree. Os dois comportamentos foram medidos em 2026-10-09 no 2.1.293 do app desktop e no 2.1.295. Sem registro no checkout principal, quem vale é o registro do worktree, e o script o atualiza de dentro do worktree. Um registro cujo `projectPath` não existe mais (por exemplo, um worktree apagado) fica para o fim. Outro escopo, como `managed`, faz o script parar antes de mexer. No fim ele lê de volta a versão de cada registro atualizado e falha nomeando o registro que não chegou. Só então troca o cache compartilhado do Codex. Sem a entrada do plugin no `config.toml` do usuário, o Codex não tem o plugin, e o script não o reinstala. Com a entrada, o script troca o cache, que fixa o marketplace numa tag e por isso precisa de quatro comandos: `plugin remove`, `marketplace remove`, `marketplace add byvict/pstack-vic --ref vX.Y.Z` e `plugin add`. Os comandos de marketplace rodam fora do projeto e atualizam o catálogo do usuário. Os comandos `plugin remove` e `plugin add` usam um `CODEX_HOME` temporário cujo diretório `plugins` aponta para o cache compartilhado: eles nunca escrevem a ativação real do usuário, mesmo numa interrupção abrupta. A configuração temporária é removida ao terminar. Antes da troca ele copia o `config.toml` de `CODEX_HOME` (ou `~/.codex`) para `config.toml.pre-X.Y.Z` e apaga a cópia quando a troca termina; numa falha a cópia fica, e o erro diz onde está. A política original do plugin permanece intacta, inclusive comentários e restrições de ferramentas; uma política ausente continua ausente. Por último, o script remove os registros do Claude Code cujo `projectPath` não existe mais e diz quais removeu. O `claude plugin uninstall --scope <escopo>` remove o registro da pasta onde roda e também tira o plugin das configurações do repositório que contém essa pasta. Numa pasta de dentro de um checkout, como `.claude/worktrees/<nome>`, essas configurações são as do checkout, inclusive o `.claude/settings.local.json` do checkout principal. Por isso o script recria a pasta apagada como um repositório git vazio, roda de lá `claude plugin uninstall pstack@pstack-vic --scope <escopo> --keep-data` e apaga as pastas que criou. Assim nenhum arquivo de configuração de outro projeto é tocado. Uma falha nessa etapa sai com código 1, com os dois pais já na versão.
 
-Cada passo confere o que já foi feito, então rodar o script duas vezes não estraga nada. Ele pula um pai que já está na versão, continua de onde parou uma troca do Codex interrompida e deixa como está a primeira cópia do `config.toml`. Em qualquer falha, o script sai com código 1. Se a troca do Codex parar no meio, o Codex pode ficar sem o cache do plugin. Rode o script de novo para terminar; ele conserva a ativação do usuário e informa o caminho da primeira cópia de segurança. A atualização preserva as fichas de modelos; `/setup-pstack` e o seletor seguem o [contrato de fontes](../skills/setup-pstack/references/model-sources.md).
+Cada passo confere o que já foi feito, então rodar o script duas vezes não estraga nada. Ele pula um pai que já está na versão, continua de onde parou uma troca do Codex interrompida e guarda a primeira cópia do `config.toml` até a troca terminar. Em qualquer falha, o script sai com código 1. Se a troca do Codex parar no meio, o Codex pode ficar sem o cache do plugin. Rode o script de novo para terminar; ele conserva a ativação do usuário e informa o caminho da primeira cópia de segurança. A atualização preserva as fichas de modelos; `/setup-pstack` e o seletor seguem o [contrato de fontes](../skills/setup-pstack/references/model-sources.md).
 
 ## Layout
 
@@ -165,9 +173,9 @@ Nada é gerado nem bifurcado por pai. As referências fazem a tradução em temp
 
 ## Grok como raiz no T3 Code
 
-Grok Build é o terceiro pai. O [mapa de ferramentas Grok](../skills/poteto-mode/references/grok-tools.md) cobre filhos nativos, owners, esperas, cancelamento, permissões e a retomada do autopilot. Claude e Codex vão pelo runner com `--parent grok`. O setup guarda sheet e probes em `~/.grok` e não escreve no `~/.grok/AGENTS.md`. Os agents gerados fixam modelo e esforço; o frontmatter das skills não faz essa seleção.
+Grok Build é o terceiro pai. O [mapa de ferramentas Grok](../skills/poteto-mode/references/grok-tools.md) cobre filhos nativos, owners, esperas, cancelamento, permissões e a retomada do autopilot. Claude e Codex vão pelo runner com `--parent grok`. O setup guarda sheet e probes na pasta `grok/` da pasta de dados do plugin no Claude Code e não escreve no `~/.grok/AGENTS.md`. Os agents gerados fixam modelo e esforço; o frontmatter das skills não faz essa seleção.
 
-O fluxo raiz → owner → helper exige `[subagents] max_depth = 2` ou maior no `~/.grok/config.toml` e uma sessão reiniciada. O setup exige os IDs dos dois níveis e o marcador observado antes de gravar a configuração.
+O fluxo raiz → owner → helper exige `[subagents] max_depth = 2` ou maior no `~/.grok/config.toml`, que o `install` grava, e uma sessão reiniciada. O setup exige os IDs dos dois níveis e o marcador observado antes de gravar a configuração.
 
 Numa raiz Grok o autopilot usa um monitor (`grok-audit-ticker.ts`) para emitir o Tick de auditoria a cada hora. O scheduler do Grok executa filhos destacados e não substitui a auditoria da raiz. Uma sessão encerrada precisa ser retomada pelo operador, com os handles reconciliados.
 

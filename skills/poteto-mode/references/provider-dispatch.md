@@ -44,7 +44,7 @@ Grok Build CLI 1.0.5 reports the served model as `grok-4.6-build` in the result 
 
 ## Role defaults
 
-Skills name roles by the labels below, the same labels `/setup-pstack` writes to the model sheet (`<config-home>/pstack-models.md`, where `<config-home>` is the parent's [harness config home](codex-tools.md#harness-config-homes); `~/.grok` on Grok). A sheet line overrides the default of its role; without one, a role takes its cell for the current parent. No session has the sheet in context, so resolve the roles with `setup-pstack.ts roles` (below the table) before dispatching, rather than reading the table alone. The block is rendered from `model-matrix.json`; edit the JSON, not the table.
+Skills name roles by the labels below, the same labels `/setup-pstack` writes to the model sheet (`pstack-models.md` in the plugin's data folder: `<config-home>/plugins/data/pstack-pstack-vic/`, where `<config-home>` is the parent's [harness config home](codex-tools.md#harness-config-homes); on Grok, the `grok/` folder inside Claude Code's). A sheet line overrides the default of its role; without one, a role takes its cell for the current parent. No session has the sheet in context, so resolve the roles with `setup-pstack.ts roles` (below the table) before dispatching, rather than reading the table alone. The block is rendered from `model-matrix.json`; edit the JSON, not the table.
 
 <!-- role-defaults:begin -->
 
