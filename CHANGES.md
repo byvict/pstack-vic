@@ -2055,3 +2055,9 @@ Desligar o plugin não desligava o sheet. O `/setup-pstack` gravava uma linha `@
 - `docs/reference.md` ganha *Desligar e desinstalar*: os comandos de cada pai, o que fica como dado e os três ajustes que a instalação pede e nenhum comando de plugin desfaz (autorização permanente, sandbox e multi-agent do Codex, `max_depth` do Grok).
 
 Nenhuma escolha de modelo ou esforço, fallback de swarm, política de Arena ou de trilha, playbook, nem o pin upstream mudou.
+
+## 0.5.32 — O sheet de modelos passa a ser dado do plugin
+
+Reúne o PR #141. Desligar ou desinstalar o plugin agora desliga o sheet de modelos. Até a 0.5.31, o `/setup-pstack` gravava o sheet nas instruções: uma linha `@~/.claude/pstack-models.md` no `~/.claude/CLAUDE.md` e um bloco no `AGENTS.md` do Codex e do Grok. Toda sessão o carregava, com o plugin ligado ou não. Agora o sheet é dado do plugin e as skills o leem na hora de despachar, com o novo `setup-pstack.ts roles`. O `write` não grava mais nas instruções e tira a ligação antiga. O novo `unwire` tira essa ligação sem mudar nenhuma escolha. `docs/reference.md` ganha *Desligar e desinstalar*. Quem atualiza de uma versão anterior roda `unwire` uma vez em cada pai, ou o próximo `/setup-pstack`.
+
+A release mantém o pin upstream, as fichas de modelos, as escolhas de modelo e esforço, o fallback de swarm e as políticas de Arena e de trilha.
