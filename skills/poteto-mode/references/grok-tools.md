@@ -40,7 +40,7 @@ For recurring babysit work inside an owner, run the PR watcher's blocking `drive
 
 ## Setup and permissions
 
-Run setup with `--parent grok`. It stores the sheet and probe ledger under `~/.grok` and mirrors the sheet in one bounded block in `~/.grok/AGENTS.md`. Grok may also load Claude instructions. At dispatch time, the Grok sheet is authoritative; a Claude sheet included by compatibility is for the Claude parent. Each parent's probes stay independent.
+Run setup with `--parent grok`. It stores the sheet and probe ledger under `~/.grok` and writes nothing into `~/.grok/AGENTS.md`; resolve roles with `setup-pstack.ts roles --parent grok`, which reads the Grok sheet only. Each parent's probes stay independent.
 
 For the standing-authorization check, pass the observed effective session mode to `authorize.ts check --parent grok --permission-mode <mode>`. `always-approve` and `bypassPermissions` pass this tool-approval check. Read the current launch flags or session mode rather than inferring it from T3's label or the config file. Other modes require operator intervention at prompted actions. This check does not grant permission to merge and does not bypass deny rules or hooks; the task's authorization and playbook gates still govern mutations.
 

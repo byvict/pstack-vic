@@ -44,7 +44,7 @@ Grok Build CLI 1.0.5 reports the served model as `grok-4.6-build` in the result 
 
 ## Role defaults
 
-Skills name roles by the labels below, the same labels `/setup-pstack` writes to the model sheet (`<config-home>/pstack-models.md`, where `<config-home>` is the parent's [harness config home](codex-tools.md#harness-config-homes); `~/.grok` on Grok). A sheet line overrides the default of its role. Without a sheet, a role takes its cell for the current parent. The block is rendered from `model-matrix.json`; edit the JSON, not the table.
+Skills name roles by the labels below, the same labels `/setup-pstack` writes to the model sheet (`<config-home>/pstack-models.md`, where `<config-home>` is the parent's [harness config home](codex-tools.md#harness-config-homes); `~/.grok` on Grok). A sheet line overrides the default of its role; without one, a role takes its cell for the current parent. No session has the sheet in context, so resolve the roles with `setup-pstack.ts roles` (below the table) before dispatching, rather than reading the table alone. The block is rendered from `model-matrix.json`; edit the JSON, not the table.
 
 <!-- role-defaults:begin -->
 
@@ -72,6 +72,14 @@ Skills name roles by the labels below, the same labels `/setup-pstack` writes to
 A list is a panel: one lane per entry, in this order. A row whose label ends in `pool` is the exception: one lane runs, picked by the Cross-family selection rule below. A role whose parent columns differ takes a family native to each parent. Why and Reflect adapt the pinned upstream defaults as described below. Aliases use the parent model and effort, preferring native dispatch.
 
 <!-- role-defaults:end -->
+
+The sheet is plugin data, and no instruction file loads it. Before the first dispatch of a configured role in a skill or playbook run, resolve the roles from the parent that dispatches:
+
+```shell
+node <plugin>/skills/setup-pstack/scripts/setup-pstack.ts roles --parent <claude|codex|grok>
+```
+
+It prints every role's `lanes` with `source` `sheet` or `default`, then the `swarm fallback` row when the sheet enables it. On Codex, run it from the project cwd and pass the loaded `--instruction-source` chain when discovery is nonstandard ([Codex model sources](../../setup-pstack/references/model-sources.md)). Run it again after `/setup-pstack` writes. A pool role still goes through `pick` (see **Cross-family selection**). A non-null `legacyWiring` names an instruction file where a version before 0.5.32 wired the sheet; report it once and point the operator at `setup-pstack.ts unwire --parent <parent>`, which removes the wiring and keeps every lane.
 
 Why and Reflect follow the upstream pin in [UPSTREAM.md](../../../UPSTREAM.md), currently Cursor pstack 0.15.10 at `4e5b1cf`: Why investigators use Grok 4.7 at `xhigh`, Why synthesis and Reflect judgment use Opus 5.5 at `max`, and Reflect tooling uses Sol at `max`. Keep those choices where native, using the port's existing Sol revision mapping. Otherwise adapt investigation and tooling to the native code family and synthesis and judgment to the native frontier family. Grok 4.7 supports at most `xhigh`, so its native defaults use that effort for all four roles. These adaptations seed first-run sheets only; configured models and efforts take precedence.
 

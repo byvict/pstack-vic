@@ -4,7 +4,7 @@ import fs, { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readli
 import { syncBuiltinESMExports } from "node:module";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { loadMatrix, renderRoleSheet } from "../../../scripts/model-matrix.ts";
+import { loadMatrix, renderRoleSheet, roleDefault } from "../../../scripts/model-matrix.ts";
 import { clisOutsideFakes, isolatedEnv, isolateProcessEnv } from "../../poteto-mode/scripts/runner/isolated-env.test-helper.ts";
 import {
   SetupError,
@@ -15,7 +15,9 @@ import {
   normalizeLane,
   parseSheet,
   pickLane,
+  resolveRoles,
   sheetPathFor,
+  unwireSheet,
   type ConfigEnv,
   type Plan,
   type State,
@@ -697,7 +699,8 @@ describe("swarm fallback", () => {
     assert.ok(pair);
     attestNative(plan, runDir, pair.pair, pair.marker);
     writeSheet(plan, runDir, { home });
-    assert.match(readFileSync(plan.integrationPath, "utf8"), /^swarm fallback: codex:gpt-6\.1-sol@high$/m);
+    assert.match(readFileSync(plan.sheetPath, "utf8"), /^swarm fallback: codex:gpt-6\.1-sol@high$/m);
+    assert.equal(existsSync(plan.integrationPath), false);
     const again = buildPlan({ parent: "codex", home, matrix });
     assert.deepEqual(again.pairs, []);
     const rerun = writeSheet(again, runDir, { home });
@@ -707,15 +710,13 @@ describe("swarm fallback", () => {
     assert.deepEqual(disabled.pairs, []);
     writeSheet(disabled, runDir, { home });
     assert.doesNotMatch(readFileSync(disabled.sheetPath, "utf8"), /swarm fallback/);
-    assert.doesNotMatch(readFileSync(disabled.integrationPath, "utf8"), /swarm fallback/);
     assert.equal(disabled.sheet, buildPlan({ parent: "codex", home, matrix }).sheet);
   });
 
-  it("recovers the setting from the integration and rejects sheet/block disagreements", () => {
+  it("recovers the setting from an earlier version's block and rejects sheet/block disagreements", () => {
     putLedger("codex", matrix.families.map((f) => f.family));
     const plan = buildPlan({ parent: "codex", home, matrix, swarmFallback: "codex:gpt-6.1-sol@xhigh" });
-    writeSheet(plan, runDir, { home });
-    rmSync(plan.sheetPath);
+    put(plan.integrationPath, `${CODEX_BLOCK_BEGIN}\n${plan.sheet}${CODEX_BLOCK_END}\n`);
     assert.deepEqual(loadState({ parent: "codex", home, matrix }).rows.at(-1), { role: "swarm fallback", lanes: ["codex:gpt-6.1-sol@xhigh"] });
     putSheet("codex", firstRunSheet("codex"));
     assert.throws(() => loadState({ parent: "codex", home, matrix }), /swarm fallback \(sheet: no row; block: codex:gpt-6.1-sol@xhigh\)/);
@@ -790,6 +791,117 @@ describe("pickLane", () => {
     assert.throws(() => pick("claude", ["cursor"]), /unknown provider "cursor"/);
     putSheet("claude", "trail reviewer pool: grok:grok-4.7@max\n");
     assert.throws(() => pick("claude"), /grok-4-7 does not select effort max/);
+  });
+});
+
+/** A directory outside any project, so a Codex lookup reaches the global profile. */
+function outside(): string {
+  const directory = join(home, "outside");
+  mkdirSync(directory, { recursive: true });
+  return directory;
+}
+
+describe("resolveRoles", () => {
+  it("takes each row from the sheet, the rest from the role table, and lists the swarm fallback last", () => {
+    const text = `${firstRunSheet("claude")
+      .replace("hillclimb: claude:claude-opus-5-5@xhigh", "hillclimb: claude:claude-opus-5-5@high")
+      .replace(/^swarm workers: .*\n/m, "")}swarm fallback: claude:claude-opus-5-5@high\n`;
+    const sheet = putSheet("claude", text);
+    const result = resolveRoles({ parent: "claude", home, matrix });
+    assert.deepEqual(result.configurationSource, { kind: "sheet", path: sheet });
+    assert.equal(result.legacyWiring, null);
+    assert.deepEqual(result.roles.map((r) => r.role), [...matrix.roles.map((r) => r.role), "swarm fallback"]);
+    assert.deepEqual(result.roles.find((r) => r.role === "hillclimb"), { role: "hillclimb", lanes: ["claude:claude-opus-5-5@high"], source: "sheet" });
+    assert.deepEqual(result.roles.find((r) => r.role === "swarm workers"), { role: "swarm workers", lanes: roleDefault(matrix, "swarm workers", "claude"), source: "default" });
+    assert.deepEqual(result.roles.at(-1), { role: "swarm fallback", lanes: ["claude:claude-opus-5-5@high"], source: "sheet" });
+  });
+
+  it("uses the role table on a first run and names the wiring an earlier version left", () => {
+    const integration = put(join(home, ".claude", "CLAUDE.md"), `# mine\n${CLAUDE_INCLUDE_LINE}\n`);
+    const result = resolveRoles({ parent: "claude", home, matrix });
+    assert.deepEqual(result.configurationSource, { kind: "first-run" });
+    assert.equal(result.legacyWiring, integration);
+    assert.ok(result.roles.every((r) => r.source === "default"));
+    assert.deepEqual(result.roles.map((r) => r.lanes), matrix.roles.map((r) => roleDefault(matrix, r.role, "claude")));
+  });
+
+  it("normalizes an old descriptor as it reads the sheet", () => {
+    putSheet("claude", "bug-fix: claude:claude-opus-5@high\n");
+    assert.deepEqual(resolveRoles({ parent: "claude", home, matrix }).roles.find((r) => r.role === "bug-fix")?.lanes, ["claude:claude-opus-5-5@high"]);
+  });
+});
+
+describe("unwireSheet", () => {
+  it("removes the Claude include, keeps the sheet byte for byte, and a second run changes nothing", () => {
+    const sheet = putSheet("claude", sheetWithHighHillclimb());
+    const integration = put(join(home, ".claude", "CLAUDE.md"), `# mine\n${CLAUDE_INCLUDE_LINE}\n`);
+    assert.deepEqual(unwireSheet({ parent: "claude", home, matrix }), { sheetPath: sheet, integrationPath: integration, sheet: "unchanged", integration: "updated", missingImport: null });
+    assert.equal(readFileSync(integration, "utf8"), "# mine\n");
+    assert.equal(readFileSync(sheet, "utf8"), sheetWithHighHillclimb());
+    assert.equal(loadState({ parent: "claude", home, matrix }).legacyWiring, null);
+    const again = unwireSheet({ parent: "claude", home, matrix });
+    assert.deepEqual([again.sheet, again.integration], ["unchanged", "unchanged"]);
+  });
+
+  for (const parent of ["codex", "grok"]) {
+    it(`moves a ${parent} sheet that lived only in its block to the sheet path, then removes the block`, () => {
+      const customized = firstRunSheet(parent).replace(/^(hillclimb: \w+:[\w.-]+)@xhigh$/m, "$1@high");
+      assert.notEqual(customized, firstRunSheet(parent));
+      const integration = put(integrationPathFor(parent, home), `# agents\n${CODEX_BLOCK_BEGIN}\n${customized}${CODEX_BLOCK_END}\n`);
+      const result = unwireSheet({ parent, home, matrix, cwd: outside() });
+      assert.deepEqual([result.sheet, result.integration], ["created", "updated"]);
+      assert.equal(readFileSync(sheetPathFor(parent, home), "utf8"), customized);
+      assert.equal(readFileSync(integration, "utf8"), "# agents\n");
+      assert.deepEqual(loadState({ parent, home, matrix, cwd: outside() }).source, { kind: "sheet", path: sheetPathFor(parent, home) });
+    });
+  }
+
+  it("carries a copied profile's imported sheet into the redirected home and leaves the imported file alone", () => {
+    const cfg = join(home, "cfg");
+    const env = { CLAUDE_CONFIG_DIR: cfg };
+    const imported = put(join(home, ".claude", "pstack-models.md"), sheetWithHighHillclimb());
+    const integration = put(join(cfg, "CLAUDE.md"), `# work profile\n${CLAUDE_INCLUDE_LINE}\n`);
+    const result = unwireSheet({ parent: "claude", home, env, matrix });
+    assert.deepEqual([result.sheet, result.integration], ["created", "updated"]);
+    assert.equal(readFileSync(join(cfg, "pstack-models.md"), "utf8"), sheetWithHighHillclimb());
+    assert.equal(readFileSync(integration, "utf8"), "# work profile\n");
+    assert.equal(readFileSync(imported, "utf8"), sheetWithHighHillclimb());
+  });
+
+  it("removes an import whose target is gone and writes no sheet", () => {
+    const integration = put(join(home, ".claude", "CLAUDE.md"), "@~/gone/pstack-models.md\n");
+    const result = unwireSheet({ parent: "claude", home, matrix });
+    assert.deepEqual([result.sheet, result.integration, result.missingImport], ["unchanged", "updated", join(home, "gone", "pstack-models.md")]);
+    assert.equal(readFileSync(integration, "utf8"), "");
+    assert.equal(existsSync(sheetPathFor("claude", home)), false);
+  });
+
+  it("reaches the global Codex block from the home folder, whose .codex is the config home", () => {
+    const sheet = putSheet("codex", firstRunSheet("codex"));
+    const integration = put(integrationPathFor("codex", home), `# agents\n${CODEX_BLOCK_BEGIN}\n${firstRunSheet("codex")}${CODEX_BLOCK_END}\n`);
+    assert.equal(resolveRoles({ parent: "codex", home, matrix, cwd: home }).legacyWiring, integration);
+    const result = unwireSheet({ parent: "codex", home, matrix, cwd: home });
+    assert.deepEqual([result.sheetPath, result.integrationPath, result.sheet, result.integration], [sheet, integration, "unchanged", "updated"]);
+    assert.equal(readFileSync(integration, "utf8"), "# agents\n");
+    assert.equal(resolveRoles({ parent: "codex", home, matrix, cwd: home }).legacyWiring, null);
+  });
+
+  it("takes a CRLF block's sheet from after its line break and removes the block with its line break", () => {
+    const integration = put(integrationPathFor("grok", home), `# g\r\n${CODEX_BLOCK_BEGIN}\r\n${firstRunSheet("grok")}${CODEX_BLOCK_END}\r\nKeep\r\n`);
+    const result = unwireSheet({ parent: "grok", home, matrix });
+    assert.deepEqual([result.sheet, result.integration], ["created", "updated"]);
+    assert.equal(readFileSync(sheetPathFor("grok", home), "utf8"), firstRunSheet("grok"));
+    assert.equal(readFileSync(integration, "utf8"), "# g\r\nKeep\r\n");
+  });
+
+  it("stops on a sheet and block that disagree, touching nothing", () => {
+    const sheet = putSheet("codex", firstRunSheet("codex"));
+    const changed = firstRunSheet("codex").replace("hillclimb: codex:gpt-6-sol@xhigh", "hillclimb: codex:gpt-6-sol@high");
+    const wired = `${CODEX_BLOCK_BEGIN}\n${changed}${CODEX_BLOCK_END}\n`;
+    const integration = put(integrationPathFor("codex", home), wired);
+    assert.throws(() => unwireSheet({ parent: "codex", home, matrix, cwd: outside() }), /assign different lanes to hillclimb/);
+    assert.equal(readFileSync(sheet, "utf8"), firstRunSheet("codex"));
+    assert.equal(readFileSync(integration, "utf8"), wired);
   });
 });
 
@@ -1187,14 +1299,14 @@ describe("attestNative", () => {
 });
 
 describe("writeSheet", () => {
-  it("writes a Grok sheet only after its native and external probes, preserving global rules on reruns", async () => {
+  it("writes a Grok sheet only after its native and external probes and leaves the global rules alone", async () => {
     const plan = await planAndProbe("grok");
     const integration = integrationPathFor("grok", home);
     mkdirSync(dirname(integration), { recursive: true });
     writeFileSync(integration, "Keep these global Grok rules.\n");
     const result = writeSheet(plan, runDir, { home });
-    assert.equal(result.sheet, "created");
-    assert.equal(readFileSync(integration, "utf8"), `Keep these global Grok rules.\n${CODEX_BLOCK_BEGIN}\n${plan.sheet}${CODEX_BLOCK_END}\n`);
+    assert.deepEqual([result.sheet, result.integration], ["created", "unchanged"]);
+    assert.equal(readFileSync(integration, "utf8"), "Keep these global Grok rules.\n");
     assert.equal(existsSync(sheetPathFor("claude", home)), false);
     assert.equal(existsSync(ledgerPathFor("codex", home)), false);
     const again = buildPlan({ parent: "grok", home, matrix });
@@ -1218,14 +1330,14 @@ describe("writeSheet", () => {
     assert.equal(existsSync(join(home, ".claude")), false);
   });
 
-  it("on a Claude first run creates the sheet, the include, and the ledger, and an unchanged rerun is byte-identical", async () => {
+  it("on a Claude first run creates the sheet and the ledger but no CLAUDE.md, and an unchanged rerun is byte-identical", async () => {
     const plan = await planAndProbe("claude");
     const result = writeSheet(plan, runDir, { home });
-    assert.deepEqual([result.sheet, result.integration, result.ledger], ["created", "created", "created"]);
+    assert.deepEqual([result.sheet, result.integration, result.ledger], ["created", "unchanged", "created"]);
     assert.equal(readFileSync(plan.sheetPath, "utf8"), plan.sheet);
-    assert.equal(readFileSync(plan.integrationPath, "utf8"), `${CLAUDE_INCLUDE_LINE}\n`);
+    assert.equal(existsSync(plan.integrationPath), false);
     assert.equal(plan.integrationPath, integrationPathFor("claude", home));
-    const before = [plan.sheetPath, plan.integrationPath, plan.ledgerPath].map((path) => statSync(path).mtimeMs);
+    const before = [plan.sheetPath, plan.ledgerPath].map((path) => statSync(path).mtimeMs);
 
     const again = await planAndProbe("claude");
     assert.equal(again.firstRun, false);
@@ -1233,7 +1345,7 @@ describe("writeSheet", () => {
     assert.deepEqual(again.pairs, []);
     const rerun = writeSheet(again, runDir, { home });
     assert.deepEqual([rerun.sheet, rerun.integration, rerun.ledger], ["unchanged", "unchanged", "unchanged"]);
-    assert.deepEqual([plan.sheetPath, plan.integrationPath, plan.ledgerPath].map((path) => statSync(path).mtimeMs), before);
+    assert.deepEqual([plan.sheetPath, plan.ledgerPath].map((path) => statSync(path).mtimeMs), before);
     assert.equal(readFileSync(plan.sheetPath, "utf8"), plan.sheet);
   });
 
@@ -1282,25 +1394,25 @@ describe("writeSheet", () => {
     const plan = await planAndProbe("claude", { roles: { hillclimb: ["grok:grok-4.6@high"] } });
     assert.deepEqual(plan.efforts.grok, ["high", "xhigh"]);
     const result = writeSheet(plan, runDir, { home });
-    assert.deepEqual([result.sheet, result.integration], ["created", "created"]);
+    assert.deepEqual([result.sheet, result.integration], ["created", "unchanged"]);
     assert.equal(readFileSync(plan.sheetPath, "utf8"), plan.sheet);
-    const before = [statSync(plan.sheetPath).mtimeMs, statSync(plan.integrationPath).mtimeMs];
+    const before = statSync(plan.sheetPath).mtimeMs;
 
     const again = await planAndProbe("claude");
     assert.equal(again.sheet, plan.sheet);
     const rerun = writeSheet(again, runDir, { home });
     assert.deepEqual([rerun.sheet, rerun.integration], ["unchanged", "unchanged"]);
-    assert.deepEqual([statSync(plan.sheetPath).mtimeMs, statSync(plan.integrationPath).mtimeMs], before);
+    assert.equal(statSync(plan.sheetPath).mtimeMs, before);
   });
 
-  it("appends the include to an existing CLAUDE.md once and treats a duplicate include as inconsistent", async () => {
+  it("removes the include an earlier version appended to CLAUDE.md and treats a duplicate include as inconsistent", async () => {
     const integration = integrationPathFor("claude", home);
     mkdirSync(dirname(integration), { recursive: true });
-    writeFileSync(integration, "# mine\n");
+    writeFileSync(integration, `# mine\n${CLAUDE_INCLUDE_LINE}\n`);
     const plan = await planAndProbe("claude");
     const result = writeSheet(plan, runDir, { home });
-    assert.equal(result.integration, "updated");
-    assert.equal(readFileSync(integration, "utf8"), `# mine\n${CLAUDE_INCLUDE_LINE}\n`);
+    assert.deepEqual([result.sheet, result.integration], ["created", "updated"]);
+    assert.equal(readFileSync(integration, "utf8"), "# mine\n");
 
     const again = await planAndProbe("claude", { efforts: { grok: "high" } });
     const duplicated = `${CLAUDE_INCLUDE_LINE}\n# mine\n- @./pstack-models.md\n`;
@@ -1312,21 +1424,20 @@ describe("writeSheet", () => {
     assert.equal(readFileSync(integration, "utf8"), duplicated);
   });
 
-  it("on Codex inserts one bounded block at the end of AGENTS.md and replaces the whole block on a rerun", async () => {
+  it("on Codex removes the block an earlier version appended to AGENTS.md and keeps the rest of the file", async () => {
     const integration = integrationPathFor("codex", home);
     mkdirSync(dirname(integration), { recursive: true });
-    writeFileSync(integration, "# agents\n\nKeep this.\n");
+    writeFileSync(integration, `# agents\n\nKeep this.\n${CODEX_BLOCK_BEGIN}\n${firstRunSheet("codex")}${CODEX_BLOCK_END}\n`);
     const plan = await planAndProbe("codex");
-    writeSheet(plan, runDir, { home });
-    const expected = `# agents\n\nKeep this.\n${CODEX_BLOCK_BEGIN}\n${plan.sheet}${CODEX_BLOCK_END}\n`;
-    assert.equal(readFileSync(integration, "utf8"), expected);
+    assert.equal(plan.sheet, firstRunSheet("codex"));
+    const result = writeSheet(plan, runDir, { home });
+    assert.deepEqual([result.sheet, result.integration], ["created", "updated"]);
+    assert.equal(readFileSync(integration, "utf8"), "# agents\n\nKeep this.\n");
 
     const changed = await planAndProbe("codex", { efforts: { grok: "high" } });
-    const result = writeSheet(changed, runDir, { home });
-    assert.deepEqual([result.sheet, result.integration], ["updated", "updated"]);
-    const text = readFileSync(integration, "utf8");
-    assert.equal(text, `# agents\n\nKeep this.\n${CODEX_BLOCK_BEGIN}\n${changed.sheet}${CODEX_BLOCK_END}\n`);
-    assert.equal(text.split(CODEX_BLOCK_BEGIN).length, 2);
+    const again = writeSheet(changed, runDir, { home });
+    assert.deepEqual([again.sheet, again.integration], ["updated", "unchanged"]);
+    assert.equal(readFileSync(integration, "utf8"), "# agents\n\nKeep this.\n");
     assert.equal(readFileSync(changed.sheetPath, "utf8"), changed.sheet);
   });
 
@@ -1348,24 +1459,30 @@ describe("writeSheet", () => {
     }
   });
 
-  it("refuses an unwritable integration before touching an existing sheet", async (t) => {
+  it("refuses an unwritable CLAUDE.md that still holds the old include before touching an existing sheet, and writes past one without it", async (t) => {
     const plan = await planAndProbe("claude");
     writeSheet(plan, runDir, { home });
     const changed = await planAndProbe("claude", { efforts: { grok: "high" } });
-    writeFileSync(changed.integrationPath, "# mine\n");
+    writeFileSync(changed.integrationPath, `# mine\n${CLAUDE_INCLUDE_LINE}\n`);
     chmodSync(changed.integrationPath, 0o444);
     if (!permissionDenied(changed.integrationPath, fs.constants.W_OK)) return t.skip("this host permits writes to chmod 0444 files; no OS permission proof");
     const before = targetState(changed);
     assertNoMutations(() => assert.throws(() => writeSheet(changed, runDir, { home }), /integration.*not writable/));
     assert.deepEqual(targetState(changed), before);
     assert.equal(readFileSync(changed.sheetPath, "utf8"), plan.sheet);
+
+    chmodSync(changed.integrationPath, 0o644);
+    writeFileSync(changed.integrationPath, "# mine\n");
+    chmodSync(changed.integrationPath, 0o444);
+    const result = writeSheet(changed, runDir, { home });
+    assert.deepEqual([result.sheet, result.integration], ["updated", "unchanged"]);
     assert.equal(readFileSync(changed.integrationPath, "utf8"), "# mine\n");
   });
 
-  it("creates no first-run sheet or ledger when an existing integration is unwritable", async (t) => {
+  it("creates no first-run sheet or ledger when an AGENTS.md that still holds the old block is unwritable", async (t) => {
     const plan = await planAndProbe("codex");
     mkdirSync(dirname(plan.integrationPath), { recursive: true });
-    writeFileSync(plan.integrationPath, "");
+    writeFileSync(plan.integrationPath, `${CODEX_BLOCK_BEGIN}\n${firstRunSheet("codex")}${CODEX_BLOCK_END}\n`);
     chmodSync(plan.integrationPath, 0o444);
     if (!permissionDenied(plan.integrationPath, fs.constants.W_OK)) return t.skip("this host permits writes to chmod 0444 files; no OS permission proof");
     const before = targetState(plan);
@@ -1375,7 +1492,7 @@ describe("writeSheet", () => {
     assert.equal(existsSync(plan.ledgerPath), false);
   });
 
-  it("refuses a changing unwritable ledger before creating the sheet or integration", async (t) => {
+  it("refuses a changing unwritable ledger before creating the sheet", async (t) => {
     const plan = await planAndProbe("claude");
     mkdirSync(dirname(plan.ledgerPath), { recursive: true });
     writeFileSync(plan.ledgerPath, `{"schemaVersion":1,"families":{}}\n`);
@@ -1445,32 +1562,31 @@ describe("write admission", () => {
     assert.deepEqual(targetState(plan), before);
   });
 
-  it("checks an unchanged integration when the sheet changes", (t) => {
+  it("does not check a CLAUDE.md without wiring when the sheet changes", () => {
     const initial = buildPlan({ parent: "claude", home, matrix });
     writeSheet(initial, runDir, { home });
     const plan = buildPlan({ parent: "claude", home, matrix, efforts: { grok: "high" } });
+    writeFileSync(plan.integrationPath, "# mine\n");
     chmodSync(plan.integrationPath, 0o444);
-    if (!permissionDenied(plan.integrationPath, fs.constants.W_OK)) return t.skip("this host permits writes to chmod 0444 files; no OS permission proof");
-    const before = targetState(plan);
-    assertNoMutations(() => assert.throws(() => writeSheet(plan, runDir, { home }), /integration.*not writable/));
-    assert.deepEqual(targetState(plan), before);
+    const result = writeSheet(plan, runDir, { home });
+    assert.deepEqual([result.sheet, result.integration], ["updated", "unchanged"]);
+    assert.equal(readFileSync(plan.integrationPath, "utf8"), "# mine\n");
   });
 
-  it("checks an unchanged sheet when the integration changes", (t) => {
+  it("does not check an unchanged sheet when only the old include goes", () => {
     const plan = buildPlan({ parent: "claude", home, matrix });
     writeFileSync(plan.sheetPath, plan.sheet);
-    writeFileSync(plan.integrationPath, "# mine\n");
+    writeFileSync(plan.integrationPath, `# mine\n${CLAUDE_INCLUDE_LINE}\n`);
     chmodSync(plan.sheetPath, 0o444);
-    if (!permissionDenied(plan.sheetPath, fs.constants.W_OK)) return t.skip("this host permits writes to chmod 0444 files; no OS permission proof");
-    const before = targetState(plan);
-    assertNoMutations(() => assert.throws(() => writeSheet(plan, runDir, { home }), /sheet.*not writable/));
-    assert.deepEqual(targetState(plan), before);
+    const result = writeSheet(plan, runDir, { home });
+    assert.deepEqual([result.sheet, result.integration], ["unchanged", "updated"]);
+    assert.equal(readFileSync(plan.integrationPath, "utf8"), "# mine\n");
   });
 
   it("admits no writes or access checks when all target bytes are identical", () => {
     const plan = buildPlan({ parent: "claude", home, matrix });
     writeSheet(plan, runDir, { home });
-    for (const path of [plan.sheetPath, plan.integrationPath, plan.ledgerPath]) chmodSync(path, 0o444);
+    for (const path of [plan.sheetPath, plan.ledgerPath]) chmodSync(path, 0o444);
     const before = targetState(plan);
     const access = mock.method(fs, "accessSync", () => { throw new Error("no-op unexpectedly checked access"); });
     syncBuiltinESMExports();
@@ -1515,11 +1631,10 @@ describe("write admission", () => {
     }
   });
 
-  it("checks ledger creation when both peer files already have the rendered bytes", async (t) => {
+  it("checks ledger creation when the sheet already has the rendered bytes", async (t) => {
     rmSync(ledgerPathFor("claude", home));
     const plan = await planAndProbe("claude");
     writeFileSync(plan.sheetPath, plan.sheet);
-    writeFileSync(plan.integrationPath, `${CLAUDE_INCLUDE_LINE}\n`);
     const configHome = dirname(plan.sheetPath);
     chmodSync(configHome, 0o555);
     try {
@@ -1549,8 +1664,8 @@ describe("write admission", () => {
       chmodSync(ancestor, 0o755);
     }
     const result = writeSheet(plan, runDir, { home, env });
-    assert.deepEqual([result.sheet, result.integration, result.ledger], ["created", "created", "unchanged"]);
-    assert.equal(readFileSync(plan.integrationPath, "utf8"), "@./pstack-models.md\n");
+    assert.deepEqual([result.sheet, result.integration, result.ledger], ["created", "unchanged", "unchanged"]);
+    assert.equal(existsSync(plan.integrationPath), false);
   });
 
   it("refuses a missing target in an unwritable config directory", (t) => {
@@ -1655,7 +1770,7 @@ describe("write admission", () => {
     const sheet = join(home, "sheet-target.md");
     const integration = join(home, "integration-target.md");
     writeFileSync(sheet, "# old\n");
-    writeFileSync(integration, "# mine\n");
+    writeFileSync(integration, "# mine\n@./pstack-models.md\n");
     symlinkSync(sheet, plan.sheetPath);
     symlinkSync(integration, plan.integrationPath);
     const result = writeSheet(plan, runDir, { home, env });
@@ -1664,7 +1779,7 @@ describe("write admission", () => {
     assert.equal(readlinkSync(plan.integrationPath), integration);
     assert.equal(readlinkSync(cfg), join(home, ".claude"));
     assert.equal(readFileSync(sheet, "utf8"), plan.sheet);
-    assert.equal(readFileSync(integration, "utf8"), "# mine\n@./pstack-models.md\n");
+    assert.equal(readFileSync(integration, "utf8"), "# mine\n");
   });
 });
 
@@ -1674,7 +1789,7 @@ describe("late write failures after admission", () => {
       const plan = await planAndProbe("codex");
       mkdirSync(dirname(plan.sheetPath), { recursive: true });
       writeFileSync(plan.sheetPath, "# original sheet\n");
-      writeFileSync(plan.integrationPath, "# original integration\n");
+      writeFileSync(plan.integrationPath, `# original integration\n${CODEX_BLOCK_BEGIN}\n# original sheet\n${CODEX_BLOCK_END}\n`);
       writeFileSync(plan.ledgerPath, '{"schemaVersion":1,"families":{}}\n');
       const before = targetState(plan).map((target) => target?.bytes);
       const original = fs.writeFileSync;
@@ -1723,7 +1838,7 @@ describe("late write failures after admission", () => {
     const plan = buildPlan({ parent: "claude", home, matrix });
     const original = fs.writeFileSync;
     const write = mock.method(fs, "writeFileSync", (...args: unknown[]) => {
-      if (args[0] === plan.integrationPath) return original(plan.integrationPath, "corrupted render\n");
+      if (args[0] === plan.sheetPath) return original(plan.sheetPath, "corrupted render\n");
       return Reflect.apply(original, fs, args);
     });
     syncBuiltinESMExports();
@@ -1820,33 +1935,33 @@ describe("configHomeFor", () => {
 });
 
 describe("writeSheet in a redirected config home", () => {
-  it("writes the Claude sheet, the ledger and a sibling import under CLAUDE_CONFIG_DIR, and nothing under <home>/.claude", async () => {
+  it("writes the Claude sheet and the ledger under CLAUDE_CONFIG_DIR, no CLAUDE.md, and nothing under <home>/.claude", async () => {
     const cfg = join(home, "claude # config");
     const env = { CLAUDE_CONFIG_DIR: cfg };
     const plan = await planAndProbe("claude", { env });
     assert.equal(plan.sheetPath, join(cfg, "pstack-models.md"));
     const result = writeSheet(plan, runDir, { home, env });
-    assert.deepEqual([result.sheet, result.integration, result.ledger], ["created", "created", "created"]);
+    assert.deepEqual([result.sheet, result.integration, result.ledger], ["created", "unchanged", "created"]);
     assert.equal(readFileSync(join(cfg, "pstack-models.md"), "utf8"), plan.sheet);
-    assert.equal(readFileSync(join(cfg, "CLAUDE.md"), "utf8"), "@./pstack-models.md\n");
+    assert.equal(existsSync(join(cfg, "CLAUDE.md")), false);
     assert.ok(existsSync(join(cfg, "pstack-probes.json")));
     assert.equal(existsSync(join(home, ".claude")), false);
 
-    const bytes = ["pstack-models.md", "CLAUDE.md", "pstack-probes.json"].map((file) => readFileSync(join(cfg, file), "utf8"));
+    const bytes = ["pstack-models.md", "pstack-probes.json"].map((file) => readFileSync(join(cfg, file), "utf8"));
     const again = await planAndProbe("claude", { env });
     assert.deepEqual(again.pairs, []);
     const rerun = writeSheet(again, runDir, { home, env });
     assert.deepEqual([rerun.sheet, rerun.integration, rerun.ledger], ["unchanged", "unchanged", "unchanged"]);
-    assert.deepEqual(["pstack-models.md", "CLAUDE.md", "pstack-probes.json"].map((file) => readFileSync(join(cfg, file), "utf8")), bytes);
+    assert.deepEqual(["pstack-models.md", "pstack-probes.json"].map((file) => readFileSync(join(cfg, file), "utf8")), bytes);
   });
 
-  it("writes the Codex sheet, the ledger and the AGENTS.md block under CODEX_HOME", async () => {
+  it("writes the Codex sheet and the ledger under CODEX_HOME and no AGENTS.md", async () => {
     const codex = join(home, "codex home");
     const env = { CODEX_HOME: codex };
     const plan = await planAndProbe("codex", { env });
     writeSheet(plan, runDir, { home, env });
     assert.equal(readFileSync(join(codex, "pstack-models.md"), "utf8"), plan.sheet);
-    assert.equal(readFileSync(join(codex, "AGENTS.md"), "utf8"), `${CODEX_BLOCK_BEGIN}\n${plan.sheet}${CODEX_BLOCK_END}\n`);
+    assert.equal(existsSync(join(codex, "AGENTS.md")), false);
     assert.ok(existsSync(join(codex, "pstack-probes.json")));
     assert.equal(existsSync(join(home, ".codex")), false);
   });
@@ -1857,11 +1972,12 @@ describe("writeSheet in a redirected config home", () => {
     assert.equal(existsSync(join(home, ".claude")), false);
   });
 
-  it("keeps the legacy include when CLAUDE_CONFIG_DIR names the default home", async () => {
+  it("removes the legacy include when CLAUDE_CONFIG_DIR names the default home", async () => {
     const env = { CLAUDE_CONFIG_DIR: join(home, ".claude") };
+    put(join(home, ".claude", "CLAUDE.md"), `${CLAUDE_INCLUDE_LINE}\n`);
     const plan = await planAndProbe("claude", { env });
-    writeSheet(plan, runDir, { home, env });
-    assert.equal(readFileSync(join(home, ".claude", "CLAUDE.md"), "utf8"), "@~/.claude/pstack-models.md\n");
+    assert.equal(writeSheet(plan, runDir, { home, env }).integration, "updated");
+    assert.equal(readFileSync(join(home, ".claude", "CLAUDE.md"), "utf8"), "");
     const unset = await planAndProbe("claude");
     assert.equal(writeSheet(unset, runDir, { home }).integration, "unchanged");
   });
@@ -1881,7 +1997,7 @@ describe("writeSheet in a redirected config home", () => {
 describe("the Claude sheet import", () => {
   for (const [lineEnd, label] of [["\n", "LF"], ["\r\n", "CRLF"]]) {
     for (const prefix of ["", "- models: ", "> "]) {
-      it(`carries and replaces a plain import with a literal @ in its directory, ${label} and ${JSON.stringify(prefix)}`, async () => {
+      it(`carries and removes a plain import with a literal @ in its directory, ${label} and ${JSON.stringify(prefix)}`, async () => {
         const cfg = join(home, "cfg");
         const env = { CLAUDE_CONFIG_DIR: cfg };
         const imported = put(join(cfg, "at@literal", "pstack-models.md"), sheetWithHighHillclimb());
@@ -1894,7 +2010,8 @@ describe("the Claude sheet import", () => {
 
         const plan = await planAndProbe("claude", { env });
         writeSheet(plan, runDir, { home, env });
-        assert.equal(readFileSync(integration, "utf8"), `# mine${lineEnd}${prefix}@./pstack-models.md${lineEnd}${lineEnd}@./other.md${lineEnd}`);
+        const kept = prefix === "- models: " ? `${prefix}${lineEnd}` : "";
+        assert.equal(readFileSync(integration, "utf8"), `# mine${lineEnd}${kept}${lineEnd}@./other.md${lineEnd}`);
         assert.equal(readFileSync(join(cfg, "pstack-models.md"), "utf8"), sheetWithHighHillclimb());
         assert.equal(readFileSync(imported, "utf8"), sheetWithHighHillclimb());
         assert.equal(readFileSync(other, "utf8"), "Other instructions.\n");
@@ -1913,8 +2030,8 @@ describe("the Claude sheet import", () => {
       assert.deepEqual(state.rows, []);
 
       const plan = await planAndProbe("claude", { env });
-      writeSheet(plan, runDir, { home, env });
-      assert.equal(readFileSync(integration, "utf8"), `${before}@./pstack-models.md\n`);
+      assert.equal(writeSheet(plan, runDir, { home, env }).integration, "unchanged");
+      assert.equal(readFileSync(integration, "utf8"), before);
       assert.equal(readFileSync(join(cfg, "pstack-models.md"), "utf8"), firstRunSheet("claude"));
       assert.equal(readFileSync(unrelated, "utf8"), sheetWithHighHillclimb());
     });
@@ -1953,7 +2070,7 @@ describe("the Claude sheet import", () => {
       assert.deepEqual(loadState({ parent: "claude", home, env, matrix }).source, { kind: "import", path: imported });
       const plan = await planAndProbe("claude", { env });
       writeSheet(plan, runDir, { home, env });
-      assert.equal(readFileSync(integration, "utf8"), `<!--@noise-->@./pstack-models.md${lineEnd}`);
+      assert.equal(readFileSync(integration, "utf8"), `<!--@noise-->${lineEnd}`);
       assert.equal(readFileSync(join(cfg, "pstack-models.md"), "utf8"), sheetWithHighHillclimb());
     });
 
@@ -1994,7 +2111,7 @@ describe("the Claude sheet import", () => {
     });
   }
 
-  it("carries a copied profile's imported sheet into the redirected home and replaces the one import in place", async () => {
+  it("carries a copied profile's imported sheet into the redirected home and removes the import", async () => {
     const cfg = join(home, "cfg");
     const env = { CLAUDE_CONFIG_DIR: cfg };
     const imported = put(join(home, ".claude", "pstack-models.md"), sheetWithHighHillclimb());
@@ -2009,18 +2126,18 @@ describe("the Claude sheet import", () => {
     assert.equal(plan.firstRun, false);
     writeSheet(plan, runDir, { home, env });
     assert.match(readFileSync(join(cfg, "pstack-models.md"), "utf8"), /^hillclimb: claude:claude-opus-5-5@high$/m);
-    assert.equal(readFileSync(join(cfg, "CLAUDE.md"), "utf8"), "# work profile\n@./pstack-models.md\nKeep this.\n");
+    assert.equal(readFileSync(join(cfg, "CLAUDE.md"), "utf8"), "# work profile\nKeep this.\n");
     assert.equal(readFileSync(imported, "utf8"), sheetWithHighHillclimb(), "the imported sheet is only read");
     assert.deepEqual(loadState({ parent: "claude", home, env, matrix }).source, { kind: "sheet", path: join(cfg, "pstack-models.md") });
   });
 
-  it("replaces an import that names the sheet elsewhere with the legacy line, inside its list item", async () => {
+  it("removes an import that names the sheet elsewhere and keeps the rest of its list item", async () => {
     const elsewhere = put(join(home, "dotfiles", "pstack-models.md"), sheetWithHighHillclimb());
     const integration = put(join(home, ".claude", "CLAUDE.md"), `# mine\n- models: @${elsewhere}\n`);
     assert.deepEqual(loadState({ parent: "claude", home, matrix }).source, { kind: "import", path: elsewhere });
     const plan = await planAndProbe("claude");
     writeSheet(plan, runDir, { home });
-    assert.equal(readFileSync(integration, "utf8"), "# mine\n- models: @~/.claude/pstack-models.md\n");
+    assert.equal(readFileSync(integration, "utf8"), "# mine\n- models: \n");
     assert.match(readFileSync(join(home, ".claude", "pstack-models.md"), "utf8"), /^hillclimb: claude:claude-opus-5-5@high$/m);
   });
 
@@ -2030,13 +2147,13 @@ describe("the Claude sheet import", () => {
     assert.deepEqual(loadState({ parent: "claude", home, matrix }).source, { kind: "import", path: spaced });
   });
 
-  it("ignores a mention in a fenced block, a code span, an HTML comment or quotes, and appends the one import", async () => {
+  it("ignores a mention in a fenced block, a code span, an HTML comment or quotes, and leaves the file alone", async () => {
     const mentions = "```text\n@~/.claude/pstack-models.md\n```\nLoad it with `@~/.claude/pstack-models.md`.\n<!-- off for now:\n@~/.claude/pstack-models.md -->\nNot this: @\"~/x/pstack-models.md\"\n";
     const integration = put(join(home, ".claude", "CLAUDE.md"), mentions);
     assert.deepEqual(loadState({ parent: "claude", home, matrix }).source, { kind: "first-run" });
     const plan = await planAndProbe("claude");
     writeSheet(plan, runDir, { home });
-    assert.equal(readFileSync(integration, "utf8"), `${mentions}@~/.claude/pstack-models.md\n`);
+    assert.equal(readFileSync(integration, "utf8"), mentions);
   });
 });
 
@@ -2045,6 +2162,7 @@ describe("loadState sources", () => {
     put(join(home, ".claude", "CLAUDE.md"), "@~/gone/pstack-models.md\n");
     const missing = loadState({ parent: "claude", home, matrix });
     assert.deepEqual([missing.source, missing.missingImport, missing.exists], [{ kind: "first-run" }, join(home, "gone", "pstack-models.md"), false]);
+    assert.equal(missing.legacyWiring, join(home, ".claude", "CLAUDE.md"));
     assert.equal(missing.efforts.grok.status, "unassigned");
     putSheet("claude", sheetWithHighHillclimb());
     const kept = loadState({ parent: "claude", home, matrix });
@@ -2059,13 +2177,13 @@ describe("loadState sources", () => {
     const sheet = put(join(cfg, "pstack-models.md"), firstRunSheet("claude"));
     assert.throws(
       () => loadState({ parent: "claude", home, env, matrix }),
-      { message: `inconsistent state: ${sheet} and ${imported} (imported by ${integration}) assign different lanes to hillclimb (sheet: claude:claude-opus-5-5@xhigh; import: claude:claude-opus-5-5@high); delete the sheet to carry the imported one over, or change the import to @./pstack-models.md to keep the sheet` }
+      { message: `inconsistent state: ${sheet} and ${imported} (imported by ${integration}) assign different lanes to hillclimb (sheet: claude:claude-opus-5-5@xhigh; import: claude:claude-opus-5-5@high); delete the sheet to carry the imported one over, or remove the import to keep the sheet` }
     );
     writeFileSync(sheet, `${sheetWithHighHillclimb()}\nA note the operator kept.\n`);
     assert.deepEqual(loadState({ parent: "claude", home, env, matrix }).source, { kind: "sheet", path: sheet });
   });
 
-  it("recovers the Codex rows from the AGENTS.md block when the sheet is missing, and writes the sheet back", async () => {
+  it("recovers the Codex rows from the AGENTS.md block when the sheet is missing, writes the sheet back and removes the block", async () => {
     const customized = firstRunSheet("codex").replace("hillclimb: codex:gpt-6-sol@xhigh", "hillclimb: codex:gpt-6-sol@high");
     const integration = put(integrationPathFor("codex", home), `# agents\n${CODEX_BLOCK_BEGIN}\n${customized}${CODEX_BLOCK_END}\n`);
     const state = loadState({ parent: "codex", home, matrix });
@@ -2075,8 +2193,9 @@ describe("loadState sources", () => {
     assert.equal(plan.firstRun, false);
     assert.equal(plan.sheet, customized);
     const result = writeSheet(plan, runDir, { home });
-    assert.deepEqual([result.sheet, result.integration], ["created", "unchanged"]);
+    assert.deepEqual([result.sheet, result.integration], ["created", "updated"]);
     assert.equal(readFileSync(sheetPathFor("codex", home), "utf8"), customized);
+    assert.equal(readFileSync(integration, "utf8"), "# agents\n");
   });
 
   it("stops when the Codex sheet and its block assign different lanes, naming both sides of each role", () => {
@@ -2107,26 +2226,37 @@ describe("imports that a line scan reads differently from Claude Code", () => {
   const elsewhere = (): string => put(join(home, "dotfiles", "pstack-models.md"), sheetWithHighHillclimb());
   const claudeMd = (text: string): string => put(join(home, ".claude", "CLAUDE.md"), text);
   const unsure = (path: string, line: number, reason: string): string =>
-    `inconsistent state: ${path} line ${line} mentions an import of pstack-models.md that this script cannot read the way Claude Code does (${reason}); move the import to the top of the file as a line of its own, or remove the mention`;
+    `inconsistent state: ${path} line ${line} mentions an import of pstack-models.md that this script cannot read the way Claude Code does (${reason}); remove the mention`;
 
-  async function rewritten(before: string, after: string): Promise<void> {
+  /** An import of a sheet elsewhere: write carries its rows over and removes the import. */
+  async function unwired(before: string, after: string): Promise<void> {
     const sheet = elsewhere();
     const integration = claudeMd(before);
     assert.deepEqual(loadState({ parent: "claude", home, matrix }).source, { kind: "import", path: sheet });
     const plan = await planAndProbe("claude");
     assert.equal(plan.firstRun, false);
-    writeSheet(plan, runDir, { home });
+    assert.equal(writeSheet(plan, runDir, { home }).integration, "updated");
     assert.equal(readFileSync(integration, "utf8"), after);
     assert.match(readFileSync(join(home, ".claude", "pstack-models.md"), "utf8"), /^hillclimb: claude:claude-opus-5-5@high$/m);
   }
 
-  async function appended(before: string, after = `${before}@~/.claude/pstack-models.md\n`): Promise<void> {
+  /** A mention Claude Code does not load: write leaves the file byte for byte. */
+  async function untouched(before: string): Promise<void> {
     elsewhere();
     const integration = claudeMd(before);
     assert.deepEqual(loadState({ parent: "claude", home, matrix }).source, { kind: "first-run" });
     const plan = await planAndProbe("claude");
-    writeSheet(plan, runDir, { home });
-    assert.equal(readFileSync(integration, "utf8"), after);
+    assert.equal(writeSheet(plan, runDir, { home }).integration, "unchanged");
+    assert.equal(readFileSync(integration, "utf8"), before);
+  }
+
+  /** An import an earlier setup placed for the config-home sheet: write restores the bytes it found. */
+  async function removed(placed: string, original: string): Promise<void> {
+    const integration = claudeMd(placed);
+    assert.equal(loadState({ parent: "claude", home, matrix }).missingImport, join(home, ".claude", "pstack-models.md"));
+    const plan = await planAndProbe("claude");
+    assert.equal(writeSheet(plan, runDir, { home }).integration, "updated");
+    assert.equal(readFileSync(integration, "utf8"), original);
   }
 
   function stops(before: string, message: string): void {
@@ -2138,38 +2268,38 @@ describe("imports that a line scan reads differently from Claude Code", () => {
     assert.equal(existsSync(join(home, ".claude", "pstack-models.md")), false);
   }
 
-  it("loads an import right after an HTML comment on its line, and rewrites it there", async () => {
-    await rewritten("<!-- models -->@~/dotfiles/pstack-models.md\n", "<!-- models -->@~/.claude/pstack-models.md\n");
+  it("loads an import right after an HTML comment on its line, and removes only the import", async () => {
+    await unwired("<!-- models -->@~/dotfiles/pstack-models.md\n", "<!-- models -->\n");
   });
 
   it("loads an import after an indented fence line that only continues a paragraph", async () => {
-    await rewritten("Para\n    ```\n@~/dotfiles/pstack-models.md\n", "Para\n    ```\n@~/.claude/pstack-models.md\n");
+    await unwired("Para\n    ```\n@~/dotfiles/pstack-models.md\n", "Para\n    ```\n");
   });
 
   it("counts only the plain import when a second one sits in an indented code block", async () => {
-    await rewritten("@~/dotfiles/pstack-models.md\n\n    @./pstack-models.md\n", "@~/.claude/pstack-models.md\n\n    @./pstack-models.md\n");
+    await unwired("@~/dotfiles/pstack-models.md\n\n    @./pstack-models.md\n", "\n    @./pstack-models.md\n");
   });
 
-  it("skips an import in an indented code block and appends one that loads", async () => {
-    await appended("Notes.\n\n    @~/dotfiles/pstack-models.md\n");
+  it("skips an import in an indented code block and leaves it", async () => {
+    await untouched("Notes.\n\n    @~/dotfiles/pstack-models.md\n");
   });
 
-  it("skips an import in front matter and appends one that loads", async () => {
-    await appended("---\nnote: @~/dotfiles/pstack-models.md\n---\nBody\n");
+  it("skips an import in front matter and leaves it", async () => {
+    await untouched("---\nnote: @~/dotfiles/pstack-models.md\n---\nBody\n");
   });
 
-  it("puts the import at the top, followed by a blank line, when an unclosed HTML comment would hide it at the end", async () => {
-    await appended("<!-- @~/dotfiles/pstack-models.md\n", "@~/.claude/pstack-models.md\n\n<!-- @~/dotfiles/pstack-models.md\n");
+  it("skips an import inside an unclosed HTML comment and leaves it", async () => {
+    await untouched("<!-- @~/dotfiles/pstack-models.md\n");
   });
 
-  it("puts a top import after the front matter and after a byte order mark", async () => {
-    await appended("---\ntitle: x\n---\n<!-- off\n", "---\ntitle: x\n---\n@~/.claude/pstack-models.md\n\n<!-- off\n");
+  it("removes only the line of a top import placed after the front matter or a byte order mark", async () => {
+    await removed("---\ntitle: x\n---\n@~/.claude/pstack-models.md\n\n<!-- off\n", "---\ntitle: x\n---\n\n<!-- off\n");
     rmSync(join(home, ".claude"), { recursive: true });
-    await appended("﻿\n<!-- off\n", "﻿@~/.claude/pstack-models.md\n\n\n<!-- off\n");
+    await removed("\ufeff@~/.claude/pstack-models.md\n\n\n<!-- off\n", "\ufeff\n\n<!-- off\n");
   });
 
-  it("skips an import in an HTML block and appends one after a blank line, which ends the block", async () => {
-    await appended("<div>\n@~/dotfiles/pstack-models.md\n</div>\n", "<div>\n@~/dotfiles/pstack-models.md\n</div>\n\n@~/.claude/pstack-models.md\n");
+  it("skips an import in an HTML block and leaves it", async () => {
+    await untouched("<div>\n@~/dotfiles/pstack-models.md\n</div>\n");
   });
 
   it("stops on an import glued to emphasis, which Claude Code loads", () => {
@@ -2184,14 +2314,39 @@ describe("imports that a line scan reads differently from Claude Code", () => {
     stops("<span>@~/dotfiles/pstack-models.md</span>\n", unsure(join(home, ".claude", "CLAUDE.md"), 1, "an HTML tag, a link or a backslash comes before it in its paragraph"));
   });
 
-  it("appends after a blank line when the last paragraph would leave a lazy line unsure", async () => {
-    await appended("See [the docs](https://example.com).", "See [the docs](https://example.com).\n\n@~/.claude/pstack-models.md\n");
+  it("removes an import appended after a blank line and keeps the blank line", async () => {
+    await removed("See [the docs](https://example.com).\n\n@~/.claude/pstack-models.md\n", "See [the docs](https://example.com).\n\n");
   });
 
-  it("still reads a plain list item and appends after a list as a lazy line", async () => {
-    await rewritten("# Rules\n- one\n- models @~/dotfiles/pstack-models.md\n", "# Rules\n- one\n- models @~/.claude/pstack-models.md\n");
+  it("removes a line left with only its list or quote marker, and only the import from a line with other text", async () => {
+    await removed("# Rules\n1. @~/.claude/pstack-models.md\n2. two\n", "# Rules\n2. two\n");
     rmSync(join(home, ".claude"), { recursive: true });
-    await appended("# Rules\n- one\n- two\n");
+    await removed("> @~/.claude/pstack-models.md\n", "");
+    rmSync(join(home, ".claude"), { recursive: true });
+    await removed("Models: @~/.claude/pstack-models.md\n", "Models: \n");
+    rmSync(join(home, ".claude"), { recursive: true });
+    await removed("5 @~/.claude/pstack-models.md\n", "5 \n");
+  });
+
+  it("stops instead of turning the indented line after the import into a code block", () => {
+    const before = "# H\n@~/.claude/pstack-models.md\n    @./other.md\n";
+    const integration = claudeMd(before);
+    const message = `inconsistent state: removing the import on line 2 of ${integration} would turn the indented line after it into a code block; remove the import by hand`;
+    assert.throws(() => loadState({ parent: "claude", home, matrix }), { message });
+    assert.throws(() => buildPlan({ parent: "claude", home, matrix }), { message });
+    assert.throws(() => unwireSheet({ parent: "claude", home, matrix }), { message });
+    assert.equal(readFileSync(integration, "utf8"), before);
+    assert.equal(existsSync(join(home, ".claude", "pstack-models.md")), false);
+  });
+
+  it("removes an import inside a paragraph even when an indented line follows, since that line still continues the paragraph", async () => {
+    await removed("Para\n@~/.claude/pstack-models.md\n    continued paragraph\n", "Para\n    continued paragraph\n");
+  });
+
+  it("still reads a plain list item, and removes an import appended after a list as a lazy line", async () => {
+    await unwired("# Rules\n- one\n- models @~/dotfiles/pstack-models.md\n", "# Rules\n- one\n- models \n");
+    rmSync(join(home, ".claude"), { recursive: true });
+    await removed("# Rules\n- one\n- two\n@~/.claude/pstack-models.md\n", "# Rules\n- one\n- two\n");
   });
 });
 
@@ -2208,38 +2363,38 @@ describe("a CLAUDE.md with carriage returns, which Claude Code's lexer reads as 
     assert.equal(readFileSync(integration, "utf8"), after);
   }
 
-  it("appends the import with an LF line end to a CRLF file that has none", async () => {
+  it("leaves a CRLF file without an import byte for byte", async () => {
     const before = "Prefer small commits.\r\nAnswer in plain language.\r\nRun the tests before declaring done.\r\n";
-    await written(before, { kind: "first-run" }, `${before}@~/.claude/pstack-models.md\n`);
+    await written(before, { kind: "first-run" }, before);
   });
 
-  it("reads an import on a CRLF line and replaces only its path", async () => {
+  it("reads an import on a CRLF line and removes that line", async () => {
     const sheet = join(home, "dotfiles", "pstack-models.md");
-    await written("Rules.\r\n\r\n@~/dotfiles/pstack-models.md\r\nMore.\r\n", { kind: "import", path: sheet }, "Rules.\r\n\r\n@~/.claude/pstack-models.md\r\nMore.\r\n");
+    await written("Rules.\r\n\r\n@~/dotfiles/pstack-models.md\r\nMore.\r\n", { kind: "import", path: sheet }, "Rules.\r\n\r\nMore.\r\n");
   });
 
-  it("reads an import after lone carriage returns and replaces only its path", async () => {
+  it("reads an import after lone carriage returns and removes that line", async () => {
     const sheet = join(home, "dotfiles", "pstack-models.md");
-    await written("Rules.\rMore.\r\r@~/dotfiles/pstack-models.md\r", { kind: "import", path: sheet }, "Rules.\rMore.\r\r@~/.claude/pstack-models.md\r");
+    await written("Rules.\rMore.\r\r@~/dotfiles/pstack-models.md\r", { kind: "import", path: sheet }, "Rules.\rMore.\r\r");
   });
 
-  it("leaves a CRLF file whose first line imports the config-home sheet byte for byte and creates the sheet", async () => {
-    const before = "@~/.claude/pstack-models.md\r\nPrefer small commits.\r\nAnswer in plain language.\r\nRun the tests before declaring done.\r\n";
-    const integration = claudeMd(before);
+  it("removes a CRLF file's first-line import of the config-home sheet and creates the sheet", async () => {
+    const rest = "Prefer small commits.\r\nAnswer in plain language.\r\nRun the tests before declaring done.\r\n";
+    const integration = claudeMd(`@~/.claude/pstack-models.md\r\n${rest}`);
     const state = loadState({ parent: "claude", home, matrix });
     assert.deepEqual([state.source, state.missingImport], [{ kind: "first-run" }, join(home, ".claude", "pstack-models.md")]);
     const plan = await planAndProbe("claude");
     const result = writeSheet(plan, runDir, { home });
-    assert.deepEqual([result.sheet, result.integration], ["created", "unchanged"]);
-    assert.equal(readFileSync(integration, "utf8"), before);
+    assert.deepEqual([result.sheet, result.integration], ["created", "updated"]);
+    assert.equal(readFileSync(integration, "utf8"), rest);
   });
 
-  it("skips imports in a CRLF fence and in CRLF front matter, and appends one that loads", async () => {
+  it("skips imports in a CRLF fence and in CRLF front matter, and leaves both files alone", async () => {
     const fenced = "```\r\n@~/dotfiles/pstack-models.md\r\n```\r\n";
-    await written(fenced, { kind: "first-run" }, `${fenced}@~/.claude/pstack-models.md\n`);
+    await written(fenced, { kind: "first-run" }, fenced);
     rmSync(join(home, ".claude"), { recursive: true });
     const frontMatter = "---\r\nnote: @~/dotfiles/pstack-models.md\r\n---\r\nBody\r\n";
-    await written(frontMatter, { kind: "first-run" }, `${frontMatter}@~/.claude/pstack-models.md\n`);
+    await written(frontMatter, { kind: "first-run" }, frontMatter);
   });
 
   it("numbers the lines of a CRLF file as an editor does when it stops on two imports", () => {
@@ -2290,7 +2445,7 @@ describe("command line", () => {
     assert.equal(disabled.code, 0, disabled.stderr);
     assert.equal(cli(["write", "--dir", runDir, "--home", home], noCliEnv()).code, 0);
     assert.doesNotMatch(readFileSync(sheetPathFor("codex", home), "utf8"), /swarm fallback/);
-    assert.doesNotMatch(readFileSync(integrationPathFor("codex", home), "utf8"), /swarm fallback/);
+    assert.equal(existsSync(integrationPathFor("codex", home)), false);
     const bad = cli([...planArgs, "--swarm-fallback", "grok:grok-4.7@xhigh"], noCliEnv());
     assert.equal(bad.code, 1);
     assert.match(bad.stderr, /native provider of codex/);
@@ -2323,7 +2478,8 @@ describe("command line", () => {
     assert.match(elsewhere.stderr, /was made for the config home .*, but this write resolves .*\.claude; run write with the --home and CLAUDE_CONFIG_DIR that plan used/);
     const written = cli(["write", "--dir", runDir, "--home", home], redirected(noCliEnv()));
     assert.equal(written.code, 0, written.stderr);
-    assert.equal(readFileSync(join(cfg, "CLAUDE.md"), "utf8"), "@./pstack-models.md\n");
+    assert.equal(readFileSync(join(cfg, "pstack-models.md"), "utf8"), plan.sheet);
+    assert.equal(existsSync(join(cfg, "CLAUDE.md")), false);
     assert.equal(existsSync(join(home, ".claude")), false);
   });
 
@@ -2394,11 +2550,29 @@ describe("command line", () => {
     const written = cli(["write", "--dir", runDir, "--home", home], noCliEnv());
     assert.equal(written.code, 0, written.stderr);
     const result = JSON.parse(written.stdout);
-    assert.deepEqual([result.sheet, result.integration, result.ledger], ["created", "created", "created"]);
+    assert.deepEqual([result.sheet, result.integration, result.ledger], ["created", "unchanged", "created"]);
     assert.equal(readFileSync(plan.sheetPath, "utf8"), plan.sheet);
 
     const again = JSON.parse(cli(["write", "--dir", runDir, "--home", home], noCliEnv()).stdout);
     assert.deepEqual([again.sheet, again.integration, again.ledger], ["unchanged", "unchanged", "unchanged"]);
+  });
+
+  it("roles prints every role's lanes and unwire removes an earlier version's block", () => {
+    putSheet("codex", firstRunSheet("codex"));
+    const integration = put(integrationPathFor("codex", home), `# agents\n${CODEX_BLOCK_BEGIN}\n${firstRunSheet("codex")}${CODEX_BLOCK_END}\n`);
+    const args = ["--parent", "codex", "--home", home, "--cwd", outside()];
+    const before = cli(["roles", ...args], noCliEnv());
+    assert.equal(before.code, 0, before.stderr);
+    const roles = JSON.parse(before.stdout);
+    assert.equal(roles.legacyWiring, integration);
+    assert.equal(roles.roles.length, matrix.roles.length);
+    assert.ok(roles.roles.every((r: { source: string }) => r.source === "sheet"));
+    const unwired = cli(["unwire", ...args], noCliEnv());
+    assert.equal(unwired.code, 0, unwired.stderr);
+    assert.deepEqual([JSON.parse(unwired.stdout).sheet, JSON.parse(unwired.stdout).integration], ["unchanged", "updated"]);
+    assert.equal(readFileSync(integration, "utf8"), "# agents\n");
+    assert.equal(JSON.parse(cli(["roles", ...args], noCliEnv()).stdout).legacyWiring, null);
+    assert.equal(cli(["roles", "--home", home], noCliEnv()).code, 64);
   });
 
   it("rejects a bad subcommand, a malformed --effort, and a missing --parent with exit 64 and usage", () => {
@@ -2412,6 +2586,8 @@ describe("command line", () => {
     assert.match(help.stdout, /Usage: setup-pstack/);
     assert.match(help.stdout, /--pair <family>@<effort>/);
     assert.doesNotMatch(help.stdout, /--family <family>/);
+    assert.match(help.stdout, /^  roles  --parent <p>/m);
+    assert.match(help.stdout, /^  unwire --parent <p>/m);
   });
 
   it("attest --pair records a native probe and attest --family is unknown", () => {

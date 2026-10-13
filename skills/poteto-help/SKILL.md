@@ -29,7 +29,7 @@ Check the state that changes the answer, and mention it only when it does:
 ## Get set up
 
 1. Install from the marketplace, from a tag. On Claude Code, type `/plugin marketplace add byvict/pstack-vic`, then `/plugin install pstack@pstack-vic`. On Codex, run `codex plugin marketplace add byvict/pstack-vic --ref vX.Y.Z`, then `codex plugin add pstack@pstack-vic`, with the tag the [README](../../README.md) shows. Grok Build finds the plugin installed on Claude Code through the CLI's compatibility.
-2. Run [`/setup-pstack`](../setup-pstack/SKILL.md) once on each parent. It picks a model and an effort for each role, as a provider-qualified descriptor such as `claude:claude-opus-5-5@xhigh`, probes each new family, and writes a sheet that `~/.claude/CLAUDE.md` includes on Claude Code and that `~/.codex/AGENTS.md` or `~/.grok/AGENTS.md` mirrors on Codex and Grok Build. The sheet applies to new sessions.
+2. Run [`/setup-pstack`](../setup-pstack/SKILL.md) once on each parent. It picks a model and an effort for each role, as a provider-qualified descriptor such as `claude:claude-opus-5-5@xhigh`, probes each new family, and writes the sheet in that parent's config home. The plugin reads it at dispatch time, and no instruction file includes it, so disabling the plugin leaves it inert.
 3. Start a real task with `/poteto-mode`, a goal, and a check that can pass or fail.
 
 Workflow skills run when the user explicitly names them or an active pstack workflow calls them. Only `/setup-pstack` and `/poteto-help` load from an ordinary request. Claude Code and Grok keep workflow leaves callable by the router, with this boundary in their descriptions. Codex also disables implicit discovery through each workflow's `agents/openai.yaml`; the router reads the named skill file. The [setup guide](../../docs/guide/01-setup.md) walks through a first task; the [reference](../../docs/reference.md#instalação) has the installation details.
@@ -127,7 +127,7 @@ Principles are one-rule skills that `/poteto-mode` reads and cites in its replie
 |---|---|
 | The mode stopped applying after a few turns | No parent re-applies the skill each turn, and a long session can summarize it away. Start each task with `/poteto-mode` again. |
 | A question got treated as the next step of the last task | Say "new task", or say the turn doesn't need the mode. |
-| A new model choice had no effect | The sheet from `/setup-pstack` applies to new sessions. Start one. |
+| A new model choice had no effect | Skills read the sheet when a run dispatches its first role. A run already under way keeps the roles it resolved; start the step again. |
 | Runs cost more than expected | See the cost paragraph under Get set up. |
 | A skill didn't load on its own | Only `/setup-pstack` and `/poteto-help` load from ordinary requests. Name the workflow explicitly or start `/poteto-mode`. |
 | Parallel agents overwrote each other | Give each writer its own worktree: `isolation: "worktree"` on the `Agent` call on Claude Code, `git worktree add` before the dispatch on Codex. |

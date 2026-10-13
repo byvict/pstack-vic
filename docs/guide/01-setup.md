@@ -20,7 +20,7 @@ Cada atribuição identifica provedor, modelo e esforço. Os valores aceitos e o
 
 Um papel com `auto` ou `inherit-parent` usa o modelo da conversa principal. Em um painel, cada entrada representa uma participante. Encurtar a lista reduz o painel. O papel `swarm workers` escolhe o modelo dos trabalhadores de um swarm, salvo quando a tarefa define explicitamente modelos por tentativa.
 
-Execute o setup uma vez em cada ambiente que usar. Os arquivos e a integração com `CLAUDE.md` ou `AGENTS.md` estão na [referência](../reference.md) e nas [regras dos diretórios de configuração](../../skills/poteto-mode/references/codex-tools.md#harness-config-homes). Abra uma nova sessão depois de gravar.
+Execute o setup uma vez em cada ambiente que usar. A planilha fica no diretório de configuração de cada ambiente, e só o plugin a lê, na hora de despachar um papel. Nenhum `CLAUDE.md` ou `AGENTS.md` a carrega, então desligar o plugin a deixa sem efeito. Os arquivos estão na [referência](../reference.md#desligar-e-desinstalar) e nas [regras dos diretórios de configuração](../../skills/poteto-mode/references/codex-tools.md#harness-config-homes).
 
 ## Prepare a verificação do projeto
 

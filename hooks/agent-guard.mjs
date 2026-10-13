@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // PreToolUse hook on Claude Code's Agent tool. A pstack agent (poteto-agent, an
 // autopilot owner) that spawns a built-in agent gets a lane without the
-// poteto-mode skill and off the model sheet; Explore and Plan do not even load
-// CLAUDE.md. The hook refuses that call and names the route to take.
+// poteto-mode skill, so nothing resolves its role from the model sheet. The
+// hook refuses that call and names the route to take.
 //
 // Claude Code sends `agent_type` only when the call comes from a subagent (or
 // from a `claude --agent` session), so the main session is never refused. The
